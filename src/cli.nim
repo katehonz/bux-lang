@@ -1,5 +1,5 @@
-import std/[os, strutils, terminal, strformat]
-import lexer, parser, sema, manifest
+import std/[os, strutils, terminal, strformat, osproc]
+import lexer, parser, sema, manifest, hir, hir_lower, c_backend, types, scope
 
 type
   ColorMode* = enum
@@ -192,12 +192,104 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
 
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
-  # For now, just type-check
-  let checkRes = cmdCheck(args, opts)
-  if checkRes != 0:
-    return checkRes
+  let root = getCurrentDir()
+  let manifestPath = root / "bux.toml"
+  if not fileExists(manifestPath):
+    printError("no bux.toml found", useColor)
+    return 1
+  let man = loadManifest(manifestPath)
+  let srcDir = root / "src"
+  if not dirExists(srcDir):
+    printError("no src/ directory found", useColor)
+    return 1
+
+  # Create build directory
+  let buildDir = root / "build"
+  if not dirExists(buildDir):
+    createDir(buildDir)
+
+  # Process all .bux files
+  var allCCode = ""
+  var foundMain = false
+  for kind, path in walkDir(srcDir):
+    if kind == pcFile and path.endsWith(".bux"):
+      let source = readFile(path)
+      let lexRes = tokenize(source, path)
+      if lexRes.hasErrors:
+        printError(&"lex errors in {path}", useColor)
+        for d in lexRes.diagnostics:
+          echo $d
+        return 1
+      let parseRes = parse(lexRes.tokens, path)
+      if parseRes.diagnostics.len > 0:
+        printError(&"parse errors in {path}", useColor)
+        for d in parseRes.diagnostics:
+          echo &"error: {d.message} at {d.loc}"
+        return 1
+      let semaRes = analyze(parseRes.module)
+      if semaRes.hasErrors:
+        printError(&"type errors in {path}", useColor)
+        for d in semaRes.diagnostics:
+          let sev = if d.severity == sdsError: "error" else: "warning"
+          echo &"{sev}: {d.message} at {d.loc}"
+        return 1
+
+      # Lower to HIR
+      var s = Sema(module: parseRes.module, globalScope: newScope())
+      s.collectGlobals()
+      let hirModule = lowerModule(parseRes.module, s)
+
+      # Generate C code
+      var cbe = initCBackend()
+      let cCode = cbe.emitModule(hirModule)
+      allCCode.add(cCode)
+      allCCode.add("\n")
+
+      if splitFile(path).name == "Main":
+        foundMain = true
+
+  if not foundMain:
+    printError("no Main.bux found in src/", useColor)
+    return 1
+
+  # Write C file
+  let cFile = buildDir / "main.c"
+  writeFile(cFile, allCCode)
+
+  # Copy runtime
+  let runtimeDst = buildDir / "runtime.c"
+  var runtimeFound = false
+  # Search in multiple locations
+  let searchPaths = @[
+    getAppDir() / ".." / "stdlib" / "runtime.c",
+    getAppDir() / "stdlib" / "runtime.c",
+    root / "stdlib" / "runtime.c",
+    root / "stdlib_runtime.c",
+    "/home/ziko/z-git/bux/bux/stdlib/runtime.c",  # TODO: make this configurable
+  ]
+  for runtimePath in searchPaths:
+    if fileExists(runtimePath):
+      copyFile(runtimePath, runtimeDst)
+      runtimeFound = true
+      break
+  if not runtimeFound:
+    printError("runtime.c not found (searched in stdlib/, build/, and project root)", useColor)
+    return 1
+
+  # Compile with cc
+  let outputName = if man.name != "": man.name else: "bux_out"
+  let outputFile = buildDir / outputName
+  let ccCmd = &"cc -o {outputFile} {cFile} {runtimeDst} -lm 2>&1"
+  if opts.verbose:
+    printInfo(&"running: {ccCmd}", useColor)
+  let (output, exitCode) = execCmdEx(ccCmd)
+  if exitCode != 0:
+    printError("C compilation failed:", useColor)
+    echo output
+    return 1
+
   if not opts.quiet:
-    printInfo("build: nothing to do yet (no codegen)", useColor)
+    printInfo(&"build: {outputFile}", useColor)
   return 0
 
 proc cmdRun*(args: seq[string], opts: GlobalOptions): int =
@@ -205,14 +297,24 @@ proc cmdRun*(args: seq[string], opts: GlobalOptions): int =
   let buildRes = cmdBuild(args, opts)
   if buildRes != 0:
     return buildRes
-  printError("run: no executable produced yet (no codegen)", useColor)
-  return 1
+  let root = getCurrentDir()
+  let man = loadManifest(root / "bux.toml")
+  let outputName = if man.name != "": man.name else: "bux_out"
+  let outputFile = root / "build" / outputName
+  if not fileExists(outputFile):
+    printError("executable not found after build", useColor)
+    return 1
+  let exitCode = execCmd(outputFile)
+  return exitCode
 
 proc cmdClean*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
-  # Placeholder
+  let root = getCurrentDir()
+  let buildDir = root / "build"
+  if dirExists(buildDir):
+    removeDir(buildDir)
   if not opts.quiet:
-    printInfo("clean: nothing to do yet", useColor)
+    printInfo("clean: build directory removed", useColor)
   return 0
 
 proc cmdVersion*(args: seq[string], opts: GlobalOptions): int =

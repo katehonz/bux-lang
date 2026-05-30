@@ -323,10 +323,11 @@ proc parsePrimary(p: var Parser): Expr =
   case p.peek()
   of tkIntLiteral, tkFloatLiteral, tkStringLiteral, tkCharLiteral, tkBoolLiteral:
     return newLiteralExpr(p.advance())
+  of tkSelf:
+    discard p.advance()
+    return Expr(kind: ekSelf, loc: loc)
   of tkIdent:
     let name = p.advance().text
-    if name == "self":
-      return Expr(kind: ekSelf, loc: loc)
     # Path expression: a::b::c
     if p.check(tkColonColon):
       var segs = @[name]
@@ -781,11 +782,25 @@ proc parseParamList(p: var Parser, allowVariadic: bool = false): seq[Param] =
     var isVar = false
     if allowVariadic and p.check(tkDotDotDot):
       discard p.advance()
-      let name = p.expect(tkIdent, "expected parameter name after '...'").text
+      let nameTok = p.at
+      var name = ""
+      if nameTok.kind == tkIdent:
+        name = p.advance().text
+      elif nameTok.kind == tkSelf:
+        name = p.advance().text
+      else:
+        name = p.expect(tkIdent, "expected parameter name after '...'").text
       let ty = p.parseType()
       result.add(Param(loc: loc, name: name, ptype: ty, isVariadic: true))
     else:
-      let name = p.expect(tkIdent, "expected parameter name").text
+      let nameTok = p.at
+      var name = ""
+      if nameTok.kind == tkIdent:
+        name = p.advance().text
+      elif nameTok.kind == tkSelf:
+        name = p.advance().text
+      else:
+        name = p.expect(tkIdent, "expected parameter name").text
       discard p.expect(tkColon, "expected ':' after parameter name")
       let ty = p.parseType()
       var defaultVal: Expr = nil
@@ -826,6 +841,11 @@ proc parseStructDecl(p: var Parser, isPublic: bool): Decl =
   discard p.expect(tkLBrace, "expected '{' to start struct body")
   var fields: seq[StructField] = @[]
   while not p.check(tkRBrace) and not p.isAtEnd:
+    # Skip newlines
+    while p.check(tkNewLine):
+      discard p.advance()
+    if p.check(tkRBrace) or p.isAtEnd:
+      break
     let fLoc = p.currentLoc
     var fPub = false
     if p.check(tkPub):
@@ -853,6 +873,11 @@ proc parseEnumDecl(p: var Parser, isPublic: bool): Decl =
   discard p.expect(tkLBrace, "expected '{' to start enum body")
   var variants: seq[EnumVariant] = @[]
   while not p.check(tkRBrace) and not p.isAtEnd:
+    # Skip newlines
+    while p.check(tkNewLine):
+      discard p.advance()
+    if p.check(tkRBrace) or p.isAtEnd:
+      break
     let vLoc = p.currentLoc
     let vName = p.expect(tkIdent, "expected variant name").text
     var fields: seq[TypeExpr] = @[]
@@ -908,6 +933,11 @@ proc parseInterfaceDecl(p: var Parser, isPublic: bool): Decl =
   discard p.expect(tkLBrace, "expected '{' to start interface body")
   var methods: seq[Decl] = @[]
   while not p.check(tkRBrace) and not p.isAtEnd:
+    # Skip newlines
+    while p.check(tkNewLine):
+      discard p.advance()
+    if p.check(tkRBrace) or p.isAtEnd:
+      break
     methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
   discard p.expect(tkRBrace, "expected '}' to close interface")
   return Decl(kind: dkInterface, loc: loc, isPublic: isPublic,
@@ -924,6 +954,11 @@ proc parseImplDecl(p: var Parser): Decl =
   discard p.expect(tkLBrace, "expected '{' to start impl block")
   var methods: seq[Decl] = @[]
   while not p.check(tkRBrace) and not p.isAtEnd:
+    # Skip newlines
+    while p.check(tkNewLine):
+      discard p.advance()
+    if p.check(tkRBrace) or p.isAtEnd:
+      break
     methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
   discard p.expect(tkRBrace, "expected '}' to close impl block")
   return Decl(kind: dkImpl, loc: loc, declImplTypeName: typeName,

@@ -14,12 +14,22 @@ type
   SemaResult* = object
     diagnostics*: seq[SemaDiagnostic]
 
+  MethodInfo* = object
+    name*: string
+    decl*: Decl
+    params*: seq[Type]
+    retType*: Type
+
   Sema* = object
     module*: Module
     globalScope*: Scope
     diagnostics*: seq[SemaDiagnostic]
     # Built-in type mapping from name to Type
     typeTable*: Table[string, Type]
+    # Type name -> list of methods (from extend blocks)
+    methodTable*: Table[string, seq[MethodInfo]]
+    # Interface name -> interface decl
+    interfaceTable*: Table[string, Decl]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,7 +104,7 @@ proc resolveType(sema: var Sema, te: TypeExpr): Type =
 # First pass: collect global symbols
 # ---------------------------------------------------------------------------
 
-proc collectGlobals(sema: var Sema) =
+proc collectGlobals*(sema: var Sema) =
   for decl in sema.module.items:
     case decl.kind
     of dkFunc:
@@ -148,6 +158,42 @@ proc collectGlobals(sema: var Sema) =
         let name = decl.declUsePath[^1]
         let sym = Symbol(kind: skModule, name: name, typ: makeUnknown(), isPublic: true)
         discard sema.globalScope.define(sym)
+    of dkInterface:
+      # Register interface for conformance checking
+      sema.interfaceTable[decl.declInterfaceName] = decl
+      let t = makeNamed(decl.declInterfaceName)
+      let sym = Symbol(kind: skType, name: decl.declInterfaceName, typ: t,
+                       decl: decl, isPublic: decl.isPublic)
+      if not sema.globalScope.define(sym):
+        sema.emitError(decl.loc, &"duplicate symbol '{decl.declInterfaceName}'")
+      sema.typeTable[decl.declInterfaceName] = t
+    of dkImpl:
+      # Register methods for the type
+      let typeName = decl.declImplTypeName
+      if not sema.methodTable.hasKey(typeName):
+        sema.methodTable[typeName] = @[]
+      for methodDecl in decl.declImplMethods:
+        if methodDecl.kind == dkFunc:
+          var params: seq[Type] = @[]
+          for p in methodDecl.declFuncParams:
+            params.add(sema.resolveType(p.ptype))
+          let retType = if methodDecl.declFuncReturnType != nil:
+            sema.resolveType(methodDecl.declFuncReturnType)
+          else:
+            makeVoid()
+          let info = MethodInfo(
+            name: methodDecl.declFuncName,
+            decl: methodDecl,
+            params: params,
+            retType: retType
+          )
+          sema.methodTable[typeName].add(info)
+          # Also register as a global function: TypeName_MethodName
+          let mangledName = typeName & "_" & methodDecl.declFuncName
+          let sym = Symbol(kind: skFunc, name: mangledName, decl: methodDecl,
+                           isPublic: true)
+          sym.typ = makeFunc(params, retType)
+          discard sema.globalScope.define(sym)
     else:
       discard
 
@@ -278,6 +324,49 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     if expr.exprCallCallee == nil:
       sema.emitError(expr.loc, "internal error: nil callee in call expression")
       return makeUnknown()
+    
+    # Check for method call: obj.method(args)
+    if expr.exprCallCallee.kind == ekField:
+      let receiver = sema.checkExpr(expr.exprCallCallee.exprFieldObj, scope)
+      let methodName = expr.exprCallCallee.exprFieldName
+      var argTypes = sema.checkExprList(expr.exprCallArgs, scope)
+      
+      # Try to find method for receiver type
+      var typeName = ""
+      if receiver.kind == tkNamed:
+        typeName = receiver.name
+      elif receiver.isPointer and receiver.inner.len > 0 and receiver.inner[0].kind == tkNamed:
+        typeName = receiver.inner[0].name
+      
+      if typeName != "" and sema.methodTable.hasKey(typeName):
+        for minfo in sema.methodTable[typeName]:
+          if minfo.name == methodName:
+            # Found method - check arguments (skip self parameter)
+            let expectedParams = minfo.params
+            if argTypes.len + 1 < expectedParams.len:
+              sema.emitError(expr.loc, &"too few arguments for method '{methodName}'")
+            elif argTypes.len > expectedParams.len:
+              sema.emitError(expr.loc, &"too many arguments for method '{methodName}'")
+            else:
+              for i in 0 ..< argTypes.len:
+                let paramIdx = i + 1  # skip self
+                if paramIdx < expectedParams.len:
+                  if not argTypes[i].isAssignableTo(expectedParams[paramIdx]):
+                    sema.emitError(expr.loc, &"argument {i+1}: expected {expectedParams[paramIdx].toString}, got {argTypes[i].toString}")
+            return minfo.retType
+      
+      # Not a method - treat as function pointer field
+      let fieldType = sema.checkExpr(expr.exprCallCallee, scope)
+      if fieldType.kind == tkFunc:
+        let expectedParams = fieldType.inner[0..^2]
+        if argTypes.len != expectedParams.len:
+          sema.emitError(expr.loc, &"expected {expectedParams.len} arguments, got {argTypes.len}")
+        return fieldType.inner[^1]
+      else:
+        sema.emitError(expr.loc, &"cannot call non-function field '{methodName}' on type {receiver.toString}")
+        return makeUnknown()
+    
+    # Regular function call
     let calleeType = sema.checkExpr(expr.exprCallCallee, scope)
     var argTypes = sema.checkExprList(expr.exprCallArgs, scope)
     if calleeType.kind == tkFunc:

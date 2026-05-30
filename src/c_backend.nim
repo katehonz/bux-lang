@@ -1,0 +1,386 @@
+import std/[strformat, strutils, tables]
+import hir, types, token, source_location
+
+type
+  CBackend* = object
+    output*: string
+    indent*: int
+    varCounter*: int
+    declaredVars*: seq[string]
+
+proc initCBackend*(): CBackend =
+  result.output = ""
+  result.indent = 0
+  result.varCounter = 0
+  result.declaredVars = @[]
+
+proc emit(be: var CBackend, s: string) =
+  be.output.add(s)
+
+proc emitLine(be: var CBackend, s: string) =
+  for i in 0..<be.indent:
+    be.output.add("    ")
+  be.output.add(s)
+  be.output.add("\n")
+
+proc emitIndent(be: var CBackend) =
+  for i in 0..<be.indent:
+    be.output.add("    ")
+
+proc freshVar(be: var CBackend): string =
+  inc be.varCounter
+  result = &"__tmp_{be.varCounter}"
+
+# Type conversion: Bux Type → C type string
+proc typeToC*(typ: Type): string =
+  if typ == nil: return "void"
+  case typ.kind
+  of tkVoid: return "void"
+  of tkBool: return "bool"
+  of tkBool8: return "bool"
+  of tkBool16: return "bool"
+  of tkBool32: return "bool"
+  of tkChar8: return "char"
+  of tkChar16: return "char16_t"
+  of tkChar32: return "char32_t"
+  of tkStr: return "const char*"
+  of tkInt8: return "int8_t"
+  of tkInt16: return "int16_t"
+  of tkInt32: return "int32_t"
+  of tkInt64: return "int64_t"
+  of tkInt: return "int"
+  of tkUInt8: return "uint8_t"
+  of tkUInt16: return "uint16_t"
+  of tkUInt32: return "uint32_t"
+  of tkUInt64: return "uint64_t"
+  of tkUInt: return "unsigned int"
+  of tkFloat32: return "float"
+  of tkFloat64: return "double"
+  of tkPointer:
+    if typ.inner.len > 0:
+      return typeToC(typ.inner[0]) & "*"
+    return "void*"
+  of tkSlice:
+    if typ.inner.len > 0:
+      return typeToC(typ.inner[0]) & "*"
+    return "void*"
+  of tkNamed: return typ.name
+  of tkTuple: return "void*"  # TODO: proper tuple struct
+  of tkFunc: return "void*"  # TODO: function pointer
+  else: return "int"
+
+proc operatorToC(op: TokenKind): string =
+  case op
+  of tkPlus: return "+"
+  of tkMinus: return "-"
+  of tkStar: return "*"
+  of tkSlash: return "/"
+  of tkPercent: return "%"
+  of tkAmp: return "&"
+  of tkPipe: return "|"
+  of tkCaret: return "^"
+  of tkShl: return "<<"
+  of tkShr: return ">>"
+  of tkAmpAmp: return "&&"
+  of tkPipePipe: return "||"
+  of tkEq: return "=="
+  of tkNe: return "!="
+  of tkLt: return "<"
+  of tkLe: return "<="
+  of tkGt: return ">"
+  of tkGe: return ">="
+  of tkBang: return "!"
+  of tkTilde: return "~"
+  of tkPlusPlus: return "++"
+  of tkMinusMinus: return "--"
+  of tkPlusAssign: return "+="
+  of tkMinusAssign: return "-="
+  of tkStarAssign: return "*="
+  of tkSlashAssign: return "/="
+  of tkPercentAssign: return "%="
+  else: return "?"
+
+# Forward declaration
+proc emitExpr(be: var CBackend, node: HirNode): string
+proc emitStmt(be: var CBackend, node: HirNode)
+
+proc emitExpr(be: var CBackend, node: HirNode): string =
+  if node == nil: return "0"
+  case node.kind
+  of hLit:
+    case node.litToken.kind
+    of tkBoolLiteral:
+      if node.litToken.text == "true": return "true"
+      else: return "false"
+    of tkStringLiteral:
+      return node.litToken.text
+    of tkNull:
+      return "NULL"
+    else:
+      return node.litToken.text
+
+  of hVar:
+    return node.varName
+
+  of hSelf:
+    return "self"
+
+  of hUnary:
+    let operand = be.emitExpr(node.unaryOperand)
+    let op = operatorToC(node.unaryOp)
+    if node.unaryOp == tkStar:
+      return &"(*{operand})"
+    elif node.unaryOp == tkAmp:
+      return &"(&{operand})"
+    else:
+      return &"({op}{operand})"
+
+  of hBinary:
+    let left = be.emitExpr(node.binaryLeft)
+    let right = be.emitExpr(node.binaryRight)
+    let op = operatorToC(node.binaryOp)
+    return &"({left} {op} {right})"
+
+  of hCall:
+    var args: seq[string] = @[]
+    for arg in node.callArgs:
+      args.add(be.emitExpr(arg))
+    let argsStr = args.join(", ")
+    return &"{node.callCallee}({argsStr})"
+
+  of hCallIndirect:
+    let callee = be.emitExpr(node.callIndirectCallee)
+    var args: seq[string] = @[]
+    for arg in node.callIndirectArgs:
+      args.add(be.emitExpr(arg))
+    let argsStr = args.join(", ")
+    return &"({callee})({argsStr})"
+
+  of hLoad:
+    let ptrExpr = be.emitExpr(node.loadPtr)
+    return &"(*{ptrExpr})"
+
+  of hFieldPtr:
+    let base = be.emitExpr(node.fieldPtrBase)
+    return &"(&({base}.{node.fieldName}))"
+
+  of hIndexPtr:
+    let base = be.emitExpr(node.indexPtrBase)
+    let idx = be.emitExpr(node.indexPtrIndex)
+    return &"(&({base}[{idx}]))"
+
+  of hStructInit:
+    # C99 compound literal: (StructName){.field1 = val1, .field2 = val2}
+    var fields: seq[string] = @[]
+    for f in node.structInitFields:
+      let val = be.emitExpr(f.value)
+      fields.add(&".{f.name} = {val}")
+    let fieldsStr = fields.join(", ")
+    return &"(({node.structInitName}){{{fieldsStr}}})"
+
+  of hSliceInit:
+    # For now, use a static array
+    var elems: seq[string] = @[]
+    for e in node.sliceInitElements:
+      elems.add(be.emitExpr(e))
+    let elemsStr = elems.join(", ")
+    return &"{{{elemsStr}}}"
+
+  of hTupleInit:
+    var elems: seq[string] = @[]
+    for e in node.tupleInitElements:
+      elems.add(be.emitExpr(e))
+    return &"{{{elems.join(\", \")}}}"
+
+  of hCast:
+    let operand = be.emitExpr(node.castOperand)
+    let typ = typeToC(node.castType)
+    return &"(({typ}){operand})"
+
+  of hIs:
+    return "true"  # TODO: proper type checking
+
+  of hIf:
+    # Ternary expression
+    let cond = be.emitExpr(node.ifCond)
+    let thenE = be.emitExpr(node.ifThen)
+    let elseE = be.emitExpr(node.ifElse)
+    return &"({cond} ? {thenE} : {elseE})"
+
+  of hAssign:
+    let target = be.emitExpr(node.assignTarget)
+    let value = be.emitExpr(node.assignValue)
+    let op = operatorToC(node.assignOp)
+    return &"({target} {op} {value})"
+
+  of hBlock:
+    # For block expressions, just emit the last expression
+    if node.blockExpr != nil:
+      return be.emitExpr(node.blockExpr)
+    elif node.blockStmts.len > 0:
+      return be.emitExpr(node.blockStmts[^1])
+    return "0"
+
+  of hMatch:
+    return "0"  # TODO: match expression lowering
+
+  else:
+    return "0"
+
+proc emitStmt(be: var CBackend, node: HirNode) =
+  if node == nil: return
+  case node.kind
+  of hReturn:
+    if node.returnValue != nil:
+      let val = be.emitExpr(node.returnValue)
+      be.emitLine(&"return {val};")
+    else:
+      be.emitLine("return;")
+
+  of hIf:
+    let cond = be.emitExpr(node.ifCond)
+    be.emitLine(&"if ({cond}) {{")
+    inc be.indent
+    be.emitStmt(node.ifThen)
+    dec be.indent
+    if node.ifElse != nil:
+      be.emitLine("} else {")
+      inc be.indent
+      be.emitStmt(node.ifElse)
+      dec be.indent
+    be.emitLine("}")
+
+  of hWhile:
+    let cond = be.emitExpr(node.whileCond)
+    be.emitLine(&"while ({cond}) {{")
+    inc be.indent
+    be.emitStmt(node.whileBody)
+    dec be.indent
+    be.emitLine("}")
+
+  of hLoop:
+    be.emitLine("while (1) {")
+    inc be.indent
+    be.emitStmt(node.loopBody)
+    dec be.indent
+    be.emitLine("}")
+
+  of hBreak:
+    be.emitLine("break;")
+
+  of hContinue:
+    be.emitLine("continue;")
+
+  of hBlock:
+    for stmt in node.blockStmts:
+      be.emitStmt(stmt)
+    if node.blockExpr != nil:
+      let val = be.emitExpr(node.blockExpr)
+      be.emitLine(&"{val};")
+
+  of hAlloca:
+    let typ = typeToC(node.allocaType)
+    be.emitLine(&"{typ} {node.allocaName};")
+
+  of hStore:
+    let ptrExpr = be.emitExpr(node.storePtr)
+    let val = be.emitExpr(node.storeValue)
+    be.emitLine(&"{ptrExpr} = {val};")
+
+  of hAssign:
+    let target = be.emitExpr(node.assignTarget)
+    let value = be.emitExpr(node.assignValue)
+    let op = operatorToC(node.assignOp)
+    be.emitLine(&"{target} {op} {value};")
+
+  of hCall:
+    let expr = be.emitExpr(node)
+    be.emitLine(&"{expr};")
+
+  of hCallIndirect:
+    let expr = be.emitExpr(node)
+    be.emitLine(&"{expr};")
+
+  else:
+    # Expression statement
+    let expr = be.emitExpr(node)
+    be.emitLine(&"{expr};")
+
+proc emitFunc*(be: var CBackend, hfunc: HirFunc) =
+  let retType = typeToC(hfunc.retType)
+  var params: seq[string] = @[]
+  for p in hfunc.params:
+    params.add(&"{typeToC(p.typ)} {p.name}")
+  if params.len == 0:
+    params.add("void")
+  let paramsStr = params.join(", ")
+  be.emitLine(&"{retType} {hfunc.name}({paramsStr}) {{")
+  inc be.indent
+  if hfunc.body != nil:
+    be.emitStmt(hfunc.body)
+  dec be.indent
+  be.emitLine("}")
+  be.emitLine("")
+
+proc emitStruct*(be: var CBackend, name: string, fields: seq[tuple[name: string, typ: Type]]) =
+  be.emitLine(&"typedef struct {name} {{")
+  inc be.indent
+  for f in fields:
+    let typ = typeToC(f.typ)
+    be.emitLine(&"{typ} {f.name};")
+  dec be.indent
+  be.emitLine(&"}} {name};")
+  be.emitLine("")
+
+proc emitEnum*(be: var CBackend, name: string, variants: seq[string]) =
+  be.emitLine(&"typedef enum {{")
+  inc be.indent
+  for i, v in variants:
+    if i < variants.len - 1:
+      be.emitLine(&"{name}_{v},")
+    else:
+      be.emitLine(&"{name}_{v}")
+  dec be.indent
+  be.emitLine(&"}} {name};")
+  be.emitLine("")
+
+proc emitModule*(be: var CBackend, module: HirModule): string =
+  # Header
+  be.emitLine("/* Generated by Bux Compiler */")
+  be.emitLine("#include <stdio.h>")
+  be.emitLine("#include <stdlib.h>")
+  be.emitLine("#include <stdint.h>")
+  be.emitLine("#include <stdbool.h>")
+  be.emitLine("#include <string.h>")
+  be.emitLine("")
+
+  # Forward declarations
+  for s in module.structs:
+    be.emitLine(&"typedef struct {s.name} {s.name};")
+  if module.structs.len > 0:
+    be.emitLine("")
+
+  # Struct definitions
+  for s in module.structs:
+    be.emitStruct(s.name, s.fields)
+
+  # Enum definitions
+  for e in module.enums:
+    be.emitEnum(e.name, e.variants)
+
+  # Function definitions
+  var hasMain = false
+  for f in module.funcs:
+    be.emitFunc(f)
+    if f.name == "Main":
+      hasMain = true
+
+  # Generate C main wrapper if Bux Main exists
+  if hasMain:
+    be.emitLine("/* C entry point wrapper */")
+    be.emitLine("int main(int argc, char** argv) {")
+    be.emitLine("    return Main();")
+    be.emitLine("}")
+    be.emitLine("")
+
+  return be.output

@@ -83,3 +83,57 @@ suite "Sema":
   test "slice element type mismatch":
     let res = checkSource("func Main() -> int { let arr = [1, c8\"a\"]; return 0; }")
     check res.hasErrors
+
+  test "method call with extend":
+    let src = """
+struct Point { x: float64; y: float64; }
+extend Point {
+  func Distance(self: Point) -> float64 { return 0.0; }
+}
+func Main() -> int {
+  let p = Point { x: 1.0, y: 2.0 };
+  let d = p.Distance();
+  return 0;
+}
+"""
+    let res = checkSource(src)
+    check not res.hasErrors
+
+  test "method call with wrong arguments":
+    let src = """
+struct Point { x: float64; y: float64; }
+extend Point {
+  func Add(self: Point, other: Point) -> Point { return self; }
+}
+func Main() -> int {
+  let p = Point { x: 1.0, y: 2.0 };
+  let q = p.Add();
+  return 0;
+}
+"""
+    let res = checkSource(src)
+    check res.hasErrors
+    check "too few arguments" in res.diagnostics[0].message
+
+  test "interface declaration":
+    let src = """
+interface Display {
+  func ToString(self: Self) -> String;
+}
+"""
+    let res = checkSource(src)
+    check not res.hasErrors
+
+  test "extend for interface":
+    let src = """
+struct Point { x: float64; y: float64; }
+interface Display {
+  func ToString(self: Self) -> String;
+}
+extend Point for Display {
+  func ToString(self: Point) -> String { return c8"Point"; }
+}
+func Main() -> int { return 0; }
+"""
+    let res = checkSource(src)
+    check not res.hasErrors
