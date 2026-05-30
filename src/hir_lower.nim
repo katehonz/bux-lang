@@ -127,6 +127,12 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   of ekIdent:
     return hirVar(expr.exprIdent, typ, loc)
 
+  of ekPath:
+    # Handle enum variants: Color::Red → Color_Red
+    # or module paths: Std::Io::PrintLine → Std_Io_PrintLine
+    let mangledName = expr.exprPath.join("_")
+    return hirVar(mangledName, typ, loc)
+
   of ekSelf:
     return hirSelf(typ, loc)
 
