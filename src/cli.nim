@@ -1,5 +1,5 @@
 import std/[os, strutils, terminal, strformat]
-import lexer, manifest
+import lexer, parser, manifest
 
 type
   ColorMode* = enum
@@ -158,14 +158,20 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   for kind, path in walkDir(srcDir):
     if kind == pcFile and path.endsWith(".bux"):
       let source = readFile(path)
-      let res = tokenize(source, path)
-      if res.hasErrors:
+      let lexRes = tokenize(source, path)
+      if lexRes.hasErrors:
         printError(&"lex errors in {path}", useColor)
-        for d in res.diagnostics:
+        for d in lexRes.diagnostics:
           echo $d
         return 1
+      let parseRes = parse(lexRes.tokens, path)
+      if parseRes.diagnostics.len > 0:
+        printError(&"parse errors in {path}", useColor)
+        for d in parseRes.diagnostics:
+          echo &"error: {d.message} at {d.loc}"
+        return 1
       if opts.verbose:
-        printInfo(&"lexed {path} ({res.tokens.len} tokens)", useColor)
+        printInfo(&"parsed {path} ({lexRes.tokens.len} tokens, {parseRes.module.items.len} top-level declarations)", useColor)
       if splitFile(path).name == "Main":
         foundMain = true
 
@@ -174,7 +180,7 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
     return 1
 
   if not opts.quiet:
-    printInfo("check passed (lexer only)", useColor)
+    printInfo("check passed", useColor)
   return 0
 
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =

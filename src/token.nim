@@ -11,6 +11,7 @@ type
 
     ##Identifiers
     tkIdent           # foo  Bar  _x
+    tkUnderscore      # _
 
     ##Control flow keywords
     tkIf              # if
@@ -47,6 +48,7 @@ type
     tkNull            # null
     tkSelf            # self
     tkSuper           # super
+    tkSizeOf          # sizeof
 
     ##Punctuation
     tkLParen          # (
@@ -191,6 +193,7 @@ proc keywordKind*(text: string): TokenKind =
   of "null": tkNull
   of "self": tkSelf
   of "super": tkSuper
+  of "sizeof": tkSizeOf
   of "true", "false": tkBoolLiteral
   else: tkIdent
 
@@ -202,6 +205,8 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkCharLiteral: "char literal"
   of tkBoolLiteral: "boolean literal"
   of tkIdent: "identifier"
+  of tkUnderscore: "'_'"
+  of tkSizeOf: "'sizeof'"
   of tkIf: "'if'"
   of tkElse: "'else'"
   of tkWhile: "'while'"

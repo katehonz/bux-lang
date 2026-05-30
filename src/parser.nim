@@ -1,0 +1,1068 @@
+import std/[strformat, sequtils]
+import token, source_location, lexer, ast
+
+type
+  ParserDiagnosticSeverity* = enum
+    pdsWarning
+    pdsError
+
+  ParserDiagnostic* = object
+    severity*: ParserDiagnosticSeverity
+    loc*: SourceLocation
+    message*: string
+
+  ParseResult* = object
+    module*: Module
+    diagnostics*: seq[ParserDiagnostic]
+
+  Parser* = object
+    tokens: seq[Token]
+    sourceName: string
+    pos: int
+    diagnostics: seq[ParserDiagnostic]
+    structInitAllowed: bool  ## disabled inside if/while/for/match conditions
+
+proc initParser*(tokens: seq[Token], sourceName: string = "<input>"): Parser =
+  result.tokens = tokens
+  result.sourceName = sourceName
+  result.pos = 0
+  result.structInitAllowed = true
+
+# ---------------------------------------------------------------------------
+# Token helpers
+# ---------------------------------------------------------------------------
+
+proc peek(p: Parser, ahead: int = 0): TokenKind =
+  let i = p.pos + ahead
+  if i < p.tokens.len:
+    return p.tokens[i].kind
+  return tkEndOfFile
+
+proc at(p: Parser): Token =
+  if p.pos < p.tokens.len:
+    return p.tokens[p.pos]
+  return Token(kind: tkEndOfFile)
+
+proc advance(p: var Parser): Token =
+  result = p.at
+  if p.pos < p.tokens.len:
+    inc p.pos
+
+proc check(p: Parser, kind: TokenKind): bool =
+  p.peek() == kind
+
+proc checkAny(p: Parser, kinds: openArray[TokenKind]): bool =
+  for k in kinds:
+    if p.peek() == k: return true
+  return false
+
+proc match(p: var Parser, kind: TokenKind): bool =
+  if p.check(kind):
+    discard p.advance()
+    return true
+  return false
+
+proc expect(p: var Parser, kind: TokenKind, message: string): Token =
+  if p.check(kind):
+    return p.advance()
+  let tok = p.at
+  p.diagnostics.add(ParserDiagnostic(
+    severity: pdsError,
+    loc: tok.loc,
+    message: message & " (got " & tokenKindName(tok.kind) & ")"
+  ))
+  result = tok
+
+proc previous(p: Parser): Token =
+  if p.pos > 0 and p.pos <= p.tokens.len:
+    return p.tokens[p.pos - 1]
+  return Token(kind: tkEndOfFile)
+
+proc currentLoc(p: Parser): SourceLocation =
+  p.at.loc
+
+proc emitError(p: var Parser, loc: SourceLocation, message: string) =
+  p.diagnostics.add(ParserDiagnostic(severity: pdsError, loc: loc, message: message))
+
+proc emitError(p: var Parser, message: string) =
+  p.emitError(p.currentLoc, message)
+
+proc isAtEnd(p: Parser): bool =
+  p.peek() == tkEndOfFile
+
+# ---------------------------------------------------------------------------
+# Recovery
+# ---------------------------------------------------------------------------
+
+proc synchronize(p: var Parser) =
+  ## Skip tokens until a declaration boundary.
+  discard p.advance()
+  while not p.isAtEnd:
+    if p.previous.kind == tkSemicolon: return
+    case p.peek()
+    of tkFunc, tkStruct, tkEnum, tkUnion, tkInterface, tkExtend,
+       tkModule, tkImport, tkConst, tkType, tkExtern, tkPub:
+      return
+    else:
+      discard p.advance()
+
+# ---------------------------------------------------------------------------
+# Forward declarations for mutual recursion
+# ---------------------------------------------------------------------------
+
+proc parseDecl(p: var Parser): Decl
+proc parseType(p: var Parser): TypeExpr
+proc parseExpr(p: var Parser): Expr
+proc parseStmt(p: var Parser): Stmt
+proc parseBlock(p: var Parser): Block
+proc parsePattern(p: var Parser): Pattern
+
+# ---------------------------------------------------------------------------
+# Attributes
+# ---------------------------------------------------------------------------
+
+type
+  ParsedAttrs* = object
+    importLib*: string
+    callConv*: CallingConvention
+    targetOs*: string
+
+proc parseAttrs(p: var Parser): ParsedAttrs =
+  while p.check(tkAt):
+    discard p.advance()  # @
+    discard p.expect(tkLBracket, "expected '[' after '@'")
+    let name = p.expect(tkIdent, "expected attribute name").text
+    if name == "Import":
+      discard p.expect(tkLParen, "expected '('")
+      let key = p.expect(tkIdent, "expected attribute key").text
+      if key == "lib":
+        discard p.expect(tkColon, "expected ':'")
+        result.importLib = p.expect(tkStringLiteral, "expected string literal").text
+      discard p.expect(tkRParen, "expected ')'")
+    discard p.expect(tkRBracket, "expected ']'")
+
+# ---------------------------------------------------------------------------
+# Type expressions
+# ---------------------------------------------------------------------------
+
+proc parseBaseType(p: var Parser): TypeExpr =
+  let loc = p.currentLoc
+  case p.peek()
+  of tkIdent:
+    let name = p.advance().text
+    if name == "self":
+      return TypeExpr(kind: tekSelf, loc: loc)
+    if p.check(tkLt):
+      var typeArgs: seq[TypeExpr] = @[]
+      discard p.advance()
+      while not p.check(tkGt) and not p.isAtEnd:
+        typeArgs.add(p.parseType())
+        if p.check(tkComma):
+          discard p.advance()
+      discard p.expect(tkGt, "expected '>' to close type arguments")
+      return TypeExpr(kind: tekNamed, loc: loc, typeName: name, typeArgs: typeArgs)
+    return TypeExpr(kind: tekNamed, loc: loc, typeName: name)
+  of tkStar:
+    discard p.advance()
+    return TypeExpr(kind: tekPointer, loc: loc, pointerPointee: p.parseBaseType())
+  of tkLParen:
+    discard p.advance()
+    var elems: seq[TypeExpr] = @[]
+    while not p.check(tkRParen) and not p.isAtEnd:
+      elems.add(p.parseType())
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkRParen, "expected ')' to close tuple type")
+    return TypeExpr(kind: tekTuple, loc: loc, tupleElements: elems)
+  else:
+    p.emitError(loc, "expected type expression")
+    return TypeExpr(kind: tekNamed, loc: loc, typeName: "")
+
+proc parseType(p: var Parser): TypeExpr =
+  var left = p.parseBaseType()
+  while p.check(tkLBracket):
+    let loc = p.currentLoc
+    discard p.advance()
+    if p.check(tkRBracket):
+      discard p.advance()
+      left = TypeExpr(kind: tekSlice, loc: loc, sliceElement: left, sliceSize: nil)
+    else:
+      let sizeExpr = p.parseExpr()
+      discard p.expect(tkRBracket, "expected ']' to close array size")
+      left = TypeExpr(kind: tekSlice, loc: loc, sliceElement: left, sliceSize: sizeExpr)
+  # Path types: Std::Io::Reader
+  while p.check(tkColonColon):
+    discard p.advance()
+    let nextSeg = p.expect(tkIdent, "expected identifier after '::'")
+    if left.kind == tekNamed:
+      var segs = @[left.typeName]
+      segs.add(nextSeg.text)
+      left = TypeExpr(kind: tekPath, loc: left.loc, pathSegments: segs)
+    elif left.kind == tekPath:
+      left.pathSegments.add(nextSeg.text)
+  return left
+
+# ---------------------------------------------------------------------------
+# Patterns
+# ---------------------------------------------------------------------------
+
+proc parsePrimaryPattern(p: var Parser): Pattern =
+  let loc = p.currentLoc
+  case p.peek()
+  of tkUnderscore:
+    discard p.advance()
+    return Pattern(kind: pkWildcard, loc: loc)
+  of tkIntLiteral, tkFloatLiteral, tkStringLiteral, tkCharLiteral, tkBoolLiteral:
+    return Pattern(kind: pkLiteral, loc: loc, patLit: p.advance())
+  of tkIdent:
+    let name = p.advance().text
+    if name == "true" or name == "false":
+      # These were lexed as BoolLiteral already, but just in case
+      return Pattern(kind: pkLiteral, loc: loc, patLit: Token(kind: tkBoolLiteral, text: name, loc: loc))
+    # Could be enum pattern or ident pattern
+    if p.check(tkColonColon):
+      var path = @[name]
+      while p.check(tkColonColon):
+        discard p.advance()
+        path.add(p.expect(tkIdent, "expected identifier in pattern path").text)
+      if p.check(tkLParen):
+        discard p.advance()
+        var args: seq[Pattern] = @[]
+        var named: seq[tuple[name: string, pattern: Pattern]] = @[]
+        while not p.check(tkRParen) and not p.isAtEnd:
+          if p.check(tkIdent) and p.peek(1) == tkColon:
+            let fieldName = p.advance().text
+            discard p.advance()  # :
+            named.add((fieldName, p.parsePattern()))
+          else:
+            args.add(p.parsePattern())
+          if p.check(tkComma):
+            discard p.advance()
+        discard p.expect(tkRParen, "expected ')' to close enum pattern")
+        return Pattern(kind: pkEnum, loc: loc, patEnumPath: path, patEnumArgs: args, patEnumNamed: named)
+      return Pattern(kind: pkIdent, loc: loc, patIdent: name)
+    elif p.check(tkLBrace):
+      # Struct pattern: Point { x: 0, y: 0 }
+      discard p.advance()
+      var fields: seq[tuple[name: string, pattern: Pattern]] = @[]
+      while not p.check(tkRBrace) and not p.isAtEnd:
+        let fieldName = p.expect(tkIdent, "expected field name in struct pattern").text
+        discard p.expect(tkColon, "expected ':' after field name in pattern")
+        fields.add((fieldName, p.parsePattern()))
+        if p.check(tkComma):
+          discard p.advance()
+      discard p.expect(tkRBrace, "expected '}' to close struct pattern")
+      return Pattern(kind: pkStruct, loc: loc, patStructName: name, patStructFields: fields)
+    elif p.check(tkLParen):
+      # Enum-like pattern with path of length 1
+      discard p.advance()
+      var args: seq[Pattern] = @[]
+      while not p.check(tkRParen) and not p.isAtEnd:
+        args.add(p.parsePattern())
+        if p.check(tkComma):
+          discard p.advance()
+      discard p.expect(tkRParen, "expected ')' to close pattern")
+      return Pattern(kind: pkEnum, loc: loc, patEnumPath: @[name], patEnumArgs: args)
+    return Pattern(kind: pkIdent, loc: loc, patIdent: name)
+  of tkLParen:
+    discard p.advance()
+    var elems: seq[Pattern] = @[]
+    while not p.check(tkRParen) and not p.isAtEnd:
+      elems.add(p.parsePattern())
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkRParen, "expected ')' to close tuple pattern")
+    return Pattern(kind: pkTuple, loc: loc, patTupleElements: elems)
+  else:
+    p.emitError(loc, "expected pattern")
+    return Pattern(kind: pkWildcard, loc: loc)
+
+proc parsePattern(p: var Parser): Pattern =
+  let loc = p.currentLoc
+  var left = p.parsePrimaryPattern()
+  # Range pattern
+  if p.check(tkDotDot) or p.check(tkDotDotEqual):
+    let inclusive = p.check(tkDotDotEqual)
+    discard p.advance()
+    let right = p.parsePrimaryPattern()
+    return Pattern(kind: pkRange, loc: loc, patRangeLo: left, patRangeHi: right, patRangeInclusive: inclusive)
+  # Guarded pattern
+  if p.check(tkIf):
+    discard p.advance()
+    let guard = p.parseExpr()
+    return Pattern(kind: pkGuarded, loc: loc, patGuardedInner: left, patGuardedExpr: guard)
+  return left
+
+# ---------------------------------------------------------------------------
+# Expressions (Pratt / precedence climbing)
+# ---------------------------------------------------------------------------
+
+proc parsePrimary(p: var Parser): Expr
+proc parsePostfix(p: var Parser): Expr
+proc parseUnary(p: var Parser): Expr
+proc parseExp(p: var Parser): Expr
+proc parseMul(p: var Parser): Expr
+proc parseAdd(p: var Parser): Expr
+proc parseShift(p: var Parser): Expr
+proc parseCast(p: var Parser): Expr
+proc parseComparison(p: var Parser): Expr
+proc parseEquality(p: var Parser): Expr
+proc parseBitAnd(p: var Parser): Expr
+proc parseBitXor(p: var Parser): Expr
+proc parseBitOr(p: var Parser): Expr
+proc parseAnd(p: var Parser): Expr
+proc parseOr(p: var Parser): Expr
+proc parseTernary(p: var Parser): Expr
+proc parseAssign(p: var Parser): Expr
+
+proc parseExpr(p: var Parser): Expr =
+  p.parseAssign()
+
+proc parsePrimary(p: var Parser): Expr =
+  let loc = p.currentLoc
+  case p.peek()
+  of tkIntLiteral, tkFloatLiteral, tkStringLiteral, tkCharLiteral, tkBoolLiteral:
+    return newLiteralExpr(p.advance())
+  of tkIdent:
+    let name = p.advance().text
+    if name == "self":
+      return Expr(kind: ekSelf, loc: loc)
+    # Path expression: a::b::c
+    if p.check(tkColonColon):
+      var segs = @[name]
+      while p.check(tkColonColon):
+        discard p.advance()
+        segs.add(p.expect(tkIdent, "expected identifier in path").text)
+      return Expr(kind: ekPath, loc: loc, exprPath: segs)
+    return newIdentExpr(name, loc)
+  of tkLParen:
+    discard p.advance()
+    if p.check(tkRParen):
+      discard p.advance()
+      return Expr(kind: ekTuple, loc: loc, exprTupleElements: @[])
+    let expr = p.parseExpr()
+    if p.check(tkComma):
+      # Tuple expression
+      var elems = @[expr]
+      while p.check(tkComma):
+        discard p.advance()
+        elems.add(p.parseExpr())
+      discard p.expect(tkRParen, "expected ')' to close tuple")
+      return Expr(kind: ekTuple, loc: loc, exprTupleElements: elems)
+    discard p.expect(tkRParen, "expected ')'")
+    return expr
+  of tkLBrace:
+    # Block expression
+    let blk = p.parseBlock()
+    return Expr(kind: ekBlock, loc: loc, exprBlock: blk)
+  of tkLBracket:
+    # Slice expression [a, b, c]
+    discard p.advance()
+    var elems: seq[Expr] = @[]
+    while not p.check(tkRBracket) and not p.isAtEnd:
+      elems.add(p.parseExpr())
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkRBracket, "expected ']' to close slice")
+    return Expr(kind: ekSlice, loc: loc, exprSliceElements: elems)
+  of tkMatch:
+    discard p.advance()
+    let subject = p.parseExpr()
+    discard p.expect(tkLBrace, "expected '{' to start match")
+    var arms: seq[MatchArm] = @[]
+    while not p.check(tkRBrace) and not p.isAtEnd:
+      let armLoc = p.currentLoc
+      let pat = p.parsePattern()
+      discard p.expect(tkFatArrow, "expected '=>' in match arm")
+      let body = p.parseExpr()
+      arms.add(MatchArm(loc: armLoc, pattern: pat, body: body))
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkRBrace, "expected '}' to close match")
+    return Expr(kind: ekMatch, loc: loc, exprMatchSubject: subject, exprMatchArms: arms)
+  of tkMinus, tkBang, tkTilde, tkStar, tkAmp, tkPlusPlus, tkMinusMinus:
+    # These are handled in parseUnary, but ++/-- as prefix are rare
+    return p.parseUnary()
+  of tkSizeOf:
+    discard p.advance()  # sizeof
+    discard p.expect(tkLParen, "expected '('")
+    let ty = p.parseType()
+    discard p.expect(tkRParen, "expected ')'")
+    return Expr(kind: ekSizeOf, loc: loc, exprSizeOfType: ty)
+  of tkHashLine:
+    discard p.advance()
+    return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikLine)
+  of tkHashColumn:
+    discard p.advance()
+    return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikColumn)
+  of tkHashFile:
+    discard p.advance()
+    return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikFile)
+  of tkHashFunction:
+    discard p.advance()
+    return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikFunction)
+  of tkHashDate:
+    discard p.advance()
+    return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikDate)
+  of tkHashTime:
+    discard p.advance()
+    return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikTime)
+  of tkHashModule:
+    discard p.advance()
+    return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikModule)
+  of tkNull:
+    discard p.advance()
+    return newLiteralExpr(Token(kind: tkNull, text: "null", loc: loc))
+  else:
+    p.emitError(loc, "expected expression")
+    discard p.advance()
+    return newLiteralExpr(Token(kind: tkIntLiteral, text: "0", loc: loc))
+
+proc parsePostfix(p: var Parser): Expr =
+  var left = p.parsePrimary()
+  while true:
+    let loc = p.currentLoc
+    case p.peek()
+    of tkLParen:
+      # Call expression
+      discard p.advance()
+      var args: seq[Expr] = @[]
+      while not p.check(tkRParen) and not p.isAtEnd:
+        if p.check(tkDotDotDot):
+          discard p.advance()
+          let operand = p.parseExpr()
+          args.add(Expr(kind: ekSpread, loc: operand.loc, exprSpreadOperand: operand))
+        else:
+          args.add(p.parseExpr())
+        if p.check(tkComma):
+          discard p.advance()
+      discard p.expect(tkRParen, "expected ')' to close call")
+      left = Expr(kind: ekCall, loc: loc, exprCallCallee: left, exprCallArgs: args)
+    of tkLBracket:
+      # Index expression
+      discard p.advance()
+      let idx = p.parseExpr()
+      discard p.expect(tkRBracket, "expected ']' to close index")
+      left = Expr(kind: ekIndex, loc: loc, exprIndexObj: left, exprIndexIdx: idx)
+    of tkDot:
+      # Field expression
+      discard p.advance()
+      let fieldName = p.expect(tkIdent, "expected field name after '.'").text
+      left = Expr(kind: ekField, loc: loc, exprFieldObj: left, exprFieldName: fieldName)
+    of tkPlusPlus, tkMinusMinus:
+      let op = p.advance().kind
+      left = Expr(kind: ekPostfix, loc: loc, exprPostfixOp: op, exprPostfixOperand: left)
+    of tkAs:
+      discard p.advance()
+      let ty = p.parseType()
+      left = Expr(kind: ekCast, loc: loc, exprCastOperand: left, exprCastType: ty)
+    of tkIs:
+      discard p.advance()
+      let ty = p.parseType()
+      left = Expr(kind: ekIs, loc: loc, exprIsOperand: left, exprIsType: ty)
+    else:
+      break
+  return left
+
+proc parseUnary(p: var Parser): Expr =
+  let loc = p.currentLoc
+  case p.peek()
+  of tkBang, tkMinus, tkTilde, tkStar, tkAmp:
+    let op = p.advance().kind
+    let operand = p.parseUnary()
+    return Expr(kind: ekUnary, loc: loc, exprUnaryOp: op, exprUnaryOperand: operand)
+  of tkPlusPlus, tkMinusMinus:
+    let op = p.advance().kind
+    let operand = p.parseUnary()
+    return Expr(kind: ekUnary, loc: loc, exprUnaryOp: op, exprUnaryOperand: operand)
+  else:
+    return p.parsePostfix()
+
+proc parseExp(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseUnary()
+  while p.check(tkStarStar):
+    let op = p.advance().kind
+    let right = p.parseUnary()  # right-associative: parseUnary not parseExp
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseMul(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseExp()
+  while p.checkAny([tkStar, tkSlash, tkPercent]):
+    let op = p.advance().kind
+    let right = p.parseExp()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseAdd(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseMul()
+  while p.checkAny([tkPlus, tkMinus]):
+    let op = p.advance().kind
+    let right = p.parseMul()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseShift(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseAdd()
+  while p.checkAny([tkShl, tkShr]):
+    let op = p.advance().kind
+    let right = p.parseAdd()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseCast(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseShift()
+  # 'as' and 'is' are handled in postfix for chaining
+  return left
+
+proc parseComparison(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseCast()
+  while p.checkAny([tkLt, tkLe, tkGt, tkGe]):
+    let op = p.advance().kind
+    let right = p.parseCast()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseEquality(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseComparison()
+  while p.checkAny([tkEq, tkNe]):
+    let op = p.advance().kind
+    let right = p.parseComparison()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseBitAnd(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseEquality()
+  while p.check(tkAmp):
+    let op = p.advance().kind
+    let right = p.parseEquality()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseBitXor(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseBitAnd()
+  while p.check(tkCaret):
+    let op = p.advance().kind
+    let right = p.parseBitAnd()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseBitOr(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseBitXor()
+  while p.check(tkPipe):
+    let op = p.advance().kind
+    let right = p.parseBitXor()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseAnd(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseBitOr()
+  while p.check(tkAmpAmp):
+    let op = p.advance().kind
+    let right = p.parseBitOr()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseOr(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseAnd()
+  while p.check(tkPipePipe):
+    let op = p.advance().kind
+    let right = p.parseAnd()
+    left = newBinaryExpr(op, left, right, loc)
+  return left
+
+proc parseTernary(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var cond = p.parseOr()
+  if p.check(tkQuestion):
+    discard p.advance()
+    let thenExpr = p.parseExpr()
+    discard p.expect(tkColon, "expected ':' in ternary expression")
+    let elseExpr = p.parseTernary()
+    return Expr(kind: ekTernary, loc: loc, exprTernaryCond: cond, exprTernaryThen: thenExpr, exprTernaryElse: elseExpr)
+  return cond
+
+proc parseAssign(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseTernary()
+  if p.checkAny([tkAssign, tkPlusAssign, tkMinusAssign, tkStarAssign, tkSlashAssign,
+                 tkPercentAssign, tkAmpAssign, tkPipeAssign, tkCaretAssign,
+                 tkShlAssign, tkShrAssign]):
+    let op = p.advance().kind
+    let right = p.parseAssign()  # right-associative
+    return Expr(kind: ekAssign, loc: loc, exprAssignOp: op, exprAssignTarget: left, exprAssignValue: right)
+  return left
+
+# ---------------------------------------------------------------------------
+# Block
+# ---------------------------------------------------------------------------
+
+proc parseBlock(p: var Parser): Block =
+  let loc = p.currentLoc
+  discard p.expect(tkLBrace, "expected '{' to start block")
+  result = newBlock(loc)
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    while p.check(tkNewLine):
+      discard p.advance()
+    if p.check(tkRBrace) or p.isAtEnd:
+      break
+    result.stmts.add(p.parseStmt())
+  discard p.expect(tkRBrace, "expected '}' to close block")
+
+# ---------------------------------------------------------------------------
+# Statements
+# ---------------------------------------------------------------------------
+
+proc parseStmt(p: var Parser): Stmt =
+  let loc = p.currentLoc
+  case p.peek()
+  of tkLet, tkVar:
+    let isMut = p.peek() == tkVar
+    discard p.advance()
+    let name = p.expect(tkIdent, "expected variable name").text
+    var pat: Pattern = nil
+    var ty: TypeExpr = nil
+    if p.check(tkColon):
+      discard p.advance()
+      ty = p.parseType()
+    discard p.expect(tkAssign, "expected '=' in let/var statement")
+    let initExpr = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skLet, loc: loc, stmtLetMut: isMut, stmtLetName: name,
+                stmtLetPattern: pat, stmtLetType: ty, stmtLetInit: initExpr)
+  of tkIf:
+    discard p.advance()
+    let cond = p.parseExpr()
+    let thenBlk = p.parseBlock()
+    var elseIfs: seq[ElseIf] = @[]
+    var elseBlk: Block = nil
+    while p.check(tkElse):
+      let elseLoc = p.currentLoc
+      discard p.advance()
+      if p.check(tkIf):
+        discard p.advance()
+        let elifCond = p.parseExpr()
+        let elifBlk = p.parseBlock()
+        elseIfs.add(ElseIf(loc: elseLoc, cond: elifCond, blk: elifBlk))
+      else:
+        elseBlk = p.parseBlock()
+        break
+    return Stmt(kind: skIf, loc: loc, stmtIfCond: cond, stmtIfThen: thenBlk,
+                stmtIfElseIfs: elseIfs, stmtIfElse: elseBlk)
+  of tkWhile:
+    discard p.advance()
+    let cond = p.parseExpr()
+    let body = p.parseBlock()
+    return Stmt(kind: skWhile, loc: loc, stmtWhileCond: cond, stmtWhileBody: body)
+  of tkDo:
+    discard p.advance()
+    let body = p.parseBlock()
+    discard p.expect(tkWhile, "expected 'while' after 'do' block")
+    let cond = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skDoWhile, loc: loc, stmtDoWhileBody: body, stmtDoWhileCond: cond)
+  of tkLoop:
+    discard p.advance()
+    let body = p.parseBlock()
+    return Stmt(kind: skLoop, loc: loc, stmtLoopBody: body)
+  of tkFor:
+    discard p.advance()
+    let varName = p.expect(tkIdent, "expected loop variable name").text
+    discard p.expect(tkIn, "expected 'in' in for loop")
+    let iter = p.parseExpr()
+    let body = p.parseBlock()
+    return Stmt(kind: skFor, loc: loc, stmtForVar: varName, stmtForIter: iter, stmtForBody: body)
+  of tkMatch:
+    discard p.advance()
+    let subject = p.parseExpr()
+    discard p.expect(tkLBrace, "expected '{' to start match")
+    var arms: seq[MatchArm] = @[]
+    while not p.check(tkRBrace) and not p.isAtEnd:
+      let armLoc = p.currentLoc
+      let pat = p.parsePattern()
+      discard p.expect(tkFatArrow, "expected '=>' in match arm")
+      let body = p.parseExpr()
+      arms.add(MatchArm(loc: armLoc, pattern: pat, body: body))
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkRBrace, "expected '}' to close match")
+    return Stmt(kind: skMatch, loc: loc, stmtMatchSubject: subject, stmtMatchArms: arms)
+  of tkReturn:
+    discard p.advance()
+    var val: Expr = nil
+    if not p.check(tkSemicolon) and not p.check(tkRBrace):
+      val = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skReturn, loc: loc, stmtReturnValue: val)
+  of tkBreak:
+    discard p.advance()
+    var label = ""
+    if p.check(tkIdent):
+      label = p.advance().text
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skBreak, loc: loc, stmtBreakLabel: label)
+  of tkContinue:
+    discard p.advance()
+    var label = ""
+    if p.check(tkIdent):
+      label = p.advance().text
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skContinue, loc: loc, stmtContinueLabel: label)
+  of tkFunc, tkStruct, tkEnum, tkUnion, tkInterface, tkExtend, tkModule,
+     tkImport, tkConst, tkType, tkExtern, tkPub:
+    # Local declaration
+    let decl = p.parseDecl()
+    return Stmt(kind: skDecl, loc: loc, stmtDecl: decl)
+  else:
+    # Expression statement
+    let expr = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skExpr, loc: loc, stmtExpr: expr)
+
+# ---------------------------------------------------------------------------
+# Declarations
+# ---------------------------------------------------------------------------
+
+proc parseTypeParams(p: var Parser): seq[string] =
+  if p.check(tkLt):
+    discard p.advance()
+    while not p.check(tkGt) and not p.isAtEnd:
+      result.add(p.expect(tkIdent, "expected type parameter name").text)
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkGt, "expected '>' to close type parameters")
+
+proc parseParamList(p: var Parser, allowVariadic: bool = false): seq[Param] =
+  discard p.expect(tkLParen, "expected '('")
+  while not p.check(tkRParen) and not p.isAtEnd:
+    let loc = p.currentLoc
+    var isVar = false
+    if allowVariadic and p.check(tkDotDotDot):
+      discard p.advance()
+      let name = p.expect(tkIdent, "expected parameter name after '...'").text
+      let ty = p.parseType()
+      result.add(Param(loc: loc, name: name, ptype: ty, isVariadic: true))
+    else:
+      let name = p.expect(tkIdent, "expected parameter name").text
+      discard p.expect(tkColon, "expected ':' after parameter name")
+      let ty = p.parseType()
+      var defaultVal: Expr = nil
+      if p.check(tkAssign):
+        discard p.advance()
+        defaultVal = p.parseExpr()
+      result.add(Param(loc: loc, name: name, ptype: ty, defaultValue: defaultVal))
+    if p.check(tkComma):
+      discard p.advance()
+  discard p.expect(tkRParen, "expected ')' to close parameter list")
+
+proc parseFuncDecl(p: var Parser, isPublic: bool, isAsm: bool, attrs: ParsedAttrs): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkFunc, "expected 'func'")
+  let name = p.expect(tkIdent, "expected function name").text
+  let typeParams = p.parseTypeParams()
+  let params = p.parseParamList(true)
+  var retType: TypeExpr = nil
+  if p.check(tkArrow):
+    discard p.advance()
+    retType = p.parseType()
+  var body: Block = nil
+  if p.check(tkLBrace):
+    body = p.parseBlock()
+  elif p.check(tkSemicolon):
+    discard p.advance()
+  return Decl(kind: dkFunc, loc: loc, isPublic: isPublic,
+              declFuncAsm: isAsm, declFuncCallConv: attrs.callConv,
+              declFuncName: name, declFuncTypeParams: typeParams,
+              declFuncParams: params, declFuncReturnType: retType,
+              declFuncBody: body)
+
+proc parseStructDecl(p: var Parser, isPublic: bool): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkStruct, "expected 'struct'")
+  let name = p.expect(tkIdent, "expected struct name").text
+  let typeParams = p.parseTypeParams()
+  discard p.expect(tkLBrace, "expected '{' to start struct body")
+  var fields: seq[StructField] = @[]
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    let fLoc = p.currentLoc
+    var fPub = false
+    if p.check(tkPub):
+      fPub = true
+      discard p.advance()
+    let fName = p.expect(tkIdent, "expected field name").text
+    discard p.expect(tkColon, "expected ':' after field name")
+    let fType = p.parseType()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    fields.add(StructField(loc: fLoc, isPublic: fPub, name: fName, ftype: fType))
+  discard p.expect(tkRBrace, "expected '}' to close struct")
+  return Decl(kind: dkStruct, loc: loc, isPublic: isPublic,
+              declStructName: name, declStructTypeParams: typeParams,
+              declStructFields: fields)
+
+proc parseEnumDecl(p: var Parser, isPublic: bool): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkEnum, "expected 'enum'")
+  let name = p.expect(tkIdent, "expected enum name").text
+  var baseType: TypeExpr = nil
+  if p.check(tkColon):
+    discard p.advance()
+    baseType = p.parseType()
+  discard p.expect(tkLBrace, "expected '{' to start enum body")
+  var variants: seq[EnumVariant] = @[]
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    let vLoc = p.currentLoc
+    let vName = p.expect(tkIdent, "expected variant name").text
+    var fields: seq[TypeExpr] = @[]
+    var namedFields: seq[tuple[name: string, ftype: TypeExpr]] = @[]
+    var discr: string = ""
+    if p.check(tkLParen):
+      discard p.advance()
+      while not p.check(tkRParen) and not p.isAtEnd:
+        if p.check(tkIdent) and p.peek(1) == tkColon:
+          let fn = p.advance().text
+          discard p.advance()  # :
+          let ft = p.parseType()
+          namedFields.add((fn, ft))
+        else:
+          fields.add(p.parseType())
+        if p.check(tkComma):
+          discard p.advance()
+      discard p.expect(tkRParen, "expected ')' to close variant")
+    if p.check(tkAssign):
+      discard p.advance()
+      discr = p.expect(tkIdent, "expected discriminant").text
+    if p.check(tkComma):
+      discard p.advance()
+    variants.add(EnumVariant(loc: vLoc, name: vName, fields: fields,
+                             namedFields: namedFields, discriminant: discr))
+  discard p.expect(tkRBrace, "expected '}' to close enum")
+  return Decl(kind: dkEnum, loc: loc, isPublic: isPublic,
+              declEnumName: name, declEnumBaseType: baseType,
+              declEnumVariants: variants)
+
+proc parseUnionDecl(p: var Parser, isPublic: bool): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkUnion, "expected 'union'")
+  let name = p.expect(tkIdent, "expected union name").text
+  discard p.expect(tkLBrace, "expected '{' to start union body")
+  var fields: seq[UnionField] = @[]
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    let fLoc = p.currentLoc
+    let fName = p.expect(tkIdent, "expected field name").text
+    discard p.expect(tkColon, "expected ':' after field name")
+    let fType = p.parseType()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    fields.add(UnionField(loc: fLoc, name: fName, ftype: fType))
+  discard p.expect(tkRBrace, "expected '}' to close union")
+  return Decl(kind: dkUnion, loc: loc, isPublic: isPublic,
+              declUnionName: name, declUnionFields: fields)
+
+proc parseInterfaceDecl(p: var Parser, isPublic: bool): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkInterface, "expected 'interface'")
+  let name = p.expect(tkIdent, "expected interface name").text
+  discard p.expect(tkLBrace, "expected '{' to start interface body")
+  var methods: seq[Decl] = @[]
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
+  discard p.expect(tkRBrace, "expected '}' to close interface")
+  return Decl(kind: dkInterface, loc: loc, isPublic: isPublic,
+              declInterfaceName: name, declInterfaceMethods: methods)
+
+proc parseImplDecl(p: var Parser): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkExtend, "expected 'extend'")
+  let typeName = p.expect(tkIdent, "expected type name").text
+  var interfaceName = ""
+  if p.check(tkFor):
+    discard p.advance()
+    interfaceName = p.expect(tkIdent, "expected interface name").text
+  discard p.expect(tkLBrace, "expected '{' to start impl block")
+  var methods: seq[Decl] = @[]
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
+  discard p.expect(tkRBrace, "expected '}' to close impl block")
+  return Decl(kind: dkImpl, loc: loc, declImplTypeName: typeName,
+              declImplInterface: interfaceName, declImplMethods: methods)
+
+proc parseModuleDecl(p: var Parser, isPublic: bool): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkModule, "expected 'module'")
+  let name = p.expect(tkIdent, "expected module name").text
+  discard p.expect(tkLBrace, "expected '{' to start module body")
+  var items: seq[Decl] = @[]
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    items.add(p.parseDecl())
+  discard p.expect(tkRBrace, "expected '}' to close module")
+  return Decl(kind: dkModule, loc: loc, isPublic: isPublic,
+              declModuleName: name, declModuleItems: items)
+
+proc parseUseDecl(p: var Parser, attrs: ParsedAttrs): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkImport, "expected 'import'")
+  var path: seq[string] = @[]
+  path.add(p.expect(tkIdent, "expected import path segment").text)
+  while p.check(tkColonColon):
+    discard p.advance()
+    path.add(p.expect(tkIdent, "expected import path segment").text)
+  var kind = ukSingle
+  var names: seq[string] = @[]
+  if p.check(tkDotDotDot):
+    discard p.advance()
+    kind = ukGlob
+  elif p.check(tkDot):
+    discard p.advance()
+    discard p.expect(tkStar, "expected '*'")
+    kind = ukGlob
+  elif p.check(tkColonColon):
+    discard p.advance()
+    discard p.expect(tkLBrace, "expected '{' for multi-import")
+    while not p.check(tkRBrace) and not p.isAtEnd:
+      names.add(p.expect(tkIdent, "expected name in multi-import").text)
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkRBrace, "expected '}' to close multi-import")
+    kind = ukMulti
+  if p.check(tkSemicolon):
+    discard p.advance()
+  return Decl(kind: dkUse, loc: loc, declUsePath: path, declUseKind: kind,
+              declUseNames: names, declUseTargetOs: attrs.targetOs)
+
+proc parseConstDecl(p: var Parser, isPublic: bool): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkConst, "expected 'const'")
+  let name = p.expect(tkIdent, "expected constant name").text
+  var ty: TypeExpr = nil
+  if p.check(tkColon):
+    discard p.advance()
+    ty = p.parseType()
+  discard p.expect(tkAssign, "expected '=' in const declaration")
+  let value = p.parseExpr()
+  if p.check(tkSemicolon):
+    discard p.advance()
+  return Decl(kind: dkConst, loc: loc, isPublic: isPublic,
+              declConstName: name, declConstType: ty, declConstValue: value)
+
+proc parseTypeAliasDecl(p: var Parser, isPublic: bool): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkType, "expected 'type'")
+  let name = p.expect(tkIdent, "expected type alias name").text
+  discard p.expect(tkAssign, "expected '=' in type alias")
+  let ty = p.parseType()
+  if p.check(tkSemicolon):
+    discard p.advance()
+  return Decl(kind: dkTypeAlias, loc: loc, isPublic: isPublic,
+              declAliasName: name, declAliasType: ty)
+
+proc parseExternDecl(p: var Parser, isPublic: bool, attrs: ParsedAttrs): Decl =
+  let loc = p.currentLoc
+  discard p.expect(tkExtern, "expected 'extern'")
+  if p.check(tkFunc):
+    let funcDecl = p.parseFuncDecl(isPublic, false, attrs)
+    funcDecl.isPublic = isPublic
+    return funcDecl
+  elif p.check(tkLBrace):
+    discard p.advance()
+    var items: seq[Decl] = @[]
+    while not p.check(tkRBrace) and not p.isAtEnd:
+      if p.check(tkFunc):
+        items.add(p.parseFuncDecl(isPublic, false, attrs))
+      elif p.check(tkIdent):
+        let vName = p.advance().text
+        discard p.expect(tkColon, "expected ':'")
+        let vType = p.parseType()
+        if p.check(tkSemicolon):
+          discard p.advance()
+        items.add(Decl(kind: dkExternVar, loc: loc, isPublic: isPublic,
+                       declExtVarName: vName, declExtVarType: vType))
+      else:
+        p.emitError("expected function or variable in extern block")
+        discard p.advance()
+    discard p.expect(tkRBrace, "expected '}' to close extern block")
+    return Decl(kind: dkExternBlock, loc: loc, declExtBlockDll: attrs.importLib,
+                declExtBlockCallConv: attrs.callConv, declExtBlockItems: items)
+  else:
+    # Single extern variable
+    let vName = p.expect(tkIdent, "expected variable name").text
+    discard p.expect(tkColon, "expected ':'")
+    let vType = p.parseType()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Decl(kind: dkExternVar, loc: loc, isPublic: isPublic,
+                declExtVarName: vName, declExtVarType: vType)
+
+proc parseDecl(p: var Parser): Decl =
+  let loc = p.currentLoc
+  var isPublic = false
+  if p.check(tkPub):
+    isPublic = true
+    discard p.advance()
+  
+  var attrs = ParsedAttrs()
+  if p.check(tkAt):
+    attrs = p.parseAttrs()
+  
+  case p.peek()
+  of tkFunc:
+    return p.parseFuncDecl(isPublic, false, attrs)
+  of tkStruct:
+    return p.parseStructDecl(isPublic)
+  of tkEnum:
+    return p.parseEnumDecl(isPublic)
+  of tkUnion:
+    return p.parseUnionDecl(isPublic)
+  of tkInterface:
+    return p.parseInterfaceDecl(isPublic)
+  of tkExtend:
+    return p.parseImplDecl()
+  of tkModule:
+    return p.parseModuleDecl(isPublic)
+  of tkImport:
+    return p.parseUseDecl(attrs)
+  of tkConst:
+    return p.parseConstDecl(isPublic)
+  of tkType:
+    return p.parseTypeAliasDecl(isPublic)
+  of tkExtern:
+    return p.parseExternDecl(isPublic, attrs)
+  else:
+    p.emitError(loc, "expected declaration")
+    p.synchronize()
+    return Decl(kind: dkFunc, loc: loc, declFuncName: "")
+
+# ---------------------------------------------------------------------------
+# Module (top-level)
+# ---------------------------------------------------------------------------
+
+proc parseModule*(p: var Parser, name: string): ParseResult =
+  var modu = newModule(name)
+  while not p.isAtEnd:
+    if p.check(tkNewLine):
+      discard p.advance()
+      continue
+    modu.items.add(p.parseDecl())
+  result = ParseResult(module: modu, diagnostics: p.diagnostics)
+
+proc parse*(tokens: seq[Token], sourceName: string = "<input>"): ParseResult =
+  var p = initParser(tokens, sourceName)
+  result = p.parseModule(sourceName)

@@ -142,7 +142,9 @@ proc scanIdent(lex: var Lexer, startLoc: SourceLocation): Token =
   while not lex.isAtEnd() and isIdentChar(lex.peek()):
     discard lex.advance()
   let text = lex.source[startPos ..< lex.pos]
-  let kind = keywordKind(text)
+  var kind = keywordKind(text)
+  if text == "_":
+    kind = tkUnderscore
   result = Token(kind: kind, text: text, loc: startLoc)
 
 # ---------------------------------------------------------------------------
