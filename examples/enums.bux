@@ -1,6 +1,6 @@
 // Enums - Enumeration types
-extern func Std_Io_PrintLine(s: String);
-extern func Std_Io_PrintInt(n: int);
+import Std::Io::{PrintLine, PrintInt};
+
 
 enum Color {
     Red,
@@ -24,11 +24,11 @@ func ColorName(c: Color) -> String {
 func Main() -> int {
     let myColor: Color = Color::Green;
     
-    Std_Io_PrintLine("My color is:");
-    Std_Io_PrintLine(ColorName(myColor));
-    Std_Io_PrintLine("Color value:");
-    Std_Io_PrintInt(myColor as int);
-    Std_Io_PrintLine("");
+    PrintLine("My color is:");
+    PrintLine(ColorName(myColor));
+    PrintLine("Color value:");
+    PrintInt(myColor as int);
+    PrintLine("");
     
     return 0;
 }

@@ -1,7 +1,7 @@
 // Hello World - Basic Bux program
-extern func Std_Io_PrintLine(s: String);
+import Std::Io::{PrintLine, PrintInt};
 
 func Main() -> int {
-    Std_Io_PrintLine("Hello, Bux!");
+    PrintLine("Hello, Bux!");
     return 0;
 }

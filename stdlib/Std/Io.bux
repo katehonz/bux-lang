@@ -1,0 +1,10 @@
+module Std::Io {
+
+extern func PrintLine(s: String);
+extern func Print(s: String);
+extern func PrintInt(n: int);
+extern func PrintFloat(f: float64);
+extern func PrintBool(b: bool);
+extern func ReadLine() -> String;
+
+}

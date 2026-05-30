@@ -1,6 +1,6 @@
 // Pattern Matching - Match expressions with algebraic enums
-extern func Std_Io_PrintLine(s: String);
-extern func Std_Io_PrintInt(n: int);
+import Std::Io::{PrintLine, PrintInt};
+
 
 enum Option {
     Some(int),
@@ -20,13 +20,13 @@ func Main() -> int {
     
     let opt2: Option = Option { tag: Option_None };
     
-    Std_Io_PrintLine("opt1 value: ");
-    Std_Io_PrintInt(GetValue(opt1));
-    Std_Io_PrintLine("");
+    PrintLine("opt1 value: ");
+    PrintInt(GetValue(opt1));
+    PrintLine("");
     
-    Std_Io_PrintLine("opt2 value: ");
-    Std_Io_PrintInt(GetValue(opt2));
-    Std_Io_PrintLine("");
+    PrintLine("opt2 value: ");
+    PrintInt(GetValue(opt2));
+    PrintLine("");
     
     return 0;
 }

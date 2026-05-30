@@ -1,6 +1,6 @@
 // Structs - Basic struct usage
-extern func Std_Io_PrintLine(s: String);
-extern func Std_Io_PrintInt(n: int);
+import Std::Io::{PrintLine, PrintInt};
+
 
 struct Point {
     x: int;
@@ -17,13 +17,13 @@ func Main() -> int {
     let p2: Point = Point { x: 5, y: 15 };
     let sum: Point = AddPoints(p1, p2);
     
-    Std_Io_PrintLine("Point sum:");
-    Std_Io_PrintLine("x = ");
-    Std_Io_PrintInt(sum.x);
-    Std_Io_PrintLine("");
-    Std_Io_PrintLine("y = ");
-    Std_Io_PrintInt(sum.y);
-    Std_Io_PrintLine("");
+    PrintLine("Point sum:");
+    PrintLine("x = ");
+    PrintInt(sum.x);
+    PrintLine("");
+    PrintLine("y = ");
+    PrintInt(sum.y);
+    PrintLine("");
     
     return 0;
 }

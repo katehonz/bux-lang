@@ -1,6 +1,6 @@
 // Methods - Struct with methods using extend
-extern func Std_Io_PrintLine(s: String);
-extern func Std_Io_PrintInt(n: int);
+import Std::Io::{PrintLine, PrintInt};
+
 
 struct Rectangle {
     width: int;
@@ -20,19 +20,19 @@ extend Rectangle {
 func Main() -> int {
     let rect: Rectangle = Rectangle { width: 10, height: 5 };
     
-    Std_Io_PrintLine("Rectangle:");
-    Std_Io_PrintLine("Width = ");
-    Std_Io_PrintInt(rect.width);
-    Std_Io_PrintLine("");
-    Std_Io_PrintLine("Height = ");
-    Std_Io_PrintInt(rect.height);
-    Std_Io_PrintLine("");
-    Std_Io_PrintLine("Area = ");
-    Std_Io_PrintInt(rect.Area());
-    Std_Io_PrintLine("");
-    Std_Io_PrintLine("Perimeter = ");
-    Std_Io_PrintInt(rect.Perimeter());
-    Std_Io_PrintLine("");
+    PrintLine("Rectangle:");
+    PrintLine("Width = ");
+    PrintInt(rect.width);
+    PrintLine("");
+    PrintLine("Height = ");
+    PrintInt(rect.height);
+    PrintLine("");
+    PrintLine("Area = ");
+    PrintInt(rect.Area());
+    PrintLine("");
+    PrintLine("Perimeter = ");
+    PrintInt(rect.Perimeter());
+    PrintLine("");
     
     return 0;
 }

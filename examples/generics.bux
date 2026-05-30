@@ -1,6 +1,6 @@
 // Generics - Generic functions and structs
-extern func Std_Io_PrintLine(s: String);
-extern func Std_Io_PrintInt(n: int);
+import Std::Io::{PrintLine, PrintInt};
+
 
 func Max<T>(a: T, b: T) -> T {
     if a > b {
@@ -14,13 +14,13 @@ func Main() -> int {
     let m1: int = Max<int>(10, 20);
     let m2: int = Max<int>(5, 3);
     
-    Std_Io_PrintLine("Max(10, 20) = ");
-    Std_Io_PrintInt(m1);
-    Std_Io_PrintLine("");
+    PrintLine("Max(10, 20) = ");
+    PrintInt(m1);
+    PrintLine("");
     
-    Std_Io_PrintLine("Max(5, 3) = ");
-    Std_Io_PrintInt(m2);
-    Std_Io_PrintLine("");
+    PrintLine("Max(5, 3) = ");
+    PrintInt(m2);
+    PrintLine("");
     
     return 0;
 }
