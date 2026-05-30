@@ -132,6 +132,13 @@ proc collectGlobals*(sema: var Sema) =
       if not sema.globalScope.define(sym):
         sema.emitError(decl.loc, &"duplicate symbol '{decl.declEnumName}'")
       sema.typeTable[decl.declEnumName] = t
+      # For algebraic enums, add variant constants with _Tag type
+      for variant in decl.declEnumVariants:
+        let variantName = decl.declEnumName & "_" & variant.name
+        let variantType = makeNamed(decl.declEnumName & "_Tag")
+        let variantSym = Symbol(kind: skConst, name: variantName, typ: variantType,
+                                decl: decl, isPublic: decl.isPublic)
+        discard sema.globalScope.define(variantSym)
     of dkUnion:
       let t = makeNamed(decl.declUnionName)
       let sym = Symbol(kind: skType, name: decl.declUnionName, typ: t,
@@ -398,14 +405,51 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
   of ekField:
     let obj = sema.checkExpr(expr.exprFieldObj, scope)
     if obj.kind == tkNamed:
-      let sym = sema.globalScope.lookup(obj.name)
-      if sym != nil and sym.decl != nil and sym.decl.kind == dkStruct:
-        for f in sym.decl.declStructFields:
-          if f.name == expr.exprFieldName:
-            return sema.resolveType(f.ftype)
-        sema.emitError(expr.loc, &"struct '{obj.name}' has no field '{expr.exprFieldName}'")
+      # Check if this is a _Data union field access
+      if obj.name.endsWith("_Data"):
+        let enumName = obj.name[0..^6]  # Remove "_Data" suffix
+        let enumSym = sema.globalScope.lookup(enumName)
+        if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+          # Look for the field in enum variants
+          for variant in enumSym.decl.declEnumVariants:
+            # Check positional fields: Ok_0, Ok_1, etc.
+            for i, f in variant.fields:
+              let fieldName = variant.name & "_" & $i
+              if fieldName == expr.exprFieldName:
+                return sema.resolveType(f)
+            # Check named fields
+            for nf in variant.namedFields:
+              if nf.name == expr.exprFieldName:
+                return sema.resolveType(nf.ftype)
+          sema.emitError(expr.loc, &"union '{obj.name}' has no field '{expr.exprFieldName}'")
+        else:
+          sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
       else:
-        sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
+        let sym = sema.globalScope.lookup(obj.name)
+        if sym != nil and sym.decl != nil:
+          if sym.decl.kind == dkStruct:
+            for f in sym.decl.declStructFields:
+              if f.name == expr.exprFieldName:
+                return sema.resolveType(f.ftype)
+            sema.emitError(expr.loc, &"struct '{obj.name}' has no field '{expr.exprFieldName}'")
+          elif sym.decl.kind == dkEnum:
+            # Algebraic enum fields
+            if expr.exprFieldName == "tag":
+              return makeNamed(obj.name & "_Tag")
+            elif expr.exprFieldName == "data":
+              return makeNamed(obj.name & "_Data")
+            else:
+              sema.emitError(expr.loc, &"enum '{obj.name}' has no field '{expr.exprFieldName}'")
+          elif sym.decl.kind == dkUnion:
+            # Union fields
+            for f in sym.decl.declUnionFields:
+              if f.name == expr.exprFieldName:
+                return sema.resolveType(f.ftype)
+            sema.emitError(expr.loc, &"union '{obj.name}' has no field '{expr.exprFieldName}'")
+          else:
+            sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
+        else:
+          sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
     else:
       sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
     return makeUnknown()

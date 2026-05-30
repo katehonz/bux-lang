@@ -124,11 +124,16 @@ type
     body*: HirNode
     isPublic*: bool
 
+  HirEnumVariant* = object
+    name*: string
+    fields*: seq[Type]  # Positional fields for algebraic enums
+    namedFields*: seq[tuple[name: string, typ: Type]]  # Named fields
+
   HirModule* = object
     funcs*: seq[HirFunc]
     externFuncs*: seq[HirFunc]  # Functions declared with extern (no body)
     structs*: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]]
-    enums*: seq[tuple[name: string, variants: seq[string]]]
+    enums*: seq[tuple[name: string, variants: seq[HirEnumVariant]]]
     consts*: seq[tuple[name: string, typ: Type, value: HirNode]]
 
 # Constructor helpers

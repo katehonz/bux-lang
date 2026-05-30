@@ -1,0 +1,29 @@
+// Algebraic Enums - Enums with data (tagged unions)
+extern func Std_Io_PrintLine(s: String);
+extern func Std_Io_PrintInt(n: int);
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+func Main() -> int {
+    let r1: Result = Result { tag: Result_Ok };
+    r1.data.Ok_0 = 42;
+    
+    let r2: Result = Result { tag: Result_Err };
+    r2.data.Err_0 = "error message";
+    
+    if r1.tag == Result_Ok {
+        Std_Io_PrintLine("r1 is Ok:");
+        Std_Io_PrintInt(r1.data.Ok_0);
+        Std_Io_PrintLine("");
+    }
+    
+    if r2.tag == Result_Err {
+        Std_Io_PrintLine("r2 is Err:");
+        Std_Io_PrintLine(r2.data.Err_0);
+    }
+    
+    return 0;
+}

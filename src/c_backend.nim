@@ -355,17 +355,70 @@ proc emitStruct*(be: var CBackend, name: string, fields: seq[tuple[name: string,
   be.emitLine(&"}} {name};")
   be.emitLine("")
 
-proc emitEnum*(be: var CBackend, name: string, variants: seq[string]) =
-  be.emitLine(&"typedef enum {{")
-  inc be.indent
-  for i, v in variants:
-    if i < variants.len - 1:
-      be.emitLine(&"{name}_{v},")
-    else:
-      be.emitLine(&"{name}_{v}")
-  dec be.indent
-  be.emitLine(&"}} {name};")
-  be.emitLine("")
+proc emitEnum*(be: var CBackend, name: string, variants: seq[HirEnumVariant]) =
+  # Check if this is a simple enum (no data) or algebraic enum (with data)
+  var hasData = false
+  for v in variants:
+    if v.fields.len > 0 or v.namedFields.len > 0:
+      hasData = true
+      break
+  
+  if not hasData:
+    # Simple enum - generate as before
+    be.emitLine(&"typedef enum {{")
+    inc be.indent
+    for i, v in variants:
+      if i < variants.len - 1:
+        be.emitLine(&"{name}_{v.name},")
+      else:
+        be.emitLine(&"{name}_{v.name}")
+    dec be.indent
+    be.emitLine(&"}} {name};")
+    be.emitLine("")
+  else:
+    # Algebraic enum - generate tagged union
+    # 1. Generate tag enum
+    be.emitLine(&"typedef enum {{")
+    inc be.indent
+    for i, v in variants:
+      if i < variants.len - 1:
+        be.emitLine(&"{name}_{v.name},")
+      else:
+        be.emitLine(&"{name}_{v.name}")
+    dec be.indent
+    be.emitLine(&"}} {name}_Tag;")
+    be.emitLine("")
+    
+    # 2. Generate union for data
+    be.emitLine(&"typedef union {{")
+    inc be.indent
+    for v in variants:
+      if v.fields.len > 0:
+        # Positional fields
+        for i, f in v.fields:
+          let typ = typeToC(f)
+          be.emitLine(&"{typ} {v.name}_{i};")
+      elif v.namedFields.len > 0:
+        # Named fields - generate as struct
+        be.emitLine(&"struct {{")
+        inc be.indent
+        for nf in v.namedFields:
+          let typ = typeToC(nf.typ)
+          be.emitLine(&"{typ} {nf.name};")
+        dec be.indent
+        be.emitLine(&"}} {v.name};")
+    dec be.indent
+    be.emitLine(&"}} {name}_Data;")
+    be.emitLine("")
+    
+    # 3. Generate main struct with tag + union
+    be.emitLine(&"typedef struct {{")
+    inc be.indent
+    be.emitLine(&"{name}_Tag tag;")
+    be.emitLine(&"{name}_Data data;")
+    dec be.indent
+    be.emitLine(&"}} {name};")
+    be.emitLine("")
 
 proc emitExternDecl*(be: var CBackend, efunc: HirFunc) =
   let retType = typeToC(efunc.retType)

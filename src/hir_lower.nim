@@ -433,7 +433,7 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   var funcs: seq[HirFunc] = @[]
   var externFuncs: seq[HirFunc] = @[]
   var structs: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]] = @[]
-  var enums: seq[tuple[name: string, variants: seq[string]]] = @[]
+  var enums: seq[tuple[name: string, variants: seq[HirEnumVariant]]] = @[]
   var consts: seq[tuple[name: string, typ: Type, value: HirNode]] = @[]
 
   for decl in module.items:
@@ -463,9 +463,37 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
         fields.add((f.name, fType))
       structs.add((decl.declStructName, fields))
     of dkEnum:
-      var variants: seq[string] = @[]
+      var variants: seq[HirEnumVariant] = @[]
       for v in decl.declEnumVariants:
-        variants.add(v.name)
+        var fields: seq[Type] = @[]
+        for f in v.fields:
+          var fType = makeUnknown()
+          if f != nil and f.kind == tekNamed:
+            case f.typeName
+            of "int", "int32": fType = makeInt()
+            of "int64": fType = makeInt64()
+            of "float64": fType = makeFloat64()
+            of "float32": fType = makeFloat32()
+            of "bool": fType = makeBool()
+            of "String", "str": fType = makeStr()
+            else: fType = makeNamed(f.typeName)
+          fields.add(fType)
+        
+        var namedFields: seq[tuple[name: string, typ: Type]] = @[]
+        for nf in v.namedFields:
+          var fType = makeUnknown()
+          if nf.ftype != nil and nf.ftype.kind == tekNamed:
+            case nf.ftype.typeName
+            of "int", "int32": fType = makeInt()
+            of "int64": fType = makeInt64()
+            of "float64": fType = makeFloat64()
+            of "float32": fType = makeFloat32()
+            of "bool": fType = makeBool()
+            of "String", "str": fType = makeStr()
+            else: fType = makeNamed(nf.ftype.typeName)
+          namedFields.add((nf.name, fType))
+        
+        variants.add(HirEnumVariant(name: v.name, fields: fields, namedFields: namedFields))
       enums.add((decl.declEnumName, variants))
     of dkConst:
       let value = ctx.lowerExpr(decl.declConstValue)
