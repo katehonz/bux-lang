@@ -1,0 +1,29 @@
+// Structs - Basic struct usage
+extern func Std_Io_PrintLine(s: String);
+extern func Std_Io_PrintInt(n: int);
+
+struct Point {
+    x: int;
+    y: int;
+}
+
+func AddPoints(a: Point, b: Point) -> Point {
+    let result: Point = Point { x: a.x + b.x, y: a.y + b.y };
+    return result;
+}
+
+func Main() -> int {
+    let p1: Point = Point { x: 10, y: 20 };
+    let p2: Point = Point { x: 5, y: 15 };
+    let sum: Point = AddPoints(p1, p2);
+    
+    Std_Io_PrintLine("Point sum:");
+    Std_Io_PrintLine("x = ");
+    Std_Io_PrintInt(sum.x);
+    Std_Io_PrintLine("");
+    Std_Io_PrintLine("y = ");
+    Std_Io_PrintInt(sum.y);
+    Std_Io_PrintLine("");
+    
+    return 0;
+}

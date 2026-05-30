@@ -1,0 +1,26 @@
+// Factorial - Recursive function
+extern func Std_Io_PrintLine(s: String);
+extern func Std_Io_PrintInt(n: int);
+
+func Factorial(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * Factorial(n - 1);
+}
+
+func Main() -> int {
+    Std_Io_PrintLine("Factorials:");
+    
+    var i: int = 1;
+    while i <= 10 {
+        let fact: int = Factorial(i);
+        Std_Io_PrintInt(i);
+        Std_Io_PrintLine("! = ");
+        Std_Io_PrintInt(fact);
+        Std_Io_PrintLine("");
+        i = i + 1;
+    }
+    
+    return 0;
+}
