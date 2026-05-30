@@ -307,11 +307,17 @@ proc emitStmt(be: var CBackend, node: HirNode) =
     be.emitLine("continue;")
 
   of hBlock:
+    if node.isScope:
+      be.emitLine("{")
+      inc be.indent
     for stmt in node.blockStmts:
       be.emitStmt(stmt)
     if node.blockExpr != nil:
       let val = be.emitExpr(node.blockExpr)
       be.emitLine(&"{val};")
+    if node.isScope:
+      dec be.indent
+      be.emitLine("}")
 
   of hAlloca:
     let typ = typeToC(node.allocaType)
@@ -352,12 +358,12 @@ proc emitFunc*(be: var CBackend, hfunc: HirFunc) =
   be.emitLine(&"{retType} {hfunc.name}({paramsStr}) {{")
   inc be.indent
   if hfunc.body != nil:
-    if hfunc.body.kind == hBlock and hfunc.body.blockExpr != nil and hfunc.retType.kind != tkVoid:
-      # Function returns a value via block expression — emit statements and add return
+    if hfunc.body.kind == hBlock:
       for stmt in hfunc.body.blockStmts:
         be.emitStmt(stmt)
-      let val = be.emitExpr(hfunc.body.blockExpr)
-      be.emitLine(&"return {val};")
+      if hfunc.body.blockExpr != nil and hfunc.retType.kind != tkVoid:
+        let val = be.emitExpr(hfunc.body.blockExpr)
+        be.emitLine(&"return {val};")
     else:
       be.emitStmt(hfunc.body)
   dec be.indent

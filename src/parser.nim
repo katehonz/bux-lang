@@ -326,6 +326,7 @@ proc parseAdd(p: var Parser): Expr
 proc parseShift(p: var Parser): Expr
 proc parseCast(p: var Parser): Expr
 proc parseComparison(p: var Parser): Expr
+proc parseRange(p: var Parser): Expr
 proc parseEquality(p: var Parser): Expr
 proc parseBitAnd(p: var Parser): Expr
 proc parseBitXor(p: var Parser): Expr
@@ -583,12 +584,22 @@ proc parseComparison(p: var Parser): Expr =
     left = newBinaryExpr(op, left, right, loc)
   return left
 
-proc parseEquality(p: var Parser): Expr =
+proc parseRange(p: var Parser): Expr =
   let loc = p.currentLoc
   var left = p.parseComparison()
+  if p.check(tkDotDot) or p.check(tkDotDotEqual):
+    let inclusive = p.check(tkDotDotEqual)
+    discard p.advance()
+    let right = p.parseComparison()
+    return Expr(kind: ekRange, loc: loc, exprRangeLo: left, exprRangeHi: right, exprRangeInclusive: inclusive)
+  return left
+
+proc parseEquality(p: var Parser): Expr =
+  let loc = p.currentLoc
+  var left = p.parseRange()
   while p.checkAny([tkEq, tkNe]):
     let op = p.advance().kind
-    let right = p.parseComparison()
+    let right = p.parseRange()
     left = newBinaryExpr(op, left, right, loc)
   return left
 

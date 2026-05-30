@@ -34,6 +34,7 @@ type
     hBlock
     hStructInit
     hSliceInit
+    hRange
     hTupleInit
     # Match (desugared to switch/branch later)
     hMatch
@@ -106,11 +107,16 @@ type
     of hBlock:
       blockStmts*: seq[HirNode]
       blockExpr*: HirNode
+      isScope*: bool
     of hStructInit:
       structInitName*: string
       structInitFields*: seq[tuple[name: string, value: HirNode]]
     of hSliceInit:
       sliceInitElements*: seq[HirNode]
+    of hRange:
+      rangeLo*: HirNode
+      rangeHi*: HirNode
+      rangeInclusive*: bool
     of hTupleInit:
       tupleInitElements*: seq[HirNode]
     of hMatch:
@@ -162,8 +168,8 @@ proc hirCall*(callee: string, args: seq[HirNode], typ: Type, loc: SourceLocation
 proc hirReturn*(value: HirNode, loc: SourceLocation): HirNode =
   HirNode(kind: hReturn, returnValue: value, typ: makeVoid(), loc: loc)
 
-proc hirBlock*(stmts: seq[HirNode], expr: HirNode, typ: Type, loc: SourceLocation): HirNode =
-  HirNode(kind: hBlock, blockStmts: stmts, blockExpr: expr, typ: typ, loc: loc)
+proc hirBlock*(stmts: seq[HirNode], expr: HirNode, typ: Type, loc: SourceLocation, isScope: bool = false): HirNode =
+  HirNode(kind: hBlock, blockStmts: stmts, blockExpr: expr, typ: typ, loc: loc, isScope: isScope)
 
 proc hirAlloca*(name: string, typ: Type, loc: SourceLocation): HirNode =
   HirNode(kind: hAlloca, allocaType: typ, allocaName: name, typ: makePointer(typ), loc: loc)

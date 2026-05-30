@@ -229,6 +229,9 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     if expr.exprSliceElements.len > 0:
       return makeSlice(ctx.resolveExprType(expr.exprSliceElements[0]))
     return makeSlice(makeUnknown())
+  of ekRange:
+    let loType = ctx.resolveExprType(expr.exprRangeLo)
+    return makeRange(loType)
   of ekTuple:
     var elems: seq[Type] = @[]
     for e in expr.exprTupleElements:
@@ -380,6 +383,12 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       elems.add(ctx.lowerExpr(e))
     return HirNode(kind: hSliceInit, sliceInitElements: elems, typ: typ, loc: loc)
 
+  of ekRange:
+    let lo = ctx.lowerExpr(expr.exprRangeLo)
+    let hi = ctx.lowerExpr(expr.exprRangeHi)
+    return HirNode(kind: hRange, rangeLo: lo, rangeHi: hi,
+                   rangeInclusive: expr.exprRangeInclusive, typ: typ, loc: loc)
+
   of ekTuple:
     var elems: seq[HirNode] = @[]
     for e in expr.exprTupleElements:
@@ -509,11 +518,53 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
                    typ: makeVoid(), loc: loc)
 
   of skFor:
-    # Desugar: for i in iter { body } → { let __iter = iter; while __hasNext(__iter) { let i = __next(__iter); body } }
-    let iterExpr = ctx.lowerExpr(stmt.stmtForIter)
-    let body = ctx.lowerBlock(stmt.stmtForBody)
-    # Simplified: just lower the body for now
-    return HirNode(kind: hLoop, loopBody: body, typ: makeVoid(), loc: loc)
+    let iterExpr = stmt.stmtForIter
+    let body = stmt.stmtForBody
+    let varName = stmt.stmtForVar
+    let loc = stmt.loc
+    
+    # Range-based for: for i in lo..hi { body }
+    if iterExpr.kind == ekRange:
+      let lo = ctx.lowerExpr(iterExpr.exprRangeLo)
+      let hi = ctx.lowerExpr(iterExpr.exprRangeHi)
+      let inclusive = iterExpr.exprRangeInclusive
+      
+      # Determine loop variable type from range bounds
+      let varType = ctx.resolveExprType(iterExpr.exprRangeLo)
+      
+      # Create: var i = lo; while i < hi { body; i = i + 1; }
+      let initStmt = hirAlloca(varName, varType, loc)
+      let varNode = hirVar(varName, makePointer(varType), loc)
+      let initStore = hirStore(varNode, lo, loc)
+      
+      let readI = hirVar(varName, varType, loc)
+      let condOp = if inclusive: tkLe else: tkLt
+      let cond = HirNode(kind: hBinary, binaryOp: condOp,
+                         binaryLeft: readI, binaryRight: hi,
+                         typ: makeBool(), loc: loc)
+      
+      var bodyStmts: seq[HirNode] = @[]
+      bodyStmts.add(ctx.lowerBlock(body))
+      
+      let readI2 = hirVar(varName, varType, loc)
+      let one = hirLit(Token(kind: tkIntLiteral, text: "1", loc: loc), varType, loc)
+      let inc = HirNode(kind: hBinary, binaryOp: tkPlus,
+                        binaryLeft: readI2, binaryRight: one,
+                        typ: varType, loc: loc)
+      bodyStmts.add(hirStore(varNode, inc, loc))
+      
+      let whileBody = hirBlock(bodyStmts, nil, makeVoid(), loc)
+      let whileNode = HirNode(kind: hWhile, whileCond: cond, whileBody: whileBody,
+                             typ: makeVoid(), loc: loc)
+      
+      # Wrap in a block so loop variable doesn't leak into outer scope
+      let forBlock = hirBlock(@[initStmt, initStore, whileNode], nil, makeVoid(), loc, isScope = true)
+      return forBlock
+    
+    # Generic iterator for loop (simplified - just infinite loop for now)
+    let loweredIter = ctx.lowerExpr(iterExpr)
+    let loweredBody = ctx.lowerBlock(body)
+    return HirNode(kind: hLoop, loopBody: loweredBody, typ: makeVoid(), loc: loc)
 
   of skDoWhile:
     let body = ctx.lowerBlock(stmt.stmtDoWhileBody)
