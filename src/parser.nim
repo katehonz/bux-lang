@@ -1,4 +1,4 @@
-import std/[strformat, sequtils]
+import std/[strformat, sequtils, strutils]
 import token, source_location, lexer, ast
 
 type
@@ -367,7 +367,9 @@ proc parsePrimary(p: var Parser): Expr =
     return Expr(kind: ekSlice, loc: loc, exprSliceElements: elems)
   of tkMatch:
     discard p.advance()
+    p.structInitAllowed = false
     let subject = p.parseExpr()
+    p.structInitAllowed = true
     discard p.expect(tkLBrace, "expected '{' to start match")
     var arms: seq[MatchArm] = @[]
     while not p.check(tkRBrace) and not p.isAtEnd:
@@ -460,6 +462,22 @@ proc parsePostfix(p: var Parser): Expr =
       discard p.advance()
       let ty = p.parseType()
       left = Expr(kind: ekIs, loc: loc, exprIsOperand: left, exprIsType: ty)
+    of tkLBrace:
+      if p.structInitAllowed and left.kind in {ekIdent, ekPath}:
+        discard p.advance()
+        var fields: seq[tuple[name: string, value: Expr]] = @[]
+        while not p.check(tkRBrace) and not p.isAtEnd:
+          let fieldName = p.expect(tkIdent, "expected field name").text
+          discard p.expect(tkColon, "expected ':'")
+          let fieldValue = p.parseExpr()
+          fields.add((fieldName, fieldValue))
+          if p.check(tkComma):
+            discard p.advance()
+        discard p.expect(tkRBrace, "expected '}'")
+        let typeName = if left.kind == ekIdent: left.exprIdent else: left.exprPath.join("::")
+        left = Expr(kind: ekStructInit, loc: loc, exprStructInitName: typeName, exprStructInitFields: fields)
+      else:
+        break
     else:
       break
   return left
@@ -645,7 +663,9 @@ proc parseStmt(p: var Parser): Stmt =
                 stmtLetPattern: pat, stmtLetType: ty, stmtLetInit: initExpr)
   of tkIf:
     discard p.advance()
+    p.structInitAllowed = false
     let cond = p.parseExpr()
+    p.structInitAllowed = true
     let thenBlk = p.parseBlock()
     var elseIfs: seq[ElseIf] = @[]
     var elseBlk: Block = nil
@@ -664,7 +684,9 @@ proc parseStmt(p: var Parser): Stmt =
                 stmtIfElseIfs: elseIfs, stmtIfElse: elseBlk)
   of tkWhile:
     discard p.advance()
+    p.structInitAllowed = false
     let cond = p.parseExpr()
+    p.structInitAllowed = true
     let body = p.parseBlock()
     return Stmt(kind: skWhile, loc: loc, stmtWhileCond: cond, stmtWhileBody: body)
   of tkDo:
@@ -683,7 +705,9 @@ proc parseStmt(p: var Parser): Stmt =
     discard p.advance()
     let varName = p.expect(tkIdent, "expected loop variable name").text
     discard p.expect(tkIn, "expected 'in' in for loop")
+    p.structInitAllowed = false
     let iter = p.parseExpr()
+    p.structInitAllowed = true
     let body = p.parseBlock()
     return Stmt(kind: skFor, loc: loc, stmtForVar: varName, stmtForIter: iter, stmtForBody: body)
   of tkMatch:

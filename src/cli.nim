@@ -1,5 +1,5 @@
 import std/[os, strutils, terminal, strformat]
-import lexer, parser, manifest
+import lexer, parser, sema, manifest
 
 type
   ColorMode* = enum
@@ -170,8 +170,15 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
         for d in parseRes.diagnostics:
           echo &"error: {d.message} at {d.loc}"
         return 1
+      let semaRes = analyze(parseRes.module)
+      if semaRes.hasErrors:
+        printError(&"type errors in {path}", useColor)
+        for d in semaRes.diagnostics:
+          let sev = if d.severity == sdsError: "error" else: "warning"
+          echo &"{sev}: {d.message} at {d.loc}"
+        return 1
       if opts.verbose:
-        printInfo(&"parsed {path} ({lexRes.tokens.len} tokens, {parseRes.module.items.len} top-level declarations)", useColor)
+        printInfo(&"checked {path} ({lexRes.tokens.len} tokens, {parseRes.module.items.len} decls)", useColor)
       if splitFile(path).name == "Main":
         foundMain = true
 
