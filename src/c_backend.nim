@@ -110,11 +110,17 @@ proc operatorToC(op: TokenKind): string =
   of tkTilde: return "~"
   of tkPlusPlus: return "++"
   of tkMinusMinus: return "--"
+  of tkAssign: return "="
   of tkPlusAssign: return "+="
   of tkMinusAssign: return "-="
   of tkStarAssign: return "*="
   of tkSlashAssign: return "/="
   of tkPercentAssign: return "%="
+  of tkAmpAssign: return "&="
+  of tkPipeAssign: return "|="
+  of tkCaretAssign: return "^="
+  of tkShlAssign: return "<<="
+  of tkShrAssign: return ">>="
   else: return "?"
 
 # Forward declaration
