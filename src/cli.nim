@@ -1,0 +1,234 @@
+import std/[os, strutils, terminal, strformat]
+import lexer, manifest
+
+type
+  ColorMode* = enum
+    cmAuto
+    cmOn
+    cmOff
+
+  GlobalOptions* = object
+    color*: ColorMode
+    quiet*: bool
+    verbose*: bool
+
+proc printUsage*() =
+  echo """Bux Programming Language (bootstrap compiler)
+
+Usage: bux [options] <command> [command-options]
+
+Commands:
+  new <name>          Create a new Bux package
+  init                Initialize a Bux package in the current directory
+  build               Build the current package
+  run                 Build and run the current package
+  check               Type-check the current package
+  clean               Remove build artifacts
+  help                Show this help message
+  version             Show version
+
+Global options:
+  --color <auto|on|off>   Control colored output (default: auto)
+  -q, --quiet             Suppress non-error output
+  -v, --verbose           Verbose output
+"""
+
+proc parseGlobalOptions(args: seq[string]): tuple[opts: GlobalOptions, rest: seq[string], ok: bool] =
+  result.opts = GlobalOptions(color: cmAuto, quiet: false, verbose: false)
+  result.rest = @[]
+  result.ok = true
+  var i = 0
+  while i < args.len:
+    let arg = args[i]
+    if arg == "--color":
+      if i + 1 >= args.len:
+        stderr.writeLine("error: --color requires an argument")
+        result.ok = false
+        return
+      inc i
+      case args[i].toLowerAscii()
+      of "auto": result.opts.color = cmAuto
+      of "on": result.opts.color = cmOn
+      of "off": result.opts.color = cmOff
+      else:
+        stderr.writeLine(&"error: unknown --color value '{args[i]}'")
+        result.ok = false
+        return
+    elif arg == "-q" or arg == "--quiet":
+      result.opts.quiet = true
+    elif arg == "-v" or arg == "--verbose":
+      result.opts.verbose = true
+    else:
+      result.rest.add(arg)
+    inc i
+
+proc shouldUseColor(opts: GlobalOptions): bool =
+  case opts.color
+  of cmOn: true
+  of cmOff: false
+  of cmAuto: terminal.isatty(stdout)
+
+proc printError(msg: string, useColor: bool) =
+  if useColor:
+    stdout.setForegroundColor(fgRed)
+    stdout.write("error: ")
+    stdout.resetAttributes()
+    stdout.writeLine(msg)
+  else:
+    stderr.writeLine("error: " & msg)
+
+proc printInfo(msg: string, useColor: bool) =
+  if useColor:
+    stdout.setForegroundColor(fgCyan)
+    stdout.write("info: ")
+    stdout.resetAttributes()
+    stdout.writeLine(msg)
+  else:
+    echo("info: " & msg)
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+proc cmdNew*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  if args.len < 1:
+    printError("'new' requires a package name", useColor)
+    return 1
+  let name = args[0]
+  let root = getCurrentDir() / name
+  if dirExists(root):
+    printError(&"directory '{name}' already exists", useColor)
+    return 1
+  createDir(root / "src")
+  writeFile(root / "bux.toml", &"""[Package]
+Name    = "{name}"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
+""")
+  writeFile(root / "src" / "Main.bux", """import Std::Io::PrintLine;
+
+func Main() -> int {
+    PrintLine(c8"Hello, Bux!");
+    return 0;
+}
+""")
+  if not opts.quiet:
+    printInfo(&"Created Bux package '{name}'", useColor)
+  return 0
+
+proc cmdInit*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let root = getCurrentDir()
+  if fileExists(root / "bux.toml"):
+    printError("bux.toml already exists", useColor)
+    return 1
+  let name = splitPath(root).tail
+  writeFile(root / "bux.toml", &"""[Package]
+Name    = "{name}"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
+""")
+  if not dirExists(root / "src"):
+    createDir(root / "src")
+  if not opts.quiet:
+    printInfo(&"Initialized Bux package '{name}'", useColor)
+  return 0
+
+proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let root = getCurrentDir()
+  let manifestPath = root / "bux.toml"
+  if not fileExists(manifestPath):
+    printError("no bux.toml found", useColor)
+    return 1
+  let man = loadManifest(manifestPath)
+  let srcDir = root / "src"
+  if not dirExists(srcDir):
+    printError("no src/ directory found", useColor)
+    return 1
+
+  var foundMain = false
+  for kind, path in walkDir(srcDir):
+    if kind == pcFile and path.endsWith(".bux"):
+      let source = readFile(path)
+      let res = tokenize(source, path)
+      if res.hasErrors:
+        printError(&"lex errors in {path}", useColor)
+        for d in res.diagnostics:
+          echo $d
+        return 1
+      if opts.verbose:
+        printInfo(&"lexed {path} ({res.tokens.len} tokens)", useColor)
+      if splitFile(path).name == "Main":
+        foundMain = true
+
+  if not foundMain:
+    printError("no Main.bux found in src/", useColor)
+    return 1
+
+  if not opts.quiet:
+    printInfo("check passed (lexer only)", useColor)
+  return 0
+
+proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  # For now, just type-check
+  let checkRes = cmdCheck(args, opts)
+  if checkRes != 0:
+    return checkRes
+  if not opts.quiet:
+    printInfo("build: nothing to do yet (no codegen)", useColor)
+  return 0
+
+proc cmdRun*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let buildRes = cmdBuild(args, opts)
+  if buildRes != 0:
+    return buildRes
+  printError("run: no executable produced yet (no codegen)", useColor)
+  return 1
+
+proc cmdClean*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  # Placeholder
+  if not opts.quiet:
+    printInfo("clean: nothing to do yet", useColor)
+  return 0
+
+proc cmdVersion*(args: seq[string], opts: GlobalOptions): int =
+  echo "bux 0.1.0 (bootstrap)"
+  return 0
+
+proc runCli*(args: seq[string]): int =
+  let (opts, rest, ok) = parseGlobalOptions(args)
+  if not ok:
+    return 1
+  if rest.len == 0:
+    printUsage()
+    return 0
+
+  let cmd = rest[0]
+  let cmdArgs = if rest.len > 1: rest[1..^1] else: @[]
+
+  case cmd
+  of "new": return cmdNew(cmdArgs, opts)
+  of "init": return cmdInit(cmdArgs, opts)
+  of "build": return cmdBuild(cmdArgs, opts)
+  of "run": return cmdRun(cmdArgs, opts)
+  of "check": return cmdCheck(cmdArgs, opts)
+  of "clean": return cmdClean(cmdArgs, opts)
+  of "version", "--version", "-v": return cmdVersion(cmdArgs, opts)
+  of "help", "--help", "-h":
+    printUsage()
+    return 0
+  else:
+    let useColor = shouldUseColor(opts)
+    printError(&"unknown command '{cmd}'", useColor)
+    return 1

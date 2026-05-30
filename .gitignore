@@ -1,0 +1,13 @@
+# Compiled binary
+buxc
+
+# Nim cache
+nimcache/
+
+# Test binaries
+tests/lexer_test
+tests/*.exe
+
+# Build artifacts
+build/
+*.o

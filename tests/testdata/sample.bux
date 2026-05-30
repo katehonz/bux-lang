@@ -1,0 +1,11 @@
+import Std::Io::PrintLine;
+
+func Add(a: int32, b: int32) -> int32 {
+    return a + b;
+}
+
+func Main() -> int {
+    let result: int32 = Add(10, 20);
+    PrintLine(c8"Hello from Bux!");
+    return 0;
+}
