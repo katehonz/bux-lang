@@ -331,7 +331,30 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     if expr.exprCallCallee == nil:
       sema.emitError(expr.loc, "internal error: nil callee in call expression")
       return makeUnknown()
-    
+
+    # Check for generic function call: Max<int>(10, 20)
+    if expr.exprCallCallee.kind == ekGenericCall:
+      let sym = scope.lookup(expr.exprCallCallee.exprGenericCallee)
+      if sym == nil:
+        sema.emitError(expr.loc, &"undeclared identifier '{expr.exprCallCallee.exprGenericCallee}'")
+        return makeUnknown()
+      if sym.typ != nil and sym.typ.kind == tkFunc:
+        # Get the return type and substitute type parameters
+        let retType = sym.typ.inner[^1]
+        if retType.kind == tkNamed:
+          # Check if this is a type parameter
+          let sym2 = sema.globalScope.lookup(expr.exprCallCallee.exprGenericCallee)
+          if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkFunc:
+            let typeParams = sym2.decl.declFuncTypeParams
+            for i, tp in typeParams:
+              if retType.name == tp and i < expr.exprCallCallee.exprGenericTypeArgs.len:
+                # Substitute with concrete type
+                let concreteType = expr.exprCallCallee.exprGenericTypeArgs[i]
+                if concreteType.kind == tekNamed:
+                  return sema.resolveType(concreteType)
+        return retType
+      return makeUnknown()
+
     # Check for method call: obj.method(args)
     if expr.exprCallCallee.kind == ekField:
       let receiver = sema.checkExpr(expr.exprCallCallee.exprFieldObj, scope)
@@ -390,6 +413,16 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     else:
       sema.emitError(expr.loc, &"cannot call non-function type {calleeType.toString}")
       return makeUnknown()
+  of ekGenericCall:
+    # Generic function call: Max<int>(10, 20)
+    # For now, just look up the function and return its return type
+    let sym = scope.lookup(expr.exprGenericCallee)
+    if sym == nil:
+      sema.emitError(expr.loc, &"undeclared identifier '{expr.exprGenericCallee}'")
+      return makeUnknown()
+    if sym.typ != nil and sym.typ.kind == tkFunc:
+      return sym.typ.inner[^1]
+    return makeUnknown()
   of ekIndex:
     let obj = sema.checkExpr(expr.exprIndexObj, scope)
     let idx = sema.checkExpr(expr.exprIndexIdx, scope)

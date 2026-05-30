@@ -104,6 +104,7 @@ type
     ekTernary
     ekRange
     ekCall
+    ekGenericCall
     ekIndex
     ekField
     ekStructInit
@@ -160,6 +161,9 @@ type
     of ekCall:
       exprCallCallee*: Expr
       exprCallArgs*: seq[Expr]
+    of ekGenericCall:
+      exprGenericCallee*: string
+      exprGenericTypeArgs*: seq[TypeExpr]
     of ekIndex:
       exprIndexObj*: Expr
       exprIndexIdx*: Expr

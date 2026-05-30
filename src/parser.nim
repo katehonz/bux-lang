@@ -441,6 +441,20 @@ proc parsePostfix(p: var Parser): Expr =
           discard p.advance()
       discard p.expect(tkRParen, "expected ')' to close call")
       left = Expr(kind: ekCall, loc: loc, exprCallCallee: left, exprCallArgs: args)
+    of tkLt:
+      # Generic type arguments: Max<int>(10, 20)
+      if left.kind == ekIdent:
+        discard p.advance()
+        var typeArgs: seq[TypeExpr] = @[]
+        while not p.check(tkGt) and not p.isAtEnd:
+          typeArgs.add(p.parseType())
+          if p.check(tkComma):
+            discard p.advance()
+        discard p.expect(tkGt, "expected '>' to close type arguments")
+        # Store type args in the identifier for later use
+        left = Expr(kind: ekGenericCall, loc: loc, exprGenericCallee: left.exprIdent, exprGenericTypeArgs: typeArgs)
+      else:
+        break
     of tkLBracket:
       # Index expression
       discard p.advance()

@@ -8,6 +8,7 @@ type
     methodTable*: Table[string, seq[MethodInfo]]
     currentFuncRetType*: Type
     varCounter*: int
+    typeSubst*: Table[string, Type]  # Type parameter substitution for generics
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -18,6 +19,7 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.globalScope = sema.globalScope
   result.methodTable = sema.methodTable
   result.varCounter = 0
+  result.typeSubst = initTable[string, Type]()
 
 # Forward declarations
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode
@@ -149,7 +151,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     # Method call desugaring: obj.method(args) → Type_method(obj, args)
     if expr.exprCallCallee.kind == ekField:
       let methodName = expr.exprCallCallee.exprFieldName
-      
+
       # Try to find the method in methodTable
       for typeName, methods in ctx.methodTable:
         for minfo in methods:
@@ -161,7 +163,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
             for arg in expr.exprCallArgs:
               args.add(ctx.lowerExpr(arg))
             return hirCall(mangledName, args, typ, loc)
-      
+
       # Not a method call - treat as field access + call (function pointer)
       let callee = ctx.lowerExpr(expr.exprCallCallee)
       var args: seq[HirNode] = @[]
@@ -169,6 +171,23 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         args.add(ctx.lowerExpr(arg))
       return HirNode(kind: hCallIndirect, callIndirectCallee: callee,
                      callIndirectArgs: args, typ: typ, loc: loc)
+
+    # Generic function call: Max<int>(10, 20) → Max_int(10, 20)
+    if expr.exprCallCallee.kind == ekGenericCall:
+      let baseName = expr.exprCallCallee.exprGenericCallee
+      var typeSuffix = ""
+      for i, targ in expr.exprCallCallee.exprGenericTypeArgs:
+        if i > 0:
+          typeSuffix.add("_")
+        if targ.kind == tekNamed:
+          typeSuffix.add(targ.typeName)
+        else:
+          typeSuffix.add("unknown")
+      let mangledName = baseName & "_" & typeSuffix
+      var args: seq[HirNode] = @[]
+      for arg in expr.exprCallArgs:
+        args.add(ctx.lowerExpr(arg))
+      return hirCall(mangledName, args, typ, loc)
 
     # Regular function call
     var calleeName = ""
@@ -390,20 +409,27 @@ proc lowerBlock(ctx: var LowerCtx, blk: Block): HirNode =
                  typ: makeVoid(), loc: blk.loc)
 
 proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
+  # Set up type substitution for generic functions
+  let oldSubst = ctx.typeSubst
+  
   var params: seq[tuple[name: string, typ: Type]] = @[]
   for p in decl.declFuncParams:
     var pType = makeUnknown()
     if p.ptype != nil:
       case p.ptype.kind
       of tekNamed:
-        case p.ptype.typeName
-        of "int", "int32": pType = makeInt()
-        of "int64": pType = makeInt64()
-        of "float64": pType = makeFloat64()
-        of "float32": pType = makeFloat32()
-        of "bool": pType = makeBool()
-        of "Point", "Self": pType = makeNamed(p.ptype.typeName)
-        else: pType = makeNamed(p.ptype.typeName)
+        # Check if this is a type parameter
+        if ctx.typeSubst.hasKey(p.ptype.typeName):
+          pType = ctx.typeSubst[p.ptype.typeName]
+        else:
+          case p.ptype.typeName
+          of "int", "int32": pType = makeInt()
+          of "int64": pType = makeInt64()
+          of "float64": pType = makeFloat64()
+          of "float32": pType = makeFloat32()
+          of "bool": pType = makeBool()
+          of "Point", "Self": pType = makeNamed(p.ptype.typeName)
+          else: pType = makeNamed(p.ptype.typeName)
       of tekPointer: pType = makePointer(makeUnknown())
       else: discard
     params.add((p.name, pType))
@@ -412,13 +438,17 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   if decl.declFuncReturnType != nil:
     case decl.declFuncReturnType.kind
     of tekNamed:
-      case decl.declFuncReturnType.typeName
-      of "int", "int32": retType = makeInt()
-      of "int64": retType = makeInt64()
-      of "float64": retType = makeFloat64()
-      of "float32": retType = makeFloat32()
-      of "bool": retType = makeBool()
-      else: retType = makeNamed(decl.declFuncReturnType.typeName)
+      # Check if this is a type parameter
+      if ctx.typeSubst.hasKey(decl.declFuncReturnType.typeName):
+        retType = ctx.typeSubst[decl.declFuncReturnType.typeName]
+      else:
+        case decl.declFuncReturnType.typeName
+        of "int", "int32": retType = makeInt()
+        of "int64": retType = makeInt64()
+        of "float64": retType = makeFloat64()
+        of "float32": retType = makeFloat32()
+        of "bool": retType = makeBool()
+        else: retType = makeNamed(decl.declFuncReturnType.typeName)
     of tekPointer: retType = makePointer(makeUnknown())
     else: discard
 
@@ -427,6 +457,9 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
 
   result = HirFunc(name: decl.declFuncName, params: params, retType: retType,
                    body: body, isPublic: decl.isPublic)
+  
+  # Restore old substitution
+  ctx.typeSubst = oldSubst
 
 proc lowerModule*(module: Module, sema: Sema): HirModule =
   var ctx = initLowerCtx(module, sema)
@@ -436,14 +469,126 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   var enums: seq[tuple[name: string, variants: seq[HirEnumVariant]]] = @[]
   var consts: seq[tuple[name: string, typ: Type, value: HirNode]] = @[]
 
+  # First pass: collect generic functions
+  var genericFuncs = initTable[string, Decl]()
+  for decl in module.items:
+    if decl.kind == dkFunc and decl.declFuncTypeParams.len > 0:
+      genericFuncs[decl.declFuncName] = decl
+
+  # Second pass: find all generic calls and monomorphize
+  proc findGenericCalls(expr: Expr): seq[tuple[name: string, typeArgs: seq[TypeExpr]]] =
+    if expr == nil: return @[]
+    result = @[]
+    case expr.kind
+    of ekCall:
+      if expr.exprCallCallee.kind == ekGenericCall:
+        result.add((expr.exprCallCallee.exprGenericCallee, expr.exprCallCallee.exprGenericTypeArgs))
+      result.add(findGenericCalls(expr.exprCallCallee))
+      for arg in expr.exprCallArgs:
+        result.add(findGenericCalls(arg))
+    of ekGenericCall:
+      result.add((expr.exprGenericCallee, expr.exprGenericTypeArgs))
+    of ekBinary:
+      result.add(findGenericCalls(expr.exprBinaryLeft))
+      result.add(findGenericCalls(expr.exprBinaryRight))
+    of ekUnary:
+      result.add(findGenericCalls(expr.exprUnaryOperand))
+    of ekAssign:
+      result.add(findGenericCalls(expr.exprAssignTarget))
+      result.add(findGenericCalls(expr.exprAssignValue))
+    of ekBlock:
+      if expr.exprBlock != nil:
+        for stmt in expr.exprBlock.stmts:
+          case stmt.kind
+          of skLet: result.add(findGenericCalls(stmt.stmtLetInit))
+          of skReturn: result.add(findGenericCalls(stmt.stmtReturnValue))
+          of skExpr: result.add(findGenericCalls(stmt.stmtExpr))
+          of skIf:
+            result.add(findGenericCalls(stmt.stmtIfCond))
+          of skWhile:
+            result.add(findGenericCalls(stmt.stmtWhileCond))
+          else: discard
+    else: discard
+
+  # Collect all generic instantiations
+  var instantiations: seq[tuple[name: string, typeArgs: seq[TypeExpr]]] = @[]
+  for decl in module.items:
+    if decl.kind == dkFunc and decl.declFuncBody != nil:
+      for stmt in decl.declFuncBody.stmts:
+        case stmt.kind
+        of skLet:
+          instantiations.add(findGenericCalls(stmt.stmtLetInit))
+        of skReturn:
+          instantiations.add(findGenericCalls(stmt.stmtReturnValue))
+        of skExpr:
+          instantiations.add(findGenericCalls(stmt.stmtExpr))
+        of skIf:
+          instantiations.add(findGenericCalls(stmt.stmtIfCond))
+        of skWhile:
+          instantiations.add(findGenericCalls(stmt.stmtWhileCond))
+        else: discard
+
+  # Generate monomorphized functions
+  var generated = initTable[string, bool]()
+  for inst in instantiations:
+    let baseName = inst.name
+    if genericFuncs.hasKey(baseName):
+      var typeSuffix = ""
+      for i, targ in inst.typeArgs:
+        if i > 0: typeSuffix.add("_")
+        if targ.kind == tekNamed:
+          typeSuffix.add(targ.typeName)
+        else:
+          typeSuffix.add("unknown")
+      let mangledName = baseName & "_" & typeSuffix
+      if not generated.hasKey(mangledName):
+        # Generate specialized version
+        let genericDecl = genericFuncs[baseName]
+        
+        # Build type substitution table
+        var subst = initTable[string, Type]()
+        for j, tp in genericDecl.declFuncTypeParams:
+          if j < inst.typeArgs.len:
+            let targ = inst.typeArgs[j]
+            if targ.kind == tekNamed:
+              case targ.typeName
+              of "int", "int32": subst[tp] = makeInt()
+              of "int64": subst[tp] = makeInt64()
+              of "float64": subst[tp] = makeFloat64()
+              of "float32": subst[tp] = makeFloat32()
+              of "bool": subst[tp] = makeBool()
+              else: subst[tp] = makeNamed(targ.typeName)
+        
+        # Create specialized declaration
+        var specDecl = Decl(
+          kind: dkFunc,
+          loc: genericDecl.loc,
+          isPublic: genericDecl.isPublic,
+          declFuncAsm: genericDecl.declFuncAsm,
+          declFuncCallConv: genericDecl.declFuncCallConv,
+          declFuncName: mangledName,
+          declFuncTypeParams: @[],
+          declFuncParams: genericDecl.declFuncParams,
+          declFuncReturnType: genericDecl.declFuncReturnType,
+          declFuncBody: genericDecl.declFuncBody
+        )
+        
+        # Set substitution and lower
+        ctx.typeSubst = subst
+        funcs.add(ctx.lowerFunc(specDecl))
+        ctx.typeSubst = initTable[string, Type]()  # Clear substitution
+        generated[mangledName] = true
+
+  # Third pass: lower all non-generic functions
   for decl in module.items:
     case decl.kind
     of dkFunc:
-      if decl.declFuncBody != nil:
-        funcs.add(ctx.lowerFunc(decl))
-      else:
-        # Extern function (no body)
-        externFuncs.add(ctx.lowerFunc(decl))
+      if decl.declFuncTypeParams.len == 0:  # Skip generic functions
+        if decl.declFuncBody != nil:
+          funcs.add(ctx.lowerFunc(decl))
+        else:
+          # Extern function (no body)
+          externFuncs.add(ctx.lowerFunc(decl))
     of dkImpl:
       for methodDecl in decl.declImplMethods:
         if methodDecl.kind == dkFunc:
