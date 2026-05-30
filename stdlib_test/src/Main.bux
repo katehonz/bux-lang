@@ -1,0 +1,21 @@
+import Std::Array::{Array, Array_New, Array_Push, Array_Get, Array_Len, Array_Free};
+import Std::Io::{PrintLine, PrintInt};
+
+func Main() -> int {
+    var arr: Array = Array_New(4);
+    
+    Array_Push(&arr, 10);
+    Array_Push(&arr, 20);
+    Array_Push(&arr, 30);
+    
+    PrintLine("Array contents:");
+    var i: uint = 0;
+    while i < Array_Len(&arr) {
+        PrintInt(Array_Get(&arr, i));
+        PrintLine("");
+        i = i + 1;
+    }
+    
+    Array_Free(&arr);
+    return 0;
+}

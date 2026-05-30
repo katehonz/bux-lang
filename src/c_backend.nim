@@ -195,6 +195,10 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     let base = be.emitExpr(node.fieldPtrBase)
     return &"(&({base}.{node.fieldName}))"
 
+  of hArrowField:
+    let base = be.emitExpr(node.arrowFieldBase)
+    return &"(&({base}->{node.arrowFieldName}))"
+
   of hIndexPtr:
     let base = be.emitExpr(node.indexPtrBase)
     let idx = be.emitExpr(node.indexPtrIndex)

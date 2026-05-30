@@ -120,6 +120,9 @@ proc isAssignableTo*(a, b: Type): bool =
   # smaller int -> int/uint
   if b.kind == tkInt and a.kind in {tkInt8, tkInt16, tkInt32}: return true
   if b.kind == tkUInt and a.kind in {tkUInt8, tkUInt16, tkUInt32}: return true
+  # int <-> uint (for convenience in bootstrap)
+  if a.kind == tkInt and b.kind == tkUInt: return true
+  if a.kind == tkUInt and b.kind == tkInt: return true
   # numeric exact match required otherwise
   if a.isNumeric and b.isNumeric: return false
   # bool across widths

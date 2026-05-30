@@ -22,6 +22,7 @@ type
     hLoad
     hStore
     hFieldPtr
+    hArrowField
     hIndexPtr
     # Functions
     hCall
@@ -84,6 +85,9 @@ type
     of hFieldPtr:
       fieldPtrBase*: HirNode
       fieldName*: string
+    of hArrowField:
+      arrowFieldBase*: HirNode
+      arrowFieldName*: string
     of hIndexPtr:
       indexPtrBase*: HirNode
       indexPtrIndex*: HirNode

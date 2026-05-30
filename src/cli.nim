@@ -1,5 +1,5 @@
 import std/[os, strutils, terminal, strformat, osproc]
-import lexer, parser, sema, manifest, hir, hir_lower, c_backend, types, scope
+import lexer, parser, ast, sema, manifest, hir, hir_lower, c_backend, types, scope
 
 type
   ColorMode* = enum
@@ -190,6 +190,23 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
     printInfo("check passed", useColor)
   return 0
 
+proc collectStdlibDecls(stdlibDir: string): seq[Decl] =
+  result = @[]
+  if not dirExists(stdlibDir): return
+  for path in walkDirRec(stdlibDir):
+    if path.endsWith(".bux"):
+      let source = readFile(path)
+      let lexRes = tokenize(source, path)
+      if lexRes.hasErrors: continue
+      let parseRes = parse(lexRes.tokens, path)
+      if parseRes.diagnostics.len > 0: continue
+      for item in parseRes.module.items:
+        if item.kind == dkModule:
+          for sub in item.declModuleItems:
+            result.add(sub)
+        else:
+          result.add(item)
+
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
   let root = getCurrentDir()
@@ -207,6 +224,22 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let buildDir = root / "build"
   if not dirExists(buildDir):
     createDir(buildDir)
+
+  # Find stdlib directory
+  var stdlibDir = ""
+  let stdlibSearchPaths = @[
+    getAppDir() / ".." / "stdlib",
+    getAppDir() / "stdlib",
+    root / "stdlib",
+    "/home/ziko/z-git/bux/bux/stdlib",
+  ]
+  for path in stdlibSearchPaths:
+    if dirExists(path):
+      stdlibDir = path
+      break
+  
+  # Collect stdlib declarations once
+  let stdlibDecls = collectStdlibDecls(stdlibDir)
 
   # Process all .bux files
   var allCCode = ""
@@ -226,6 +259,13 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
         for d in parseRes.diagnostics:
           echo &"error: {d.message} at {d.loc}"
         return 1
+      
+      # Merge stdlib declarations into the module (prepend so they are processed first)
+      var mergedItems = stdlibDecls
+      for decl in parseRes.module.items:
+        mergedItems.add(decl)
+      parseRes.module.items = mergedItems
+      
       let (semaRes, semaCtx) = analyzeFull(parseRes.module)
       if semaRes.hasErrors:
         printError(&"type errors in {path}", useColor)
@@ -257,18 +297,6 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   # Copy runtime and stdlib files
   let runtimeDst = buildDir / "runtime.c"
   let ioDst = buildDir / "io.c"
-  var stdlibDir = ""
-  # Search for stdlib directory
-  let stdlibSearchPaths = @[
-    getAppDir() / ".." / "stdlib",
-    getAppDir() / "stdlib",
-    root / "stdlib",
-    "/home/ziko/z-git/bux/bux/stdlib",  # TODO: make this configurable
-  ]
-  for path in stdlibSearchPaths:
-    if dirExists(path):
-      stdlibDir = path
-      break
   if stdlibDir == "":
     printError("stdlib directory not found", useColor)
     return 1

@@ -899,7 +899,7 @@ proc parseStructDecl(p: var Parser, isPublic: bool): Decl =
     let fName = p.expect(tkIdent, "expected field name").text
     discard p.expect(tkColon, "expected ':' after field name")
     let fType = p.parseType()
-    if p.check(tkSemicolon):
+    if p.check(tkSemicolon) or p.check(tkComma):
       discard p.advance()
     fields.add(StructField(loc: fLoc, isPublic: fPub, name: fName, ftype: fType))
   discard p.expect(tkRBrace, "expected '}' to close struct")
@@ -1012,14 +1012,24 @@ proc parseImplDecl(p: var Parser): Decl =
 proc parseModuleDecl(p: var Parser, isPublic: bool): Decl =
   let loc = p.currentLoc
   discard p.expect(tkModule, "expected 'module'")
-  let name = p.expect(tkIdent, "expected module name").text
+  var path: seq[string] = @[]
+  path.add(p.expect(tkIdent, "expected module name").text)
+  while p.check(tkColonColon):
+    discard p.advance()
+    path.add(p.expect(tkIdent, "expected module path segment").text)
+  let name = path[^1]
   discard p.expect(tkLBrace, "expected '{' to start module body")
   var items: seq[Decl] = @[]
   while not p.check(tkRBrace) and not p.isAtEnd:
+    while p.check(tkNewLine):
+      discard p.advance()
+    if p.check(tkRBrace) or p.isAtEnd:
+      break
     items.add(p.parseDecl())
   discard p.expect(tkRBrace, "expected '}' to close module")
   return Decl(kind: dkModule, loc: loc, isPublic: isPublic,
-              declModuleName: name, declModuleItems: items)
+              declModuleName: name, declModulePath: path,
+              declModuleItems: items)
 
 proc parseUseDecl(p: var Parser, attrs: ParsedAttrs): Decl =
   let loc = p.currentLoc
@@ -1027,6 +1037,9 @@ proc parseUseDecl(p: var Parser, attrs: ParsedAttrs): Decl =
   var path: seq[string] = @[]
   path.add(p.expect(tkIdent, "expected import path segment").text)
   while p.check(tkColonColon):
+    # Lookahead: if :: is followed by { or *, don't consume it here
+    if p.peek(1) == tkLBrace or p.peek(1) == tkStar:
+      break
     discard p.advance()
     path.add(p.expect(tkIdent, "expected import path segment").text)
   var kind = ukSingle
@@ -1040,13 +1053,17 @@ proc parseUseDecl(p: var Parser, attrs: ParsedAttrs): Decl =
     kind = ukGlob
   elif p.check(tkColonColon):
     discard p.advance()
-    discard p.expect(tkLBrace, "expected '{' for multi-import")
-    while not p.check(tkRBrace) and not p.isAtEnd:
-      names.add(p.expect(tkIdent, "expected name in multi-import").text)
-      if p.check(tkComma):
-        discard p.advance()
-    discard p.expect(tkRBrace, "expected '}' to close multi-import")
-    kind = ukMulti
+    if p.check(tkLBrace):
+      discard p.advance()
+      while not p.check(tkRBrace) and not p.isAtEnd:
+        names.add(p.expect(tkIdent, "expected name in multi-import").text)
+        if p.check(tkComma):
+          discard p.advance()
+      discard p.expect(tkRBrace, "expected '}' to close multi-import")
+      kind = ukMulti
+    elif p.check(tkStar):
+      discard p.advance()
+      kind = ukGlob
   if p.check(tkSemicolon):
     discard p.advance()
   return Decl(kind: dkUse, loc: loc, declUsePath: path, declUseKind: kind,
@@ -1083,8 +1100,14 @@ proc parseExternDecl(p: var Parser, isPublic: bool, attrs: ParsedAttrs): Decl =
   discard p.expect(tkExtern, "expected 'extern'")
   if p.check(tkFunc):
     let funcDecl = p.parseFuncDecl(isPublic, false, attrs)
-    funcDecl.isPublic = isPublic
-    return funcDecl
+    # Convert dkFunc to dkExternFunc
+    return Decl(kind: dkExternFunc, loc: funcDecl.loc, isPublic: isPublic,
+                declExtFuncName: funcDecl.declFuncName,
+                declExtFuncDll: attrs.importLib,
+                declExtFuncCallConv: attrs.callConv,
+                declExtFuncParams: funcDecl.declFuncParams,
+                declExtFuncVariadic: false,
+                declExtFuncReturnType: funcDecl.declFuncReturnType)
   elif p.check(tkLBrace):
     discard p.advance()
     var items: seq[Decl] = @[]

@@ -337,6 +337,7 @@ type
       declImplMethods*: seq[Decl]
     of dkModule:
       declModuleName*: string
+      declModulePath*: seq[string]
       declModuleItems*: seq[Decl]
     of dkUse:
       declUsePath*: seq[string]
@@ -370,11 +371,12 @@ type
   # ---------------------------------------------------------------------------
   Module* = ref object
     name*: string
+    path*: seq[string]
     items*: seq[Decl]
 
 # Convenience constructors
-proc newModule*(name: string): Module =
-  result = Module(name: name)
+proc newModule*(name: string, path: seq[string] = @[]): Module =
+  result = Module(name: name, path: path)
 
 proc newBlock*(loc: SourceLocation): Block =
   result = Block(loc: loc)

@@ -118,6 +118,16 @@ proc collectGlobals*(sema: var Sema) =
       sym.typ = makeFunc(params, retType)
       if not sema.globalScope.define(sym):
         sema.emitError(decl.loc, &"duplicate symbol '{decl.declFuncName}'")
+    of dkExternFunc:
+      let sym = Symbol(kind: skFunc, name: decl.declExtFuncName, decl: decl,
+                       isPublic: decl.isPublic)
+      var params: seq[Type] = @[]
+      for p in decl.declExtFuncParams:
+        params.add(sema.resolveType(p.ptype))
+      let retType = if decl.declExtFuncReturnType != nil: sema.resolveType(decl.declExtFuncReturnType) else: makeVoid()
+      sym.typ = makeFunc(params, retType)
+      if not sema.globalScope.define(sym):
+        sema.emitError(decl.loc, &"duplicate symbol '{decl.declExtFuncName}'")
     of dkStruct:
       let t = makeNamed(decl.declStructName)
       let sym = Symbol(kind: skType, name: decl.declStructName, typ: t,
@@ -160,11 +170,24 @@ proc collectGlobals*(sema: var Sema) =
         sema.emitError(decl.loc, &"duplicate symbol '{decl.declAliasName}'")
       sema.typeTable[decl.declAliasName] = t
     of dkUse:
-      # Imports: for now just register the last segment as a module symbol
+      # Imports: register imported names into scope
       if decl.declUsePath.len > 0:
-        let name = decl.declUsePath[^1]
-        let sym = Symbol(kind: skModule, name: name, typ: makeUnknown(), isPublic: true)
-        discard sema.globalScope.define(sym)
+        case decl.declUseKind
+        of ukMulti:
+          for name in decl.declUseNames:
+            if sema.globalScope.lookup(name) == nil:
+              let sym = Symbol(kind: skFunc, name: name, typ: makeUnknown(), isPublic: true)
+              discard sema.globalScope.define(sym)
+        of ukGlob:
+          let name = decl.declUsePath[^1]
+          if sema.globalScope.lookup(name) == nil:
+            let sym = Symbol(kind: skModule, name: name, typ: makeUnknown(), isPublic: true)
+            discard sema.globalScope.define(sym)
+        of ukSingle:
+          let name = decl.declUsePath[^1]
+          if sema.globalScope.lookup(name) == nil:
+            let sym = Symbol(kind: skFunc, name: name, typ: makeUnknown(), isPublic: true)
+            discard sema.globalScope.define(sym)
     of dkInterface:
       # Register interface for conformance checking
       sema.interfaceTable[decl.declInterfaceName] = decl
@@ -460,10 +483,14 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       return makeUnknown()
   of ekField:
     let obj = sema.checkExpr(expr.exprFieldObj, scope)
-    if obj.kind == tkNamed:
+    var objType = obj
+    # Auto-dereference pointer types for field access
+    if objType.kind == tkPointer and objType.inner.len > 0:
+      objType = objType.inner[0]
+    if objType.kind == tkNamed:
       # Check if this is a _Data union field access
-      if obj.name.endsWith("_Data"):
-        let enumName = obj.name[0..^6]  # Remove "_Data" suffix
+      if objType.name.endsWith("_Data"):
+        let enumName = objType.name[0..^6]  # Remove "_Data" suffix
         let enumSym = sema.globalScope.lookup(enumName)
         if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
           # Look for the field in enum variants
@@ -477,17 +504,17 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
             for nf in variant.namedFields:
               if nf.name == expr.exprFieldName:
                 return sema.resolveType(nf.ftype)
-          sema.emitError(expr.loc, &"union '{obj.name}' has no field '{expr.exprFieldName}'")
+          sema.emitError(expr.loc, &"union '{objType.name}' has no field '{expr.exprFieldName}'")
         else:
           sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
       else:
-        let sym = sema.globalScope.lookup(obj.name)
+        let sym = sema.globalScope.lookup(objType.name)
         if sym != nil and sym.decl != nil:
           if sym.decl.kind == dkStruct:
             for f in sym.decl.declStructFields:
               if f.name == expr.exprFieldName:
                 return sema.resolveType(f.ftype)
-            sema.emitError(expr.loc, &"struct '{obj.name}' has no field '{expr.exprFieldName}'")
+            sema.emitError(expr.loc, &"struct '{objType.name}' has no field '{expr.exprFieldName}'")
           elif sym.decl.kind == dkEnum:
             # Algebraic enum fields
             if expr.exprFieldName == "tag":

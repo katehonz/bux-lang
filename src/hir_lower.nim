@@ -1,4 +1,4 @@
-import std/[tables, strformat, strutils]
+import std/[tables, sets, strformat, strutils]
 import ast, types, token, source_location, hir, sema, scope
 
 type
@@ -7,6 +7,7 @@ type
     globalScope*: Scope
     methodTable*: Table[string, seq[MethodInfo]]
     currentFuncRetType*: Type
+    currentFuncDecl*: Decl
     varCounter*: int
     typeSubst*: Table[string, Type]  # Type parameter substitution for generics
     importTable*: Table[string, string]  # Local name → fully qualified name for imports
@@ -102,6 +103,26 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.typeSubst = initTable[string, Type]()
   result.importTable = initTable[string, string]()
 
+proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
+  if te == nil: return makeUnknown()
+  case te.kind
+  of tekNamed:
+    case te.typeName
+    of "void": return makeVoid()
+    of "bool": return makeBool()
+    of "int": return makeInt()
+    of "int32": return makeInt()
+    of "int64": return makeInt64()
+    of "float64": return makeFloat64()
+    of "float32": return makeFloat32()
+    of "uint": return makeUInt()
+    of "uint32": return makeUInt()
+    of "uint64": return makeUInt64()
+    else: return makeNamed(te.typeName)
+  of tekPointer: return makePointer(ctx.resolveTypeExpr(te.pointerPointee))
+  of tekSlice: return makeSlice(ctx.resolveTypeExpr(te.sliceElement))
+  else: return makeUnknown()
+
 # Forward declarations
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode
 proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode
@@ -119,8 +140,33 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     of tkBoolLiteral: return makeBool()
     else: return makeUnknown()
   of ekIdent:
+    # Check global scope first
     let sym = ctx.globalScope.lookup(expr.exprIdent)
     if sym != nil and sym.typ != nil: return sym.typ
+    # Check current function parameters
+    if ctx.currentFuncDecl != nil:
+      var params: seq[Param] = @[]
+      case ctx.currentFuncDecl.kind
+      of dkFunc: params = ctx.currentFuncDecl.declFuncParams
+      of dkExternFunc: params = ctx.currentFuncDecl.declExtFuncParams
+      else: discard
+      for p in params:
+        if p.name == expr.exprIdent and p.ptype != nil:
+          case p.ptype.kind
+          of tekNamed:
+            case p.ptype.typeName
+            of "int", "int32": return makeInt()
+            of "int64": return makeInt64()
+            of "float64": return makeFloat64()
+            of "float32": return makeFloat32()
+            of "bool": return makeBool()
+            of "uint": return makeUInt()
+            of "void": return makeVoid()
+            else: return makeNamed(p.ptype.typeName)
+          of tekPointer:
+            let pointeeType = ctx.resolveTypeExpr(p.ptype.pointerPointee)
+            return makePointer(pointeeType)
+          else: discard
     return makeUnknown()
   of ekSelf: return makeNamed("self")
   of ekBinary:
@@ -156,7 +202,10 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
             return minfo.retType
     return makeUnknown()
   of ekField:
-    let objType = ctx.resolveExprType(expr.exprFieldObj)
+    var objType = ctx.resolveExprType(expr.exprFieldObj)
+    # Auto-dereference pointer types for field access
+    if objType.kind == tkPointer and objType.inner.len > 0:
+      objType = objType.inner[0]
     if objType.kind == tkNamed:
       let sym = ctx.globalScope.lookup(objType.name)
       if sym != nil and sym.decl != nil and sym.decl.kind == dkStruct:
@@ -171,7 +220,8 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
                 of "float32": return makeFloat32()
                 of "bool": return makeBool()
                 else: return makeNamed(f.ftype.typeName)
-              of tekPointer: return makePointer(makeUnknown())
+              of tekPointer:
+                return ctx.resolveTypeExpr(f.ftype)
               else: return makeUnknown()
     return makeUnknown()
   of ekStructInit: return makeNamed(expr.exprStructInitName)
@@ -186,9 +236,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     return makeTuple(elems)
   of ekCast:
     if expr.exprCastType != nil:
-      case expr.exprCastType.kind
-      of tekNamed: return makeNamed(expr.exprCastType.typeName)
-      else: return makeUnknown()
+      return ctx.resolveTypeExpr(expr.exprCastType)
     return makeUnknown()
   of ekBlock:
     if expr.exprBlock.stmts.len > 0:
@@ -292,7 +340,14 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                      callIndirectArgs: args, typ: typ, loc: loc)
 
   of ekField:
+    let objType = ctx.resolveExprType(expr.exprFieldObj)
     let base = ctx.lowerExpr(expr.exprFieldObj)
+    # Auto-dereference pointer types for field access
+    if objType.kind == tkPointer:
+      let arrowPtr = HirNode(kind: hArrowField, arrowFieldBase: base,
+                             arrowFieldName: expr.exprFieldName,
+                             typ: makePointer(typ), loc: loc)
+      return HirNode(kind: hLoad, loadPtr: arrowPtr, typ: typ, loc: loc)
     let basePtr = HirNode(kind: hFieldPtr, fieldPtrBase: base,
                           fieldName: expr.exprFieldName,
                           typ: makePointer(typ), loc: loc)
@@ -335,10 +390,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     let operand = ctx.lowerExpr(expr.exprCastOperand)
     var castType = makeUnknown()
     if expr.exprCastType != nil:
-      case expr.exprCastType.kind
-      of tekNamed: castType = makeNamed(expr.exprCastType.typeName)
-      of tekPointer: castType = makePointer(makeUnknown())
-      else: discard
+      castType = ctx.resolveTypeExpr(expr.exprCastType)
     return HirNode(kind: hCast, castOperand: operand, castType: castType,
                    typ: typ, loc: loc)
 
@@ -509,8 +561,28 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   # Set up type substitution for generic functions
   let oldSubst = ctx.typeSubst
   
+  var funcName: string
+  var funcParams: seq[Param]
+  var funcReturnType: TypeExpr
+  var funcBody: Block
+  
+  case decl.kind
+  of dkFunc:
+    funcName = decl.declFuncName
+    funcParams = decl.declFuncParams
+    funcReturnType = decl.declFuncReturnType
+    funcBody = decl.declFuncBody
+  of dkExternFunc:
+    funcName = decl.declExtFuncName
+    funcParams = decl.declExtFuncParams
+    funcReturnType = decl.declExtFuncReturnType
+    funcBody = nil
+  else:
+    result = HirFunc(name: "", params: @[], retType: makeVoid(), body: nil)
+    return
+  
   var params: seq[tuple[name: string, typ: Type]] = @[]
-  for p in decl.declFuncParams:
+  for p in funcParams:
     var pType = makeUnknown()
     if p.ptype != nil:
       case p.ptype.kind
@@ -527,32 +599,37 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
           of "bool": pType = makeBool()
           of "Point", "Self": pType = makeNamed(p.ptype.typeName)
           else: pType = makeNamed(p.ptype.typeName)
-      of tekPointer: pType = makePointer(makeUnknown())
+      of tekPointer:
+        let pointeeType = ctx.resolveTypeExpr(p.ptype.pointerPointee)
+        pType = makePointer(pointeeType)
       else: discard
     params.add((p.name, pType))
 
   var retType = makeVoid()
-  if decl.declFuncReturnType != nil:
-    case decl.declFuncReturnType.kind
+  if funcReturnType != nil:
+    case funcReturnType.kind
     of tekNamed:
       # Check if this is a type parameter
-      if ctx.typeSubst.hasKey(decl.declFuncReturnType.typeName):
-        retType = ctx.typeSubst[decl.declFuncReturnType.typeName]
+      if ctx.typeSubst.hasKey(funcReturnType.typeName):
+        retType = ctx.typeSubst[funcReturnType.typeName]
       else:
-        case decl.declFuncReturnType.typeName
+        case funcReturnType.typeName
         of "int", "int32": retType = makeInt()
         of "int64": retType = makeInt64()
         of "float64": retType = makeFloat64()
         of "float32": retType = makeFloat32()
         of "bool": retType = makeBool()
-        else: retType = makeNamed(decl.declFuncReturnType.typeName)
-    of tekPointer: retType = makePointer(makeUnknown())
+        else: retType = makeNamed(funcReturnType.typeName)
+    of tekPointer:
+      let pointeeType = ctx.resolveTypeExpr(funcReturnType.pointerPointee)
+      retType = makePointer(pointeeType)
     else: discard
 
   ctx.currentFuncRetType = retType
-  let body = if decl.declFuncBody != nil: ctx.lowerBlock(decl.declFuncBody) else: nil
+  ctx.currentFuncDecl = decl
+  let body = if funcBody != nil: ctx.lowerBlock(funcBody) else: nil
 
-  result = HirFunc(name: decl.declFuncName, params: params, retType: retType,
+  result = HirFunc(name: funcName, params: params, retType: retType,
                    body: body, isPublic: decl.isPublic)
   
   # Restore old substitution
@@ -566,6 +643,17 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   var enums: seq[tuple[name: string, variants: seq[HirEnumVariant]]] = @[]
   var consts: seq[tuple[name: string, typ: Type, value: HirNode]] = @[]
 
+  # Collect local symbol names so we don't remap them via imports
+  var localSymbols = initHashSet[string]()
+  for decl in module.items:
+    case decl.kind
+    of dkFunc: localSymbols.incl(decl.declFuncName)
+    of dkExternFunc: localSymbols.incl(decl.declExtFuncName)
+    of dkStruct: localSymbols.incl(decl.declStructName)
+    of dkEnum: localSymbols.incl(decl.declEnumName)
+    of dkUnion: localSymbols.incl(decl.declUnionName)
+    else: discard
+
   # Collect imports for name resolution
   for decl in module.items:
     if decl.kind == dkUse:
@@ -574,12 +662,14 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
         if decl.declUsePath.len > 0:
           let localName = decl.declUsePath[^1]
           let fullName = decl.declUsePath.join("_")
-          ctx.importTable[localName] = fullName
+          if localName notin localSymbols:
+            ctx.importTable[localName] = fullName
       of ukMulti:
         if decl.declUsePath.len > 0:
           let basePath = decl.declUsePath.join("_")
           for name in decl.declUseNames:
-            ctx.importTable[name] = basePath & "_" & name
+            if name notin localSymbols:
+              ctx.importTable[name] = basePath & "_" & name
       of ukGlob:
         # For glob imports, we can't statically resolve all names here.
         # Store the base path for potential future use.
@@ -706,6 +796,8 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
         else:
           # Extern function (no body)
           externFuncs.add(ctx.lowerFunc(decl))
+    of dkExternFunc:
+      externFuncs.add(ctx.lowerFunc(decl))
     of dkImpl:
       for methodDecl in decl.declImplMethods:
         if methodDecl.kind == dkFunc:
@@ -715,13 +807,7 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
     of dkStruct:
       var fields: seq[tuple[name: string, typ: Type]] = @[]
       for f in decl.declStructFields:
-        var fType = makeUnknown()
-        if f.ftype != nil and f.ftype.kind == tekNamed:
-          case f.ftype.typeName
-          of "float64": fType = makeFloat64()
-          of "float32": fType = makeFloat32()
-          of "int", "int32": fType = makeInt()
-          else: fType = makeNamed(f.ftype.typeName)
+        let fType = if f.ftype != nil: ctx.resolveTypeExpr(f.ftype) else: makeUnknown()
         fields.add((f.name, fType))
       structs.add((decl.declStructName, fields))
     of dkEnum:
