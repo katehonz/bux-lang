@@ -148,22 +148,27 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   of ekCall:
     # Method call desugaring: obj.method(args) → Type_method(obj, args)
     if expr.exprCallCallee.kind == ekField:
-      let recvType = ctx.resolveExprType(expr.exprCallCallee.exprFieldObj)
       let methodName = expr.exprCallCallee.exprFieldName
-      var typeName = ""
-      if recvType.kind == tkNamed: typeName = recvType.name
-      elif recvType.isPointer and recvType.inner.len > 0 and recvType.inner[0].kind == tkNamed:
-        typeName = recvType.inner[0].name
-      if typeName != "" and ctx.methodTable.hasKey(typeName):
-        for minfo in ctx.methodTable[typeName]:
+      
+      # Try to find the method in methodTable
+      for typeName, methods in ctx.methodTable:
+        for minfo in methods:
           if minfo.name == methodName:
-            # Desugar: obj.method(args) → Type_method(&obj, args)
+            # Found the method - desugar to Type_method(receiver, args)
             let mangledName = typeName & "_" & methodName
             var args: seq[HirNode] = @[]
             args.add(ctx.lowerExpr(expr.exprCallCallee.exprFieldObj))
             for arg in expr.exprCallArgs:
               args.add(ctx.lowerExpr(arg))
             return hirCall(mangledName, args, typ, loc)
+      
+      # Not a method call - treat as field access + call (function pointer)
+      let callee = ctx.lowerExpr(expr.exprCallCallee)
+      var args: seq[HirNode] = @[]
+      for arg in expr.exprCallArgs:
+        args.add(ctx.lowerExpr(arg))
+      return HirNode(kind: hCallIndirect, callIndirectCallee: callee,
+                     callIndirectArgs: args, typ: typ, loc: loc)
 
     # Regular function call
     var calleeName = ""

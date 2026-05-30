@@ -573,3 +573,11 @@ proc analyze*(modu: Module): SemaResult =
   sema.collectGlobals()
   sema.checkBodies()
   result = SemaResult(diagnostics: sema.diagnostics)
+
+proc analyzeFull*(modu: Module): tuple[result: SemaResult, sema: Sema] =
+  ## Analyze module and return both result and full Sema context
+  ## Use this when you need the Sema for lowering (method table, etc.)
+  var sema = Sema(module: modu, globalScope: newScope())
+  sema.collectGlobals()
+  sema.checkBodies()
+  result = (SemaResult(diagnostics: sema.diagnostics), sema)

@@ -226,7 +226,7 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
         for d in parseRes.diagnostics:
           echo &"error: {d.message} at {d.loc}"
         return 1
-      let semaRes = analyze(parseRes.module)
+      let (semaRes, semaCtx) = analyzeFull(parseRes.module)
       if semaRes.hasErrors:
         printError(&"type errors in {path}", useColor)
         for d in semaRes.diagnostics:
@@ -235,9 +235,7 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
         return 1
 
       # Lower to HIR
-      var s = Sema(module: parseRes.module, globalScope: newScope())
-      s.collectGlobals()
-      let hirModule = lowerModule(parseRes.module, s)
+      let hirModule = lowerModule(parseRes.module, semaCtx)
 
       # Generate C code
       var cbe = initCBackend()
