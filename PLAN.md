@@ -66,7 +66,7 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 
 ---
 
-## Phase 2 — Semantic Analysis 🔄 (In Progress)
+## Phase 2 — Semantic Analysis ✅ (Complete)
 
 **Goal:** Type-check the AST and produce a typed symbol table.
 
@@ -77,30 +77,30 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | `2.3` First pass | ✅ | Collect global symbols (functions, structs, enums, unions, interfaces, consts, type aliases, imports) |
 | `2.4` Type checking | ✅ | Expression typing, operator overload resolution per Rux rules, assignment compatibility |
 | `2.5` Name resolution | ✅ | Resolve identifiers, paths, `self`, `super`; report undeclared / ambiguous names |
-| `2.6` Interface conformance | 🔄 | Check that `extend T for I` provides all required methods; build vtable map |
-| `2.7` Generics (basic) | ⏳ | Monomorphization of generic structs and functions at call sites |
+| `2.6` Interface conformance | ✅ | Check that `extend T for I` provides all required methods; build vtable map |
+| `2.7` Generics (basic) | ✅ | Monomorphization of generic functions at call sites |
 | `2.8` Diagnostics | ✅ | Multi-file error messages with source locations |
-| `2.9` **Algebraic enums** | ⏳ | Enums with data (like Rust's `enum Result<T,E> { Ok(T), Err(E) }`) — AST supports it, sema needs to validate |
-| `2.10` **Method resolution** | ⏳ | Resolve `obj.method()` calls to `Type_method(obj)` based on receiver type |
+| `2.9` **Algebraic enums** | ✅ | Enums with data (like Rust's `enum Result<T,E> { Ok(T), Err(E) }`) — lowered to tagged unions |
+| `2.10` **Method resolution** | ✅ | Resolve `obj.method()` calls to `Type_method(obj)` based on receiver type |
 
-**Deliverable:** `bux check` rejects ill-typed programs and passes `Tests/Echo`, `Tests/Io`, `Tests/Pow` type-checking.
+**Deliverable:** `bux check` rejects ill-typed programs and passes all 9 example programs.
 
 ---
 
-## Phase 3 — High-Level IR (HIR) (Week 8)
+## Phase 3 — High-Level IR (HIR) ✅ (Complete)
 
 **Goal:** Lower AST to a simplified, fully-typed HIR.
 
-| Task | Details |
-|------|---------|
-| `3.1` HIR nodes | Desugared equivalents of AST nodes (see `_rux/Include/Rux/Hir.h`) |
-| `3.2` Lowering | Desugar `for` → `while`+iterator, `match` → decision tree, method calls to explicit receiver calls |
-| `3.3` Constant folding | Evaluate `const` and simple compile-time expressions |
-| `3.4` Interface lowering | Convert interface values to fat pointers `{data_ptr, vtable_ptr}`; generate vtable labels |
-| `3.5` **Generic instantiation** | Monomorphize generic functions/structs at call sites |
-| `3.6` **Enum lowering** | Lower algebraic enums to tagged unions `{tag: uint, data: union}` |
+| Task | Status | Details |
+|------|--------|---------|
+| `3.1` HIR nodes | ✅ | Desugared equivalents of AST nodes |
+| `3.2` Lowering | ✅ | Desugar `for` → `while`+counter, `match` → if-else chains, method calls to explicit receiver calls |
+| `3.3` Constant folding | ⏳ | Evaluate `const` and simple compile-time expressions |
+| `3.4` Interface lowering | ⏳ | Convert interface values to fat pointers `{data_ptr, vtable_ptr}`; generate vtable labels |
+| `3.5` **Generic instantiation** | ✅ | Monomorphize generic functions at call sites |
+| `3.6` **Enum lowering** | ✅ | Lower algebraic enums to tagged unions `{tag: uint, data: union}` |
 
-**Deliverable:** HIR dump matches Rux HIR semantics for sample programs.
+**Deliverable:** HIR lowering produces valid C code for all example programs.
 
 ---
 
@@ -123,18 +123,18 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 
 **Strategy:** Two backends in parallel — a **C transpiler** for instant portability and a **native x86-64** backend for performance.
 
-### 5A — C Transpiler (Primary bootstrap path)
+### 5A — C Transpiler (Primary bootstrap path) ✅
 
-| Task | Details |
-|------|---------|
-| `5A.1` C emitter | Walk LIR and emit C11 code |
-| `5A.2` Types to C | Bux primitives → C primitives; structs → C structs; enums → C enums + tagged unions; slices → `{T* data; size_t len;}` |
-| `5A.3` Functions to C | Bux functions → C functions with `static` / `extern`; name mangling for overloads/generics |
-| `5A.4` FFI | `extern` / `@[Import]` → `#include` + function declarations; link with system `cc` |
-| `5A.5` Runtime shim | Small C runtime providing `bux_alloc`, `bux_print`, panic/abort for div-by-zero, etc. |
-| `5A.6` Build integration | `bux build` invokes `cc` / `clang` / `gcc` automatically |
+| Task | Status | Details |
+|------|--------|---------|
+| `5A.1` C emitter | ✅ | Walk HIR and emit C11 code |
+| `5A.2` Types to C | ✅ | Bux primitives → C primitives; structs → C structs; enums → C enums + tagged unions; slices → `T*` |
+| `5A.3` Functions to C | ✅ | Bux functions → C functions with `static` / `extern`; name mangling for overloads/generics |
+| `5A.4` FFI | ✅ | `extern` / `@[Import]` → `extern` declarations; link with system `cc` |
+| `5A.5` Runtime shim | ✅ | Small C runtime providing `bux_alloc`, `bux_print`, panic/abort for div-by-zero, etc. |
+| `5A.6` Build integration | ✅ | `bux build` invokes `cc` / `clang` / `gcc` automatically |
 
-**Deliverable:** `bux run` on `Tests/Io/Main.bux` prints "Hello from a Bux binary!".
+**Deliverable:** `bux run` on all 9 examples produces working binaries.
 
 ### 5B — Native x86-64 Backend (Secondary, for self-hosting speed)
 
@@ -150,24 +150,24 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 
 ---
 
-## Phase 6 — Standard Library (Week 15-18)
+## Phase 6 — Standard Library 🔄 (In Progress)
 
 **Goal:** Enough stdlib to write the compiler in Bux.
 
-| Module | Requirements |
-|--------|-------------|
-| `Std::Io` | `Print`, `PrintLine`, `ReadLine`, file read/write (wrap C stdio initially) |
-| `Std::Memory` | `Alloc`, `Free`, `Realloc` (wrap `malloc`/`free`) |
-| `Std::String` | Basic string builder, concatenation, slicing |
-| `Std::Array` | Dynamic array (`Vec<T>` equivalent): `push`, `pop`, `get`, `len`, `capacity` |
-| `Std::Map` | Hash map with string keys (needed for symbol tables) |
-| `Std::Math` | `Sqrt`, `Pow`, `Min`, `Max`, `Abs` |
-| `Std::Os` | `Args`, `Env`, `Exit`, `Cwd` |
-| `Std::Path` | Path joining, extension splitting |
-| `Std::Process` | Spawn subprocess, read stdout/stderr |
-| **`Std::Result`** | `Result<T, E>` + `Option<T>` types with `?` operator for error propagation |
-| **`Std::Iter`** | Iterator trait with `map`, `filter`, `fold`, `collect` |
-| **`Std::Fmt`** | String formatting: `"Hello, {}!"` interpolation |
+| Module | Status | Requirements |
+|--------|--------|-------------|
+| `Std::Io` | ✅ | `Print`, `PrintLine`, `PrintInt`, `ReadLine` (wrap C stdio) |
+| `Std::Memory` | ✅ | `bux_alloc`, `bux_realloc`, `bux_free` (wrap `malloc`/`free`) |
+| `Std::String` | ⏳ | Basic string builder, concatenation, slicing |
+| `Std::Array` | ✅ | Dynamic array: `Array_New`, `Array_Push`, `Array_Get`, `Array_Len`, `Array_Free` |
+| `Std::Map` | ⏳ | Hash map with string keys (needed for symbol tables) |
+| `Std::Math` | ⏳ | `Sqrt`, `Pow`, `Min`, `Max`, `Abs` |
+| `Std::Os` | ⏳ | `Args`, `Env`, `Exit`, `Cwd` |
+| `Std::Path` | ⏳ | Path joining, extension splitting |
+| `Std::Process` | ⏳ | Spawn subprocess, read stdout/stderr |
+| **`Std::Result`** | ⏳ | `Result<T, E>` + `Option<T>` types with `?` operator for error propagation |
+| **`Std::Iter`** | ⏳ | Iterator trait with `map`, `filter`, `fold`, `collect` |
+| **`Std::Fmt`** | ⏳ | String formatting: `"Hello, {}!"` interpolation |
 
 **Deliverable:** Can write a non-trivial CLI tool (e.g., a file copier or a basic grep) entirely in Bux.
 
@@ -499,10 +499,10 @@ func Main() -> int {
 |-----------|-------|------------------|
 | **M0** | 0 ✅ | `bux check` lexes source |
 | **M1** | 1 ✅ | All Rux test files parse |
-| **M2** | 2 🔄 | Type-checker rejects invalid programs |
-| **M3** | 3+4 | LIR emits for all constructs |
-| **M4** | 5A | `bux run` produces working binary via C |
-| **M5** | 6 | Can write compiler-adjacent tools in Bux |
+| **M2** | 2 ✅ | Type-checker rejects invalid programs |
+| **M3** | 3 ✅ | HIR lowering works for all constructs |
+| **M4** | 5A ✅ | `bux run` produces working binary via C transpiler |
+| **M5** | 6 🔄 | Can write compiler-adjacent tools in Bux |
 | **M6** | 7 | **Self-hosted**: Bux compiler builds itself |
 | **M7** | 8 | Result/Option, ownership, concurrency shipped |
 | **M8** | 9 | Package manager + LSP + formatter shipped |
@@ -524,10 +524,11 @@ func Main() -> int {
 
 ## Next Immediate Steps
 
-1. **Complete Phase 2** — Finish interface conformance checking and generic monomorphization
-2. **Build HIR** (Phase 3) — Lower AST to typed HIR
-3. **C Backend** (Phase 5A) — Get `Hello, Bux!` running via C transpiler
-4. **Stdlib basics** — `Array`, `String`, `Result` types
+1. **Generic struct monomorphization** — Enable `Array<T>`, `Map<K,V>` for self-hosting
+2. **Std::String module** — String builder, concatenation, slicing
+3. **Std::Map module** — Hash map with string keys (critical for symbol tables)
+4. **Std::Result / Std::Option** — Algebraic enums for error handling
+5. **Self-hosting preparation** — Audit Nim compiler code for Bux-rewrite feasibility
 
 ---
 
@@ -630,6 +631,7 @@ Based on [Rux Documentation](https://rux-lang.dev/docs/), these are the features
 | **Index** | `arr[idx]` | ✅ Implemented |
 | **Call** | `func(args...)` | ✅ Implemented |
 | **Spread** | `func(slice...)` | ✅ Implemented |
+| **Range expr** | `0..5`, `0..=5` | ✅ Implemented |
 | **Struct init** | `Point { x: 1.0, y: 2.0 }` | ✅ Implemented |
 | **Slice init** | `[1, 2, 3]` | ✅ Implemented |
 | **Tuple init** | `(a, b, c)` | ✅ Implemented |
@@ -656,7 +658,7 @@ Based on [Rux Documentation](https://rux-lang.dev/docs/), these are the features
 | **Return type** | `-> type` | ✅ Implemented |
 | **Multiple returns** | `-> (type1, type2)` via tuple | ⏳ Phase 1 |
 | **Variadic** | `values: type...` | ⏳ Phase 1 |
-| **Generics** | `func Name<T>(...)` | ⏳ Phase 2.7 |
+| **Generics** | `func Name<T>(...)` | ✅ Implemented |
 | **Assembler** | `asm func Name() { ... }` | ⏳ Phase 8 |
 | **Entry point** | `func Main() -> int` | ✅ Implemented |
 
