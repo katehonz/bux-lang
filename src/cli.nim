@@ -256,30 +256,45 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let cFile = buildDir / "main.c"
   writeFile(cFile, allCCode)
 
-  # Copy runtime
+  # Copy runtime and stdlib files
   let runtimeDst = buildDir / "runtime.c"
-  var runtimeFound = false
-  # Search in multiple locations
-  let searchPaths = @[
-    getAppDir() / ".." / "stdlib" / "runtime.c",
-    getAppDir() / "stdlib" / "runtime.c",
-    root / "stdlib" / "runtime.c",
-    root / "stdlib_runtime.c",
-    "/home/ziko/z-git/bux/bux/stdlib/runtime.c",  # TODO: make this configurable
+  let ioDst = buildDir / "io.c"
+  var stdlibDir = ""
+  # Search for stdlib directory
+  let stdlibSearchPaths = @[
+    getAppDir() / ".." / "stdlib",
+    getAppDir() / "stdlib",
+    root / "stdlib",
+    "/home/ziko/z-git/bux/bux/stdlib",  # TODO: make this configurable
   ]
-  for runtimePath in searchPaths:
-    if fileExists(runtimePath):
-      copyFile(runtimePath, runtimeDst)
-      runtimeFound = true
+  for path in stdlibSearchPaths:
+    if dirExists(path):
+      stdlibDir = path
       break
-  if not runtimeFound:
-    printError("runtime.c not found (searched in stdlib/, build/, and project root)", useColor)
+  if stdlibDir == "":
+    printError("stdlib directory not found", useColor)
+    return 1
+  
+  # Copy runtime.c
+  let runtimeSrc = stdlibDir / "runtime.c"
+  if fileExists(runtimeSrc):
+    copyFile(runtimeSrc, runtimeDst)
+  else:
+    printError("runtime.c not found in stdlib", useColor)
+    return 1
+  
+  # Copy io.c
+  let ioSrc = stdlibDir / "io.c"
+  if fileExists(ioSrc):
+    copyFile(ioSrc, ioDst)
+  else:
+    printError("io.c not found in stdlib", useColor)
     return 1
 
   # Compile with cc
   let outputName = if man.name != "": man.name else: "bux_out"
   let outputFile = buildDir / outputName
-  let ccCmd = &"cc -o {outputFile} {cFile} {runtimeDst} -lm 2>&1"
+  let ccCmd = &"cc -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm 2>&1"
   if opts.verbose:
     printInfo(&"running: {ccCmd}", useColor)
   let (output, exitCode) = execCmdEx(ccCmd)

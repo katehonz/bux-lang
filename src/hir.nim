@@ -126,6 +126,7 @@ type
 
   HirModule* = object
     funcs*: seq[HirFunc]
+    externFuncs*: seq[HirFunc]  # Functions declared with extern (no body)
     structs*: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]]
     enums*: seq[tuple[name: string, variants: seq[string]]]
     consts*: seq[tuple[name: string, typ: Type, value: HirNode]]

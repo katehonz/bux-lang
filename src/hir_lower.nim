@@ -420,6 +420,7 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
 proc lowerModule*(module: Module, sema: Sema): HirModule =
   var ctx = initLowerCtx(module, sema)
   var funcs: seq[HirFunc] = @[]
+  var externFuncs: seq[HirFunc] = @[]
   var structs: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]] = @[]
   var enums: seq[tuple[name: string, variants: seq[string]]] = @[]
   var consts: seq[tuple[name: string, typ: Type, value: HirNode]] = @[]
@@ -427,7 +428,11 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   for decl in module.items:
     case decl.kind
     of dkFunc:
-      funcs.add(ctx.lowerFunc(decl))
+      if decl.declFuncBody != nil:
+        funcs.add(ctx.lowerFunc(decl))
+      else:
+        # Extern function (no body)
+        externFuncs.add(ctx.lowerFunc(decl))
     of dkImpl:
       for methodDecl in decl.declImplMethods:
         if methodDecl.kind == dkFunc:
@@ -461,4 +466,4 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       consts.add((decl.declConstName, typ, value))
     else: discard
 
-  result = HirModule(funcs: funcs, structs: structs, enums: enums, consts: consts)
+  result = HirModule(funcs: funcs, externFuncs: externFuncs, structs: structs, enums: enums, consts: consts)
