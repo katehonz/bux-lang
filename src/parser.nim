@@ -62,6 +62,26 @@ proc match(p: var Parser, kind: TokenKind): bool =
     return true
   return false
 
+proc isTypeArgListAhead(p: Parser): bool =
+  ## Lookahead to determine if '<' starts a type argument list.
+  ## Returns true if we can find a matching '>' before EOF, '{', or ';'.
+  if not p.check(tkLt): return false
+  var depth = 0
+  var ahead = 0
+  while true:
+    let kind = p.peek(ahead)
+    if kind == tkEndOfFile or kind == tkLBrace or kind == tkSemicolon:
+      return false
+    if kind == tkLt:
+      inc depth
+    elif kind == tkGt:
+      dec depth
+      if depth == 0:
+        return true
+      if depth < 0:
+        return false
+    inc ahead
+
 proc expect(p: var Parser, kind: TokenKind, message: string): Token =
   if p.check(kind):
     return p.advance()
@@ -240,7 +260,7 @@ proc parsePrimaryPattern(p: var Parser): Pattern =
             discard p.advance()
         discard p.expect(tkRParen, "expected ')' to close enum pattern")
         return Pattern(kind: pkEnum, loc: loc, patEnumPath: path, patEnumArgs: args, patEnumNamed: named)
-      return Pattern(kind: pkIdent, loc: loc, patIdent: name)
+      return Pattern(kind: pkEnum, loc: loc, patEnumPath: path, patEnumArgs: @[], patEnumNamed: @[])
     elif p.check(tkLBrace):
       # Struct pattern: Point { x: 0, y: 0 }
       discard p.advance()
@@ -443,7 +463,8 @@ proc parsePostfix(p: var Parser): Expr =
       left = Expr(kind: ekCall, loc: loc, exprCallCallee: left, exprCallArgs: args)
     of tkLt:
       # Generic type arguments: Max<int>(10, 20)
-      if left.kind == ekIdent:
+      # Only treat '<' as generic args if lookahead confirms a matching '>'
+      if left.kind == ekIdent and p.isTypeArgListAhead():
         discard p.advance()
         var typeArgs: seq[TypeExpr] = @[]
         while not p.check(tkGt) and not p.isAtEnd:
@@ -727,10 +748,20 @@ proc parseStmt(p: var Parser): Stmt =
     return Stmt(kind: skFor, loc: loc, stmtForVar: varName, stmtForIter: iter, stmtForBody: body)
   of tkMatch:
     discard p.advance()
+    p.structInitAllowed = false
     let subject = p.parseExpr()
+    p.structInitAllowed = true
+    # Skip newlines before opening brace
+    while p.check(tkNewLine):
+      discard p.advance()
     discard p.expect(tkLBrace, "expected '{' to start match")
     var arms: seq[MatchArm] = @[]
     while not p.check(tkRBrace) and not p.isAtEnd:
+      # Skip newlines
+      while p.check(tkNewLine):
+        discard p.advance()
+      if p.check(tkRBrace) or p.isAtEnd:
+        break
       let armLoc = p.currentLoc
       let pat = p.parsePattern()
       discard p.expect(tkFatArrow, "expected '=>' in match arm")
@@ -739,7 +770,7 @@ proc parseStmt(p: var Parser): Stmt =
       if p.check(tkComma):
         discard p.advance()
     discard p.expect(tkRBrace, "expected '}' to close match")
-    return Stmt(kind: skMatch, loc: loc, stmtMatchSubject: subject, stmtMatchArms: arms)
+    return Stmt(kind: skExpr, loc: loc, stmtExpr: Expr(kind: ekMatch, loc: loc, exprMatchSubject: subject, exprMatchArms: arms))
   of tkReturn:
     discard p.advance()
     var val: Expr = nil

@@ -136,7 +136,15 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
       if node.litToken.text == "true": return "true"
       else: return "false"
     of tkStringLiteral:
-      return node.litToken.text
+      var text = node.litToken.text
+      # Strip c8" c16" c32" prefixes — in C they are just regular string literals
+      if text.startsWith("c32\""):
+        text = text[3..^1]
+      elif text.startsWith("c16\""):
+        text = text[3..^1]
+      elif text.startsWith("c8\""):
+        text = text[2..^1]
+      return text
     of tkNull:
       return "NULL"
     else:
@@ -340,7 +348,14 @@ proc emitFunc*(be: var CBackend, hfunc: HirFunc) =
   be.emitLine(&"{retType} {hfunc.name}({paramsStr}) {{")
   inc be.indent
   if hfunc.body != nil:
-    be.emitStmt(hfunc.body)
+    if hfunc.body.kind == hBlock and hfunc.body.blockExpr != nil and hfunc.retType.kind != tkVoid:
+      # Function returns a value via block expression — emit statements and add return
+      for stmt in hfunc.body.blockStmts:
+        be.emitStmt(stmt)
+      let val = be.emitExpr(hfunc.body.blockExpr)
+      be.emitLine(&"return {val};")
+    else:
+      be.emitStmt(hfunc.body)
   dec be.indent
   be.emitLine("}")
   be.emitLine("")

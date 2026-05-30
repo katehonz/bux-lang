@@ -9,10 +9,90 @@ type
     currentFuncRetType*: Type
     varCounter*: int
     typeSubst*: Table[string, Type]  # Type parameter substitution for generics
+    importTable*: Table[string, string]  # Local name → fully qualified name for imports
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
   result = "__tmp_" & $ctx.varCounter
+
+proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ: Type, loc: SourceLocation): HirNode =
+  # Lower match expression to a block with if-else chain.
+  # For now, supports enum tag matching and wildcard/ident fallbacks.
+  let resultName = ctx.freshName()
+  var stmts: seq[HirNode] = @[]
+  
+  # Allocate result variable
+  stmts.add(hirAlloca(resultName, typ, loc))
+  
+  # Build if-else chain from arms (last arm is the outermost else)
+  var ifChain: HirNode = nil
+  
+  for i in countdown(arms.len - 1, 0):
+    let arm = arms[i]
+    let body = arm.body
+    
+    case arm.pattern.kind
+    of pkEnum:
+      let path = arm.pattern.patEnumPath
+      if path.len >= 2:
+        let enumName = path[0]
+        let variantName = path[^1]
+        let tagName = enumName & "_" & variantName
+        
+        # condition: subject.tag == EnumName_VariantName
+        let tagField = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: "tag",
+                               typ: makePointer(makeNamed(enumName & "_Tag")), loc: loc)
+        let tagLoad = HirNode(kind: hLoad, loadPtr: tagField, typ: makeNamed(enumName & "_Tag"), loc: loc)
+        let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName & "_Tag"), loc)
+        let cond = hirBinary(tkEq, tagLoad, tagConst, makeBool(), loc)
+        
+        # body: result = arm_body
+        var armStmts: seq[HirNode] = @[]
+        armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
+        let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
+        
+        if ifChain == nil:
+          ifChain = HirNode(kind: hIf, ifCond: cond, ifThen: armBlock, ifElse: nil,
+                            typ: makeVoid(), loc: loc)
+        else:
+          ifChain = HirNode(kind: hIf, ifCond: cond, ifThen: armBlock, ifElse: ifChain,
+                            typ: makeVoid(), loc: loc)
+      else:
+        var armStmts: seq[HirNode] = @[]
+        armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
+        let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
+        if ifChain == nil:
+          ifChain = armBlock
+        else:
+          ifChain = HirNode(kind: hIf,
+            ifCond: hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc),
+            ifThen: armBlock, ifElse: ifChain, typ: makeVoid(), loc: loc)
+    of pkWildcard, pkIdent:
+      # Default arm — always matches
+      var armStmts: seq[HirNode] = @[]
+      armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
+      let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
+      if ifChain == nil:
+        ifChain = armBlock
+      else:
+        ifChain = HirNode(kind: hIf,
+          ifCond: hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc),
+          ifThen: armBlock, ifElse: ifChain, typ: makeVoid(), loc: loc)
+    else:
+      var armStmts: seq[HirNode] = @[]
+      armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
+      let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
+      if ifChain == nil:
+        ifChain = armBlock
+      else:
+        ifChain = HirNode(kind: hIf,
+          ifCond: hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc),
+          ifThen: armBlock, ifElse: ifChain, typ: makeVoid(), loc: loc)
+  
+  stmts.add(ifChain)
+  
+  # Return the result variable as the block expression
+  return hirBlock(stmts, hirVar(resultName, typ, loc), typ, loc)
 
 proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.module = module
@@ -20,6 +100,7 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.methodTable = sema.methodTable
   result.varCounter = 0
   result.typeSubst = initTable[string, Type]()
+  result.importTable = initTable[string, string]()
 
 # Forward declarations
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode
@@ -127,7 +208,10 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return hirLit(expr.exprLit, typ, loc)
 
   of ekIdent:
-    return hirVar(expr.exprIdent, typ, loc)
+    let name = expr.exprIdent
+    if ctx.importTable.hasKey(name):
+      return hirVar(ctx.importTable[name], typ, loc)
+    return hirVar(name, typ, loc)
 
   of ekPath:
     # Handle enum variants: Color::Red → Color_Red
@@ -193,8 +277,10 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     var calleeName = ""
     if expr.exprCallCallee.kind == ekIdent:
       calleeName = expr.exprCallCallee.exprIdent
+      if ctx.importTable.hasKey(calleeName):
+        calleeName = ctx.importTable[calleeName]
     elif expr.exprCallCallee.kind == ekPath:
-      calleeName = expr.exprCallCallee.exprPath.join("::")
+      calleeName = expr.exprCallCallee.exprPath.join("_")
     var args: seq[HirNode] = @[]
     for arg in expr.exprCallArgs:
       args.add(ctx.lowerExpr(arg))
@@ -284,8 +370,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     var arms: seq[HirMatchArm] = @[]
     for arm in expr.exprMatchArms:
       arms.add(HirMatchArm(pattern: arm.pattern, body: ctx.lowerExpr(arm.body)))
-    return HirNode(kind: hMatch, matchSubject: subject, matchArms: arms,
-                   typ: typ, loc: loc)
+    return lowerMatch(ctx, subject, arms, typ, loc)
 
   of ekSizeOf:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
@@ -405,8 +490,20 @@ proc lowerBlock(ctx: var LowerCtx, blk: Block): HirNode =
     let hir = ctx.lowerStmt(s)
     if hir != nil:
       stmts.add(hir)
-  return HirNode(kind: hBlock, blockStmts: stmts, blockExpr: nil,
-                 typ: makeVoid(), loc: blk.loc)
+  # If the last statement is an expression, make it the block's result expression
+  var expr: HirNode = nil
+  if stmts.len > 0 and stmts[^1].kind == hBlock and stmts[^1].blockExpr != nil:
+    # Nested block expression (e.g., from match lowering) — lift it
+    let last = stmts[^1]
+    stmts[^1] = hirBlock(last.blockStmts, nil, makeVoid(), last.loc)
+    expr = last.blockExpr
+  elif stmts.len > 0 and stmts[^1].kind != hBlock:
+    # Last stmt is a simple expression-like node — we can't easily extract it,
+    # but for hVar/hLit/hCall etc. we could treat them as block expr.
+    # For now, leave as-is to avoid breaking control-flow statements.
+    discard
+  return HirNode(kind: hBlock, blockStmts: stmts, blockExpr: expr,
+                 typ: if expr != nil: expr.typ else: makeVoid(), loc: blk.loc)
 
 proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   # Set up type substitution for generic functions
@@ -468,6 +565,26 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   var structs: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]] = @[]
   var enums: seq[tuple[name: string, variants: seq[HirEnumVariant]]] = @[]
   var consts: seq[tuple[name: string, typ: Type, value: HirNode]] = @[]
+
+  # Collect imports for name resolution
+  for decl in module.items:
+    if decl.kind == dkUse:
+      case decl.declUseKind
+      of ukSingle:
+        if decl.declUsePath.len > 0:
+          let localName = decl.declUsePath[^1]
+          let fullName = decl.declUsePath.join("_")
+          ctx.importTable[localName] = fullName
+      of ukMulti:
+        if decl.declUsePath.len > 0:
+          let basePath = decl.declUsePath.join("_")
+          for name in decl.declUseNames:
+            ctx.importTable[name] = basePath & "_" & name
+      of ukGlob:
+        # For glob imports, we can't statically resolve all names here.
+        # Store the base path for potential future use.
+        discard
+
 
   # First pass: collect generic functions
   var genericFuncs = initTable[string, Decl]()

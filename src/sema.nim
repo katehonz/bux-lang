@@ -211,6 +211,29 @@ proc collectGlobals*(sema: var Sema) =
 proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type
 proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type
 
+proc extractPatternBindings(sema: var Sema, pat: Pattern, scope: Scope) =
+  ## Add pattern-bound identifiers to scope with unknown type (best-effort)
+  if pat == nil: return
+  case pat.kind
+  of pkIdent:
+    let sym = Symbol(kind: skVar, name: pat.patIdent, typ: makeUnknown(), isMutable: false)
+    discard scope.define(sym)
+  of pkEnum:
+    for arg in pat.patEnumArgs:
+      sema.extractPatternBindings(arg, scope)
+    for nf in pat.patEnumNamed:
+      sema.extractPatternBindings(nf.pattern, scope)
+  of pkTuple:
+    for elem in pat.patTupleElements:
+      sema.extractPatternBindings(elem, scope)
+  of pkStruct:
+    for f in pat.patStructFields:
+      sema.extractPatternBindings(f.pattern, scope)
+  of pkGuarded:
+    sema.extractPatternBindings(pat.patGuardedInner, scope)
+  else:
+    discard
+
 proc checkExprList(sema: var Sema, exprs: seq[Expr], scope: Scope): seq[Type] =
   for e in exprs:
     result.add(sema.checkExpr(e, scope))
@@ -522,7 +545,9 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     let subjectType = sema.checkExpr(expr.exprMatchSubject, scope)
     var resultType = makeUnknown()
     for arm in expr.exprMatchArms:
-      let armType = sema.checkExpr(arm.body, scope)
+      var armScope = newScope(scope)
+      sema.extractPatternBindings(arm.pattern, armScope)
+      let armType = sema.checkExpr(arm.body, armScope)
       if resultType.isUnknown:
         resultType = armType
       elif armType != resultType and not armType.isUnknown:

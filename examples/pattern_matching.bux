@@ -1,0 +1,32 @@
+// Pattern Matching - Match expressions with algebraic enums
+extern func Std_Io_PrintLine(s: String);
+extern func Std_Io_PrintInt(n: int);
+
+enum Option {
+    Some(int),
+    None
+}
+
+func GetValue(opt: Option) -> int {
+    match opt {
+        Option::Some(value) => opt.data.Some_0,
+        Option::None => 0
+    }
+}
+
+func Main() -> int {
+    let opt1: Option = Option { tag: Option_Some };
+    opt1.data.Some_0 = 42;
+    
+    let opt2: Option = Option { tag: Option_None };
+    
+    Std_Io_PrintLine("opt1 value: ");
+    Std_Io_PrintInt(GetValue(opt1));
+    Std_Io_PrintLine("");
+    
+    Std_Io_PrintLine("opt2 value: ");
+    Std_Io_PrintInt(GetValue(opt2));
+    Std_Io_PrintLine("");
+    
+    return 0;
+}

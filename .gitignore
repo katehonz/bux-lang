@@ -1,13 +1,23 @@
 # Compiled binary
 buxc
+src/main
 
 # Nim cache
 nimcache/
 
 # Test binaries
 tests/lexer_test
+tests/parser_test
+tests/sema_test
+tests/hir_test
+tests/test_generics_parse
 tests/*.exe
 
 # Build artifacts
 build/
 *.o
+
+# Temporary directories
+_test_tmp_pkg/
+test_pkg/
+examples_pkg/
