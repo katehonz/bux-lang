@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <pthread.h>
+#include <ucontext.h>
 
 /* Command-line argument storage */
 int g_argc = 0;
@@ -793,4 +794,140 @@ void bux_channel_free(void* handle) {
     pthread_cond_destroy(&ch->not_full);
     free(ch->buffer);
     free(ch);
+}
+
+/* ============================================================================
+ * Stackful Coroutines + Async Scheduler (Phase 8.3 true async)
+ * ============================================================================ */
+
+#define BUX_CORO_STACK_SIZE (64 * 1024)
+
+typedef struct bux_async_task {
+    ucontext_t ctx;
+    ucontext_t* caller_ctx;
+    uint8_t* stack;
+    int state;           /* 0 = ready, 1 = running, 2 = done */
+    void (*entry)(void);
+    struct bux_async_task* next;
+} bux_async_task_t;
+
+static bux_async_task_t* bux_ready_head = NULL;
+static bux_async_task_t* bux_ready_tail = NULL;
+static bux_async_task_t* bux_current_task = NULL;
+static ucontext_t bux_scheduler_ctx;
+static int bux_scheduler_running = 0;
+
+static void bux_enqueue_ready(bux_async_task_t* task) {
+    task->next = NULL;
+    if (bux_ready_tail) {
+        bux_ready_tail->next = task;
+    } else {
+        bux_ready_head = task;
+    }
+    bux_ready_tail = task;
+}
+
+static bux_async_task_t* bux_dequeue_ready(void) {
+    bux_async_task_t* task = bux_ready_head;
+    if (task) {
+        bux_ready_head = task->next;
+        if (!bux_ready_head) bux_ready_tail = NULL;
+    }
+    return task;
+}
+
+static void bux_coro_trampoline(void) {
+    bux_async_task_t* self = bux_current_task;
+    if (self != NULL && self->entry != NULL) {
+        self->entry();
+    }
+    if (self != NULL) {
+        self->state = 2; /* done */
+        swapcontext(&self->ctx, &bux_scheduler_ctx);
+    }
+}
+
+void* bux_async_spawn(void (*func)(void)) {
+    bux_async_task_t* task = (bux_async_task_t*)malloc(sizeof(bux_async_task_t));
+    if (!task) {
+        fprintf(stderr, "bux runtime: out of memory (async spawn)\n");
+        abort();
+    }
+    task->stack = (uint8_t*)malloc(BUX_CORO_STACK_SIZE);
+    if (!task->stack) {
+        fprintf(stderr, "bux runtime: out of memory (coro stack)\n");
+        free(task);
+        abort();
+    }
+    task->state = 0;
+    task->next = NULL;
+    task->caller_ctx = NULL;
+    task->entry = func;
+
+    getcontext(&task->ctx);
+    task->ctx.uc_stack.ss_sp = task->stack;
+    task->ctx.uc_stack.ss_size = BUX_CORO_STACK_SIZE;
+    task->ctx.uc_link = &bux_scheduler_ctx;
+    makecontext(&task->ctx, bux_coro_trampoline, 0);
+
+    bux_enqueue_ready(task);
+    return task;
+}
+
+void bux_async_yield(void) {
+    if (bux_current_task != NULL) {
+        bux_async_task_t* task = bux_current_task;
+        bux_current_task = NULL;
+        bux_enqueue_ready(task);
+        swapcontext(&task->ctx, &bux_scheduler_ctx);
+    }
+}
+
+void bux_async_await(void* handle) {
+    if (!handle) return;
+    bux_async_task_t* target = (bux_async_task_t*)handle;
+    while (target->state != 2) {
+        if (bux_current_task != NULL) {
+            /* Inside a coroutine: yield and let scheduler run */
+            bux_async_yield();
+        } else {
+            /* Main thread: run scheduler until target is done */
+            if (!bux_scheduler_running) {
+                bux_async_run();
+            }
+        }
+    }
+}
+
+void bux_async_run(void) {
+    if (bux_scheduler_running) return;
+    bux_scheduler_running = 1;
+    getcontext(&bux_scheduler_ctx);
+    while (bux_ready_head != NULL) {
+        bux_async_task_t* task = bux_dequeue_ready();
+        if (!task) break;
+        if (task->state == 2) {
+            free(task->stack);
+            free(task);
+            continue;
+        }
+        task->state = 1;
+        bux_current_task = task;
+        swapcontext(&bux_scheduler_ctx, &task->ctx);
+        bux_current_task = NULL;
+        if (task->state == 2) {
+            free(task->stack);
+            free(task);
+        }
+    }
+    bux_scheduler_running = 0;
+}
+
+void bux_async_sleep(int64_t ms) {
+    /* Naive sleep: block this coroutine via yield */
+    if (ms > 0) {
+        /* TODO: proper timer-based scheduling */
+        /* For now, just yield once */
+        bux_async_yield();
+    }
 }

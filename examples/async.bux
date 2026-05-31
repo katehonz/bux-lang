@@ -1,23 +1,32 @@
-import Std::Io::{PrintLine, PrintInt};
-import Std::Task::TaskHandle;
+import Std::Io::PrintLine;
 
-async func BackgroundWork(id: int) {
-    PrintLine("Task started:");
-    PrintInt(id);
-    PrintLine("");
-    Task_Sleep(50);
-    PrintLine("Task done:");
-    PrintInt(id);
-    PrintLine("");
+extern func bux_async_yield();
+extern func bux_async_run();
+extern func bux_async_spawn(fn: *void) -> *void;
+extern func bux_async_await(handle: *void);
+
+async func WorkA() {
+    PrintLine("WorkA: step 1");
+    bux_async_yield();
+    PrintLine("WorkA: step 2");
+    bux_async_yield();
+    PrintLine("WorkA: done");
+}
+
+async func WorkB() {
+    PrintLine("WorkB: step 1");
+    bux_async_yield();
+    PrintLine("WorkB: step 2");
+    bux_async_yield();
+    PrintLine("WorkB: done");
 }
 
 func Main() -> int {
-    PrintLine("Main: spawning tasks...");
-    let h1: *void = spawn BackgroundWork(1);
-    let h2: *void = spawn BackgroundWork(2);
-    PrintLine("Main: waiting for tasks...");
-    h1.await;
-    h2.await;
-    PrintLine("Main: all tasks completed");
+    PrintLine("Main: start");
+    let h1: *void = spawn WorkA();
+    let h2: *void = spawn WorkB();
+    bux_async_await(h1);
+    bux_async_await(h2);
+    PrintLine("Main: all done");
     return 0;
 }
