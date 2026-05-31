@@ -223,6 +223,67 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
+    // While
+    if kind == hWhile {
+        StringBuilder_Append(&cbe.sb, "while (");
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, ") {\n");
+        if node.child2 != null as *HirNode {
+            cbe.indent = cbe.indent + 1;
+            CBE_EmitExpr(cbe, node.child2);
+            cbe.indent = cbe.indent - 1;
+        }
+        var sp: int = 0;
+        while sp < cbe.indent {
+            StringBuilder_Append(&cbe.sb, "    ");
+            sp = sp + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "}");
+        return;
+    }
+
+    // Loop (infinite)
+    if kind == hLoop {
+        StringBuilder_Append(&cbe.sb, "while (1) {\n");
+        if node.child1 != null as *HirNode {
+            cbe.indent = cbe.indent + 1;
+            CBE_EmitExpr(cbe, node.child1);
+            cbe.indent = cbe.indent - 1;
+        }
+        var sp: int = 0;
+        while sp < cbe.indent {
+            StringBuilder_Append(&cbe.sb, "    ");
+            sp = sp + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "}");
+        return;
+    }
+
+    // Index: arr[idx] — emit as arr[idx]
+    if kind == hIndexPtr {
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, "[");
+        CBE_EmitExpr(cbe, node.child2);
+        StringBuilder_Append(&cbe.sb, "]");
+        return;
+    }
+
+    // Load: *ptr — emit as *ptr (dereference)
+    if kind == hLoad {
+        StringBuilder_Append(&cbe.sb, "(*");
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, ")");
+        return;
+    }
+
+    // Assign: target = value
+    if kind == hAssign {
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, " = ");
+        CBE_EmitExpr(cbe, node.child2);
+        return;
+    }
+
     // Cast
     if kind == hCast {
         StringBuilder_Append(&cbe.sb, "((");

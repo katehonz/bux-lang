@@ -66,6 +66,13 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Binary
     if kind == ekBinary {
+        // Assignment operator → use hAssign
+        if expr.intValue == tkAssign {
+            n.kind = hAssign;
+            n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+            n.child2 = Lcx_LowerExpr(ctx, expr.child2);
+            return n;
+        }
         n.kind = hBinary;
         n.intValue = expr.intValue; // operator
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
@@ -103,6 +110,22 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         n.kind = hFieldPtr;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         n.strValue = expr.strValue;
+        return n;
+    }
+
+    // Index: arr[idx]
+    if kind == ekIndex {
+        n.kind = hIndexPtr;
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        n.child2 = Lcx_LowerExpr(ctx, expr.child2);
+        return n;
+    }
+
+    // Assign: target = value
+    if kind == ekAssign {
+        n.kind = hAssign;
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1); // target
+        n.child2 = Lcx_LowerExpr(ctx, expr.child2); // value
         return n;
     }
 
