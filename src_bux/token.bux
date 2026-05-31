@@ -128,9 +128,10 @@ const tkHashTime: int = 96;
 const tkHashModule: int = 97;
 
 // Special
-const tkNewLine: int = 98;
-const tkEndOfFile: int = 99;
-const tkUnknown: int = 100;
+const tkOwn: int = 98;
+const tkNewLine: int = 99;
+const tkEndOfFile: int = 100;
+const tkUnknown: int = 101;
 
 // ---------------------------------------------------------------------------
 // Token struct

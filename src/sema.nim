@@ -63,7 +63,7 @@ proc typeExprReferencesTypeParam(te: TypeExpr, name: string): bool =
     return false
   of tekSlice:
     return typeExprReferencesTypeParam(te.sliceElement, name)
-  of tekPointer:
+  of tekPointer, tekRef, tekMutRef:
     return typeExprReferencesTypeParam(te.pointerPointee, name)
   of tekTuple:
     for elem in te.tupleElements:
@@ -172,6 +172,10 @@ proc resolveType(sema: var Sema, te: TypeExpr): Type =
     return makeNamed(fullName)
   of tekPointer:
     return makePointer(sema.resolveType(te.pointerPointee))
+  of tekRef:
+    return makePointer(sema.resolveType(te.pointerPointee))  # &T → *T in bootstrap
+  of tekMutRef:
+    return makePointer(sema.resolveType(te.pointerPointee))  # &mut T → *T in bootstrap
   of tekSlice:
     let elemType = sema.resolveType(te.sliceElement)
     return makeSlice(elemType)

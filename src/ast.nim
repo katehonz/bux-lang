@@ -27,6 +27,8 @@ type
     tekPath
     tekSlice
     tekPointer
+    tekRef       ## &T — shared reference (gradual ownership)
+    tekMutRef    ## &mut T — mutable reference
     tekTuple
     tekSelf
 
@@ -41,7 +43,7 @@ type
     of tekSlice:
       sliceElement*: TypeExpr
       sliceSize*: Expr          ## nil for unsized slices T[]
-    of tekPointer:
+    of tekPointer, tekRef, tekMutRef:
       pointerPointee*: TypeExpr
     of tekTuple:
       tupleElements*: seq[TypeExpr]
@@ -313,6 +315,7 @@ type
   Decl* = ref object
     loc*: SourceLocation
     isPublic*: bool
+    declAttrs*: seq[string]   ## attributes: @[Checked], @[Inline], etc.
     case kind*: DeclKind
     of dkFunc:
       declFuncAsm*: bool

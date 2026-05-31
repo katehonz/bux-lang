@@ -146,13 +146,16 @@ type
     importLib*: string
     callConv*: CallingConvention
     targetOs*: string
+    checked*: bool             ## @[Checked] — enable borrow checking
 
 proc parseAttrs(p: var Parser): ParsedAttrs =
   while p.check(tkAt):
     discard p.advance()  # @
     discard p.expect(tkLBracket, "expected '[' after '@'")
     let name = p.expect(tkIdent, "expected attribute name").text
-    if name == "Import":
+    if name == "Checked":
+      result.checked = true
+    elif name == "Import":
       discard p.expect(tkLParen, "expected '('")
       let key = p.expect(tkIdent, "expected attribute key").text
       if key == "lib":
@@ -185,6 +188,9 @@ proc parseBaseType(p: var Parser): TypeExpr =
   of tkStar:
     discard p.advance()
     return TypeExpr(kind: tekPointer, loc: loc, pointerPointee: p.parseBaseType())
+  of tkAmp:
+    discard p.advance()
+    return TypeExpr(kind: tekRef, loc: loc, pointerPointee: p.parseBaseType())
   of tkLParen:
     discard p.advance()
     var elems: seq[TypeExpr] = @[]
@@ -895,7 +901,10 @@ proc parseFuncDecl(p: var Parser, isPublic: bool, isAsm: bool, attrs: ParsedAttr
     body = p.parseBlock()
   elif p.check(tkSemicolon):
     discard p.advance()
+  var declAttrs: seq[string] = @[]
+  if attrs.checked: declAttrs.add("Checked")
   return Decl(kind: dkFunc, loc: loc, isPublic: isPublic,
+              declAttrs: declAttrs,
               declFuncAsm: isAsm, declFuncCallConv: attrs.callConv,
               declFuncName: name, declFuncTypeParams: typeParams,
               declFuncParams: params, declFuncReturnType: retType,

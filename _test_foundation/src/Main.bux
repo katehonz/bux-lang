@@ -1,0 +1,2 @@
+import Std::Io::PrintLine;
+func Main() -> int { PrintLine("foundation ok"); return 0; }

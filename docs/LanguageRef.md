@@ -353,6 +353,40 @@ func Main() -> int {
 
 ---
 
+## Gradual Ownership (Phase 8.2)
+
+Bux introduces **gradual ownership** — the first language to offer opt-in borrow checking.
+
+### Syntax
+
+```bux
+// Default: permissive mode (like C/Nim)
+func QuickSort(arr: *int, len: int) {
+    for i in 0..len {
+        arr[i] = arr[i] * 2;
+    }
+}
+
+// Opt-in: @[Checked] enables borrow checking
+@[Checked]
+func SafeMerge(a: &[int], b: &[int]) -> Vec<int> {
+    // &T = shared reference (borrow checker enforced)
+    // &mut T = mutable reference (exclusive)
+    // own T = ownership transfer
+}
+```
+
+### Reference types
+
+| Type | Syntax | Description |
+|------|--------|-------------|
+| Raw pointer | `*T` | C-style pointer, no checks |
+| Shared ref | `&T` | Borrowed reference (checked) |
+| Mutable ref | `&mut T` | Exclusive mutable borrow |
+| Owned | `own T` | Ownership transfer |
+
+---
+
 ## Error Handling
 
 ### Result and Option Types
