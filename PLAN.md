@@ -712,31 +712,52 @@ func Main() -> int {
 
 ---
 
-## Next Immediate Steps (Updated 2026-05-31)
+## Next Immediate Steps (Updated 2026-05-31 — Session #2)
 
-### Completed Today
-1. ✅ **Self-hosting audit** — Phase 6.5: all 14 Nim files analyzed, Bux readiness assessed
-2. ✅ **All 14 modules ported to Bux** — 4094 LOC in `src_bux/`
-3. ✅ **Generic type inference** — `Max(10, 20)` works without explicit type args
-4. ✅ **`extend Box<T>` syntax** — Generic impl blocks
-5. ✅ **String stdlib** — Slicing, trimming, contains, StringBuilder
-6. ✅ **Generic Map\<K,V\>** — Value-type keys with strcmp
-7. ✅ **`!` unwrap operator** — Parser + sema + HIR + C backend
-8. ✅ **`@[Checked]` + `&T` + `own` syntax** — Ownership syntax parsing
-9. ✅ **`const func` syntax** — CTFE function declarations parsed
-10. ✅ **Std::Math** — Full module with C runtime wrappers
+### Completed Today (Session #2 — 14 commits!)
+1. ✅ **Struct init** — `TypeName { field: value }` across all 4 phases (parser, sema, hir_lower, c_backend)
+2. ✅ **`structInitAllowed`** — Properly disabled in if/while/for/match conditions
+3. ✅ **Postfix `!`** (unwrap) + prefix `!` (logical not) — Both parsed correctly
+4. ✅ **Extra call args** — Gracefully consumed (parser stores 2, skips rest)
+5. ✅ **Infinite-loop guards** — Block parser, match parser, struct init parser
+6. ✅ **Null-safe C runtime** — `bux_strcmp`, `bux_strcpy`, `bux_strncmp` handle NULL
+7. ✅ **C codegen improvements:**
+   - Type aliases (`typedef const char* String; uint8/int64/float64...`)
+   - Forward declarations for all functions
+   - Runtime declarations (`bux_alloc`, `bux_free`)
+   - Struct definitions with forward type declarations
+   - Pointer types for let/cast (`String*`)
+   - Cast uses actual target type
+   - Null literal → `0`
+8. ✅ **While/loop** — Full C emission with body
+9. ✅ **Array indexing** — `arr[i]` via `hIndexPtr`
+10. ✅ **Assignments** — `ekBinary(tkAssign)` → `hAssign`
+11. ✅ **Field access** — `obj->field` via `hFieldPtr`
+12. ✅ **`sizeof(Type)`** — via `hSizeOf`
+13. ✅ **Keyword-as-identifier** — `module`, `type`, `enum` as field/param names
+14. ✅ **`buxc2 project` produces working binary** — Simple projects compile and run!
 
-### Current Blockers (Phase 7.9 Dogfooding)
+### Current Status: `buxc2 check` 11/14 (79%)
 
-**Phase 7.9 is COMPLETE** — `buxc2` builds and runs successfully.
+| Passing | Status |
+|---------|--------|
+| token, source_location, types, scope, hir, sema, manifest, hir_lower, c_backend, cli, Main | ✅ |
+| ast, lexer, parser | ❌ (3 remaining) |
+
+### `buxc2 project` — Multi-file build
+
+- ✅ Pipeline works (Scan→Parse→Merge→Sema→HIR→CBackend→CC)
+- ✅ Simple projects compile to working ELF binaries
+- ⏳ 11-module project: pipeline processes but C compilation has type errors (parameter types)
+- ⏳ Full 14-module: ast/lexer/parser crash
 
 ### Next Actions (Priority Order)
 
-1. **Phase 7.10** — Bootstrap loop: use `buxc2` to compile itself → `buxc3`, compare output
-2. **Expand `buxc2` capabilities** — Currently compiles but doesn't fully process all Bux features
-3. **Add missing examples to Makefile** — `extend_generic`, `generic_infer`, `generic_infer2`, `strings2` (already added)
-4. **Phase 8** — Advanced features: ownership checker, CTFE evaluation, string interpolation
-5. **Phase 9** — Ecosystem: package manager, LSP, formatter
+1. **Fix parameter/return types** — `String*` instead of `int` in function signatures
+2. **Debug ast/lexer/parser** — Get all 14 modules passing check
+3. **Full 14-module project build** — Complete bootstrap loop: buxc3 produced by buxc2
+4. **Compare buxc2 vs buxc3 output** — True self-hosting verification
+5. **Phase 8** — Advanced features: ownership checker, CTFE evaluation, string interpolation
 
 ---
 
