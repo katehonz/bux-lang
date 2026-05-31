@@ -18,7 +18,8 @@ This document describes the Bux programming language as implemented by the boots
 10. [Generics](#generics)
 11. [Error Handling](#error-handling)
 12. [Modules and Imports](#modules-and-imports)
-13. [Operators](#operators)
+13. [Async/Await](#asyncawait)
+14. [Operators](#operators)
 
 ---
 
@@ -42,6 +43,7 @@ Identifiers start with a letter or underscore, followed by letters, digits, or u
 func, let, var, const, type, struct, enum, union, interface, extend
 module, import, pub, extern, if, else, while, do, loop, for, in
 break, continue, return, match, as, is, null, self, super, sizeof
+async, await, spawn
 ```
 
 ### String Literals
@@ -496,6 +498,66 @@ func PrivateFunc() -> int {
     return 0;
 }
 ```
+
+---
+
+## Async/Await
+
+Bux supports stackful coroutines via `async`/`await` with a round-robin scheduler.
+
+### Declaring Async Functions
+
+```bux
+async func Compute() -> int {
+    PrintLine("step 1");
+    bux_async_yield();
+    PrintLine("step 2");
+    return 42;
+}
+```
+
+### Spawning Tasks
+
+```bux
+let handle = spawn Compute();
+```
+
+### Awaiting Results
+
+```bux
+let result: int = handle.await as int;
+```
+
+### Full Example
+
+```bux
+import Std::Io::{PrintLine, PrintInt};
+
+async func Compute() -> int {
+    PrintLine("Compute: start");
+    bux_async_yield();
+    PrintLine("Compute: done");
+    return 42;
+}
+
+func Main() -> int {
+    let h = spawn Compute();
+    let r: int = h.await as int;
+    PrintInt(r);
+    return 0;
+}
+```
+
+### Runtime Functions
+
+| Function | Description |
+|----------|-------------|
+| `bux_async_yield()` | Yield control to the scheduler |
+| `bux_async_spawn(fn)` | Create a new coroutine from a function |
+| `bux_async_await(handle)` | Block until coroutine completes, return result |
+| `bux_async_run()` | Run the scheduler (called implicitly from main) |
+| `bux_async_sleep(ms)` | Sleep for `ms` milliseconds (non-blocking) |
+| `bux_async_return(value, size)` | Copy return value into task result buffer |
 
 ---
 

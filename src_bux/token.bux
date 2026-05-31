@@ -133,6 +133,11 @@ const tkNewLine: int = 99;
 const tkEndOfFile: int = 100;
 const tkUnknown: int = 101;
 
+// Async / concurrency
+const tkAsync: int = 102;
+const tkAwait: int = 103;
+const tkSpawn: int = 104;
+
 // ---------------------------------------------------------------------------
 // Token struct
 // ---------------------------------------------------------------------------
@@ -154,6 +159,8 @@ func Token_IsKeyword(kind: int) -> bool {
     if kind >= tkBreak && kind <= tkMatch { return true; }
     if kind >= tkFunc && kind <= tkExtern { return true; }
     if kind >= tkAs && kind <= tkSuper { return true; }
+    if kind == tkSizeOf { return true; }
+    if kind >= tkAsync && kind <= tkSpawn { return true; }
     return false;
 }
 

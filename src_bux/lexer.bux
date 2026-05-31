@@ -294,6 +294,9 @@ func lexKeywordKind(text: String) -> int {
     if String_Eq(text, "self") { return tkSelf; }
     if String_Eq(text, "super") { return tkSuper; }
     if String_Eq(text, "sizeof") { return tkSizeOf; }
+    if String_Eq(text, "async") { return tkAsync; }
+    if String_Eq(text, "await") { return tkAwait; }
+    if String_Eq(text, "spawn") { return tkSpawn; }
     return tkIdent;
 }
 

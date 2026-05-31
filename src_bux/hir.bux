@@ -31,6 +31,8 @@ const hSliceInit: int = 25;
 const hRange: int = 26;
 const hTupleInit: int = 27;
 const hMatch: int = 28;
+const hSpawn: int = 29;
+const hAwait: int = 30;
 
 // ---------------------------------------------------------------------------
 // HirNode — unified struct with tagged union pattern

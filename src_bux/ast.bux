@@ -93,6 +93,8 @@ const ekTry: int = 20;
 const ekUnwrap: int = 23;
 const ekBlock: int = 21;
 const ekMatch: int = 22;
+const ekSpawn: int = 24;
+const ekAwait: int = 25;
 
 struct Expr {
     kind: int,
@@ -223,6 +225,7 @@ struct Decl {
     line: uint32,
     column: uint32,
     isPublic: bool,
+    isAsync: bool,
     // Names
     strValue: String,        // decl name
     strValue2: String,       // interface name, dll name, module path

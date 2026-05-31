@@ -145,6 +145,26 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
+    // spawn Callee(args)
+    if kind == hSpawn {
+        StringBuilder_Append(&cbe.sb, "bux_async_spawn(");
+        StringBuilder_Append(&cbe.sb, node.strValue);
+        if node.child1 != null as *HirNode {
+            StringBuilder_Append(&cbe.sb, ", (void*)");
+            CBE_EmitExpr(cbe, node.child1);
+        }
+        StringBuilder_Append(&cbe.sb, ")");
+        return;
+    }
+
+    // await
+    if kind == hAwait {
+        StringBuilder_Append(&cbe.sb, "bux_async_await(");
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, ")");
+        return;
+    }
+
     // Return
     if kind == hReturn {
         StringBuilder_Append(&cbe.sb, "return");
@@ -371,24 +391,9 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
     // Return type
     if String_Eq(f.retTypeName, "") || String_Eq(f.retTypeName, "void") {
         StringBuilder_Append(&cbe.sb, "void ");
-    } else if String_Eq(f.retTypeName, "String") || String_Eq(f.retTypeName, "str") {
-        StringBuilder_Append(&cbe.sb, "String ");
-    } else if String_Eq(f.retTypeName, "bool") {
-        StringBuilder_Append(&cbe.sb, "bool ");
-    } else if String_Eq(f.retTypeName, "int") {
-        StringBuilder_Append(&cbe.sb, "int ");
-    } else if String_Eq(f.retTypeName, "int64") {
-        StringBuilder_Append(&cbe.sb, "int64 ");
-    } else if String_Eq(f.retTypeName, "uint") {
-        StringBuilder_Append(&cbe.sb, "uint ");
-    } else if String_Eq(f.retTypeName, "float64") {
-        StringBuilder_Append(&cbe.sb, "float64 ");
-    } else if f.retTypeKind == tyNamed || !String_Eq(f.retTypeName, "") {
-        // Use the struct name directly (e.g., "Point", "Type")
+    } else {
         StringBuilder_Append(&cbe.sb, f.retTypeName);
         StringBuilder_Append(&cbe.sb, " ");
-    } else {
-        StringBuilder_Append(&cbe.sb, "int "); // fallback
     }
 
     StringBuilder_Append(&cbe.sb, f.name);

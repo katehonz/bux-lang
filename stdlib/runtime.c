@@ -8,6 +8,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <ucontext.h>
+#include <time.h>
 
 /* Command-line argument storage */
 int g_argc = 0;
@@ -809,6 +810,7 @@ typedef struct bux_async_task {
     int state;           /* 0 = ready, 1 = running, 2 = done */
     void (*entry)(void);
     void* result;        /* pointer to heap-allocated result */
+    int64_t sleep_until_ms;
     struct bux_async_task* next;
 } bux_async_task_t;
 
@@ -835,6 +837,26 @@ static bux_async_task_t* bux_dequeue_ready(void) {
         if (!bux_ready_head) bux_ready_tail = NULL;
     }
     return task;
+}
+
+static void bux_remove_from_ready(bux_async_task_t* target) {
+    bux_async_task_t* prev = NULL;
+    bux_async_task_t* curr = bux_ready_head;
+    while (curr) {
+        if (curr == target) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                bux_ready_head = curr->next;
+            }
+            if (bux_ready_tail == curr) {
+                bux_ready_tail = prev;
+            }
+            return;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
 }
 
 static void bux_coro_trampoline(void) {
@@ -864,6 +886,7 @@ void* bux_async_spawn(void (*func)(void)) {
     task->next = NULL;
     task->caller_ctx = NULL;
     task->entry = func;
+    task->sleep_until_ms = 0;
 
     getcontext(&task->ctx);
     task->ctx.uc_stack.ss_sp = task->stack;
@@ -884,21 +907,31 @@ void bux_async_yield(void) {
     }
 }
 
+
+void bux_async_run(void);
+
 void* bux_async_await(void* handle) {
     if (!handle) return NULL;
     bux_async_task_t* target = (bux_async_task_t*)handle;
     while (target->state != 2) {
         if (bux_current_task != NULL) {
-            /* Inside a coroutine: yield and let scheduler run */
             bux_async_yield();
         } else {
-            /* Main thread: run scheduler until target is done */
             if (!bux_scheduler_running) {
                 bux_async_run();
             }
         }
     }
-    return target->result;
+    void* result = target->result;
+    bux_remove_from_ready(target);
+    free(target->stack);
+    free(target);
+    return result;
+}
+static int64_t bux_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 void bux_async_run(void) {
@@ -909,27 +942,39 @@ void bux_async_run(void) {
         bux_async_task_t* task = bux_dequeue_ready();
         if (!task) break;
         if (task->state == 2) {
-            free(task->stack);
-            free(task);
+            /* Leave completed tasks in queue for await to clean up */
+            bux_enqueue_ready(task);
             continue;
+        }
+        /* Check if task is still sleeping */
+        if (task->sleep_until_ms > 0) {
+            int64_t now = bux_now_ms();
+            if (now < task->sleep_until_ms) {
+                /* Re-queue and check next task */
+                bux_enqueue_ready(task);
+                /* If all tasks are sleeping, sleep the thread */
+                if (bux_ready_head == task && bux_ready_tail == task) {
+                    int64_t delay = task->sleep_until_ms - now;
+                    struct timespec ts;
+                    ts.tv_sec = delay / 1000;
+                    ts.tv_nsec = (delay % 1000) * 1000000;
+                    nanosleep(&ts, NULL);
+                }
+                continue;
+            }
+            task->sleep_until_ms = 0;
         }
         task->state = 1;
         bux_current_task = task;
         swapcontext(&bux_scheduler_ctx, &task->ctx);
         bux_current_task = NULL;
-        if (task->state == 2) {
-            free(task->stack);
-            free(task);
-        }
     }
     bux_scheduler_running = 0;
 }
 
 void bux_async_sleep(int64_t ms) {
-    /* Naive sleep: block this coroutine via yield */
-    if (ms > 0) {
-        /* TODO: proper timer-based scheduling */
-        /* For now, just yield once */
+    if (ms > 0 && bux_current_task != NULL) {
+        bux_current_task->sleep_until_ms = bux_now_ms() + ms;
         bux_async_yield();
     }
 }

@@ -276,6 +276,43 @@ These C functions are provided by `runtime.c` and are available via `extern` dec
 
 ---
 
+## Std::Async
+
+Low-level async runtime for stackful coroutines. These functions are used by the `async`/`await` language features.
+
+### Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `bux_async_spawn` | `func bux_async_spawn(fn: *void) -> *void` | Create a new coroutine from a function pointer |
+| `bux_async_yield` | `func bux_async_yield()` | Yield control to the scheduler |
+| `bux_async_await` | `func bux_async_await(handle: *void) -> *void` | Block until coroutine completes, return result pointer |
+| `bux_async_run` | `func bux_async_run()` | Run the round-robin scheduler |
+| `bux_async_sleep` | `func bux_async_sleep(ms: int64)` | Non-blocking sleep for `ms` milliseconds |
+| `bux_async_return` | `func bux_async_return(value: *void, size: int64)` | Copy return value into task result buffer |
+| `bux_now_ms` | `func bux_now_ms() -> int64` | Monotonic clock in milliseconds |
+
+### Example
+
+```bux
+extern func bux_async_yield();
+extern func bux_async_spawn(fn: *void) -> *void;
+extern func bux_async_await(handle: *void) -> *void;
+
+async func Compute() -> int {
+    bux_async_yield();
+    return 42;
+}
+
+func Main() -> int {
+    let h = spawn Compute();
+    let r: int = h.await as int;
+    return 0;
+}
+```
+
+---
+
 ## Future Modules
 
 - `Std::Result` — Shipped via algebraic enums ✅
@@ -284,4 +321,4 @@ These C functions are provided by `runtime.c` and are available via `extern` dec
 - `Std::Os` — `Args`, `Env`, `Exit`, `Cwd`
 - `Std::Fmt` — String formatting with interpolation
 - `Std::Iter` — Iterator trait and combinators
-- `Std::Task` / `Std::Channel` — Lightweight concurrency
+- `Std::Task` / `Std::Channel` — Lightweight concurrency (pthread-based threads)

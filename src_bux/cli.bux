@@ -76,6 +76,9 @@ func Cli_Compile(source: String, sourceName: String) -> String {
         PrintLine("HIR lowering failed");
         return "";
     }
+    Print("HIR funcCount=");
+    PrintInt(hirMod.funcCount);
+    PrintLine("");
 
     // Phase 5: C code generation
     let cCode: String = CBackend_Generate(hirMod);

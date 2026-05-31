@@ -832,11 +832,11 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     let cond = ctx.lowerExpr(stmt.stmtIfCond)
     let thenBlock = ctx.lowerBlock(stmt.stmtIfThen)
     var elseBlock: HirNode = nil
-    if stmt.stmtIfElse != nil:
-      elseBlock = ctx.lowerBlock(stmt.stmtIfElse)
-    elif stmt.stmtIfElseIfs.len > 0:
-      # Desugar else-if chain
+    if stmt.stmtIfElseIfs.len > 0:
+      # Desugar else-if chain, attaching else block if present
       var current: HirNode = nil
+      if stmt.stmtIfElse != nil:
+        current = ctx.lowerBlock(stmt.stmtIfElse)
       for i in countdown(stmt.stmtIfElseIfs.len - 1, 0):
         let elifBranch = stmt.stmtIfElseIfs[i]
         let elifCond = ctx.lowerExpr(elifBranch.cond)
@@ -844,6 +844,8 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
         current = HirNode(kind: hIf, ifCond: elifCond, ifThen: elifBlock,
                          ifElse: current, typ: makeVoid(), loc: elifBranch.loc)
       elseBlock = current
+    elif stmt.stmtIfElse != nil:
+      elseBlock = ctx.lowerBlock(stmt.stmtIfElse)
     return ctx.flushPending(HirNode(kind: hIf, ifCond: cond, ifThen: thenBlock, ifElse: elseBlock,
                    typ: makeVoid(), loc: loc))
 

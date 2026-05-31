@@ -127,15 +127,9 @@ func parserParseType(p: *Parser) -> *TypeExpr {
         te.line = line;
         te.column = col;
         te.pointerPointee = parserParseType(p);
-        // Set typeName to "String*" for String pointer, else "int*"
+        // Set typeName to "Pointee*"
         if te.pointerPointee != null as *TypeExpr {
-            if String_Eq(te.pointerPointee.typeName, "String") {
-                te.typeName = "String*";
-            } else if String_Eq(te.pointerPointee.typeName, "int") {
-                te.typeName = "int*";
-            } else {
-                te.typeName = "int*";
-            }
+            te.typeName = String_Concat(te.pointerPointee.typeName, "*");
         }
         return te;
     }
@@ -241,8 +235,32 @@ func parserParsePrimary(p: *Parser) -> *Expr {
     // sizeof(Type)
     if kind == tkSizeOf {
         discard parserAdvance(p);
+        discard parserExpect(p, tkLParen, "expected '(' after sizeof");
         let e: *Expr = parserMakeExpr(ekSizeOf, line, col);
         e.refType = parserParseType(p);
+        discard parserExpect(p, tkRParen, "expected ')' after sizeof type");
+        return e;
+    }
+
+    // spawn Callee(args)
+    if kind == tkSpawn {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekSpawn, line, col);
+        e.child1 = parserParsePrimary(p);
+        // Optional call arguments
+        if parserCheck(p, tkLParen) {
+            discard parserAdvance(p);
+            if !parserCheck(p, tkRParen) {
+                e.child2 = parserParseExpr(p);
+                if parserMatch(p, tkComma) {
+                    e.child3 = parserParseExpr(p);
+                    while parserMatch(p, tkComma) {
+                        discard parserParseExpr(p);
+                    }
+                }
+            }
+            discard parserExpect(p, tkRParen, "expected ')' after spawn arguments");
+        }
         return e;
     }
 
@@ -320,6 +338,20 @@ func parserParsePostfix(p: *Parser) -> *Expr {
             discard parserExpect(p, tkRBracket, "expected ']'");
             left = e;
             continue;
+        }
+
+        // .await
+        if kind == tkDot {
+            if parserPeek(p, 1) == tkAwait {
+                discard parserAdvance(p); // .
+                discard parserAdvance(p); // await
+                let line: uint32 = parserCurToken(p).line;
+                let col: uint32 = parserCurToken(p).column;
+                let e: *Expr = parserMakeExpr(ekAwait, line, col);
+                e.child1 = left;
+                left = e;
+                continue;
+            }
         }
 
         // Field: expr.name
@@ -765,7 +797,7 @@ func parserParseParamList(p: *Parser) -> *Decl {
 // Declarations
 // ---------------------------------------------------------------------------
 
-func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool) -> *Decl {
+func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool, isAsync: bool) -> *Decl {
     let line: uint32 = parserCurToken(p).line;
     let col: uint32 = parserCurToken(p).column;
     discard parserExpect(p, tkFunc, "expected 'func'");
@@ -776,6 +808,7 @@ func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool) -> *Decl {
     d.line = line;
     d.column = col;
     d.isPublic = isPublic;
+    d.isAsync = isAsync;
     d.strValue = nameTok.text;
 
     // Type params <T, U>
@@ -953,7 +986,7 @@ func parserParseImportDecl(p: *Parser, isPublic: bool) -> *Decl {
     // Parse path: Std::Io::PrintLine
     var pathStr: String = "";
     var segCount: int = 0;
-    while parserCheck(p, tkIdent) || (segCount > 0 && parserCheck(p, tkColonColon)) {
+    while parserCheck(p, tkIdent) || (segCount > 0 && parserCheck(p, tkColonColon) && parserPeek(p, 1) != tkLBrace) {
         if segCount > 0 {
             discard parserAdvance(p); // ::
             if String_Len(pathStr) > 0 {
@@ -995,7 +1028,7 @@ func parserParseExternDecl(p: *Parser, isPublic: bool) -> *Decl {
     discard parserExpect(p, tkExtern, "expected 'extern'");
 
     if parserCheck(p, tkFunc) {
-        let d: *Decl = parserParseFuncDecl(p, isPublic, true);
+        let d: *Decl = parserParseFuncDecl(p, isPublic, true, false);
         d.kind = dkExternFunc;
         return d;
     }
@@ -1016,7 +1049,11 @@ func parserParseDecl(p: *Parser) -> *Decl {
     let isPublic: bool = parserMatch(p, tkPub);
     let kind: int = parserPeek(p, 0);
 
-    if kind == tkFunc { return parserParseFuncDecl(p, isPublic, false); }
+    if kind == tkAsync && parserPeek(p, 1) == tkFunc {
+        discard parserAdvance(p); // async
+        return parserParseFuncDecl(p, isPublic, false, true);
+    }
+    if kind == tkFunc { return parserParseFuncDecl(p, isPublic, false, false); }
     if kind == tkStruct { return parserParseStructDecl(p, isPublic); }
     if kind == tkEnum { return parserParseEnumDecl(p, isPublic); }
     if kind == tkImport { return parserParseImportDecl(p, isPublic); }
@@ -1048,7 +1085,7 @@ func parserParseDecl(p: *Parser) -> *Decl {
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkFunc) {
-                let m: *Decl = parserParseFuncDecl(p, false, false);
+                let m: *Decl = parserParseFuncDecl(p, false, false, false);
                 // Store method in linked list
                 if d.methodCount == 0 {
                     d.childDecl1 = m;

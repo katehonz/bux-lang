@@ -5,20 +5,21 @@ extern func bux_async_run();
 extern func bux_async_spawn(fn: *void) -> *void;
 extern func bux_async_await(handle: *void) -> *void;
 extern func bux_async_return(value: *void, size: int64);
+extern func bux_async_sleep(ms: int64);
 
 async func Compute() -> int {
-    PrintLine("Compute: step 1");
-    bux_async_yield();
-    PrintLine("Compute: step 2");
+    PrintLine("Compute: start");
+    bux_async_sleep(100);
+    PrintLine("Compute: after 100ms");
     let result: int = 42;
     bux_async_return((&result) as *void, sizeof(int));
     return result;
 }
 
 async func Double() -> int {
-    PrintLine("Double: step 1");
-    bux_async_yield();
-    PrintLine("Double: step 2");
+    PrintLine("Double: start");
+    bux_async_sleep(50);
+    PrintLine("Double: after 50ms");
     let result: int = 84;
     bux_async_return((&result) as *void, sizeof(int));
     return result;

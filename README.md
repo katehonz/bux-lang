@@ -1,6 +1,6 @@
 # Bux Programming Language
 
-> **Status:** Bootstrap phase — compiler written in Nim, targeting self-hosting.
+> **Status:** Self-hosting phase — `buxc2` (Bux compiler written in Bux) compiles `.bux` files to C. Bootstrap compiler (`buxc`, Nim) maintains backward compatibility.
 
 Bux is a fast, compiled, strongly-typed systems programming language inspired by [Rux](https://rux-lang.dev/). The long-term goal is a self-hosted compiler with a minimal runtime, native x86-64 backend, and modern tooling.
 
@@ -93,6 +93,25 @@ func Main() -> int {
 }
 ```
 
+### Async/Await
+```bux
+import Std::Io::{PrintLine, PrintInt};
+
+async func Compute() -> int {
+    PrintLine("Compute: step 1");
+    bux_async_yield();
+    PrintLine("Compute: step 2");
+    return 42;
+}
+
+func Main() -> int {
+    let h1 = spawn Compute();
+    let r1: int = h1.await as int;
+    PrintInt(r1);
+    return 0;
+}
+```
+
 ### Hash Map
 ```bux
 import Std::Map::{Map, Map_New, Map_Set, Map_Get};
@@ -119,8 +138,10 @@ func Main() -> int {
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
 | **Standard Library** | `Io`, `Array`, `String`, `Map` |
-| **Backend** | C transpiler (bootstrap) |
+| **Backend** | C transpiler (bootstrap) → self-hosting target |
 | **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
+| **Async/Await** | `async func`, `spawn`, `.await` with stackful coroutines |
+| **Concurrency** | `Task`/`Channel` (pthread-based), `bux_async_yield`/`spawn` |
 | **CTFE** | `const func` — compile-time function execution |
 | **Trait Bounds** | `func Max<T: Comparable>(a: T, b: T) -> T` |
 | **Package Manager** | `bux add`, `bux install`, `bux.lock`, path + git deps |
@@ -133,6 +154,8 @@ func Main() -> int {
 ```
 bux/
 ├── src/              # Bootstrap compiler (Nim)
+├── src_bux/          # Self-hosting compiler source (Bux)
+├── _selfhost/        # Self-hosting build artifacts
 ├── stdlib/           # Standard library (.bux + .c runtime)
 ├── examples/         # Example programs
 ├── tests/            # Unit tests (Nim)
@@ -147,8 +170,11 @@ bux/
 ## Build & Test
 
 ```bash
-# Build compiler
+# Build bootstrap compiler (Nim)
 make build
+
+# Build self-hosted compiler (Bux → C → binary)
+make selfhost
 
 # Run all tests
 make test

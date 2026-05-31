@@ -122,6 +122,25 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         return n;
     }
 
+    // spawn Callee(args)
+    if kind == ekSpawn {
+        n.kind = hSpawn;
+        if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+            n.strValue = expr.child1.strValue;
+        }
+        if expr.child2 != null as *Expr {
+            n.child1 = Lcx_LowerExpr(ctx, expr.child2);
+        }
+        return n;
+    }
+
+    // expr.await
+    if kind == ekAwait {
+        n.kind = hAwait;
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        return n;
+    }
+
     // Index: arr[idx]
     if kind == ekIndex {
         n.kind = hIndexPtr;
