@@ -1,0 +1,308 @@
+// hir_lower.bux — HIR lowering: AST → HIR transformation (ported from hir_lower.nim)
+// Transforms the typed AST into a lower-level IR suitable for code generation.
+module HirLower;
+
+// ---------------------------------------------------------------------------
+// Lowering context
+// ---------------------------------------------------------------------------
+struct LowerCtx {
+    module: *Module,
+    scope: *Scope,
+    funcs: *HirFunc,
+    funcCount: int,
+    externFuncs: *HirFunc,
+    externCount: int,
+    varCounter: int,
+    tryCounter: int,
+}
+
+// ---------------------------------------------------------------------------
+// Fresh name generation
+// ---------------------------------------------------------------------------
+
+func Lcx_FreshName(ctx: *LowerCtx) -> String {
+    ctx.varCounter = ctx.varCounter + 1;
+    return String_FromInt(ctx.varCounter as int64);
+}
+
+// ---------------------------------------------------------------------------
+// Type → HIR type
+// ---------------------------------------------------------------------------
+
+func Lcx_LowerType(typeKind: int, typeName: String) -> int {
+    return typeKind;
+}
+
+// ---------------------------------------------------------------------------
+// Expression lowering
+// ---------------------------------------------------------------------------
+
+func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
+    if expr == null as *Expr { return null as *HirNode; }
+
+    let line: uint32 = expr.line;
+    let col: uint32 = expr.column;
+    let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    n.kind = hBlock;
+    n.line = line;
+    n.column = col;
+
+    let kind: int = expr.kind;
+
+    // Literal
+    if kind == ekLiteral {
+        n.kind = hLit;
+        n.intValue = expr.tokKind;
+        n.strValue = expr.tokText;
+        return n;
+    }
+
+    // Identifier → variable reference
+    if kind == ekIdent {
+        n.kind = hVar;
+        n.strValue = expr.strValue;
+        return n;
+    }
+
+    // Binary
+    if kind == ekBinary {
+        n.kind = hBinary;
+        n.intValue = expr.intValue; // operator
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        n.child2 = Lcx_LowerExpr(ctx, expr.child2);
+        return n;
+    }
+
+    // Unary
+    if kind == ekUnary {
+        n.kind = hUnary;
+        n.intValue = expr.intValue;
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        return n;
+    }
+
+    // Call
+    if kind == ekCall {
+        n.kind = hCall;
+        // Get callee name
+        if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+            n.strValue = expr.child1.strValue;
+        }
+        // Lower arguments
+        if expr.child2 != null as *Expr {
+            n.child1 = Lcx_LowerExpr(ctx, expr.child2);
+        }
+        if expr.child3 != null as *Expr {
+            n.child2 = Lcx_LowerExpr(ctx, expr.child3);
+        }
+        return n;
+    }
+
+    // Field access
+    if kind == ekField {
+        n.kind = hFieldPtr;
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        n.strValue = expr.strValue;
+        return n;
+    }
+
+    // Return
+    if kind == ekReturn {
+        n.kind = hReturn;
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        return n;
+    }
+
+    // Cast
+    if kind == ekCast {
+        n.kind = hCast;
+        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        return n;
+    }
+
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// Statement lowering
+// ---------------------------------------------------------------------------
+
+func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
+    if stmt == null as *Stmt { return null as *HirNode; }
+
+    let line: uint32 = stmt.line;
+    let col: uint32 = stmt.column;
+    let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    n.kind = hBlock;
+    n.line = line;
+    n.column = col;
+
+    let kind: int = stmt.kind;
+
+    // Let/var → alloca + store
+    if kind == skLet {
+        let init: *HirNode = Lcx_LowerExpr(ctx, stmt.child1);
+        // alloca for the variable
+        let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        alloca.kind = hAlloca;
+        alloca.line = line;
+        alloca.column = col;
+        alloca.strValue = stmt.strValue;
+        // store the init value
+        n.kind = hStore;
+        n.child1 = alloca;
+        n.child2 = init;
+        return n;
+    }
+
+    // Return
+    if kind == skReturn {
+        n.kind = hReturn;
+        if stmt.child1 != null as *Expr {
+            n.child1 = Lcx_LowerExpr(ctx, stmt.child1);
+        }
+        return n;
+    }
+
+    // Expression statement
+    if kind == skExpr && stmt.child1 != null as *Expr {
+        return Lcx_LowerExpr(ctx, stmt.child1);
+    }
+
+    // If
+    if kind == skIf {
+        n.kind = hIf;
+        n.child1 = Lcx_LowerExpr(ctx, stmt.child1); // condition
+        if stmt.refStmtBlock != null as *Block {
+            n.child2 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
+        }
+        if stmt.refStmtElse != null as *Block {
+            n.child3 = Lcx_LowerBlock(ctx, stmt.refStmtElse, -1);
+        }
+        return n;
+    }
+
+    // While
+    if kind == skWhile {
+        n.kind = hWhile;
+        n.child1 = Lcx_LowerExpr(ctx, stmt.child1);
+        if stmt.refStmtBlock != null as *Block {
+            n.child2 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
+        }
+        return n;
+    }
+
+    // Loop
+    if kind == skLoop {
+        n.kind = hLoop;
+        if stmt.refStmtBlock != null as *Block {
+            n.child1 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
+        }
+        return n;
+    }
+
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// Block lowering
+// ---------------------------------------------------------------------------
+
+func Lcx_LowerBlock(ctx: *LowerCtx, block: *Block, retTypeKind: int) -> *HirNode {
+    if block == null as *Block { return null as *HirNode; }
+
+    // For simplicity, create a block node with first statement
+    let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    n.kind = hBlock;
+    n.line = block.line;
+    n.column = block.column;
+    n.boolValue = true; // isScope
+
+    // In a full implementation, lower all statements
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// Function lowering
+// ---------------------------------------------------------------------------
+
+func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
+    let f: *HirFunc = bux_alloc(sizeof(HirFunc)) as *HirFunc;
+    f.name = decl.strValue;
+    f.isPublic = decl.isPublic;
+    f.paramCount = decl.paramCount;
+    f.param0 = decl.param0;
+    f.param1 = decl.param1;
+    f.param2 = decl.param2;
+    f.param3 = decl.param3;
+    f.param4 = decl.param4;
+    f.param5 = decl.param5;
+
+    if decl.retType != null as *TypeExpr {
+        f.retTypeName = decl.retType.typeName;
+    } else {
+        f.retTypeName = "";
+    }
+
+    if decl.refBody != null as *Block {
+        f.body = Lcx_LowerBlock(ctx, decl.refBody, -1);
+    } else {
+        f.body = null as *HirNode;
+    }
+
+    return f;
+}
+
+// ---------------------------------------------------------------------------
+// Module lowering — main entry point
+// ---------------------------------------------------------------------------
+
+func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
+    let ctx: *LowerCtx = bux_alloc(sizeof(LowerCtx)) as *LowerCtx;
+    ctx.module = mod;
+    ctx.scope = sema.scope;
+    ctx.funcs = bux_alloc(256 as uint * sizeof(HirFunc)) as *HirFunc;
+    ctx.funcCount = 0;
+    ctx.externFuncs = bux_alloc(64 as uint * sizeof(HirFunc)) as *HirFunc;
+    ctx.externCount = 0;
+    ctx.varCounter = 0;
+
+    let hm: *HirModule = bux_alloc(sizeof(HirModule)) as *HirModule;
+    hm.funcCount = 0;
+    hm.funcs = ctx.funcs;
+
+    // Iterate declarations
+    var decl: *Decl = mod.firstItem;
+    while decl != null as *Decl {
+        if decl.kind == dkFunc {
+            let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
+            ctx.funcs[ctx.funcCount] = f;
+            ctx.funcCount = ctx.funcCount + 1;
+        }
+        if decl.kind == dkExternFunc {
+            let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
+            ctx.externFuncs[ctx.externCount] = f;
+            ctx.externCount = ctx.externCount + 1;
+        }
+        if decl.kind == dkStruct {
+            hm.structCount = hm.structCount + 1;
+        }
+        if decl.kind == dkEnum {
+            hm.enumCount = hm.enumCount + 1;
+        }
+        decl = decl.childDecl2;
+    }
+
+    hm.funcCount = ctx.funcCount;
+    hm.funcs = ctx.funcs;
+    hm.externCount = ctx.externCount;
+    hm.externFuncs = ctx.externFuncs;
+
+    return hm;
+}
+
+func HirLower_Free(ctx: *LowerCtx) {
+    bux_free(ctx.funcs as *void);
+    bux_free(ctx.externFuncs as *void);
+    bux_free(ctx as *void);
+}

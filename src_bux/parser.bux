@@ -1,0 +1,1005 @@
+// parser.bux — Recursive descent parser (ported from parser.nim)
+// Parses Bux source tokens into an AST.
+module Parser;
+
+extern func bux_strlen(s: String) -> uint;
+
+// ---------------------------------------------------------------------------
+// Parser state
+// ---------------------------------------------------------------------------
+struct Parser {
+    tokens: *LexToken,
+    tokenCount: int,
+    pos: int,
+    diagCount: int,
+    diags: *ParserDiag,
+    structInitAllowed: bool,
+}
+
+struct ParserDiag {
+    line: uint32,
+    column: uint32,
+    message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Token helpers
+// ---------------------------------------------------------------------------
+
+func parserCurToken(p: *Parser) -> LexToken {
+    if p.pos < p.tokenCount {
+        return p.tokens[p.pos];
+    }
+    var eof: LexToken;
+    eof.kind = tkEndOfFile;
+    eof.text = "";
+    return eof;
+}
+
+func parserPeek(p: *Parser, ahead: int) -> int {
+    let i: int = p.pos + ahead;
+    if i >= 0 && i < p.tokenCount {
+        return p.tokens[i].kind;
+    }
+    return tkEndOfFile;
+}
+
+func parserAdvance(p: *Parser) -> LexToken {
+    let tok: LexToken = parserCurToken(p);
+    if p.pos < p.tokenCount {
+        p.pos = p.pos + 1;
+    }
+    return tok;
+}
+
+func parserCheck(p: *Parser, kind: int) -> bool {
+    return parserPeek(p, 0) == kind;
+}
+
+func parserMatch(p: *Parser, kind: int) -> bool {
+    if parserCheck(p, kind) {
+        discard parserAdvance(p);
+        return true;
+    }
+    return false;
+}
+
+func parserPrevious(p: *Parser) -> LexToken {
+    if p.pos > 0 && p.pos <= p.tokenCount {
+        return p.tokens[p.pos - 1];
+    }
+    var eof: LexToken;
+    eof.kind = tkEndOfFile;
+    return eof;
+}
+
+func parserExpect(p: *Parser, kind: int, msg: String) -> LexToken {
+    if parserCheck(p, kind) {
+        return parserAdvance(p);
+    }
+    let tok: LexToken = parserCurToken(p);
+    p.diags[p.diagCount] = ParserDiag {
+        line: tok.line, column: tok.column, message: msg
+    };
+    p.diagCount = p.diagCount + 1;
+    return tok;
+}
+
+func parserEmitDiag(p: *Parser, line: uint32, col: uint32, msg: String) {
+    p.diags[p.diagCount] = ParserDiag {
+        line: line, column: col, message: msg
+    };
+    p.diagCount = p.diagCount + 1;
+}
+
+// ---------------------------------------------------------------------------
+// Type parsing
+// ---------------------------------------------------------------------------
+
+func parserParseType(p: *Parser) -> *TypeExpr {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    let kindTok: int = parserPeek(p, 0);
+
+    // *T (pointer)
+    if kindTok == tkStar {
+        discard parserAdvance(p);
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekPointer;
+        te.line = line;
+        te.column = col;
+        te.pointerPointee = parserParseType(p);
+        return te;
+    }
+
+    // name
+    let nameTok: LexToken = parserExpect(p, tkIdent, "expected type name");
+    let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+    te.kind = tekNamed;
+    te.line = nameTok.line;
+    te.column = nameTok.column;
+    te.typeName = nameTok.text;
+
+    // Optional <T, U> type args
+    if parserCheck(p, tkLt) {
+        discard parserAdvance(p); // <
+        let arg0: LexToken = parserExpect(p, tkIdent, "expected type argument");
+        te.typeArgName0 = arg0.text;
+        te.typeArgCount = 1;
+        if parserMatch(p, tkComma) {
+            let arg1: LexToken = parserExpect(p, tkIdent, "expected type argument");
+            te.typeArgName1 = arg1.text;
+            te.typeArgCount = 2;
+        }
+        discard parserExpect(p, tkGt, "expected '>' to close type arguments");
+    }
+    return te;
+}
+
+// ---------------------------------------------------------------------------
+// Forward declarations and helpers
+// ---------------------------------------------------------------------------
+
+func parserParseExpr(p: *Parser) -> *Expr;
+func parserParseStmt(p: *Parser) -> *Stmt;
+func parserParseBlock(p: *Parser) -> *Block;
+
+func parserMakeExpr(kind: int, line: uint32, col: uint32) -> *Expr {
+    let e: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+    e.kind = kind;
+    e.line = line;
+    e.column = col;
+    e.strValue = "";
+    e.intValue = 0;
+    e.boolValue = false;
+    e.tokKind = 0;
+    e.tokText = "";
+    e.child1 = null as *Expr;
+    e.child2 = null as *Expr;
+    e.child3 = null as *Expr;
+    e.refType = null as *TypeExpr;
+    e.refBlock = null as *Block;
+    e.genericCallee = "";
+    e.genericTypeArg0 = "";
+    e.genericTypeArg1 = "";
+    e.genericTypeArgCount = 0;
+    e.structName = "";
+    e.structFieldCount = 0;
+    return e;
+}
+
+// ---------------------------------------------------------------------------
+// Primary expressions
+// ---------------------------------------------------------------------------
+
+func parserParsePrimary(p: *Parser) -> *Expr {
+    let tok: LexToken = parserCurToken(p);
+    let line: uint32 = tok.line;
+    let col: uint32 = tok.column;
+    let kind: int = tok.kind;
+
+    // Literals
+    if kind == tkIntLiteral || kind == tkFloatLiteral || kind == tkStringLiteral
+        || kind == tkCharLiteral || kind == tkBoolLiteral {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekLiteral, line, col);
+        e.tokKind = kind;
+        e.tokText = tok.text;
+        return e;
+    }
+
+    // Identifier
+    if kind == tkIdent {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekIdent, line, col);
+        e.strValue = tok.text;
+        return e;
+    }
+
+    // self
+    if kind == tkSelf {
+        discard parserAdvance(p);
+        return parserMakeExpr(ekSelf, line, col);
+    }
+
+    // null
+    if kind == tkNull {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekLiteral, line, col);
+        e.tokKind = tkNull;
+        return e;
+    }
+
+    // sizeof(Type)
+    if kind == tkSizeOf {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekSizeOf, line, col);
+        e.refType = parserParseType(p);
+        return e;
+    }
+
+    // #intrinsics
+    if kind >= tkHashLine && kind <= tkHashModule {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekLiteral, line, col);
+        e.intValue = kind;
+        return e;
+    }
+
+    // ( expr )
+    if kind == tkLParen {
+        discard parserAdvance(p);
+        let e: *Expr = parserParseExpr(p);
+        discard parserExpect(p, tkRParen, "expected ')'");
+        return e;
+    }
+
+    // -expr, !expr, *expr, &expr
+    if kind == tkMinus || kind == tkBang || kind == tkStar || kind == tkAmp {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekUnary, line, col);
+        e.intValue = kind;
+        e.child1 = parserParsePrimary(p);
+        return e;
+    }
+
+    parserEmitDiag(p, line, col, "expected expression");
+    return parserMakeExpr(ekLiteral, line, col);
+}
+
+// ---------------------------------------------------------------------------
+// Postfix: call, index, field access, as, is, ?
+// ---------------------------------------------------------------------------
+
+func parserParsePostfix(p: *Parser) -> *Expr {
+    var left: *Expr = parserParsePrimary(p);
+
+    while true {
+        let kind: int = parserPeek(p, 0);
+
+        // Call: expr(args)
+        if kind == tkLParen {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let e: *Expr = parserMakeExpr(ekCall, line, col);
+            e.child1 = left;
+            // Parse arguments (up to 8)
+            // child2 = first arg, child3 = second arg, extra = rest
+            if !parserCheck(p, tkRParen) {
+                e.child2 = parserParseExpr(p);
+                if parserMatch(p, tkComma) {
+                    e.child3 = parserParseExpr(p);
+                }
+            }
+            discard parserExpect(p, tkRParen, "expected ')'");
+            left = e;
+            continue;
+        }
+
+        // Index: expr[expr]
+        if kind == tkLBracket {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let e: *Expr = parserMakeExpr(ekIndex, line, col);
+            e.child1 = left;
+            e.child2 = parserParseExpr(p);
+            discard parserExpect(p, tkRBracket, "expected ']'");
+            left = e;
+            continue;
+        }
+
+        // Field: expr.name
+        if kind == tkDot {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let name: LexToken = parserExpect(p, tkIdent, "expected field name");
+            let e: *Expr = parserMakeExpr(ekField, line, col);
+            e.child1 = left;
+            e.strValue = name.text;
+            left = e;
+            continue;
+        }
+
+        // as, is
+        if kind == tkAs || kind == tkIs {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let ek: int = 0;
+            if kind == tkAs { ek = ekCast; } else { ek = ekIs; }
+            let e: *Expr = parserMakeExpr(ek, line, col);
+            e.child1 = left;
+            e.refType = parserParseType(p);
+            left = e;
+            continue;
+        }
+
+        // ? (try operator)
+        if kind == tkQuestion {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let e: *Expr = parserMakeExpr(ekTry, line, col);
+            e.child1 = left;
+            left = e;
+            continue;
+        }
+
+        // ++, --
+        if kind == tkPlusPlus || kind == tkMinusMinus {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let e: *Expr = parserMakeExpr(ekPostfix, line, col);
+            e.child1 = left;
+            e.intValue = kind;
+            left = e;
+            continue;
+        }
+
+        break;
+    }
+    return left;
+}
+
+// ---------------------------------------------------------------------------
+// Binary expression (precedence climbing)
+// All binary operators: arithmetic, comparison, logical, bitwise, assignment
+// ---------------------------------------------------------------------------
+
+func parserIsBinaryOp(kind: int) -> bool {
+    if kind >= tkPlus && kind <= tkStarStar { return true; }           // arithmetic
+    if kind == tkAmp || kind == tkPipe || kind == tkCaret { return true; } // bitwise (no &|)
+    if kind >= tkShl && kind <= tkShrAssign { return true; }           // shift + assign
+    if kind >= tkEq && kind <= tkGe { return true; }                   // comparison
+    if kind == tkAmpAmp || kind == tkPipePipe { return true; }         // logical
+    if kind >= tkAssign && kind <= tkShrAssign { return true; }        // all assigns
+    if kind == tkDotDot || kind == tkDotDotEqual { return true; }      // range
+    return false;
+}
+
+func parserParseBinary(p: *Parser) -> *Expr {
+    var left: *Expr = parserParsePostfix(p);
+
+    while parserIsBinaryOp(parserPeek(p, 0)) {
+        let opTok: LexToken = parserAdvance(p);
+        let line: uint32 = opTok.line;
+        let col: uint32 = opTok.column;
+        let right: *Expr = parserParsePostfix(p);
+        let e: *Expr = parserMakeExpr(ekBinary, line, col);
+        e.intValue = opTok.kind;
+        e.child1 = left;
+        e.child2 = right;
+        left = e;
+    }
+    return left;
+}
+
+// ---------------------------------------------------------------------------
+// Ternary: cond ? then : else
+// ---------------------------------------------------------------------------
+
+func parserParseTernary(p: *Parser) -> *Expr {
+    var left: *Expr = parserParseBinary(p);
+    if parserMatch(p, tkQuestion) {
+        let thenExpr: *Expr = parserParseExpr(p);
+        discard parserExpect(p, tkColon, "expected ':' in ternary");
+        let elseExpr: *Expr = parserParseExpr(p);
+        let e: *Expr = parserMakeExpr(ekTernary, left.line, left.column);
+        e.child1 = left;
+        e.child2 = thenExpr;
+        e.child3 = elseExpr;
+        return e;
+    }
+    return left;
+}
+
+// ---------------------------------------------------------------------------
+// Top-level expression
+// ---------------------------------------------------------------------------
+
+func parserParseExpr(p: *Parser) -> *Expr {
+    return parserParseTernary(p);
+}
+
+// ---------------------------------------------------------------------------
+// Statements
+// ---------------------------------------------------------------------------
+
+func parserParseStmt(p: *Parser) -> *Stmt {
+    let tok: LexToken = parserCurToken(p);
+    let line: uint32 = tok.line;
+    let col: uint32 = tok.column;
+    let kind: int = tok.kind;
+
+    // let / var
+    if kind == tkLet || kind == tkVar {
+        let isVar: bool = (kind == tkVar);
+        discard parserAdvance(p);
+        let nameTok: LexToken = parserExpect(p, tkIdent, "expected variable name");
+        var typeExpr: *TypeExpr = null as *TypeExpr;
+        if parserMatch(p, tkColon) {
+            typeExpr = parserParseType(p);
+        }
+        discard parserExpect(p, tkAssign, "expected '=' in let/var statement");
+        let init: *Expr = parserParseExpr(p);
+        parserMatch(p, tkSemicolon); // optional ;
+
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skLet;
+        s.line = line;
+        s.column = col;
+        s.strValue = nameTok.text;
+        s.boolValue = isVar;
+        s.child1 = init;
+        s.refStmtType = typeExpr;
+        return s;
+    }
+
+    // if
+    if kind == tkIf {
+        discard parserAdvance(p);
+        let cond: *Expr = parserParseExpr(p);
+        let thenBlock: *Block = parserParseBlock(p);
+        var elseBlock: *Block = null as *Block;
+        if parserMatch(p, tkElse) {
+            if parserCheck(p, tkIf) {
+                // else if → recursively parse an if stmt inside else
+                elseBlock = parserParseBlock(p);
+            } else {
+                elseBlock = parserParseBlock(p);
+            }
+        }
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skIf;
+        s.line = line;
+        s.column = col;
+        s.child1 = cond;
+        s.refStmtBlock = thenBlock;
+        s.refStmtElse = elseBlock;
+        return s;
+    }
+
+    // while
+    if kind == tkWhile {
+        discard parserAdvance(p);
+        let cond: *Expr = parserParseExpr(p);
+        let body: *Block = parserParseBlock(p);
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skWhile;
+        s.line = line;
+        s.column = col;
+        s.child1 = cond;
+        s.refStmtBlock = body;
+        return s;
+    }
+
+    // loop
+    if kind == tkLoop {
+        discard parserAdvance(p);
+        let body: *Block = parserParseBlock(p);
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skLoop;
+        s.line = line;
+        s.column = col;
+        s.refStmtBlock = body;
+        return s;
+    }
+
+    // for
+    if kind == tkFor {
+        discard parserAdvance(p);
+        let varName: LexToken = parserExpect(p, tkIdent, "expected loop variable");
+        discard parserExpect(p, tkIn, "expected 'in'");
+        let iter: *Expr = parserParseExpr(p);
+        let body: *Block = parserParseBlock(p);
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skFor;
+        s.line = line;
+        s.column = col;
+        s.strValue = varName.text;
+        s.child1 = iter;
+        s.refStmtBlock = body;
+        return s;
+    }
+
+    // return
+    if kind == tkReturn {
+        discard parserAdvance(p);
+        var value: *Expr = null as *Expr;
+        if !parserCheck(p, tkSemicolon) && !parserCheck(p, tkNewLine) && !parserCheck(p, tkRBrace) {
+            value = parserParseExpr(p);
+        }
+        parserMatch(p, tkSemicolon);
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skReturn;
+        s.line = line;
+        s.column = col;
+        s.child1 = value;
+        return s;
+    }
+
+    // break / continue
+    if kind == tkBreak || kind == tkContinue {
+        let sk: int = 0;
+        if kind == tkBreak { sk = skBreak; } else { sk = skContinue; }
+        discard parserAdvance(p);
+        parserMatch(p, tkSemicolon);
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = sk;
+        s.line = line;
+        s.column = col;
+        return s;
+    }
+
+    // match
+    if kind == tkMatch {
+        discard parserAdvance(p);
+        let subject: *Expr = parserParseExpr(p);
+        discard parserExpect(p, tkLBrace, "expected '{' to start match body");
+        // Skip match body (simplified — just parse arms as empty)
+        while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+            if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+            discard parserParseExpr(p);  // pattern
+            if parserMatch(p, tkFatArrow) {
+                discard parserParseExpr(p);  // body
+            }
+        }
+        discard parserExpect(p, tkRBrace, "expected '}' to close match");
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skMatch;
+        s.line = line;
+        s.column = col;
+        s.child1 = subject;
+        return s;
+    }
+
+    // Expression statement
+    if kind == tkNewLine || kind == tkSemicolon {
+        discard parserAdvance(p);
+        return null as *Stmt;
+    }
+
+    let expr: *Expr = parserParseExpr(p);
+    parserMatch(p, tkSemicolon);
+    let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+    s.kind = skExpr;
+    s.line = line;
+    s.column = col;
+    s.child1 = expr;
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// Block: { stmt* }
+// ---------------------------------------------------------------------------
+
+func parserParseBlock(p: *Parser) -> *Block {
+    discard parserExpect(p, tkLBrace, "expected '{'");
+    let b: *Block = bux_alloc(sizeof(Block)) as *Block;
+    b.line = parserCurToken(p).line;
+    b.column = parserCurToken(p).column;
+    b.stmtCount = 0;
+
+    while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+        if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+            discard parserAdvance(p);
+            continue;
+        }
+        let s: *Stmt = parserParseStmt(p);
+        if s != null as *Stmt {
+            b.stmtCount = b.stmtCount + 1;
+        }
+    }
+    discard parserExpect(p, tkRBrace, "expected '}'");
+    return b;
+}
+
+// ---------------------------------------------------------------------------
+// Function parameters
+// ---------------------------------------------------------------------------
+
+func parserParseParamList(p: *Parser) -> *Decl {
+    let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    d.kind = dkFunc;
+    d.paramCount = 0;
+
+    discard parserExpect(p, tkLParen, "expected '('");
+    while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+        if d.paramCount >= 6 { break; }
+        let nameTok: LexToken = parserExpect(p, tkIdent, "expected parameter name");
+        discard parserExpect(p, tkColon, "expected ':' in parameter");
+        let ptype: *TypeExpr = parserParseType(p);
+
+        if d.paramCount == 0 {
+            d.param0.name = nameTok.text;
+            d.param0.refParamType = ptype;
+        } else if d.paramCount == 1 {
+            d.param1.name = nameTok.text;
+            d.param1.refParamType = ptype;
+        } else if d.paramCount == 2 {
+            d.param2.name = nameTok.text;
+            d.param2.refParamType = ptype;
+        } else if d.paramCount == 3 {
+            d.param3.name = nameTok.text;
+            d.param3.refParamType = ptype;
+        } else if d.paramCount == 4 {
+            d.param4.name = nameTok.text;
+            d.param4.refParamType = ptype;
+        } else if d.paramCount == 5 {
+            d.param5.name = nameTok.text;
+            d.param5.refParamType = ptype;
+        }
+        d.paramCount = d.paramCount + 1;
+
+        if parserMatch(p, tkComma) { continue; }
+        break;
+    }
+    discard parserExpect(p, tkRParen, "expected ')'");
+    return d;
+}
+
+// ---------------------------------------------------------------------------
+// Declarations
+// ---------------------------------------------------------------------------
+
+func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool) -> *Decl {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserExpect(p, tkFunc, "expected 'func'");
+
+    let nameTok: LexToken = parserExpect(p, tkIdent, "expected function name");
+    let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    d.kind = dkFunc;
+    d.line = line;
+    d.column = col;
+    d.isPublic = isPublic;
+    d.strValue = nameTok.text;
+
+    // Type params <T, U>
+    if parserCheck(p, tkLt) {
+        discard parserAdvance(p);
+        let tp0: LexToken = parserExpect(p, tkIdent, "expected type param");
+        d.typeParam0 = tp0.text;
+        d.typeParamCount = 1;
+        if parserMatch(p, tkComma) {
+            let tp1: LexToken = parserExpect(p, tkIdent, "expected type param");
+            d.typeParam1 = tp1.text;
+            d.typeParamCount = 2;
+        }
+        discard parserExpect(p, tkGt, "expected '>'");
+    }
+
+    // Params
+    let params: *Decl = parserParseParamList(p);
+    d.paramCount = params.paramCount;
+    d.param0 = params.param0;
+    d.param1 = params.param1;
+    d.param2 = params.param2;
+    d.param3 = params.param3;
+    d.param4 = params.param4;
+    d.param5 = params.param5;
+
+    // Return type
+    if parserMatch(p, tkArrow) {
+        d.retType = parserParseType(p);
+    }
+
+    // Body
+    if !isExtern && parserCheck(p, tkLBrace) {
+        d.refBody = parserParseBlock(p);
+    } else {
+        d.refBody = null as *Block;
+    }
+
+    return d;
+}
+
+func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserExpect(p, tkStruct, "expected 'struct'");
+    let nameTok: LexToken = parserExpect(p, tkIdent, "expected struct name");
+
+    let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    d.kind = dkStruct;
+    d.line = line;
+    d.column = col;
+    d.isPublic = isPublic;
+    d.strValue = nameTok.text;
+
+    // Type params
+    if parserCheck(p, tkLt) {
+        discard parserAdvance(p);
+        let tp0: LexToken = parserExpect(p, tkIdent, "expected type param");
+        d.typeParam0 = tp0.text;
+        d.typeParamCount = 1;
+        if parserMatch(p, tkComma) {
+            let tp1: LexToken = parserExpect(p, tkIdent, "expected type param");
+            d.typeParam1 = tp1.text;
+            d.typeParamCount = 2;
+        }
+        discard parserExpect(p, tkGt, "expected '>'");
+    }
+
+    discard parserExpect(p, tkLBrace, "expected '{'");
+    while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+        if d.fieldCount >= 8 { break; }
+        if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+        let fName: LexToken = parserExpect(p, tkIdent, "expected field name");
+        discard parserExpect(p, tkColon, "expected ':' in struct field");
+        let fType: *TypeExpr = parserParseType(p);
+        parserMatch(p, tkSemicolon);
+
+        if d.fieldCount == 0 {
+            d.field0.name = fName.text;
+            d.field0.refFieldType = fType;
+        } else if d.fieldCount == 1 {
+            d.field1.name = fName.text;
+            d.field1.refFieldType = fType;
+        } else if d.fieldCount == 2 {
+            d.field2.name = fName.text;
+            d.field2.refFieldType = fType;
+        } else if d.fieldCount == 3 {
+            d.field3.name = fName.text;
+            d.field3.refFieldType = fType;
+        }
+        d.fieldCount = d.fieldCount + 1;
+    }
+    discard parserExpect(p, tkRBrace, "expected '}'");
+    return d;
+}
+
+func parserParseEnumDecl(p: *Parser, isPublic: bool) -> *Decl {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserExpect(p, tkEnum, "expected 'enum'");
+    let nameTok: LexToken = parserExpect(p, tkIdent, "expected enum name");
+
+    let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    d.kind = dkEnum;
+    d.line = line;
+    d.column = col;
+    d.isPublic = isPublic;
+    d.strValue = nameTok.text;
+
+    discard parserExpect(p, tkLBrace, "expected '{'");
+    while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+        if d.variantCount >= 8 { break; }
+        if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
+        let vName: LexToken = parserExpect(p, tkIdent, "expected variant name");
+
+        var v: EnumVariant;
+        v.name = vName.text;
+
+        // Optional (Type, Type) data
+        if parserMatch(p, tkLParen) {
+            let t0: LexToken = parserExpect(p, tkIdent, "expected data type");
+            v.fieldTypeName0 = t0.text;
+            v.fieldCount = 1;
+            if parserMatch(p, tkComma) {
+                let t1: LexToken = parserExpect(p, tkIdent, "expected data type");
+                v.fieldTypeName1 = t1.text;
+                v.fieldCount = 2;
+            }
+            discard parserExpect(p, tkRParen, "expected ')'");
+        }
+
+        if d.variantCount == 0 { d.variant0 = v; }
+        else if d.variantCount == 1 { d.variant1 = v; }
+        else if d.variantCount == 2 { d.variant2 = v; }
+        else if d.variantCount == 3 { d.variant3 = v; }
+        d.variantCount = d.variantCount + 1;
+
+        parserMatch(p, tkComma);
+        if parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+    }
+    discard parserExpect(p, tkRBrace, "expected '}'");
+    return d;
+}
+
+func parserParseImportDecl(p: *Parser, isPublic: bool) -> *Decl {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserExpect(p, tkImport, "expected 'import'");
+
+    let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    d.kind = dkUse;
+    d.line = line;
+    d.column = col;
+    d.isPublic = isPublic;
+
+    // Parse path: Std::Io::PrintLine
+    var pathStr: String = "";
+    var segCount: int = 0;
+    while parserCheck(p, tkIdent) || (segCount > 0 && parserCheck(p, tkColonColon)) {
+        if segCount > 0 {
+            discard parserAdvance(p); // ::
+            if pathStr.len > 0 {
+                let tmp: *char8 = bux_alloc(256) as *char8;
+                // Append to path string (simplified)
+                pathStr = String_Concat(pathStr, "::");
+            }
+        }
+        let seg: LexToken = parserExpect(p, tkIdent, "expected module path segment");
+        pathStr = String_Concat(pathStr, seg.text);
+        segCount = segCount + 1;
+    }
+    d.usePath = pathStr;
+
+    // Optional ::{name1, name2}
+    if parserMatch(p, tkColonColon) && parserCheck(p, tkLBrace) {
+        discard parserAdvance(p); // {
+        var names: String = "";
+        while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+            let n: LexToken = parserExpect(p, tkIdent, "expected import name");
+            names = String_Concat(names, n.text);
+            names = String_Concat(names, ",");
+            if !parserMatch(p, tkComma) { break; }
+        }
+        discard parserExpect(p, tkRBrace, "expected '}'");
+        d.useNames = names;
+        d.useKind = 2; // ukMulti
+    } else {
+        d.useKind = 0; // ukSingle
+    }
+
+    parserMatch(p, tkSemicolon);
+    return d;
+}
+
+func parserParseExternDecl(p: *Parser, isPublic: bool) -> *Decl {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserExpect(p, tkExtern, "expected 'extern'");
+
+    if parserCheck(p, tkFunc) {
+        let d: *Decl = parserParseFuncDecl(p, isPublic, true);
+        d.kind = dkExternFunc;
+        return d;
+    }
+
+    let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    d.kind = dkExternFunc;
+    d.line = line;
+    d.column = col;
+    d.isPublic = isPublic;
+    return d;
+}
+
+// ---------------------------------------------------------------------------
+// Top-level declaration
+// ---------------------------------------------------------------------------
+
+func parserParseDecl(p: *Parser) -> *Decl {
+    let isPublic: bool = parserMatch(p, tkPub);
+    let kind: int = parserPeek(p, 0);
+
+    if kind == tkFunc { return parserParseFuncDecl(p, isPublic, false); }
+    if kind == tkStruct { return parserParseStructDecl(p, isPublic); }
+    if kind == tkEnum { return parserParseEnumDecl(p, isPublic); }
+    if kind == tkImport { return parserParseImportDecl(p, isPublic); }
+    if kind == tkExtern { return parserParseExternDecl(p, isPublic); }
+
+    if kind == tkExtend {
+        discard parserAdvance(p);
+        let line: uint32 = parserCurToken(p).line;
+        let col: uint32 = parserCurToken(p).column;
+        let typeName: LexToken = parserExpect(p, tkIdent, "expected type name");
+
+        let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+        d.kind = dkImpl;
+        d.line = line;
+        d.column = col;
+        d.isPublic = isPublic;
+        d.strValue = typeName.text;
+
+        // Optional <T>
+        if parserCheck(p, tkLt) {
+            discard parserAdvance(p);
+            let tp0: LexToken = parserExpect(p, tkIdent, "expected type param");
+            d.typeParam0 = tp0.text;
+            d.typeParamCount = 1;
+            discard parserExpect(p, tkGt, "expected '>'");
+        }
+
+        discard parserExpect(p, tkLBrace, "expected '{'");
+        while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+            if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+            if parserCheck(p, tkFunc) {
+                let m: *Decl = parserParseFuncDecl(p, false, false);
+                // Store method in linked list
+                if d.methodCount == 0 {
+                    d.childDecl1 = m;
+                } else if d.methodCount == 1 {
+                    d.childDecl2 = m;
+                }
+                d.methodCount = d.methodCount + 1;
+            } else {
+                break;
+            }
+        }
+        discard parserExpect(p, tkRBrace, "expected '}'");
+        return d;
+    }
+
+    if kind == tkModule {
+        discard parserAdvance(p);
+        let name: LexToken = parserExpect(p, tkIdent, "expected module name");
+        parserMatch(p, tkSemicolon);
+        let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+        d.kind = dkModule;
+        d.strValue = name.text;
+        return d;
+    }
+
+    if kind == tkConst {
+        discard parserAdvance(p);
+        let name: LexToken = parserExpect(p, tkIdent, "expected const name");
+        discard parserExpect(p, tkColon, "expected ':'");
+        let ct: *TypeExpr = parserParseType(p);
+        discard parserExpect(p, tkAssign, "expected '='");
+        let val: *Expr = parserParseExpr(p);
+        parserMatch(p, tkSemicolon);
+        let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+        d.kind = dkConst;
+        d.strValue = name.text;
+        d.constType = ct;
+        d.constValue = val;
+        return d;
+    }
+
+    // Skip unknown declarations
+    while parserPeek(p, 0) != tkEndOfFile && parserPeek(p, 0) != tkNewLine && parserPeek(p, 0) != tkRBrace {
+        discard parserAdvance(p);
+    }
+    return null as *Decl;
+}
+
+// ---------------------------------------------------------------------------
+// Module parsing
+// ---------------------------------------------------------------------------
+
+func Parser_Parse(tokens: *LexToken, tokenCount: int) -> *Module {
+    let p: *Parser = bux_alloc(sizeof(Parser)) as *Parser;
+    p.tokens = tokens;
+    p.tokenCount = tokenCount;
+    p.pos = 0;
+    p.structInitAllowed = true;
+    let diagBuf: *ParserDiag = bux_alloc(256 as uint * sizeof(ParserDiag)) as *ParserDiag;
+    p.diags = diagBuf;
+    p.diagCount = 0;
+
+    let mod: *Module = bux_alloc(sizeof(Module)) as *Module;
+    mod.name = "";
+    mod.itemCount = 0;
+    mod.firstItem = null as *Decl;
+
+    // Parse declarations until EOF
+    while parserPeek(p, 0) != tkEndOfFile {
+        if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+            discard parserAdvance(p);
+            continue;
+        }
+        let decl: *Decl = parserParseDecl(p);
+        if decl != null as *Decl {
+            decl.childDecl2 = mod.firstItem; // push front
+            mod.firstItem = decl;
+            mod.itemCount = mod.itemCount + 1;
+        }
+    }
+
+    return mod;
+}
+
+func Parser_DiagCount(p: *Parser) -> int {
+    return p.diagCount;
+}
+
+func Parser_Free(p: *Parser) {
+    bux_free(p.diags as *void);
+    bux_free(p as *void);
+}

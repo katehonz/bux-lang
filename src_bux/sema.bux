@@ -1,0 +1,394 @@
+// sema.bux — Semantic analysis (type checker, ported from sema.nim)
+// Validates types, resolves identifiers, checks function calls.
+module Sema;
+
+// ---------------------------------------------------------------------------
+// Sema context
+// ---------------------------------------------------------------------------
+struct Sema {
+    module: *Module,
+    scope: *Scope,
+    typeTable: *StringMap,
+    methodTable: *StringMap,
+    diagCount: int,
+    diags: *SemaDiag,
+    hasError: bool,
+}
+
+struct SemaDiag {
+    line: uint32,
+    column: uint32,
+    message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+func Sema_EmitError(sema: *Sema, line: uint32, col: uint32, msg: String) {
+    if sema.diagCount < 256 {
+        sema.diags[sema.diagCount] = SemaDiag { line: line, column: col, message: msg };
+        sema.diagCount = sema.diagCount + 1;
+    }
+    sema.hasError = true;
+}
+
+// ---------------------------------------------------------------------------
+// Type resolution from TypeExpr → Type constants
+// ---------------------------------------------------------------------------
+
+func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
+    if te == null as *TypeExpr { return tkUnknown; }
+    let name: String = te.typeName;
+
+    if te.kind == tekPointer {
+        return tkPointer;
+    }
+
+    if String_Eq(name, "void") { return tkVoid; }
+    if String_Eq(name, "bool") { return tkBool; }
+    if String_Eq(name, "bool8") { return tkBool8; }
+    if String_Eq(name, "bool16") { return tkBool16; }
+    if String_Eq(name, "bool32") { return tkBool32; }
+    if String_Eq(name, "char8") { return tkChar8; }
+    if String_Eq(name, "char16") { return tkChar16; }
+    if String_Eq(name, "char32") { return tkChar32; }
+    if String_Eq(name, "String") { return tkStr; }
+    if String_Eq(name, "str") { return tkStr; }
+    if String_Eq(name, "int8") { return tkInt8; }
+    if String_Eq(name, "int16") { return tkInt16; }
+    if String_Eq(name, "int32") { return tkInt32; }
+    if String_Eq(name, "int64") { return tkInt64; }
+    if String_Eq(name, "int") { return tkInt; }
+    if String_Eq(name, "uint8") { return tkUInt8; }
+    if String_Eq(name, "uint16") { return tkUInt16; }
+    if String_Eq(name, "uint32") { return tkUInt32; }
+    if String_Eq(name, "uint64") { return tkUInt64; }
+    if String_Eq(name, "uint") { return tkUInt; }
+    if String_Eq(name, "float32") { return tkFloat32; }
+    if String_Eq(name, "float64") { return tkFloat64; }
+    if String_Eq(name, "float") { return tkFloat64; }
+
+    // Check type table for user-defined types
+    if sema.typeTable != null as *StringMap {
+        if StringMap_Has(sema.typeTable, name) {
+            return tkNamed;
+        }
+    }
+    return tkNamed; // assume named type
+}
+
+// ---------------------------------------------------------------------------
+// Type predicates
+// ---------------------------------------------------------------------------
+
+func Sema_IsNumeric(kind: int) -> bool {
+    if kind == tkUnknown || kind == tkNamed || kind == tkTypeParam { return true; }
+    return kind >= tkInt8 && kind <= tkUInt64;
+}
+
+func Sema_IsBool(kind: int) -> bool {
+    return kind == tkBool || kind == tkBool8 || kind == tkBool16 || kind == tkBool32;
+}
+
+func Sema_TypeName(kind: int) -> String {
+    if kind == tkUnknown { return "?"; }
+    if kind == tkVoid { return "void"; }
+    if kind == tkBool { return "bool"; }
+    if kind == tkInt { return "int"; }
+    if kind == tkInt64 { return "int64"; }
+    if kind == tkUInt { return "uint"; }
+    if kind == tkFloat64 { return "float64"; }
+    if kind == tkStr { return "String"; }
+    if kind == tkPointer { return "*ptr"; }
+    if kind == tkNamed { return "user-type"; }
+    if kind == tkTypeParam { return "type-param"; }
+    return "?";
+}
+
+// ---------------------------------------------------------------------------
+// Expression type checking
+// ---------------------------------------------------------------------------
+
+func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
+    if expr == null as *Expr { return tkUnknown; }
+    let kind: int = expr.kind;
+
+    // Literal
+    if kind == ekLiteral {
+        let tk: int = expr.tokKind;
+        if tk == tkIntLiteral { return tkInt; }
+        if tk == tkFloatLiteral { return tkFloat64; }
+        if tk == tkStringLiteral { return tkStr; }
+        if tk == tkBoolLiteral { return tkBool; }
+        if tk == tkCharLiteral { return tkChar32; }
+        if tk == tkNull { return tkPointer; }
+        return tkUnknown;
+    }
+
+    // Identifier — look up in scope
+    if kind == ekIdent {
+        let sym: Symbol = Scope_Lookup(sema.scope, expr.strValue);
+        if sym.kind == 0 && !String_Eq(sym.name, expr.strValue) {
+            Sema_EmitError(sema, expr.line, expr.column, "undeclared identifier");
+            return tkUnknown;
+        }
+        return sym.typeKind;
+    }
+
+    // Binary
+    if kind == ekBinary {
+        let left: int = Sema_CheckExpr(sema, expr.child1);
+        let right: int = Sema_CheckExpr(sema, expr.child2);
+        let op: int = expr.intValue;
+
+        // Comparison operators return bool
+        if op >= tkEq && op <= tkGe { return tkBool; }
+        // Logical operators return bool
+        if op == tkAmpAmp || op == tkPipePipe || op == tkBang { return tkBool; }
+        // Arithmetic returns wider type
+        if !Sema_IsNumeric(left) || !Sema_IsNumeric(right) {
+            Sema_EmitError(sema, expr.line, expr.column, "arithmetic requires numeric operands");
+        }
+        if left == tkFloat64 || right == tkFloat64 { return tkFloat64; }
+        return tkInt;
+    }
+
+    // Unary
+    if kind == ekUnary {
+        let operand: int = Sema_CheckExpr(sema, expr.child1);
+        let op: int = expr.intValue;
+        if op == tkBang { return tkBool; }
+        if op == tkStar { return tkUnknown; } // dereference — resolve pointee
+        if op == tkAmp { return tkPointer; }
+        return operand;
+    }
+
+    // Call
+    if kind == ekCall {
+        let callee: int = Sema_CheckExpr(sema, expr.child1);
+        if callee == tkUnknown { return tkUnknown; }
+        // Assume callee returns same type (simplified)
+        return callee;
+    }
+
+    // Ternary
+    if kind == ekTernary {
+        return Sema_CheckExpr(sema, expr.child2); // then type
+    }
+
+    // Cast — return target type
+    if kind == ekCast {
+        if expr.refType != null as *TypeExpr {
+            return Sema_ResolveType(sema, expr.refType);
+        }
+        return tkUnknown;
+    }
+
+    // Try (?)
+    if kind == ekTry {
+        let inner: int = Sema_CheckExpr(sema, expr.child1);
+        return inner; // simplified
+    }
+
+    return tkUnknown;
+}
+
+// ---------------------------------------------------------------------------
+// Statement checking
+// ---------------------------------------------------------------------------
+
+func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
+    if stmt == null as *Stmt { return; }
+    let kind: int = stmt.kind;
+
+    // Let/var
+    if kind == skLet {
+        let initType: int = Sema_CheckExpr(sema, stmt.child1);
+        // Register variable in scope
+        var sym: Symbol;
+        sym.kind = skVar;
+        sym.name = stmt.strValue;
+        sym.typeKind = initType;
+        sym.isMutable = stmt.boolValue;
+        sym.isPublic = false;
+        discard Scope_Define(sema.scope, sym);
+        return;
+    }
+
+    // Return
+    if kind == skReturn {
+        if stmt.child1 != null as *Expr {
+            discard Sema_CheckExpr(sema, stmt.child1);
+        }
+        return;
+    }
+
+    // If
+    if kind == skIf {
+        let condType: int = Sema_CheckExpr(sema, stmt.child1);
+        if !Sema_IsBool(condType) && condType != tkUnknown {
+            Sema_EmitError(sema, stmt.line, stmt.column, "if condition must be bool");
+        }
+        return;
+    }
+
+    // While
+    if kind == skWhile {
+        let condType: int = Sema_CheckExpr(sema, stmt.child1);
+        if !Sema_IsBool(condType) && condType != tkUnknown {
+            Sema_EmitError(sema, stmt.line, stmt.column, "while condition must be bool");
+        }
+        return;
+    }
+
+    // Expression statement
+    if kind == skExpr && stmt.child1 != null as *Expr {
+        discard Sema_CheckExpr(sema, stmt.child1);
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Collect globals (register functions, structs, enums in scope)
+// ---------------------------------------------------------------------------
+
+func Sema_CollectGlobals(sema: *Sema) {
+    var decl: *Decl = sema.module.firstItem;
+    while decl != null as *Decl {
+        let dk: int = decl.kind;
+
+        // Function
+        if dk == dkFunc {
+            var sym: Symbol;
+            sym.kind = skFunc;
+            sym.name = decl.strValue;
+            sym.typeKind = tkFunc;
+            sym.isPublic = decl.isPublic;
+            discard Scope_Define(sema.scope, sym);
+        }
+
+        // Struct
+        if dk == dkStruct {
+            var sym: Symbol;
+            sym.kind = skType;
+            sym.name = decl.strValue;
+            sym.typeKind = tkNamed;
+            sym.isPublic = decl.isPublic;
+            discard Scope_Define(sema.scope, sym);
+        }
+
+        // Enum
+        if dk == dkEnum {
+            var sym: Symbol;
+            sym.kind = skType;
+            sym.name = decl.strValue;
+            sym.typeKind = tkNamed;
+            sym.isPublic = decl.isPublic;
+            discard Scope_Define(sema.scope, sym);
+        }
+
+        // Extern function
+        if dk == dkExternFunc {
+            var sym: Symbol;
+            sym.kind = skFunc;
+            sym.name = decl.strValue;
+            sym.typeKind = tkFunc;
+            sym.isPublic = true;
+            discard Scope_Define(sema.scope, sym);
+        }
+
+        decl = decl.childDecl2;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Analyze — main entry point
+// ---------------------------------------------------------------------------
+
+func Sema_Analyze(mod: *Module) -> *Sema {
+    let s: *Sema = bux_alloc(sizeof(Sema)) as *Sema;
+    s.module = mod;
+    s.scope = bux_alloc(sizeof(Scope)) as *Scope;
+    s.scope.symbols = bux_alloc(256 as uint * sizeof(Symbol)) as *Symbol;
+    s.scope.count = 0;
+    s.scope.parent = null as *Scope;
+    s.hasError = false;
+    s.diagCount = 0;
+    s.diags = bux_alloc(256 as uint * sizeof(SemaDiag)) as *SemaDiag;
+    s.typeTable = null as *StringMap;
+    s.methodTable = null as *StringMap;
+
+    // First pass: collect globals
+    Sema_CollectGlobals(s);
+
+    // Second pass: check function bodies
+    var decl: *Decl = mod.firstItem;
+    while decl != null as *Decl {
+        if decl.kind == dkFunc && decl.refBody != null as *Block {
+            // Create function scope (child of global)
+            var funcScope: Scope = Scope_NewChild(s.scope);
+
+            // Add type params to scope
+            if decl.typeParamCount >= 1 {
+                var tpSym: Symbol;
+                tpSym.kind = skType;
+                tpSym.name = decl.typeParam0;
+                tpSym.typeKind = tkTypeParam;
+                discard Scope_Define(&funcScope, tpSym);
+            }
+            if decl.typeParamCount >= 2 {
+                var tpSym2: Symbol;
+                tpSym2.kind = skType;
+                tpSym2.name = decl.typeParam1;
+                tpSym2.typeKind = tkTypeParam;
+                discard Scope_Define(&funcScope, tpSym2);
+            }
+
+            // Add parameters to scope
+            var i: int = 0;
+            while i < decl.paramCount {
+                var pSym: Symbol;
+                pSym.kind = skVar;
+                pSym.typeKind = tkInt; // simplified
+                pSym.isMutable = false;
+                if i == 0 { pSym.name = decl.param0.name; }
+                else if i == 1 { pSym.name = decl.param1.name; }
+                else if i == 2 { pSym.name = decl.param2.name; }
+                else if i == 3 { pSym.name = decl.param3.name; }
+                else if i == 4 { pSym.name = decl.param4.name; }
+                else if i == 5 { pSym.name = decl.param5.name; }
+                discard Scope_Define(&funcScope, pSym);
+                i = i + 1;
+            }
+
+            // Switch to function scope and check body statements
+            let prevScope: *Scope = s.scope;
+            s.scope = &funcScope;
+
+            // Check body (simplified — just count statements)
+            var stmtCount: int = decl.refBody.stmtCount;
+            // In a full implementation, iterate statements and check each
+
+            s.scope = prevScope;
+        }
+        decl = decl.childDecl2;
+    }
+
+    return s;
+}
+
+func Sema_HasError(sema: *Sema) -> bool {
+    return sema.hasError;
+}
+
+func Sema_DiagCount(sema: *Sema) -> int {
+    return sema.diagCount;
+}
+
+func Sema_Free(sema: *Sema) {
+    bux_free(sema.scope.symbols as *void);
+    bux_free(sema.scope as *void);
+    bux_free(sema.diags as *void);
+    bux_free(sema as *void);
+}
