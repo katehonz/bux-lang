@@ -508,6 +508,9 @@ proc parsePostfix(p: var Parser): Expr =
     of tkQuestion:
       discard p.advance()
       left = Expr(kind: ekTry, loc: loc, exprTryOperand: left, exprTryType: nil)
+    of tkBang:
+      discard p.advance()
+      left = Expr(kind: ekUnwrap, loc: loc, exprUnwrapOperand: left)
     of tkLBrace:
       if p.structInitAllowed and left.kind in {ekIdent, ekPath, ekGenericCall}:
         discard p.advance()

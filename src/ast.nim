@@ -116,6 +116,7 @@ type
     ekCast
     ekIs
     ekTry
+    ekUnwrap        ## expr! — unwrap or panic
     ekBlock
     ekMatch
 
@@ -193,6 +194,8 @@ type
     of ekTry:
       exprTryOperand*: Expr
       exprTryType*: TypeExpr  # nil for Result?, or explicit target type
+    of ekUnwrap:
+      exprUnwrapOperand*: Expr
     of ekBlock:
       exprBlock*: Block
     of ekMatch:

@@ -373,6 +373,8 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
   of ekTry:
     # For now, assume Result<int, String> -> int or Option<int> -> int
     return makeInt()
+  of ekUnwrap:
+    return makeInt()
   of ekBlock:
     if expr.exprBlock.stmts.len > 0:
       let last = expr.exprBlock.stmts[^1]
@@ -691,6 +693,51 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                            typ: makeNamed(typeName & "_Data"), loc: loc)
     let okPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: okField,
                         typ: makePointer(makeInt()), loc: loc)
+    let okLoad = HirNode(kind: hLoad, loadPtr: okPtr, typ: makeInt(), loc: loc)
+
+    ctx.pendingStmts.add(tmpAlloca)
+    ctx.pendingStmts.add(tmpStore)
+    ctx.pendingStmts.add(ifNode)
+    return okLoad
+
+  of ekUnwrap:
+    let operand = ctx.lowerExpr(expr.exprUnwrapOperand)
+    let operandType = ctx.resolveExprType(expr.exprUnwrapOperand)
+
+    var errTag = "Result_Err"
+    var typeName = "Result"
+    if operandType.kind == tkNamed:
+      typeName = operandType.name
+      if typeName == "Option":
+        errTag = "Option_None"
+
+    let tmpName = ctx.freshTryVar()
+    let tmpAlloca = hirAlloca(tmpName, operandType, loc)
+    let tmpVar = hirVar(tmpName, makePointer(operandType), loc)
+    let tmpStore = hirStore(tmpVar, operand, loc)
+
+    let tagPtr = HirNode(kind: hFieldPtr, fieldPtrBase: tmpVar, fieldName: "tag",
+                          typ: makePointer(makeNamed(typeName & "_Tag")), loc: loc)
+    let tagLoad = HirNode(kind: hLoad, loadPtr: tagPtr,
+                           typ: makeNamed(typeName & "_Tag"), loc: loc)
+    let errConst = hirVar(errTag, makeNamed(typeName & "_Tag"), loc)
+    let cond = hirBinary(tkEq, tagLoad, errConst, makeBool(), loc)
+
+    # On error: call bux_panic("unwrap failed")
+    let panicTok = Token(kind: tkStringLiteral, text: "\"unwrap failed\"", loc: loc)
+    let panicMsg = HirNode(kind: hLit, litToken: panicTok, typ: makeStr(), loc: loc)
+    let panicCall = hirCall("bux_panic", @[panicMsg], makeVoid(), loc)
+    let thenBlock = hirBlock(@[panicCall], nil, makeVoid(), loc)
+    let ifNode = HirNode(kind: hIf, ifCond: cond, ifThen: thenBlock,
+                          ifElse: nil, typ: makeVoid(), loc: loc)
+
+    # Extract the Ok/Some value
+    let dataPtr = HirNode(kind: hFieldPtr, fieldPtrBase: tmpVar, fieldName: "data",
+                           typ: makePointer(makeNamed(typeName & "_Data")), loc: loc)
+    let dataLoad = HirNode(kind: hLoad, loadPtr: dataPtr,
+                            typ: makeNamed(typeName & "_Data"), loc: loc)
+    let okPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: "Ok_0",
+                         typ: makePointer(makeInt()), loc: loc)
     let okLoad = HirNode(kind: hLoad, loadPtr: okPtr, typ: makeInt(), loc: loc)
 
     ctx.pendingStmts.add(tmpAlloca)
@@ -1065,6 +1112,8 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       result.add(findGenericCalls(expr.exprUnaryOperand))
     of ekTry:
       result.add(findGenericCalls(expr.exprTryOperand))
+    of ekUnwrap:
+      result.add(findGenericCalls(expr.exprUnwrapOperand))
     of ekAssign:
       result.add(findGenericCalls(expr.exprAssignTarget))
       result.add(findGenericCalls(expr.exprAssignValue))
