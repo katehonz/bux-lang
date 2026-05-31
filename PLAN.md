@@ -293,7 +293,32 @@ Phase 7.5 — Driver (depends on all):
 | `7.7` Port C backend | ✅ | `c_backend.bux` — C code generator | 266 |
 | `7.8` Port CLI | ✅ | `cli.bux` + `main.bux` — command dispatch | ~181 |
 | `7.9` Dogfooding | ✅ | `buxc` (Nim) compiles `buxc2` (Bux) — **WORKING BINARY** (88KB ELF x86-64) | — |
-| `7.10` Fix bootstrap loop | ⏳ | Once `buxc2 == buxc3`, we are self-hosted. Freeze Nim version as reference. | — |
+| `7.10` Bootstrap loop | 🔄 | `buxc2 check` works on `.bux` files. Full multi-file build needs sema/IR fixes. | 7.9 |
+
+### Phase 7.10 — Bootstrap Loop (In Progress)
+
+**Status:** `buxc2` can type-check (`check`) individual `.bux` files. Full self-compilation needs fixes in `buxc2`'s sema, HIR, and C backend.
+
+**What works:**
+- ✅ `buxc2 version` — shows version from command-line args
+- ✅ `buxc2 check <file.bux>` — lexes, parses, type-checks, generates C (validates pipeline)
+- ✅ `buxc2 build <file.bux> <output.c>` — writes generated C to file
+- ✅ Command-line args — `bux_argc()`/`bux_argv()` in runtime, `int main(argc, argv)` wrapper
+
+**What needs fixing in `buxc2`:**
+| Issue | Location | Description |
+|-------|----------|-------------|
+| `String` → `int` | `sema.bux` | `Sema_ResolveType("String")` returns `tyInt` instead of `tyStr` |
+| Function calls not in body | `hir_lower.bux` | `Lcx_LowerExpr` doesn't emit call expressions into function body |
+| No `int main()` wrapper | `c_backend.bux` | Missing `hasMain` detection and C main wrapper generation |
+| Single-file only | `cli.bux` | Cannot merge multiple `.bux` files with imports |
+
+**Bootstrap loop goal:**
+```
+buxc (Nim) → compile src_bux/*.bux → buxc2 (Bux binary)
+buxc2 (Bux) → compile src_bux/*.bux → buxc3 (Bux binary)
+compare buxc2 == buxc3 → SELF-HOSTED ✅
+```
 
 ### Phase 7.9 — Completed 2026-05-31 🎉
 

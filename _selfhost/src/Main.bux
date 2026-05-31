@@ -1,13 +1,22 @@
 // main.bux — Entry point for the Bux self-hosting compiler
 module Main {
 
+// C runtime for command-line args
+extern func bux_argc() -> int;
+extern func bux_argv(index: int) -> String;
+
 // Forward declaration from Cli module
 func Cli_Run(args: *String, argCount: int) -> int;
 
 func Main() -> int {
-    // In a full implementation, parse command-line arguments
-    // For now, just show version info
-    var emptyArgs: *String = null as *String;
-    return Cli_Run(emptyArgs, 0);
+    let count: int = bux_argc();
+    // Allocate array of String pointers
+    let args: *String = bux_alloc(count as uint * 8) as *String;
+    var i: int = 0;
+    while i < count {
+        args[i] = bux_argv(i);
+        i = i + 1;
+    }
+    return Cli_Run(args, count);
 }
 }

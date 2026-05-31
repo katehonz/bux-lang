@@ -544,7 +544,11 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
   # Generate C main wrapper if Bux Main exists
   if hasMain:
     be.emitLine("/* C entry point wrapper */")
+    be.emitLine("extern int g_argc;")
+    be.emitLine("extern char** g_argv;")
     be.emitLine("int main(int argc, char** argv) {")
+    be.emitLine("    g_argc = argc;")
+    be.emitLine("    g_argv = argv;")
     be.emitLine("    return Main();")
     be.emitLine("}")
     be.emitLine("")

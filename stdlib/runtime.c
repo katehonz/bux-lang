@@ -7,6 +7,16 @@
 #include <stdbool.h>
 #include <string.h>
 
+/* Command-line argument storage */
+int g_argc = 0;
+char** g_argv = NULL;
+
+int bux_argc(void) { return g_argc; }
+char* bux_argv(int index) {
+    if (index < 0 || index >= g_argc) return "";
+    return g_argv[index];
+}
+
 /* Memory allocation */
 void* bux_alloc(size_t size) {
     void* ptr = malloc(size);
