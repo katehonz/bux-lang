@@ -302,22 +302,54 @@ extend Rectangle {
 
 ## Generics
 
-Generic functions are monomorphized at compile time:
+### Generic Functions
+
+Generic functions are monomorphized at compile time. Type parameters can be specified explicitly or inferred from arguments:
 
 ```bux
-func Swap<T>(a: *T, b: *T) {
-    let tmp: T = *a;
-    *a = *b;
-    *b = tmp;
+func Max<T>(a: T, b: T) -> T {
+    if a > b { return a; }
+    return b;
 }
 
 func Main() -> int {
-    let x: int = 1;
-    let y: int = 2;
-    Swap<int>(&x, &y);
+    // Explicit type args
+    let m1: int = Max<int>(10, 20);
+
+    // Type inference — T inferred as int from arguments
+    let m2: int = Max(10, 20);
     return 0;
 }
 ```
+
+### Generic Structs
+
+```bux
+struct Box<T> {
+    value: T,
+}
+
+// Use extend Type<T> for methods on generic structs
+extend Box<T> {
+    func Get(self: *Box<T>) -> T {
+        return self.value;
+    }
+
+    func Set(self: *Box<T>, value: T) {
+        self.value = value;
+    }
+}
+
+func Main() -> int {
+    let b: Box<int> = Box<int> { value: 42 };
+    PrintInt(b.Get());  // 42
+    b.Set(100);
+    PrintInt(b.Get());  // 100
+    return 0;
+}
+```
+
+> **Note:** `extend Type<T>` syntax requires type parameters on the impl block. The compiler propagates them to each method automatically.
 
 ---
 

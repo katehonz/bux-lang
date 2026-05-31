@@ -1,12 +1,12 @@
 # Bux Standard Library
 
-The Bux standard library provides core functionality for systems programming. It is intentionally minimal for the bootstrap phase and will grow as the language matures.
+The Bux standard library provides core functionality for systems programming. All modules are merged into every compilation, so no explicit linking is needed.
 
 ---
 
 ## Std::Io
 
-Basic input/output operations wrapping C stdio.
+Basic I/O and file operations wrapping C stdio.
 
 ### Functions
 
@@ -18,14 +18,17 @@ Basic input/output operations wrapping C stdio.
 | `PrintFloat` | `func PrintFloat(f: float64)` | Print float |
 | `PrintBool` | `func PrintBool(b: bool)` | Print boolean |
 | `ReadLine` | `func ReadLine() -> String` | Read line from stdin |
+| `ReadFile` | `func ReadFile(path: String) -> String` | Read entire file into string |
+| `WriteFile` | `func WriteFile(path: String, content: String) -> bool` | Write string to file |
+| `FileExists` | `func FileExists(path: String) -> bool` | Check if file exists |
 
 ### Example
 ```bux
-import Std::Io::{PrintLine, PrintInt};
+import Std::Io::{PrintLine, ReadFile, WriteFile};
 
 func Main() -> int {
-    PrintLine("Hello, World!");
-    PrintInt(42);
+    WriteFile("/tmp/test.txt", "Hello, Bux!");
+    PrintLine(ReadFile("/tmp/test.txt"));
     return 0;
 }
 ```
@@ -34,13 +37,12 @@ func Main() -> int {
 
 ## Std::Array
 
-Dynamic array of integers (currently hardcoded for `int`).
+Fully generic dynamic array `Array<T>`.
 
 ### Types
-
 ```bux
-struct Array {
-    data: *int,
+struct Array<T> {
+    data: *T,
     len: uint,
     cap: uint,
 }
@@ -50,22 +52,22 @@ struct Array {
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `Array_New` | `func Array_New(cap: uint) -> Array` | Create new array with capacity |
-| `Array_Push` | `func Array_Push(arr: *Array, value: int)` | Append element |
-| `Array_Get` | `func Array_Get(arr: *Array, index: uint) -> int` | Get element at index |
-| `Array_Len` | `func Array_Len(arr: *Array) -> uint` | Get length |
-| `Array_Free` | `func Array_Free(arr: *Array)` | Free memory |
+| `Array_New<T>` | `func Array_New<T>(cap: uint) -> Array<T>` | Create new array |
+| `Array_Push<T>` | `func Array_Push<T>(arr: *Array<T>, value: T)` | Append element |
+| `Array_Get<T>` | `func Array_Get<T>(arr: *Array<T>, index: uint) -> T` | Get element at index |
+| `Array_Len<T>` | `func Array_Len<T>(arr: *Array<T>) -> uint` | Get length |
+| `Array_Free<T>` | `func Array_Free<T>(arr: *Array<T>)` | Free memory |
 
 ### Example
 ```bux
 import Std::Array::{Array, Array_New, Array_Push, Array_Get};
 
 func Main() -> int {
-    let arr: Array = Array_New(4);
-    Array_Push(&arr, 10);
-    Array_Push(&arr, 20);
-    PrintInt(Array_Get(&arr, 0));  // 10
-    Array_Free(&arr);
+    let arr: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&arr, 10);
+    Array_Push<int>(&arr, 20);
+    PrintInt(Array_Get<int>(&arr, 0));  // 10
+    Array_Free<int>(&arr);
     return 0;
 }
 ```
@@ -74,28 +76,81 @@ func Main() -> int {
 
 ## Std::String
 
-String manipulation utilities for the built-in `String` type (`const char*` in C).
+String manipulation utilities.
+
+### Core Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `String_Len` | `func String_Len(s: String) -> uint` | Length of string |
+| `String_Eq` | `func String_Eq(a: String, b: String) -> bool` | Compare strings |
+| `String_Concat` | `func String_Concat(a: String, b: String) -> String` | Concatenate (allocates) |
+| `String_Copy` | `func String_Copy(s: String) -> String` | Copy string (allocates) |
+| `String_StartsWith` | `func String_StartsWith(s: String, prefix: String) -> bool` | Check prefix |
+| `String_EndsWith` | `func String_EndsWith(s: String, suffix: String) -> bool` | Check suffix |
+| `String_Contains` | `func String_Contains(s: String, substr: String) -> bool` | Check substring |
+
+### Slicing & Trimming
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `String_Slice` | `func String_Slice(s: String, start: uint, len: uint) -> String` | Extract substring |
+| `String_Trim` | `func String_Trim(s: String) -> String` | Trim both sides |
+| `String_TrimLeft` | `func String_TrimLeft(s: String) -> String` | Trim left side |
+| `String_TrimRight` | `func String_TrimRight(s: String) -> String` | Trim right side |
+
+### Split & Join
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `String_SplitCount` | `func String_SplitCount(s: String, delim: String) -> uint` | Count parts |
+| `String_SplitPart` | `func String_SplitPart(s: String, delim: String, index: uint) -> String` | Get nth part (0-indexed) |
+| `String_Join2` | `func String_Join2(a: String, b: String, sep: String) -> String` | Join two strings with separator |
+
+### Conversion
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `String_FromInt` | `func String_FromInt(n: int64) -> String` | Int to string |
+| `String_ToInt` | `func String_ToInt(s: String) -> int64` | String to int |
+
+---
+
+## Std::StringBuilder
+
+Efficient string construction using a dynamic buffer.
+
+### Types
+```bux
+struct StringBuilder {
+    handle: *void,
+}
+```
 
 ### Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `String_Len` | `func String_Len(s: String) -> uint` | Length of string (wraps `strlen`) |
-| `String_Eq` | `func String_Eq(a: String, b: String) -> bool` | Compare strings for equality |
-| `String_Concat` | `func String_Concat(a: String, b: String) -> String` | Concatenate two strings (allocates) |
-| `String_Copy` | `func String_Copy(s: String) -> String` | Copy string (allocates) |
-| `String_StartsWith` | `func String_StartsWith(s: String, prefix: String) -> bool` | Check prefix |
+| `StringBuilder_New` | `func StringBuilder_New() -> StringBuilder` | Create with default capacity (64) |
+| `StringBuilder_NewCap` | `func StringBuilder_NewCap(cap: uint) -> StringBuilder` | Create with custom capacity |
+| `StringBuilder_Append` | `func StringBuilder_Append(sb: *StringBuilder, s: String)` | Append string |
+| `StringBuilder_AppendInt` | `func StringBuilder_AppendInt(sb: *StringBuilder, n: int64)` | Append integer |
+| `StringBuilder_AppendFloat` | `func StringBuilder_AppendFloat(sb: *StringBuilder, f: float64)` | Append float |
+| `StringBuilder_AppendChar` | `func StringBuilder_AppendChar(sb: *StringBuilder, c: char8)` | Append char |
+| `StringBuilder_Build` | `func StringBuilder_Build(sb: *StringBuilder) -> String` | Build result string |
+| `StringBuilder_Free` | `func StringBuilder_Free(sb: *StringBuilder)` | Free memory |
 
 ### Example
 ```bux
-import Std::String::{String_Len, String_Concat, String_Eq};
+import Std::String::{StringBuilder, StringBuilder_New, StringBuilder_Append, StringBuilder_AppendInt, StringBuilder_Build, StringBuilder_Free};
 
 func Main() -> int {
-    let hello: String = "Hello";
-    let world: String = "World";
-    let greeting: String = String_Concat(hello, ", ");
-    let full: String = String_Concat(greeting, world);
-    PrintLine(full);  // "Hello, World"
+    let sb: StringBuilder = StringBuilder_New();
+    StringBuilder_Append(&sb, "Hello, ");
+    StringBuilder_Append(&sb, "World! #");
+    StringBuilder_AppendInt(&sb, 42);
+    PrintLine(StringBuilder_Build(&sb));  // "Hello, World! #42"
+    StringBuilder_Free(&sb);
     return 0;
 }
 ```
@@ -104,19 +159,18 @@ func Main() -> int {
 
 ## Std::Map
 
-Hash map with `String` keys and `int` values using linear probing.
+Generic hash map `Map<K, V>` for value-type keys (int, float, etc.).
 
 ### Types
-
 ```bux
-struct MapEntry {
-    key: String,
-    value: int,
+struct MapEntry<K, V> {
+    key: K,
+    value: V,
     occupied: bool,
 }
 
-struct Map {
-    entries: *MapEntry,
+struct Map<K, V> {
+    entries: *MapEntry<K, V>,
     cap: uint,
     len: uint,
 }
@@ -126,24 +180,81 @@ struct Map {
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `Map_New` | `func Map_New(cap: uint) -> Map` | Create new map with given capacity |
-| `Map_Set` | `func Map_Set(m: *Map, key: String, value: int)` | Insert or update key |
-| `Map_Get` | `func Map_Get(m: *Map, key: String) -> int` | Get value by key (0 if missing) |
-| `Map_Has` | `func Map_Has(m: *Map, key: String) -> bool` | Check if key exists |
-| `Map_Len` | `func Map_Len(m: *Map) -> uint` | Number of entries |
-| `Map_Free` | `func Map_Free(m: *Map)` | Free memory |
+| `Map_New<K,V>` | `func Map_New<K,V>(cap: uint) -> Map<K,V>` | Create map |
+| `Map_Set<K,V>` | `func Map_Set<K,V>(m: *Map<K,V>, key: K, value: V)` | Insert/update |
+| `Map_Get<K,V>` | `func Map_Get<K,V>(m: *Map<K,V>, key: K) -> V` | Get value (zero if missing) |
+| `Map_Has<K,V>` | `func Map_Has<K,V>(m: *Map<K,V>, key: K) -> bool` | Check key exists |
+| `Map_Len<K,V>` | `func Map_Len<K,V>(m: *Map<K,V>) -> uint` | Entry count |
+| `Map_Free<K,V>` | `func Map_Free<K,V>(m: *Map<K,V>)` | Free memory |
 
 ### Example
 ```bux
-import Std::Map::{Map, Map_New, Map_Set, Map_Get, Map_Has};
+import Std::Map::{Map, Map_New, Map_Set, Map_Get, Map_Free};
 
 func Main() -> int {
-    let m: Map = Map_New(16);
-    Map_Set(&m, "one", 1);
-    Map_Set(&m, "two", 2);
-    PrintInt(Map_Get(&m, "one"));   // 1
-    PrintInt(Map_Get(&m, "three")); // 0
-    Map_Free(&m);
+    let m: Map<int, String> = Map_New<int, String>(16);
+    Map_Set<int, String>(&m, 1, "one");
+    Map_Set<int, String>(&m, 2, "two");
+    PrintLine(Map_Get<int, String>(&m, 1));  // "one"
+    Map_Free<int, String>(&m);
+    return 0;
+}
+```
+
+> **Note:** For `String` keys, use `StringMap<V>` below which uses `strcmp` for key comparison.
+
+---
+
+## Std::StringMap
+
+Specialized hash map for `String` keys with any value type.
+
+### Types
+```bux
+struct StringMapEntry<V> {
+    key: String,
+    value: V,
+    occupied: bool,
+}
+
+struct StringMap<V> {
+    entries: *StringMapEntry<V>,
+    cap: uint,
+    len: uint,
+}
+```
+
+### Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `StringMap_New<V>` | `func StringMap_New<V>(cap: uint) -> StringMap<V>` | Create map |
+| `StringMap_Set<V>` | `func StringMap_Set<V>(m: *StringMap<V>, key: String, value: V)` | Insert/update |
+| `StringMap_Get<V>` | `func StringMap_Get<V>(m: *StringMap<V>, key: String) -> V` | Get value |
+| `StringMap_Has<V>` | `func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool` | Check key exists |
+| `StringMap_Len<V>` | `func StringMap_Len<V>(m: *StringMap<V>) -> uint` | Entry count |
+| `StringMap_Free<V>` | `func StringMap_Free<V>(m: *StringMap<V>)` | Free memory |
+
+---
+
+## Std::Path
+
+Path manipulation utilities.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Path_Join` | `func Path_Join(a: String, b: String) -> String` | Join path segments |
+| `Path_Parent` | `func Path_Parent(path: String) -> String` | Get parent directory |
+| `Path_Ext` | `func Path_Ext(path: String) -> String` | Get file extension |
+
+### Example
+```bux
+import Std::Path::{Path_Join, Path_Parent, Path_Ext};
+
+func Main() -> int {
+    PrintLine(Path_Join("/home", "docs"));       // "/home/docs"
+    PrintLine(Path_Parent("/a/b/c.txt"));         // "/a/b"
+    PrintLine(Path_Ext("main.bux"));              // ".bux"
     return 0;
 }
 ```
@@ -156,19 +267,19 @@ These C functions are provided by `runtime.c` and are available via `extern` dec
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `bux_alloc` | `func bux_alloc(size: uint) -> *void` | Allocate memory (wraps `malloc`) |
+| `bux_alloc` | `func bux_alloc(size: uint) -> *void` | Allocate memory |
 | `bux_realloc` | `func bux_realloc(ptr: *void, size: uint) -> *void` | Reallocate memory |
 | `bux_free` | `func bux_free(ptr: *void)` | Free memory |
-| `bux_bounds_check` | `func bux_bounds_check(index: uint, len: uint)` | Panic on out-of-bounds |
+| `bux_bounds_check` | `func bux_bounds_check(index: uint, len: uint)` | Panic on OOB |
+| `bux_hash_string` | `func bux_hash_string(s: String) -> uint` | DJB2 hash for strings |
+| `bux_hash_bytes` | `func bux_hash_bytes(ptr: *void, size: uint) -> uint` | DJB2 hash for raw bytes |
 
 ---
 
 ## Future Modules
 
-Planned for future phases:
-
-- `Std::Result` — Generic `Result<T, E>` with `?` operator support
-- `Std::Option` — Generic `Option<T>`
+- `Std::Result` — Shipped via algebraic enums ✅
+- `Std::Option` — Shipped via algebraic enums ✅
 - `Std::Math` — `Sqrt`, `Pow`, `Min`, `Max`, `Abs`
 - `Std::Os` — `Args`, `Env`, `Exit`, `Cwd`
 - `Std::Fmt` — String formatting with interpolation

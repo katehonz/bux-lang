@@ -1015,6 +1015,7 @@ proc parseImplDecl(p: var Parser): Decl =
   let loc = p.currentLoc
   discard p.expect(tkExtend, "expected 'extend'")
   let typeName = p.expect(tkIdent, "expected type name").text
+  let typeParams = p.parseTypeParams()
   var interfaceName = ""
   if p.check(tkFor):
     discard p.advance()
@@ -1030,6 +1031,7 @@ proc parseImplDecl(p: var Parser): Decl =
     methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
   discard p.expect(tkRBrace, "expected '}' to close impl block")
   return Decl(kind: dkImpl, loc: loc, declImplTypeName: typeName,
+              declImplTypeParams: typeParams,
               declImplInterface: interfaceName, declImplMethods: methods)
 
 proc parseModuleDecl(p: var Parser, isPublic: bool): Decl =

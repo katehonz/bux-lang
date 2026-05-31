@@ -508,6 +508,32 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         args.add(ctx.lowerExpr(arg))
       return hirCall(mangledName, args, typ, loc)
 
+    # Inferred generic function call: Max(10, 20) → Max_int(10, 20)
+    if expr.exprCallInferredTypeArgs.len > 0:
+      var calleeName = ""
+      case expr.exprCallCallee.kind
+      of ekIdent:
+        calleeName = expr.exprCallCallee.exprIdent
+        if ctx.importTable.hasKey(calleeName):
+          calleeName = ctx.importTable[calleeName]
+      of ekPath:
+        calleeName = expr.exprCallCallee.exprPath.join("_")
+      else: discard
+      if calleeName != "":
+        var typeSuffix = ""
+        for i, targ in expr.exprCallInferredTypeArgs:
+          if i > 0:
+            typeSuffix.add("_")
+          if targ.kind == tekNamed:
+            typeSuffix.add(targ.typeName)
+          else:
+            typeSuffix.add("unknown")
+        let mangledName = calleeName & "_" & typeSuffix
+        var args: seq[HirNode] = @[]
+        for arg in expr.exprCallArgs:
+          args.add(ctx.lowerExpr(arg))
+        return hirCall(mangledName, args, typ, loc)
+
     # Regular function call
     var calleeName = ""
     if expr.exprCallCallee.kind == ekIdent:
@@ -1004,6 +1030,12 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       ctx.genericFuncs[decl.declFuncName] = decl
     if decl.kind == dkStruct and decl.declStructTypeParams.len > 0:
       ctx.genericStructs[decl.declStructName] = decl
+    if decl.kind == dkImpl and decl.declImplTypeParams.len > 0:
+      let typeName = decl.declImplTypeName
+      for methodDecl in decl.declImplMethods:
+        if methodDecl.kind == dkFunc:
+          let mangledName = typeName & "_" & methodDecl.declFuncName
+          ctx.genericFuncs[mangledName] = methodDecl
 
   # Second pass: find all generic calls and monomorphize
   proc findGenericCalls(expr: Expr): seq[tuple[name: string, typeArgs: seq[TypeExpr]]] =
@@ -1013,6 +1045,14 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
     of ekCall:
       if expr.exprCallCallee.kind == ekGenericCall:
         result.add((expr.exprCallCallee.exprGenericCallee, expr.exprCallCallee.exprGenericTypeArgs))
+      elif expr.exprCallInferredTypeArgs.len > 0:
+        var calleeName = ""
+        case expr.exprCallCallee.kind
+        of ekIdent: calleeName = expr.exprCallCallee.exprIdent
+        of ekPath: calleeName = expr.exprCallCallee.exprPath.join("::")
+        else: discard
+        if calleeName != "":
+          result.add((calleeName, expr.exprCallInferredTypeArgs))
       result.add(findGenericCalls(expr.exprCallCallee))
       for arg in expr.exprCallArgs:
         result.add(findGenericCalls(arg))
@@ -1126,6 +1166,9 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
     of dkImpl:
       for methodDecl in decl.declImplMethods:
         if methodDecl.kind == dkFunc:
+          # Skip generic methods — they are monomorphized via generateMethodInstance
+          if methodDecl.declFuncTypeParams.len > 0:
+            continue
           var hf = ctx.lowerFunc(methodDecl)
           hf.name = decl.declImplTypeName & "_" & hf.name
           funcs.add(hf)

@@ -162,6 +162,7 @@ type
     of ekCall:
       exprCallCallee*: Expr
       exprCallArgs*: seq[Expr]
+      exprCallInferredTypeArgs*: seq[TypeExpr]  ## filled by sema for inferred generic calls
     of ekGenericCall:
       exprGenericCallee*: string
       exprGenericTypeArgs*: seq[TypeExpr]
@@ -337,6 +338,7 @@ type
       declInterfaceMethods*: seq[Decl]  ## FuncDecl signatures only
     of dkImpl:
       declImplTypeName*: string
+      declImplTypeParams*: seq[string]  ## type parameters for generic impl: extend Box<T>
       declImplInterface*: string        ## empty if not for interface
       declImplMethods*: seq[Decl]
     of dkModule:

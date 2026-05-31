@@ -173,21 +173,120 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 
 ---
 
-## Phase 7 — Self-Hosting: The Great Rewrite (Week 19-26)
+## Phase 6.5 — Self-Hosting Audit (Completed 2026-05-31)
+
+### Source File Analysis
+
+| File | Lines | Procs | Complexity | Bux Readiness |
+|------|-------|-------|------------|---------------|
+| `source_location.nim` | 8 | 0 | Trivial struct | ✅ Ready |
+| `main.nim` | 6 | 0 | CLI entry | ✅ Ready |
+| `scope.nim` | 47 | 4 | Simple | ✅ Ready |
+| `manifest.nim` | 79 | 2 | TOML parser | ⚠️ Needs TOML/INI parser |
+| `hir.nim` | 184 | 0 | Type defs | ✅ Ready |
+| `types.nim` | 185 | 44 | Factories | ✅ Ready |
+| `token.nim` | 305 | 12 | Enum + helpers | ✅ Ready |
+| `cli.nim` | 390 | 15 | File I/O, process | ⚠️ Needs File I/O, path ops |
+| `ast.nim` | 400 | 6 | Complex case-object | ✅ Ready (algebraic enums) |
+| `c_backend.nim` | 519 | 16 | Code generation | ⚠️ Needs String formatting |
+| `lexer.nim` | 567 | 37 | State machine | ⚠️ Needs String split/compare |
+| `sema.nim` | 892 | 27 | Type checking | ⚠️ Needs Table[String,...] |
+| `parser.nim` | 1220 | 81 | Pratt parser | ⚠️ Needs seq/array ops |
+| `hir_lower.nim` | 1233 | 29 | Tree transform | ⚠️ Needs Table, HashSet |
+
+### Nim Patterns → Bux Equivalents
+
+| Nim Pattern | Used In | Bux Status |
+|-------------|---------|------------|
+| `Table[string, T]` | sema, hir_lower, c_backend (23 uses) | ❌ **Blocker** — need `StringMap<V>` |
+| `HashSet[string]` | hir_lower (1 use) | ❌ Can use `StringMap<bool>` workaround |
+| `seq[T]` with push/len/iter | All files (200+ uses) | ⚠️ `Array<T>` exists, needs richer API |
+| `&"..."` / `fmt"..."` | sema, c_backend (119 uses) | ❌ **Blocker** — need string formatting |
+| `split()`, `join()` | lexer, parser, cli | ❌ **Blocker** — need String split/join |
+| `case obj.kind of...` | All files (90+ uses) | ✅ `match` with algebraic enums |
+| `for x in collection` | All files (200+ uses) | ✅ Supported |
+| `var` parameters | Multiple | ✅ Use pointers (`*T`) |
+| File read/write | cli | ❌ Need `readFile`, `writeFile` |
+| OS path operations | cli, manifest | ❌ Need path join, exists |
+
+### Rewrite Order (Dependency-driven)
+
+```
+Phase 7.0 — Stdlib blockers:
+  ├── StringMap<V> (blocker #1 — needed by all modules)
+  ├── String split/join (blocker #2 — needed by lexer, parser)
+  ├── String formatting (blocker #3 — needed by sema, c_backend)
+  ├── File I/O (readFile, writeFile, fileExists)
+  └── OS path (joinPath, parentDir)
+
+Phase 7.1 — Foundation (no internal deps):
+  ├── token.bux (enum + helpers)
+  ├── source_location.bux (struct)
+  ├── types.bux (enum + factories)
+  ├── scope.bux (symbol table — needs StringMap)
+  └── hir.bux (type definitions)
+
+Phase 7.2 — Frontend (depends on 7.1):
+  ├── lexer.bux (needs String split/compare)
+  ├── ast.bux (algebraic enums)
+  └── parser.bux (Pratt parser, needs Array<T>)
+
+Phase 7.3 — Analysis (depends on 7.2):
+  ├── sema.bux (type checking, needs StringMap, formatting)
+  └── manifest.bux (TOML parser)
+
+Phase 7.4 — Backend (depends on 7.3):
+  ├── hir_lower.bux (tree transform, needs StringMap, HashSet)
+  └── c_backend.bux (code gen, needs String formatting)
+
+Phase 7.5 — Driver (depends on all):
+  ├── cli.bux (file I/O, argument parsing)
+  └── main.bux (entry point)
+```
+
+### Risk Assessment
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| StringMap not working for String keys | **High** | Already have working `StringMap<V>` in stdlib using strcmp |
+| `&key as *void` precedence bug | **Medium** | Workaround: use intermediate `*K` variable |
+| Cross-module generics not working | **Medium** | All compiler code will be in one package (merged via stdlib mechanism) |
+| `Map_Len` monomorphization bug | **Low** | Avoid calling `Map_Len` with explicit type args; inline the body |
+| String formatting complexity | **Medium** | Use StringBuilder pattern instead of printf-style formatting |
+| Array<T> API gaps | **Low** | Extend Array module as needed during porting |
+
+### Estimated Effort
+
+| Phase | Bux LOC | Effort |
+|-------|---------|--------|
+| 7.0 Stdlib blockers | ~300 | 1-2 sessions |
+| 7.1 Foundation | ~600 | 1-2 sessions |
+| 7.2 Frontend | ~1800 | 3-4 sessions |
+| 7.3 Analysis | ~900 | 2-3 sessions |
+| 7.4 Backend | ~1700 | 3-4 sessions |
+| 7.5 Driver | ~400 | 1 session |
+| **Total** | **~5700** | **11-16 sessions** |
+
+---
+
+## Phase 7 — Self-Hosting: The Great Rewrite
 
 **Goal:** Bux compiler compiles itself. This is the **main milestone**.
 
-| Task | Details |
-|------|---------|
-| `7.1` Port lexer | Rewrite `lexer.nim` → `Lexer.bux` |
-| `7.2` Port parser | Rewrite `parser.nim` → `Parser.bux` |
-| `7.3` Port sema | Rewrite `sema.nim` → `Sema.bux` |
-| `7.4` Port HIR | Rewrite `hir.nim` → `Hir.bux` |
-| `7.5` Port LIR | Rewrite `lir.nim` → `Lir.bux` |
-| `7.6` Port C backend | Rewrite `c_backend.nim` → `CBackend.bux` |
-| `7.7` Port CLI | Rewrite `main.nim` → `Main.bux` |
-| `7.8` Dogfooding | Use `buxc` (Nim) to build `buxc2` (Bux). Then use `buxc2` to build `buxc3`. Compare bit-for-bit. |
-| `7.9` Fix bootstrap loop | Once `buxc2 == buxc3`, we are self-hosted. Freeze Nim version as reference. |
+**Pre-requisites (Phase 7.0):** StringMap, String split/join, String formatting, File I/O must be working.
+
+| Task | Details | Deps |
+|------|---------|------|
+| `7.1` Port foundation | `token.bux`, `source_location.bux`, `types.bux`, `scope.bux`, `hir.bux` (~600 LOC) | StringMap |
+| `7.2` Port lexer | `lexer.bux` — state machine, UTF-8, error reporting (~570 LOC) | String split/compare |
+| `7.3` Port AST + parser | `ast.bux` + `parser.bux` — Pratt parser, algebraic enums (~1620 LOC) | Array<T>, match |
+| `7.4` Port sema | `sema.bux` — type checking, symbol resolution (~890 LOC) | StringMap, formatting |
+| `7.5` Port manifest | `manifest.bux` — TOML/bux.toml parser (~80 LOC) | File I/O, String split |
+| `7.6` Port HIR lowering | `hir_lower.bux` — tree transformation (~1230 LOC) | StringMap, HashSet |
+| `7.7` Port C backend | `c_backend.bux` — C code generator (~520 LOC) | String formatting |
+| `7.8` Port CLI | `cli.bux` + `main.bux` — command dispatch (~400 LOC) | File I/O, path ops |
+| `7.9` Dogfooding | Use `buxc` (Nim) to build `buxc2` (Bux). Then use `buxc2` to build `buxc3`. Compare bit-for-bit. | All of above |
+| `7.10` Fix bootstrap loop | Once `buxc2 == buxc3`, we are self-hosted. Freeze Nim version as reference. | 7.9 |
 
 **Deliverable:** `make selfhost` succeeds; Bux compiler is written entirely in Bux.
 
@@ -522,13 +621,21 @@ func Main() -> int {
 
 ---
 
-## Next Immediate Steps
+## Next Immediate Steps ✅ (Completed 2026-05-31)
 
-1. **Inferred generic function calls** — `UseBox(&b)` instead of `UseBox<int>(&b)`
-2. **`extend Box<T>` syntax** — Parser support for generic impl blocks
-3. **Std::String improvements** — String builder, slicing, interpolation
-4. **Std::Map generic** — `Map<K,V>` with generic keys and values
-5. **Self-hosting preparation** — Audit Nim compiler code for Bux-rewrite feasibility
+1. ✅ **Inferred generic function calls** — `Max(10, 20)` instead of `Max<int>(10, 20)`
+2. ✅ **`extend Box<T>` syntax** — Parser support for generic impl blocks
+3. ✅ **Std::String improvements** — Slicing, trimming, contains, StringBuilder
+4. ✅ **Std::Map generic** — `Map<K,V>` with generic keys and values (value-type keys)
+5. ✅ **Self-hosting audit** — See Phase 6.5 below
+
+### Next Actions (Priority order)
+
+1. **StringMap** — `Map<String, V>` with strcmp-based key comparison (blocker #1)
+2. **String split/join** — `String_Split(s, sep)`, `String_Join(parts, sep)` for parsing
+3. **String formatting** — Simple `String_Format(pattern, args...)` or `sb.Append(...)` pattern
+4. **File I/O** — `readFile`, `writeFile`, `fileExists` via C stdio
+5. **Begin porting lexer** — Start with `token.bux` + `lexer.bux` (most self-contained modules)
 
 ---
 

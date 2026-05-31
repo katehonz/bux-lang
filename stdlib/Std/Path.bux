@@ -1,0 +1,19 @@
+module Std::Path {
+
+extern func bux_path_join(a: String, b: String) -> String;
+extern func bux_path_parent(path: String) -> String;
+extern func bux_path_ext(path: String) -> String;
+
+func Path_Join(a: String, b: String) -> String {
+    return bux_path_join(a, b);
+}
+
+func Path_Parent(path: String) -> String {
+    return bux_path_parent(path);
+}
+
+func Path_Ext(path: String) -> String {
+    return bux_path_ext(path);
+}
+
+}

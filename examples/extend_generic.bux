@@ -1,0 +1,30 @@
+// Generic impl blocks — extend Box<T> with methods
+import Std::Io::{PrintLine, PrintInt};
+
+struct Box<T> {
+    value: T,
+}
+
+extend Box<T> {
+    func Get(self: *Box<T>) -> T {
+        return self.value;
+    }
+
+    func Set(self: *Box<T>, value: T) {
+        self.value = value;
+    }
+}
+
+func Main() -> int {
+    let b: Box<int> = Box<int> { value: 42 };
+    PrintLine("Box value:");
+    PrintInt(b.Get());
+    PrintLine("");
+
+    b.Set(100);
+    PrintLine("Box after Set(100):");
+    PrintInt(b.Get());
+    PrintLine("");
+
+    return 0;
+}

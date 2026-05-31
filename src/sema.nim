@@ -48,6 +48,89 @@ proc hasErrors*(res: SemaResult): bool =
   return false
 
 # ---------------------------------------------------------------------------
+# Generic type inference helpers
+# ---------------------------------------------------------------------------
+
+proc typeExprReferencesTypeParam(te: TypeExpr, name: string): bool =
+  ## Recursively check if a TypeExpr tree references a given type parameter name.
+  if te == nil: return false
+  case te.kind
+  of tekNamed:
+    if te.typeName == name: return true
+    for arg in te.typeArgs:
+      if typeExprReferencesTypeParam(arg, name): return true
+  of tekPath:
+    return false
+  of tekSlice:
+    return typeExprReferencesTypeParam(te.sliceElement, name)
+  of tekPointer:
+    return typeExprReferencesTypeParam(te.pointerPointee, name)
+  of tekTuple:
+    for elem in te.tupleElements:
+      if typeExprReferencesTypeParam(elem, name): return true
+  of tekSelf:
+    return false
+
+proc typeToTypeExpr(t: Type): TypeExpr =
+  ## Convert a resolved Type back to a TypeExpr for storage in inferred type args.
+  case t.kind
+  of tkInt: TypeExpr(kind: tekNamed, typeName: "int")
+  of tkInt8: TypeExpr(kind: tekNamed, typeName: "int8")
+  of tkInt16: TypeExpr(kind: tekNamed, typeName: "int16")
+  of tkInt32: TypeExpr(kind: tekNamed, typeName: "int32")
+  of tkInt64: TypeExpr(kind: tekNamed, typeName: "int64")
+  of tkUInt: TypeExpr(kind: tekNamed, typeName: "uint")
+  of tkUInt8: TypeExpr(kind: tekNamed, typeName: "uint8")
+  of tkUInt16: TypeExpr(kind: tekNamed, typeName: "uint16")
+  of tkUInt32: TypeExpr(kind: tekNamed, typeName: "uint32")
+  of tkUInt64: TypeExpr(kind: tekNamed, typeName: "uint64")
+  of tkFloat32: TypeExpr(kind: tekNamed, typeName: "float32")
+  of tkFloat64: TypeExpr(kind: tekNamed, typeName: "float64")
+  of tkBool: TypeExpr(kind: tekNamed, typeName: "bool")
+  of tkStr: TypeExpr(kind: tekNamed, typeName: "String")
+  of tkNamed: TypeExpr(kind: tekNamed, typeName: t.name)
+  of tkPointer:
+    if t.inner.len > 0:
+      TypeExpr(kind: tekPointer, pointerPointee: typeToTypeExpr(t.inner[0]))
+    else:
+      TypeExpr(kind: tekNamed, typeName: "void")
+  of tkVoid: TypeExpr(kind: tekNamed, typeName: "void")
+  else: TypeExpr(kind: tekNamed, typeName: t.toString)
+
+proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
+                   loc: SourceLocation): seq[TypeExpr] =
+  ## Infer type arguments from argument types for a generic function call.
+  ## Returns empty seq if inference fails for any type parameter.
+  result = @[]
+  for tpName in funcDecl.declFuncTypeParams:
+    var inferred: Type = nil
+    for i, param in funcDecl.declFuncParams:
+      if i >= argTypes.len: break
+      # Skip pointer params — type param is inside the pointee and we cannot
+      # structurally extract it (e.g., *Map<K,V> → arg is *Map<int,String>)
+      if param.ptype.kind == tekPointer:
+        continue
+      if typeExprReferencesTypeParam(param.ptype, tpName):
+        if inferred == nil:
+          inferred = argTypes[i]
+        elif inferred != argTypes[i]:
+          # Check if one is assignable to the other (wider type wins)
+          if argTypes[i].isAssignableTo(inferred):
+            discard  # inferred stays the same
+          elif inferred.isAssignableTo(argTypes[i]):
+            inferred = argTypes[i]
+          else:
+            sema.emitError(loc,
+              &"conflicting types for type parameter '{tpName}': " &
+              &"{inferred.toString} vs {argTypes[i].toString}")
+            return @[]
+    if inferred != nil and not inferred.isUnknown:
+      result.add(typeToTypeExpr(inferred))
+    else:
+      # Cannot infer this type parameter from arguments
+      return @[]
+
+# ---------------------------------------------------------------------------
 # Type resolution from AST TypeExpr
 # ---------------------------------------------------------------------------
 
@@ -229,10 +312,19 @@ proc collectGlobals*(sema: var Sema) =
     of dkImpl:
       # Register methods for the type
       let typeName = decl.declImplTypeName
+      let implTypeParams = decl.declImplTypeParams
       if not sema.methodTable.hasKey(typeName):
         sema.methodTable[typeName] = @[]
+      # If impl has type params, temporarily add them to type table
+      var addedTypeParams: seq[string] = @[]
+      for tp in implTypeParams:
+        sema.typeTable[tp] = makeTypeParam(tp)
+        addedTypeParams.add(tp)
       for methodDecl in decl.declImplMethods:
         if methodDecl.kind == dkFunc:
+          # Propagate impl type params to method for HIR lowering
+          if implTypeParams.len > 0:
+            methodDecl.declFuncTypeParams = implTypeParams
           var params: seq[Type] = @[]
           for p in methodDecl.declFuncParams:
             params.add(sema.resolveType(p.ptype))
@@ -252,7 +344,13 @@ proc collectGlobals*(sema: var Sema) =
           let sym = Symbol(kind: skFunc, name: mangledName, decl: methodDecl,
                            isPublic: true)
           sym.typ = makeFunc(params, retType)
+          if implTypeParams.len > 0:
+            # Register as generic function for monomorphization
+            sym.decl = methodDecl
           discard sema.globalScope.define(sym)
+      # Clean up type parameters
+      for tp in addedTypeParams:
+        sema.typeTable.del(tp)
     else:
       discard
 
@@ -485,6 +583,39 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         for i in 0 ..< argTypes.len:
           if not argTypes[i].isAssignableTo(expectedParams[i]) and not (argTypes[i].kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
             sema.emitError(expr.loc, &"argument {i+1}: expected {expectedParams[i].toString}, got {argTypes[i].toString}")
+
+      # Check for inferred generic function call (no explicit type args)
+      var calleeDecl: Decl = nil
+      case expr.exprCallCallee.kind
+      of ekIdent:
+        let sym = scope.lookup(expr.exprCallCallee.exprIdent)
+        if sym != nil: calleeDecl = sym.decl
+      of ekPath:
+        let fullName = expr.exprCallCallee.exprPath.join("::")
+        let sym = scope.lookup(fullName)
+        if sym != nil: calleeDecl = sym.decl
+      else: discard
+
+      if calleeDecl != nil and calleeDecl.kind == dkFunc and
+         calleeDecl.declFuncTypeParams.len > 0 and
+         expr.exprCallInferredTypeArgs.len == 0 and
+         expr.exprCallCallee.kind != ekGenericCall:
+        let inferred = sema.inferTypeArgs(calleeDecl, argTypes, expr.loc)
+        if inferred.len == calleeDecl.declFuncTypeParams.len:
+          expr.exprCallInferredTypeArgs = inferred
+          # Substitute return type using inferred type args
+          if calleeDecl.declFuncReturnType != nil:
+            var added: seq[string] = @[]
+            for i, tp in calleeDecl.declFuncTypeParams:
+              if i < inferred.len:
+                let concrete = sema.resolveType(inferred[i])
+                sema.typeTable[tp] = concrete
+                added.add(tp)
+            let retType = sema.resolveType(calleeDecl.declFuncReturnType)
+            for tp in added:
+              sema.typeTable.del(tp)
+            return retType
+
       return calleeType.inner[^1]
     elif calleeType.kind == tkUnknown:
       return makeUnknown()
@@ -707,6 +838,10 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
 
 proc checkFunc(sema: var Sema, decl: Decl) =
   if decl.declFuncBody == nil:
+    return
+  # Skip body type-checking for generic functions — their bodies contain
+  # type parameters that cannot be fully resolved until monomorphization.
+  if decl.declFuncTypeParams.len > 0:
     return
   var funcScope = newScope(sema.globalScope)
   # Add type parameters to type table for resolution

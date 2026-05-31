@@ -1,0 +1,26 @@
+// Generic function type inference — calls without explicit type args
+import Std::Io::{PrintLine, PrintInt};
+
+func Max<T>(a: T, b: T) -> T {
+    if a > b {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+func Main() -> int {
+    // Inferred: T = int
+    let m1: int = Max(10, 20);
+    let m2: int = Max(5, 3);
+    
+    PrintLine("Max(10, 20) = ");
+    PrintInt(m1);
+    PrintLine("");
+    
+    PrintLine("Max(5, 3) = ");
+    PrintInt(m2);
+    PrintLine("");
+    
+    return 0;
+}

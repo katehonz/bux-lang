@@ -6,6 +6,25 @@ extern func bux_strncmp(a: String, b: String, n: uint) -> int;
 extern func bux_strcpy(dest: *char8, src: String) -> *char8;
 extern func bux_strcat(dest: *char8, src: String) -> *char8;
 extern func bux_strncpy(dest: *char8, src: String, n: uint) -> *char8;
+extern func bux_strstr(haystack: String, needle: String) -> String;
+extern func bux_str_contains(haystack: String, needle: String) -> int;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+extern func bux_str_trim_left(s: String) -> String;
+extern func bux_str_trim_right(s: String) -> String;
+extern func bux_str_trim(s: String) -> String;
+extern func bux_int_to_str(n: int64) -> String;
+extern func bux_str_to_int(s: String) -> int64;
+extern func bux_sb_new(initial_cap: uint) -> *void;
+extern func bux_sb_append(sb: *void, s: String);
+extern func bux_sb_append_int(sb: *void, n: int64);
+extern func bux_sb_append_float(sb: *void, f: float64);
+extern func bux_sb_append_char(sb: *void, c: char8);
+extern func bux_sb_build(sb: *void) -> String;
+extern func bux_sb_free(sb: *void);
+extern func bux_str_split_count(s: String, delim: String) -> uint;
+extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
+extern func bux_str_join2(a: String, b: String, sep: String) -> String;
+
 
 func String_Len(s: String) -> uint {
     return bux_strlen(s);
@@ -40,6 +59,100 @@ func String_StartsWith(s: String, prefix: String) -> bool {
     }
     let r: int = bux_strncmp(s, prefix, p_len);
     return r == 0;
+}
+
+func String_EndsWith(s: String, suffix: String) -> bool {
+    let s_len: uint = bux_strlen(s);
+    let suf_len: uint = bux_strlen(suffix);
+    if suf_len > s_len {
+        return false;
+    }
+    let start: uint = s_len - suf_len;
+    let tail: String = bux_str_slice(s, start, suf_len);
+    let eq: bool = bux_strcmp(tail, suffix) == 0;
+    return eq;
+}
+
+func String_Contains(s: String, substr: String) -> bool {
+    let r: int = bux_str_contains(s, substr);
+    return r != 0;
+}
+
+func String_Slice(s: String, start: uint, len: uint) -> String {
+    return bux_str_slice(s, start, len);
+}
+
+func String_Trim(s: String) -> String {
+    return bux_str_trim(s);
+}
+
+func String_TrimLeft(s: String) -> String {
+    return bux_str_trim_left(s);
+}
+
+func String_TrimRight(s: String) -> String {
+    return bux_str_trim_right(s);
+}
+
+func String_FromInt(n: int64) -> String {
+    return bux_int_to_str(n);
+}
+
+func String_ToInt(s: String) -> int64 {
+    return bux_str_to_int(s);
+}
+
+// String Builder — efficient string construction
+struct StringBuilder {
+    handle: *void,
+}
+
+func StringBuilder_New() -> StringBuilder {
+    return StringBuilder { handle: bux_sb_new(64) };
+}
+
+func StringBuilder_NewCap(cap: uint) -> StringBuilder {
+    return StringBuilder { handle: bux_sb_new(cap) };
+}
+
+func StringBuilder_Append(sb: *StringBuilder, s: String) {
+    bux_sb_append(sb.handle, s);
+}
+
+func StringBuilder_AppendInt(sb: *StringBuilder, n: int64) {
+    bux_sb_append_int(sb.handle, n);
+}
+
+func StringBuilder_AppendFloat(sb: *StringBuilder, f: float64) {
+    bux_sb_append_float(sb.handle, f);
+}
+
+func StringBuilder_AppendChar(sb: *StringBuilder, c: char8) {
+    bux_sb_append_char(sb.handle, c);
+}
+
+func StringBuilder_Build(sb: *StringBuilder) -> String {
+    return bux_sb_build(sb.handle);
+}
+
+func StringBuilder_Free(sb: *StringBuilder) {
+    bux_sb_free(sb.handle);
+}
+
+// ---------------------------------------------------------------------------
+// String split/join
+// ---------------------------------------------------------------------------
+
+func String_SplitCount(s: String, delim: String) -> uint {
+    return bux_str_split_count(s, delim);
+}
+
+func String_SplitPart(s: String, delim: String, index: uint) -> String {
+    return bux_str_split_part(s, delim, index);
+}
+
+func String_Join2(a: String, b: String, sep: String) -> String {
+    return bux_str_join2(a, b, sep);
 }
 
 }

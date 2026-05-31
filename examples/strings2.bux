@@ -1,0 +1,74 @@
+// String improvements — slicing, trimming, contains, StringBuilder
+import Std::Io::{Print, PrintLine, PrintInt, PrintBool};
+import Std::String::{String_Len, String_Slice, String_Contains, String_EndsWith, String_StartsWith};
+import Std::String::{String_Trim, String_TrimLeft, String_TrimRight, String_FromInt, String_ToInt};
+import Std::String::{StringBuilder, StringBuilder_New, StringBuilder_Append, StringBuilder_AppendInt, StringBuilder_Build, StringBuilder_Free};
+
+func Main() -> int {
+    // --- Slicing ---
+    let hello: String = "Hello, World!";
+    Print("Slice(0,5): ");
+    PrintLine(String_Slice(hello, 0, 5));
+
+    Print("Slice(7,5): ");
+    PrintLine(String_Slice(hello, 7, 5));
+
+    // --- Contains ---
+    Print("Contains 'World': ");
+    PrintBool(String_Contains(hello, "World"));
+    PrintLine("");
+
+    Print("Contains 'xyz': ");
+    PrintBool(String_Contains(hello, "xyz"));
+    PrintLine("");
+
+    // --- EndsWith ---
+    Print("EndsWith '!': ");
+    PrintBool(String_EndsWith(hello, "!"));
+    PrintLine("");
+
+    // --- StartsWith ---
+    Print("StartsWith 'Hello': ");
+    PrintBool(String_StartsWith(hello, "Hello"));
+    PrintLine("");
+
+    // --- Trim ---
+    let spaced: String = "   foo bar   ";
+    Print("Trim: '");
+    Print(String_Trim(spaced));
+    PrintLine("'");
+
+    Print("TrimLeft: '");
+    Print(String_TrimLeft(spaced));
+    PrintLine("'");
+
+    Print("TrimRight: '");
+    Print(String_TrimRight(spaced));
+    PrintLine("'");
+
+    // --- Int conversion ---
+    Print("FromInt(42): ");
+    PrintLine(String_FromInt(42));
+
+    Print("FromInt(-100): ");
+    PrintLine(String_FromInt(-100));
+
+    let n: int64 = String_ToInt("123");
+    Print("ToInt('123'): ");
+    PrintInt(n as int);
+    PrintLine("");
+
+    // --- StringBuilder ---
+    let sb: StringBuilder = StringBuilder_New();
+    StringBuilder_Append(&sb, "Hello");
+    StringBuilder_Append(&sb, ", ");
+    StringBuilder_Append(&sb, "World");
+    StringBuilder_Append(&sb, "! #");
+    StringBuilder_AppendInt(&sb, 42);
+    
+    Print("StringBuilder: ");
+    PrintLine(StringBuilder_Build(&sb));
+    StringBuilder_Free(&sb);
+
+    return 0;
+}

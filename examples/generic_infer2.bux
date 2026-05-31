@@ -1,0 +1,23 @@
+// Generic function type inference — multiple type parameters
+import Std::Io::{PrintLine, PrintInt};
+
+struct Pair<T, U> {
+    first: T,
+    second: U,
+}
+
+func MakePair<T, U>(a: T, b: U) -> Pair<T, U> {
+    return Pair<T, U> { first: a, second: b };
+}
+
+func Pair_GetFirst<T, U>(self: *Pair<T, U>) -> T {
+    return self.first;
+}
+
+func Main() -> int {
+    // Inferred: T = int, U = String
+    let p: Pair<int, String> = MakePair(42, "hello");
+    PrintInt(p.GetFirst());
+    PrintLine("");
+    return 0;
+}
