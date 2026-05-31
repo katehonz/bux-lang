@@ -768,6 +768,10 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return HirNode(kind: hSpawn, spawnCallee: calleeName, spawnArgs: args,
                    typ: makePointer(makeVoid()), loc: loc)
 
+  of ekAwait:
+    let lowered = ctx.lowerExpr(expr.exprAwaitOperand)
+    return hirCall("bux_task_join", @[lowered], makeVoid(), loc)
+
   else:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
                    typ: makeVoid(), loc: loc)

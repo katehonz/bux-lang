@@ -118,6 +118,7 @@ type
     ekTry
     ekUnwrap        ## expr! — unwrap or panic
     ekSpawn         ## spawn expr — create a new task
+    ekAwait         ## expr.await — suspend until future resolves
     ekBlock
     ekMatch
 
@@ -200,6 +201,8 @@ type
     of ekSpawn:
       exprSpawnCallee*: Expr
       exprSpawnArgs*: seq[Expr]
+    of ekAwait:
+      exprAwaitOperand*: Expr
     of ekBlock:
       exprBlock*: Block
     of ekMatch:
@@ -335,6 +338,7 @@ type
       declFuncAsm*: bool
       declFuncCallConv*: CallingConvention
       declFuncConst*: bool          ## const func — evaluable at compile time
+      declFuncIsAsync*: bool        ## async func — returns Future<T>
       declFuncName*: string
       declFuncTypeParams*: seq[TypeParam]
       declFuncParams*: seq[Param]

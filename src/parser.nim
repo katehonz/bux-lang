@@ -527,10 +527,14 @@ proc parsePostfix(p: var Parser): Expr =
       discard p.expect(tkRBracket, "expected ']' to close index")
       left = Expr(kind: ekIndex, loc: loc, exprIndexObj: left, exprIndexIdx: idx)
     of tkDot:
-      # Field expression
+      # Field expression or .await
       discard p.advance()
-      let fieldName = p.expectIdentOrKeyword("expected field name after '.'").text
-      left = Expr(kind: ekField, loc: loc, exprFieldObj: left, exprFieldName: fieldName)
+      if p.check(tkAwait):
+        discard p.advance()
+        left = Expr(kind: ekAwait, loc: loc, exprAwaitOperand: left)
+      else:
+        let fieldName = p.expectIdentOrKeyword("expected field name after '.'").text
+        left = Expr(kind: ekField, loc: loc, exprFieldObj: left, exprFieldName: fieldName)
     of tkPlusPlus, tkMinusMinus:
       let op = p.advance().kind
       left = Expr(kind: ekPostfix, loc: loc, exprPostfixOp: op, exprPostfixOperand: left)
@@ -971,7 +975,7 @@ proc parseParamList(p: var Parser, allowVariadic: bool = false): seq[Param] =
       discard p.advance()
   discard p.expect(tkRParen, "expected ')' to close parameter list")
 
-proc parseFuncDecl(p: var Parser, isPublic: bool, isAsm: bool, attrs: ParsedAttrs, isConst: bool = false): Decl =
+proc parseFuncDecl(p: var Parser, isPublic: bool, isAsm: bool, attrs: ParsedAttrs, isConst: bool = false, isAsync: bool = false): Decl =
   let loc = p.currentLoc
   discard p.expect(tkFunc, "expected 'func'")
   let name = p.expect(tkIdent, "expected function name").text
@@ -991,7 +995,7 @@ proc parseFuncDecl(p: var Parser, isPublic: bool, isAsm: bool, attrs: ParsedAttr
   return Decl(kind: dkFunc, loc: loc, isPublic: isPublic,
               declAttrs: declAttrs,
               declFuncAsm: isAsm, declFuncCallConv: attrs.callConv,
-              declFuncConst: isConst,
+              declFuncConst: isConst, declFuncIsAsync: isAsync,
               declFuncName: name, declFuncTypeParams: typeParams,
               declFuncParams: params, declFuncReturnType: retType,
               declFuncBody: body)
@@ -1278,10 +1282,15 @@ proc parseDecl(p: var Parser): Decl =
   if p.check(tkConst) and p.peek(1) == tkFunc:
     isConst = true
     discard p.advance()
+
+  var isAsync = false
+  if p.check(tkAsync) and p.peek(1) == tkFunc:
+    isAsync = true
+    discard p.advance()
   
   case p.peek()
   of tkFunc:
-    return p.parseFuncDecl(isPublic, false, attrs, isConst)
+    return p.parseFuncDecl(isPublic, false, attrs, isConst, isAsync)
   of tkStruct:
     return p.parseStructDecl(isPublic)
   of tkEnum:

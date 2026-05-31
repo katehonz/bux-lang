@@ -42,6 +42,7 @@ type
     interfaceTable*: Table[string, Decl]
     # Borrow checker state
     checkedFunc*: bool  ## true inside @[Checked] function
+    currentFuncIsAsync*: bool  ## true inside async func
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1007,6 +1008,10 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     for arg in expr.exprSpawnArgs:
       discard sema.checkExpr(arg, scope)
     return makePointer(makeVoid())
+  of ekAwait:
+    let operand = sema.checkExpr(expr.exprAwaitOperand, scope)
+    # await on a task handle returns void for now
+    return makeVoid()
   of ekSpread:
     return sema.checkExpr(expr.exprSpreadOperand, scope)
 
@@ -1100,7 +1105,9 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   if decl.declFuncTypeParams.len > 0:
     return
   let wasChecked = sema.checkedFunc
+  let wasAsync = sema.currentFuncIsAsync
   sema.checkedFunc = "Checked" in decl.declAttrs
+  sema.currentFuncIsAsync = decl.declFuncIsAsync
   var funcScope = newScope(sema.globalScope)
   # Add type parameters to type table for resolution
   var addedTypeParams: seq[string] = @[]
@@ -1119,6 +1126,7 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   for tp in addedTypeParams:
     sema.typeTable.del(tp)
   sema.checkedFunc = wasChecked
+  sema.currentFuncIsAsync = wasAsync
 
 # ---------------------------------------------------------------------------
 # Second pass: check all function bodies

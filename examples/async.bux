@@ -1,0 +1,23 @@
+import Std::Io::{PrintLine, PrintInt};
+import Std::Task::TaskHandle;
+
+async func BackgroundWork(id: int) {
+    PrintLine("Task started:");
+    PrintInt(id);
+    PrintLine("");
+    Task_Sleep(50);
+    PrintLine("Task done:");
+    PrintInt(id);
+    PrintLine("");
+}
+
+func Main() -> int {
+    PrintLine("Main: spawning tasks...");
+    let h1: *void = spawn BackgroundWork(1);
+    let h2: *void = spawn BackgroundWork(2);
+    PrintLine("Main: waiting for tasks...");
+    h1.await;
+    h2.await;
+    PrintLine("Main: all tasks completed");
+    return 0;
+}
