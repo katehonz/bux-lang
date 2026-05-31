@@ -227,7 +227,10 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
     of "float": return makeFloat64()
     of "float32": return makeFloat32()
     of "float64": return makeFloat64()
-    else: return makeNamed(te.typeName)
+    else:
+      if ctx.typeSubst.hasKey(te.typeName):
+        return ctx.typeSubst[te.typeName]
+      return makeNamed(te.typeName)
   of tekPointer: return makePointer(ctx.resolveTypeExpr(te.pointerPointee))
   of tekSlice: return makeSlice(ctx.resolveTypeExpr(te.sliceElement))
   else: return makeUnknown()
@@ -404,6 +407,15 @@ proc getReceiverTypeExpr(ctx: LowerCtx, expr: Expr): TypeExpr =
 
 proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs: seq[TypeExpr]): string
 
+proc findMethodEntry(ctx: LowerCtx, typeName: string): (string, seq[MethodInfo]) =
+  if ctx.methodTable.hasKey(typeName):
+    return (typeName, ctx.methodTable[typeName])
+  for i in countdown(typeName.len - 1, 1):
+    let prefix = typeName[0..<i]
+    if ctx.methodTable.hasKey(prefix):
+      return (prefix, ctx.methodTable[prefix])
+  return ("", @[])
+
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   if expr == nil: return nil
   let loc = expr.loc
@@ -442,9 +454,16 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     if expr.exprCallCallee.kind == ekField:
       let methodName = expr.exprCallCallee.exprFieldName
       let receiverExpr = expr.exprCallCallee.exprFieldObj
+      let receiverType = ctx.resolveExprType(receiverExpr)
+      var receiverTypeName = ""
+      if receiverType.kind == tkNamed:
+        receiverTypeName = receiverType.name
+      elif receiverType.kind == tkPointer and receiverType.inner.len > 0 and receiverType.inner[0].kind == tkNamed:
+        receiverTypeName = receiverType.inner[0].name
 
-      # Try to find the method in methodTable
-      for typeName, methods in ctx.methodTable:
+      # Look up method for receiver type specifically
+      let (typeName, methods) = ctx.findMethodEntry(receiverTypeName)
+      if typeName != "":
         for minfo in methods:
           if minfo.name == methodName:
             var calleeName = typeName & "_" & methodName
@@ -455,7 +474,6 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
               calleeName = ctx.generateMethodInstance(calleeName, typeArgs)
             var args: seq[HirNode] = @[]
             let loweredReceiver = ctx.lowerExpr(receiverExpr)
-            let receiverType = ctx.resolveExprType(receiverExpr)
             # Auto-address if method expects pointer but receiver is value
             if minfo.params.len > 0 and minfo.params[0].kind == tkPointer and receiverType.kind != tkPointer:
               args.add(hirUnary(tkAmp, loweredReceiver, makePointer(receiverType), loc))

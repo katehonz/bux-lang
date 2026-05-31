@@ -5,40 +5,40 @@ extern func bux_realloc(ptr: *void, size: uint) -> *void;
 extern func bux_free(ptr: *void);
 extern func bux_bounds_check(index: uint, len: uint);
 
-struct Array {
-    data: *int,
+struct Array<T> {
+    data: *T,
     len: uint,
     cap: uint,
 }
 
-func Array_New(cap: uint) -> Array {
-    let data = bux_alloc(cap * 8) as *int;
-    return Array { data: data, len: 0, cap: cap };
+func Array_New<T>(cap: uint) -> Array<T> {
+    let data = bux_alloc(cap * sizeof(T)) as *T;
+    return Array<T> { data: data, len: 0, cap: cap };
 }
 
-func Array_Push(arr: *Array, value: int) {
-    if arr.len >= arr.cap {
-        arr.cap = arr.cap * 2;
-        arr.data = bux_realloc(arr.data as *void, arr.cap * 8) as *int;
+func Array_Push<T>(self: *Array<T>, value: T) {
+    if self.len >= self.cap {
+        self.cap = self.cap * 2;
+        self.data = bux_realloc(self.data as *void, self.cap * sizeof(T)) as *T;
     }
-    arr.data[arr.len] = value;
-    arr.len = arr.len + 1;
+    self.data[self.len] = value;
+    self.len = self.len + 1;
 }
 
-func Array_Get(arr: *Array, index: uint) -> int {
-    bux_bounds_check(index, arr.len);
-    return arr.data[index];
+func Array_Get<T>(self: *Array<T>, index: uint) -> T {
+    bux_bounds_check(index, self.len);
+    return self.data[index];
 }
 
-func Array_Len(arr: *Array) -> uint {
-    return arr.len;
+func Array_Len<T>(self: *Array<T>) -> uint {
+    return self.len;
 }
 
-func Array_Free(arr: *Array) {
-    bux_free(arr.data as *void);
-    arr.data = null as *int;
-    arr.len = 0;
-    arr.cap = 0;
+func Array_Free<T>(self: *Array<T>) {
+    bux_free(self.data as *void);
+    self.data = null as *T;
+    self.len = 0;
+    self.cap = 0;
 }
 
 }
