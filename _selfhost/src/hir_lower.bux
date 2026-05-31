@@ -110,6 +110,15 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     if kind == ekCast {
         n.kind = hCast;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+        if expr.refType != null as *TypeExpr {
+            n.typeKind = expr.refType.kind;
+            // For pointer types, construct "PointeeType*"
+            if expr.refType.kind == tekPointer && expr.refType.pointerPointee != null as *TypeExpr {
+                n.typeName = String_Concat(expr.refType.pointerPointee.typeName, "*");
+            } else if !String_Eq(expr.refType.typeName, "") {
+                n.typeName = expr.refType.typeName;
+            }
+        }
         return n;
     }
 
@@ -173,7 +182,12 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         alloca.typeName = "";
         if stmt.refStmtType != null as *TypeExpr {
             alloca.intValue = stmt.refStmtType.kind;
-            alloca.typeName = stmt.refStmtType.typeName;
+            // For pointer types, construct "PointeeType*"
+            if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
+                alloca.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
+            } else if !String_Eq(stmt.refStmtType.typeName, "") {
+                alloca.typeName = stmt.refStmtType.typeName;
+            }
         }
         // store the init value
         n.kind = hStore;
@@ -281,7 +295,14 @@ func Lcx_LowerParam(out: *HirParam, p: *Param) {
     out.name = p.name;
     if p.refParamType != null as *TypeExpr {
         out.typeKind = p.refParamType.kind;
-        out.typeName = p.refParamType.typeName;
+        // For pointer types, construct "PointeeType*"
+        if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
+            out.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+        } else if !String_Eq(p.refParamType.typeName, "") {
+            out.typeName = p.refParamType.typeName;
+        } else {
+            out.typeName = "";
+        }
     } else {
         out.typeKind = 0;
         out.typeName = "";

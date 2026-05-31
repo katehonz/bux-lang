@@ -222,7 +222,11 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     // Cast
     if kind == hCast {
         StringBuilder_Append(&cbe.sb, "((");
-        StringBuilder_Append(&cbe.sb, CBackend_TypeToC(tyPointer));
+        if !String_Eq(node.typeName, "") {
+            StringBuilder_Append(&cbe.sb, node.typeName);
+        } else {
+            StringBuilder_Append(&cbe.sb, CBackend_TypeToC(node.typeKind));
+        }
         StringBuilder_Append(&cbe.sb, ")");
         CBE_EmitExpr(cbe, node.child1);
         StringBuilder_Append(&cbe.sb, ")");
