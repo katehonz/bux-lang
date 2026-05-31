@@ -323,6 +323,7 @@ type
     of dkFunc:
       declFuncAsm*: bool
       declFuncCallConv*: CallingConvention
+      declFuncConst*: bool          ## const func — evaluable at compile time
       declFuncName*: string
       declFuncTypeParams*: seq[string]
       declFuncParams*: seq[Param]
