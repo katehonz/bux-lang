@@ -132,12 +132,25 @@ proc isAssignableTo*(a, b: Type): bool =
   if a.kind == tkInt and b.kind == tkInt64: return true
   if a.kind == tkUInt64 and b.kind == tkUInt: return true
   if a.kind == tkUInt and b.kind == tkUInt64: return true
+  # int32 <-> int (for convenience in bootstrap)
+  if a.kind == tkInt32 and b.kind == tkInt: return true
+  if a.kind == tkInt and b.kind == tkInt32: return true
+  if a.kind == tkUInt32 and b.kind == tkInt: return true
+  if a.kind == tkInt and b.kind == tkUInt32: return true
+  if a.kind == tkUInt32 and b.kind == tkUInt: return true
+  if a.kind == tkUInt and b.kind == tkUInt32: return true
+  if a.kind == tkInt32 and b.kind == tkUInt32: return true
+  if a.kind == tkUInt32 and b.kind == tkInt32: return true
   # smaller int -> int/uint
   if b.kind == tkInt and a.kind in {tkInt8, tkInt16, tkInt32}: return true
   if b.kind == tkUInt and a.kind in {tkUInt8, tkUInt16, tkUInt32}: return true
   # int <-> uint (for convenience in bootstrap)
   if a.kind == tkInt and b.kind == tkUInt: return true
   if a.kind == tkUInt and b.kind == tkInt: return true
+  # *char8 -> String (C string literal to Bux String)
+  if a.kind == tkPointer and b.kind == tkStr:
+    if a.inner.len > 0 and a.inner[0].kind == tkChar8:
+      return true
   # numeric exact match required otherwise
   if a.isNumeric and b.isNumeric: return false
   # bool across widths

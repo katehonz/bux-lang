@@ -883,6 +883,8 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       return obj.inner[0]
     elif obj.isPointer:
       return obj.inner[0]
+    elif obj.kind == tkStr:
+      return makeChar8()
     else:
       sema.emitError(expr.loc, "cannot index non-slice/non-pointer type")
       return makeUnknown()
