@@ -808,6 +808,7 @@ typedef struct bux_async_task {
     uint8_t* stack;
     int state;           /* 0 = ready, 1 = running, 2 = done */
     void (*entry)(void);
+    void* result;        /* pointer to heap-allocated result */
     struct bux_async_task* next;
 } bux_async_task_t;
 
@@ -883,8 +884,8 @@ void bux_async_yield(void) {
     }
 }
 
-void bux_async_await(void* handle) {
-    if (!handle) return;
+void* bux_async_await(void* handle) {
+    if (!handle) return NULL;
     bux_async_task_t* target = (bux_async_task_t*)handle;
     while (target->state != 2) {
         if (bux_current_task != NULL) {
@@ -897,6 +898,7 @@ void bux_async_await(void* handle) {
             }
         }
     }
+    return target->result;
 }
 
 void bux_async_run(void) {
@@ -930,4 +932,18 @@ void bux_async_sleep(int64_t ms) {
         /* For now, just yield once */
         bux_async_yield();
     }
+}
+
+void bux_async_return(void* value, size_t size) {
+    if (bux_current_task != NULL && value != NULL && size > 0) {
+        void* copy = malloc(size);
+        if (copy) memcpy(copy, value, size);
+        bux_current_task->result = copy;
+    }
+}
+
+void* bux_async_result(void* handle) {
+    if (!handle) return NULL;
+    bux_async_task_t* task = (bux_async_task_t*)handle;
+    return task->result;
 }

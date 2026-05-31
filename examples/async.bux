@@ -1,32 +1,42 @@
-import Std::Io::PrintLine;
+import Std::Io::{PrintLine, PrintInt};
 
 extern func bux_async_yield();
 extern func bux_async_run();
 extern func bux_async_spawn(fn: *void) -> *void;
-extern func bux_async_await(handle: *void);
+extern func bux_async_await(handle: *void) -> *void;
+extern func bux_async_return(value: *void, size: int64);
 
-async func WorkA() {
-    PrintLine("WorkA: step 1");
+async func Compute() -> int {
+    PrintLine("Compute: step 1");
     bux_async_yield();
-    PrintLine("WorkA: step 2");
-    bux_async_yield();
-    PrintLine("WorkA: done");
+    PrintLine("Compute: step 2");
+    let result: int = 42;
+    bux_async_return((&result) as *void, sizeof(int));
+    return result;
 }
 
-async func WorkB() {
-    PrintLine("WorkB: step 1");
+async func Double() -> int {
+    PrintLine("Double: step 1");
     bux_async_yield();
-    PrintLine("WorkB: step 2");
-    bux_async_yield();
-    PrintLine("WorkB: done");
+    PrintLine("Double: step 2");
+    let result: int = 84;
+    bux_async_return((&result) as *void, sizeof(int));
+    return result;
 }
 
 func Main() -> int {
     PrintLine("Main: start");
-    let h1: *void = spawn WorkA();
-    let h2: *void = spawn WorkB();
-    bux_async_await(h1);
-    bux_async_await(h2);
-    PrintLine("Main: all done");
+    let h1: *void = spawn Compute();
+    let h2: *void = spawn Double();
+    let r1Ptr: *int = h1.await as *int;
+    let r2Ptr: *int = h2.await as *int;
+    let r1: int = *r1Ptr;
+    let r2: int = *r2Ptr;
+    PrintLine("Results:");
+    PrintInt(r1);
+    PrintLine("");
+    PrintInt(r2);
+    PrintLine("");
+    PrintLine("Main: done");
     return 0;
 }

@@ -770,7 +770,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
 
   of ekAwait:
     let lowered = ctx.lowerExpr(expr.exprAwaitOperand)
-    return hirCall("bux_async_await", @[lowered], makeVoid(), loc)
+    return hirCall("bux_async_await", @[lowered], makePointer(makeVoid()), loc)
 
   else:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),

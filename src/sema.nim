@@ -1010,8 +1010,8 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     return makePointer(makeVoid())
   of ekAwait:
     let operand = sema.checkExpr(expr.exprAwaitOperand, scope)
-    # await on a task handle returns void for now
-    return makeVoid()
+    # await on a task handle returns *void (result pointer)
+    return makePointer(makeVoid())
   of ekSpread:
     return sema.checkExpr(expr.exprSpreadOperand, scope)
 
