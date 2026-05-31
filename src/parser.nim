@@ -503,7 +503,7 @@ proc parsePostfix(p: var Parser): Expr =
       discard p.advance()
       left = Expr(kind: ekTry, loc: loc, exprTryOperand: left, exprTryType: nil)
     of tkLBrace:
-      if p.structInitAllowed and left.kind in {ekIdent, ekPath}:
+      if p.structInitAllowed and left.kind in {ekIdent, ekPath, ekGenericCall}:
         discard p.advance()
         var fields: seq[tuple[name: string, value: Expr]] = @[]
         while not p.check(tkRBrace) and not p.isAtEnd:
@@ -514,8 +514,17 @@ proc parsePostfix(p: var Parser): Expr =
           if p.check(tkComma):
             discard p.advance()
         discard p.expect(tkRBrace, "expected '}'")
-        let typeName = if left.kind == ekIdent: left.exprIdent else: left.exprPath.join("::")
-        left = Expr(kind: ekStructInit, loc: loc, exprStructInitName: typeName, exprStructInitFields: fields)
+        var typeName = ""
+        var typeArgs: seq[TypeExpr] = @[]
+        if left.kind == ekIdent:
+          typeName = left.exprIdent
+        elif left.kind == ekPath:
+          typeName = left.exprPath.join("::")
+        elif left.kind == ekGenericCall:
+          typeName = left.exprGenericCallee
+          typeArgs = left.exprGenericTypeArgs
+        left = Expr(kind: ekStructInit, loc: loc, exprStructInitName: typeName,
+                    exprStructInitTypeArgs: typeArgs, exprStructInitFields: fields)
       else:
         break
     else:

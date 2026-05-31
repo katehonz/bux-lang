@@ -3,7 +3,7 @@ SRC := src/main.nim
 OUT := buxc
 BUILD_DIR := build
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics pattern_matching strings map result_option try_operator
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics pattern_matching strings map result_option try_operator generics_struct
 
 .PHONY: all build dev test clean test-examples
 

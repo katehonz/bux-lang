@@ -13,6 +13,9 @@ type
     pendingStmts*: seq[HirNode]
     typeSubst*: Table[string, Type]  # Type parameter substitution for generics
     importTable*: Table[string, string]  # Local name → fully qualified name for imports
+    genericStructs*: Table[string, Decl]  # Generic struct declarations
+    generatedStructInsts*: Table[string, bool]  # Track generated struct instantiations
+    extraStructs*: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]]
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -118,11 +121,71 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.pendingStmts = @[]
   result.typeSubst = initTable[string, Type]()
   result.importTable = initTable[string, string]()
+  result.genericStructs = initTable[string, Decl]()
+  result.generatedStructInsts = initTable[string, bool]()
+  result.extraStructs = @[]
+
+proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
+
+proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type]): Type =
+  if te == nil: return makeUnknown()
+  case te.kind
+  of tekNamed:
+    if subst.hasKey(te.typeName):
+      return subst[te.typeName]
+    if te.typeArgs.len > 0 and ctx.genericStructs.hasKey(te.typeName):
+      var suffix = ""
+      for i, arg in te.typeArgs:
+        if i > 0: suffix.add("_")
+        let argType = substituteType(ctx, arg, subst)
+        suffix.add(argType.toString)
+      let mangledName = te.typeName & "_" & suffix
+      if not ctx.generatedStructInsts.hasKey(mangledName):
+        let genericDecl = ctx.genericStructs[te.typeName]
+        var fields: seq[tuple[name: string, typ: Type]] = @[]
+        for f in genericDecl.declStructFields:
+          let resolvedType = substituteType(ctx, f.ftype, subst)
+          fields.add((f.name, resolvedType))
+        ctx.extraStructs.add((mangledName, fields))
+        ctx.generatedStructInsts[mangledName] = true
+      return makeNamed(mangledName)
+    return ctx.resolveTypeExpr(te)
+  of tekPointer:
+    return makePointer(substituteType(ctx, te.pointerPointee, subst))
+  of tekSlice:
+    return makeSlice(substituteType(ctx, te.sliceElement, subst))
+  of tekTuple:
+    var elems: seq[Type] = @[]
+    for e in te.tupleElements:
+      elems.add(substituteType(ctx, e, subst))
+    return makeTuple(elems)
+  else:
+    return ctx.resolveTypeExpr(te)
 
 proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
   if te == nil: return makeUnknown()
   case te.kind
   of tekNamed:
+    if te.typeArgs.len > 0 and ctx.genericStructs.hasKey(te.typeName):
+      var suffix = ""
+      for i, arg in te.typeArgs:
+        if i > 0: suffix.add("_")
+        let argType = ctx.resolveTypeExpr(arg)
+        suffix.add(argType.toString)
+      let mangledName = te.typeName & "_" & suffix
+      if not ctx.generatedStructInsts.hasKey(mangledName):
+        let genericDecl = ctx.genericStructs[te.typeName]
+        var fields: seq[tuple[name: string, typ: Type]] = @[]
+        var subst = initTable[string, Type]()
+        for j, tp in genericDecl.declStructTypeParams:
+          if j < te.typeArgs.len:
+            subst[tp] = ctx.resolveTypeExpr(te.typeArgs[j])
+        for f in genericDecl.declStructFields:
+          let resolvedType = substituteType(ctx, f.ftype, subst)
+          fields.add((f.name, resolvedType))
+        ctx.extraStructs.add((mangledName, fields))
+        ctx.generatedStructInsts[mangledName] = true
+      return makeNamed(mangledName)
     case te.typeName
     of "void": return makeVoid()
     of "bool": return makeBool()
@@ -252,7 +315,11 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
                 return ctx.resolveTypeExpr(f.ftype)
               else: return makeUnknown()
     return makeUnknown()
-  of ekStructInit: return makeNamed(expr.exprStructInitName)
+  of ekStructInit:
+    if expr.exprStructInitTypeArgs.len > 0:
+      let te = TypeExpr(kind: tekNamed, loc: expr.loc, typeName: expr.exprStructInitName, typeArgs: expr.exprStructInitTypeArgs)
+      return ctx.resolveTypeExpr(te)
+    return makeNamed(expr.exprStructInitName)
   of ekSlice:
     if expr.exprSliceElements.len > 0:
       return makeSlice(ctx.resolveExprType(expr.exprSliceElements[0]))
@@ -405,7 +472,15 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     var fields: seq[tuple[name: string, value: HirNode]] = @[]
     for f in expr.exprStructInitFields:
       fields.add((f.name, ctx.lowerExpr(f.value)))
-    return HirNode(kind: hStructInit, structInitName: expr.exprStructInitName,
+    var structName = expr.exprStructInitName
+    if expr.exprStructInitTypeArgs.len > 0:
+      var suffix = ""
+      for i, targ in expr.exprStructInitTypeArgs:
+        if i > 0: suffix.add("_")
+        let argType = ctx.resolveTypeExpr(targ)
+        suffix.add(argType.toString)
+      structName = structName & "_" & suffix
+    return HirNode(kind: hStructInit, structInitName: structName,
                    structInitFields: fields, typ: typ, loc: loc)
 
   of ekSlice:
@@ -801,11 +876,13 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
         discard
 
 
-  # First pass: collect generic functions
+  # First pass: collect generic functions and generic structs
   var genericFuncs = initTable[string, Decl]()
   for decl in module.items:
     if decl.kind == dkFunc and decl.declFuncTypeParams.len > 0:
       genericFuncs[decl.declFuncName] = decl
+    if decl.kind == dkStruct and decl.declStructTypeParams.len > 0:
+      ctx.genericStructs[decl.declStructName] = decl
 
   # Second pass: find all generic calls and monomorphize
   proc findGenericCalls(expr: Expr): seq[tuple[name: string, typeArgs: seq[TypeExpr]]] =
@@ -932,11 +1009,12 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
           hf.name = decl.declImplTypeName & "_" & hf.name
           funcs.add(hf)
     of dkStruct:
-      var fields: seq[tuple[name: string, typ: Type]] = @[]
-      for f in decl.declStructFields:
-        let fType = if f.ftype != nil: ctx.resolveTypeExpr(f.ftype) else: makeUnknown()
-        fields.add((f.name, fType))
-      structs.add((decl.declStructName, fields))
+      if decl.declStructTypeParams.len == 0:  # Skip generic structs — monomorphized separately
+        var fields: seq[tuple[name: string, typ: Type]] = @[]
+        for f in decl.declStructFields:
+          let fType = if f.ftype != nil: ctx.resolveTypeExpr(f.ftype) else: makeUnknown()
+          fields.add((f.name, fType))
+        structs.add((decl.declStructName, fields))
     of dkEnum:
       var variants: seq[HirEnumVariant] = @[]
       for v in decl.declEnumVariants:
@@ -979,5 +1057,9 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       else: makeUnknown()
       consts.add((decl.declConstName, typ, value))
     else: discard
+
+  # Add monomorphized generic structs
+  for s in ctx.extraStructs:
+    structs.add(s)
 
   result = HirModule(funcs: funcs, externFuncs: externFuncs, structs: structs, enums: enums, consts: consts)

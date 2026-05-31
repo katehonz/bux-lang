@@ -1,0 +1,25 @@
+// Generic structs - Box<T> and Pair<T, U>
+import Std::Io::{PrintLine, PrintInt};
+
+struct Box<T> {
+    value: T,
+}
+
+struct Pair<T, U> {
+    first: T,
+    second: U,
+}
+
+func Main() -> int {
+    let b: Box<int> = Box<int> { value: 42 };
+    PrintLine("Box value:");
+    PrintInt(b.value);
+    PrintLine("");
+    
+    let p: Pair<int, String> = Pair<int, String> { first: 10, second: "hello" };
+    PrintLine("Pair first:");
+    PrintInt(p.first);
+    PrintLine("");
+    
+    return 0;
+}

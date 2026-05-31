@@ -81,14 +81,19 @@ proc isUnknown*(t: Type): bool = t.kind == tkUnknown
 proc isVoid*(t: Type): bool = t.kind == tkVoid
 proc isBool*(t: Type): bool = t.kind in {tkBool, tkBool8, tkBool16, tkBool32}
 proc isNumeric*(t: Type): bool =
+  if t.kind in {tkUnknown, tkNamed, tkTypeParam}: return true
   t.kind in {tkInt8, tkInt16, tkInt32, tkInt64, tkInt,
              tkUInt8, tkUInt16, tkUInt32, tkUInt64, tkUInt,
              tkFloat32, tkFloat64}
 proc isInteger*(t: Type): bool =
+  if t.kind in {tkUnknown, tkNamed, tkTypeParam}: return true
   t.kind in {tkInt8, tkInt16, tkInt32, tkInt64, tkInt,
              tkUInt8, tkUInt16, tkUInt32, tkUInt64, tkUInt}
-proc isFloat*(t: Type): bool = t.kind in {tkFloat32, tkFloat64}
+proc isFloat*(t: Type): bool =
+  if t.kind in {tkUnknown, tkNamed, tkTypeParam}: return true
+  t.kind in {tkFloat32, tkFloat64}
 proc isSigned*(t: Type): bool =
+  if t.kind in {tkUnknown, tkNamed, tkTypeParam}: return true
   t.kind in {tkInt8, tkInt16, tkInt32, tkInt64, tkInt}
 proc isPointer*(t: Type): bool = t.kind == tkPointer
 proc isSlice*(t: Type): bool = t.kind == tkSlice

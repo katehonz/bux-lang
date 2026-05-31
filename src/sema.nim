@@ -427,7 +427,7 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
               for i in 0 ..< argTypes.len:
                 let paramIdx = i + 1  # skip self
                 if paramIdx < expectedParams.len:
-                  if not argTypes[i].isAssignableTo(expectedParams[paramIdx]):
+                  if not argTypes[i].isAssignableTo(expectedParams[paramIdx]) and not (argTypes[i].kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
                     sema.emitError(expr.loc, &"argument {i+1}: expected {expectedParams[paramIdx].toString}, got {argTypes[i].toString}")
             return minfo.retType
       
@@ -451,7 +451,7 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         sema.emitError(expr.loc, &"expected {expectedParams.len} arguments, got {argTypes.len}")
       else:
         for i in 0 ..< argTypes.len:
-          if not argTypes[i].isAssignableTo(expectedParams[i]):
+          if not argTypes[i].isAssignableTo(expectedParams[i]) and not (argTypes[i].kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
             sema.emitError(expr.loc, &"argument {i+1}: expected {expectedParams[i].toString}, got {argTypes[i].toString}")
       return calleeType.inner[^1]
     elif calleeType.kind == tkUnknown:
