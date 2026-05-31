@@ -744,7 +744,7 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
 
     discard parserExpect(p, tkLBrace, "expected '{'");
     while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
-        if d.fieldCount >= 8 { break; }
+        if d.fieldCount >= 64 { break; }
         if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
         if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
         let beforePos: int = p.pos;
@@ -770,6 +770,18 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
         } else if d.fieldCount == 3 {
             d.field3.name = fName.text;
             d.field3.refFieldType = fType;
+        } else if d.fieldCount == 4 {
+            d.field4.name = fName.text;
+            d.field4.refFieldType = fType;
+        } else if d.fieldCount == 5 {
+            d.field5.name = fName.text;
+            d.field5.refFieldType = fType;
+        } else if d.fieldCount == 6 {
+            d.field6.name = fName.text;
+            d.field6.refFieldType = fType;
+        } else if d.fieldCount == 7 {
+            d.field7.name = fName.text;
+            d.field7.refFieldType = fType;
         }
         d.fieldCount = d.fieldCount + 1;
     }
