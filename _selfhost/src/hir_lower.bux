@@ -170,6 +170,7 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         alloca.column = col;
         alloca.strValue = stmt.strValue;
         // Set type from the declared type expression
+        alloca.typeName = "";
         if stmt.refStmtType != null as *TypeExpr {
             alloca.intValue = stmt.refStmtType.kind;
             alloca.typeName = stmt.refStmtType.typeName;

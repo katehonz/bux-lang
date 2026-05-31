@@ -144,14 +144,21 @@ unsigned int bux_strlen(const char* s) {
 }
 
 int bux_strcmp(const char* a, const char* b) {
+    if (a == b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
     return strcmp(a, b);
 }
 
 int bux_strncmp(const char* a, const char* b, unsigned int n) {
+    if (a == b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
     return strncmp(a, b, (size_t)n);
 }
 
 char* bux_strcpy(char* dest, const char* src) {
+    if (!dest || !src) return dest;
     return strcpy(dest, src);
 }
 
