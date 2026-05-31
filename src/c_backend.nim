@@ -490,6 +490,17 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
   for e in module.enums:
     be.emitEnum(e.name, e.variants)
 
+  # Forward declarations for all functions
+  for f in module.funcs:
+    let retType = typeToC(f.retType)
+    var params: seq[string] = @[]
+    for p in f.params:
+      params.add(typeToC(p.typ) & " " & p.name)
+    if params.len == 0:
+      params.add("void")
+    be.emitLine(retType & " " & f.name & "(" & params.join(", ") & ");")
+  be.emitLine("")
+
   # Function definitions
   var hasMain = false
   for f in module.funcs:

@@ -114,6 +114,7 @@ proc `!=`*(a, b: Type): bool = not (a == b)
 # Assignment compatibility
 proc isAssignableTo*(a, b: Type): bool =
   if a.isUnknown or b.isUnknown: return true
+  if b.kind == tkTypeParam: return true
   if a == b: return true
   # float32 -> float64
   if a.kind == tkFloat32 and b.kind == tkFloat64: return true

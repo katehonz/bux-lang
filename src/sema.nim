@@ -110,6 +110,11 @@ proc collectGlobals*(sema: var Sema) =
     of dkFunc:
       let sym = Symbol(kind: skFunc, name: decl.declFuncName, decl: decl,
                        isPublic: decl.isPublic)
+      # Temporarily add type parameters to type table for resolution
+      var addedTypeParams: seq[string] = @[]
+      for tp in decl.declFuncTypeParams:
+        sema.typeTable[tp] = makeTypeParam(tp)
+        addedTypeParams.add(tp)
       # Build function type from params and return
       var params: seq[Type] = @[]
       for p in decl.declFuncParams:
@@ -118,6 +123,30 @@ proc collectGlobals*(sema: var Sema) =
       sym.typ = makeFunc(params, retType)
       if not sema.globalScope.define(sym):
         sema.emitError(decl.loc, &"duplicate symbol '{decl.declFuncName}'")
+      # Auto-register func Type_Method(self: Type, ...) as a method
+      if decl.declFuncParams.len > 0 and decl.declFuncParams[0].name == "self":
+        var typeName = ""
+        for i in countdown(decl.declFuncName.len - 1, 1):
+          if decl.declFuncName[i] == '_':
+            let prefix = decl.declFuncName[0..<i]
+            let typeSym = sema.globalScope.lookup(prefix)
+            if typeSym != nil and typeSym.kind == skType and typeSym.decl != nil and typeSym.decl.kind == dkStruct:
+              typeName = prefix
+              break
+        if typeName != "":
+          let methodName = decl.declFuncName[typeName.len + 1 .. ^1]
+          if not sema.methodTable.hasKey(typeName):
+            sema.methodTable[typeName] = @[]
+          var minfo = MethodInfo(
+            name: methodName,
+            decl: decl,
+            params: params,
+            retType: retType
+          )
+          sema.methodTable[typeName].add(minfo)
+      # Clean up type parameters
+      for tp in addedTypeParams:
+        sema.typeTable.del(tp)
     of dkExternFunc:
       let sym = Symbol(kind: skFunc, name: decl.declExtFuncName, decl: decl,
                        isPublic: decl.isPublic)
@@ -283,6 +312,9 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       return makeUnknown()
     return sym.typ
   of ekSelf:
+    let sym = scope.lookup("self")
+    if sym != nil and sym.typ != nil:
+      return sym.typ
     return makeNamed("self")
   of ekPath:
     let fullName = expr.exprPath.join("::")
@@ -607,7 +639,7 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
   of skLet:
     let initType = sema.checkExpr(stmt.stmtLetInit, scope)
     let declaredType = if stmt.stmtLetType != nil: sema.resolveType(stmt.stmtLetType) else: initType
-    if stmt.stmtLetType != nil and not initType.isAssignableTo(declaredType):
+    if stmt.stmtLetType != nil and not initType.isAssignableTo(declaredType) and not (initType.kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
       sema.emitError(stmt.loc, &"cannot assign {initType.toString} to {declaredType.toString}")
     let sym = Symbol(kind: skVar, name: stmt.stmtLetName, typ: declaredType,
                      isMutable: stmt.stmtLetMut)
@@ -677,6 +709,11 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   if decl.declFuncBody == nil:
     return
   var funcScope = newScope(sema.globalScope)
+  # Add type parameters to type table for resolution
+  var addedTypeParams: seq[string] = @[]
+  for tp in decl.declFuncTypeParams:
+    sema.typeTable[tp] = makeTypeParam(tp)
+    addedTypeParams.add(tp)
   # Add parameters
   for p in decl.declFuncParams:
     let pType = sema.resolveType(p.ptype)
@@ -685,6 +722,9 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   # Check body statements
   for stmt in decl.declFuncBody.stmts:
     discard sema.checkStmt(stmt, funcScope)
+  # Clean up type parameters
+  for tp in addedTypeParams:
+    sema.typeTable.del(tp)
 
 # ---------------------------------------------------------------------------
 # Second pass: check all function bodies

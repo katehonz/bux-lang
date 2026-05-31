@@ -16,6 +16,11 @@ type
     genericStructs*: Table[string, Decl]  # Generic struct declarations
     generatedStructInsts*: Table[string, bool]  # Track generated struct instantiations
     extraStructs*: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]]
+    structInstMap*: Table[string, tuple[baseName: string, typeArgs: seq[Type]]]  # Mangled name -> base + args
+    genericFuncs*: Table[string, Decl]  # Generic function declarations
+    generatedFuncInsts*: Table[string, bool]  # Track generated function instantiations
+    extraFuncs*: seq[HirFunc]  # Monomorphized generic methods
+    varTypeExprs*: Table[string, TypeExpr]  # Track variable names -> type expr for generic method inference
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -124,6 +129,11 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.genericStructs = initTable[string, Decl]()
   result.generatedStructInsts = initTable[string, bool]()
   result.extraStructs = @[]
+  result.structInstMap = initTable[string, tuple[baseName: string, typeArgs: seq[Type]]]()
+  result.genericFuncs = initTable[string, Decl]()
+  result.generatedFuncInsts = initTable[string, bool]()
+  result.extraFuncs = @[]
+  result.varTypeExprs = initTable[string, TypeExpr]()
 
 proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
 
@@ -143,11 +153,15 @@ proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type])
       if not ctx.generatedStructInsts.hasKey(mangledName):
         let genericDecl = ctx.genericStructs[te.typeName]
         var fields: seq[tuple[name: string, typ: Type]] = @[]
+        var concreteArgs: seq[Type] = @[]
         for f in genericDecl.declStructFields:
           let resolvedType = substituteType(ctx, f.ftype, subst)
           fields.add((f.name, resolvedType))
+        for arg in te.typeArgs:
+          concreteArgs.add(substituteType(ctx, arg, subst))
         ctx.extraStructs.add((mangledName, fields))
         ctx.generatedStructInsts[mangledName] = true
+        ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
       return makeNamed(mangledName)
     return ctx.resolveTypeExpr(te)
   of tekPointer:
@@ -177,14 +191,18 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
         let genericDecl = ctx.genericStructs[te.typeName]
         var fields: seq[tuple[name: string, typ: Type]] = @[]
         var subst = initTable[string, Type]()
+        var concreteArgs: seq[Type] = @[]
         for j, tp in genericDecl.declStructTypeParams:
           if j < te.typeArgs.len:
             subst[tp] = ctx.resolveTypeExpr(te.typeArgs[j])
+        for arg in te.typeArgs:
+          concreteArgs.add(ctx.resolveTypeExpr(arg))
         for f in genericDecl.declStructFields:
           let resolvedType = substituteType(ctx, f.ftype, subst)
           fields.add((f.name, resolvedType))
         ctx.extraStructs.add((mangledName, fields))
         ctx.generatedStructInsts[mangledName] = true
+        ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
       return makeNamed(mangledName)
     case te.typeName
     of "void": return makeVoid()
@@ -234,7 +252,10 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     # Check global scope first
     let sym = ctx.globalScope.lookup(expr.exprIdent)
     if sym != nil and sym.typ != nil: return sym.typ
-    # Check current function parameters
+    # Check local variables and parameters tracked in varTypeExprs
+    if ctx.varTypeExprs.hasKey(expr.exprIdent):
+      return ctx.resolveTypeExpr(ctx.varTypeExprs[expr.exprIdent])
+    # Check current function parameters (fallback for untracked params)
     if ctx.currentFuncDecl != nil:
       var params: seq[Param] = @[]
       case ctx.currentFuncDecl.kind
@@ -259,7 +280,17 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
             return makePointer(pointeeType)
           else: discard
     return makeUnknown()
-  of ekSelf: return makeNamed("self")
+  of ekSelf:
+    # Look up self parameter type from current function
+    if ctx.currentFuncDecl != nil:
+      var params: seq[Param] = @[]
+      case ctx.currentFuncDecl.kind
+      of dkFunc: params = ctx.currentFuncDecl.declFuncParams
+      of dkExternFunc: params = ctx.currentFuncDecl.declExtFuncParams
+      else: discard
+      if params.len > 0 and params[0].name == "self" and params[0].ptype != nil:
+        return substituteType(ctx, params[0].ptype, ctx.typeSubst)
+    return makeNamed("self")
   of ekBinary:
     let left = ctx.resolveExprType(expr.exprBinaryLeft)
     case expr.exprBinaryOp
@@ -347,6 +378,32 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     return makeVoid()
   else: return makeUnknown()
 
+proc extractGenericStructInfo(ctx: LowerCtx, te: TypeExpr): tuple[baseName: string, typeArgs: seq[TypeExpr]] =
+  if te == nil: return ("", @[])
+  var baseTe = te
+  if baseTe.kind == tekPointer:
+    baseTe = baseTe.pointerPointee
+  if baseTe.kind == tekNamed and baseTe.typeArgs.len > 0 and ctx.genericStructs.hasKey(baseTe.typeName):
+    return (baseTe.typeName, baseTe.typeArgs)
+  return ("", @[])
+
+proc getReceiverTypeExpr(ctx: LowerCtx, expr: Expr): TypeExpr =
+  case expr.kind
+  of ekIdent:
+    if ctx.varTypeExprs.hasKey(expr.exprIdent):
+      return ctx.varTypeExprs[expr.exprIdent]
+  of ekField:
+    # For chained field access, try to resolve from the outer object
+    # This is limited but covers common cases
+    discard
+  of ekStructInit:
+    return TypeExpr(kind: tekNamed, loc: expr.loc, typeName: expr.exprStructInitName,
+                    typeArgs: expr.exprStructInitTypeArgs)
+  else: discard
+  return nil
+
+proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs: seq[TypeExpr]): string
+
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   if expr == nil: return nil
   let loc = expr.loc
@@ -384,18 +441,29 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     # Method call desugaring: obj.method(args) → Type_method(obj, args)
     if expr.exprCallCallee.kind == ekField:
       let methodName = expr.exprCallCallee.exprFieldName
+      let receiverExpr = expr.exprCallCallee.exprFieldObj
 
       # Try to find the method in methodTable
       for typeName, methods in ctx.methodTable:
         for minfo in methods:
           if minfo.name == methodName:
-            # Found the method - desugar to Type_method(receiver, args)
-            let mangledName = typeName & "_" & methodName
+            var calleeName = typeName & "_" & methodName
+            # Check if this is a generic method on a generic struct instance
+            let recvTypeExpr = ctx.getReceiverTypeExpr(receiverExpr)
+            let (baseName, typeArgs) = ctx.extractGenericStructInfo(recvTypeExpr)
+            if baseName != "" and baseName == typeName and minfo.decl.declFuncTypeParams.len > 0:
+              calleeName = ctx.generateMethodInstance(calleeName, typeArgs)
             var args: seq[HirNode] = @[]
-            args.add(ctx.lowerExpr(expr.exprCallCallee.exprFieldObj))
+            let loweredReceiver = ctx.lowerExpr(receiverExpr)
+            let receiverType = ctx.resolveExprType(receiverExpr)
+            # Auto-address if method expects pointer but receiver is value
+            if minfo.params.len > 0 and minfo.params[0].kind == tkPointer and receiverType.kind != tkPointer:
+              args.add(hirUnary(tkAmp, loweredReceiver, makePointer(receiverType), loc))
+            else:
+              args.add(loweredReceiver)
             for arg in expr.exprCallArgs:
               args.add(ctx.lowerExpr(arg))
-            return hirCall(mangledName, args, typ, loc)
+            return hirCall(calleeName, args, typ, loc)
 
       # Not a method call - treat as field access + call (function pointer)
       let callee = ctx.lowerExpr(expr.exprCallCallee)
@@ -632,6 +700,16 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     let alloca = hirAlloca(stmt.stmtLetName, allocaType, loc)
     let varNode = hirVar(stmt.stmtLetName, makePointer(allocaType), loc)
     let store = hirStore(varNode, initHir, loc)
+    # Track type expr for generic method inference
+    if stmt.stmtLetType != nil:
+      ctx.varTypeExprs[stmt.stmtLetName] = stmt.stmtLetType
+    elif stmt.stmtLetInit.kind == ekStructInit and stmt.stmtLetInit.exprStructInitTypeArgs.len > 0:
+      ctx.varTypeExprs[stmt.stmtLetName] = TypeExpr(
+        kind: tekNamed,
+        loc: stmt.stmtLetInit.loc,
+        typeName: stmt.stmtLetInit.exprStructInitName,
+        typeArgs: stmt.stmtLetInit.exprStructInitTypeArgs
+      )
     var stmts = ctx.pendingStmts
     ctx.pendingStmts = @[]
     stmts.add(alloca)
@@ -798,42 +876,68 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   for p in funcParams:
     var pType = makeUnknown()
     if p.ptype != nil:
-      case p.ptype.kind
-      of tekNamed:
-        # Check if this is a type parameter
-        if ctx.typeSubst.hasKey(p.ptype.typeName):
-          pType = ctx.typeSubst[p.ptype.typeName]
-        else:
-          pType = ctx.resolveTypeExpr(p.ptype)
-      of tekPointer:
-        let pointeeType = ctx.resolveTypeExpr(p.ptype.pointerPointee)
-        pType = makePointer(pointeeType)
-      else: discard
+      pType = substituteType(ctx, p.ptype, ctx.typeSubst)
     params.add((p.name, pType))
+    if p.ptype != nil:
+      ctx.varTypeExprs[p.name] = p.ptype
 
   var retType = makeVoid()
   if funcReturnType != nil:
-    case funcReturnType.kind
-    of tekNamed:
-      # Check if this is a type parameter
-      if ctx.typeSubst.hasKey(funcReturnType.typeName):
-        retType = ctx.typeSubst[funcReturnType.typeName]
-      else:
-        retType = ctx.resolveTypeExpr(funcReturnType)
-    of tekPointer:
-      let pointeeType = ctx.resolveTypeExpr(funcReturnType.pointerPointee)
-      retType = makePointer(pointeeType)
-    else: discard
+    retType = substituteType(ctx, funcReturnType, ctx.typeSubst)
 
+  let oldFuncDecl = ctx.currentFuncDecl
+  let oldFuncRetType = ctx.currentFuncRetType
+  let oldVarTypeExprs = ctx.varTypeExprs
   ctx.currentFuncRetType = retType
   ctx.currentFuncDecl = decl
+  ctx.varTypeExprs = initTable[string, TypeExpr]()  # Clear local vars for new function
   let body = if funcBody != nil: ctx.lowerBlock(funcBody) else: nil
+  ctx.currentFuncDecl = oldFuncDecl
+  ctx.currentFuncRetType = oldFuncRetType
+  ctx.varTypeExprs = oldVarTypeExprs
 
   result = HirFunc(name: funcName, params: params, retType: retType,
                    body: body, isPublic: decl.isPublic)
   
   # Restore old substitution
   ctx.typeSubst = oldSubst
+
+proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs: seq[TypeExpr]): string =
+  if not ctx.genericFuncs.hasKey(baseMethodName):
+    return baseMethodName
+  let genericDecl = ctx.genericFuncs[baseMethodName]
+  if genericDecl.declFuncTypeParams.len == 0:
+    return baseMethodName
+  var subst = initTable[string, Type]()
+  var typeSuffix = ""
+  for i, tp in genericDecl.declFuncTypeParams:
+    if i > 0: typeSuffix.add("_")
+    if i < typeArgs.len:
+      let argType = ctx.resolveTypeExpr(typeArgs[i])
+      subst[tp] = argType
+      typeSuffix.add(argType.toString)
+    else:
+      typeSuffix.add("unknown")
+  let mangledName = baseMethodName & "_" & typeSuffix
+  if not ctx.generatedFuncInsts.hasKey(mangledName):
+    var specDecl = Decl(
+      kind: dkFunc,
+      loc: genericDecl.loc,
+      isPublic: genericDecl.isPublic,
+      declFuncAsm: genericDecl.declFuncAsm,
+      declFuncCallConv: genericDecl.declFuncCallConv,
+      declFuncName: mangledName,
+      declFuncTypeParams: @[],
+      declFuncParams: genericDecl.declFuncParams,
+      declFuncReturnType: genericDecl.declFuncReturnType,
+      declFuncBody: genericDecl.declFuncBody
+    )
+    let oldSubst = ctx.typeSubst
+    ctx.typeSubst = subst
+    ctx.extraFuncs.add(ctx.lowerFunc(specDecl))
+    ctx.typeSubst = oldSubst
+    ctx.generatedFuncInsts[mangledName] = true
+  return mangledName
 
 proc lowerModule*(module: Module, sema: Sema): HirModule =
   var ctx = initLowerCtx(module, sema)
@@ -877,10 +981,9 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
 
 
   # First pass: collect generic functions and generic structs
-  var genericFuncs = initTable[string, Decl]()
   for decl in module.items:
     if decl.kind == dkFunc and decl.declFuncTypeParams.len > 0:
-      genericFuncs[decl.declFuncName] = decl
+      ctx.genericFuncs[decl.declFuncName] = decl
     if decl.kind == dkStruct and decl.declStructTypeParams.len > 0:
       ctx.genericStructs[decl.declStructName] = decl
 
@@ -943,7 +1046,7 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   var generated = initTable[string, bool]()
   for inst in instantiations:
     let baseName = inst.name
-    if genericFuncs.hasKey(baseName):
+    if ctx.genericFuncs.hasKey(baseName):
       var typeSuffix = ""
       for i, targ in inst.typeArgs:
         if i > 0: typeSuffix.add("_")
@@ -954,7 +1057,7 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       let mangledName = baseName & "_" & typeSuffix
       if not generated.hasKey(mangledName):
         # Generate specialized version
-        let genericDecl = genericFuncs[baseName]
+        let genericDecl = ctx.genericFuncs[baseName]
         
         # Build type substitution table
         var subst = initTable[string, Type]()
@@ -1061,5 +1164,9 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   # Add monomorphized generic structs
   for s in ctx.extraStructs:
     structs.add(s)
+
+  # Add monomorphized generic methods
+  for f in ctx.extraFuncs:
+    funcs.add(f)
 
   result = HirModule(funcs: funcs, externFuncs: externFuncs, structs: structs, enums: enums, consts: consts)

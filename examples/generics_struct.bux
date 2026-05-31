@@ -10,15 +10,41 @@ struct Pair<T, U> {
     second: U,
 }
 
+func Box_Get<T>(self: *Box<T>) -> T {
+    return self.value;
+}
+
+func Box_Set<T>(self: *Box<T>, value: T) {
+    self.value = value;
+}
+
+func Pair_GetFirst<T, U>(self: *Pair<T, U>) -> T {
+    return self.first;
+}
+
+func Pair_GetSecond<T, U>(self: *Pair<T, U>) -> U {
+    return self.second;
+}
+
 func Main() -> int {
     let b: Box<int> = Box<int> { value: 42 };
     PrintLine("Box value:");
-    PrintInt(b.value);
+    PrintInt(b.Get());
+    PrintLine("");
+    
+    b.Set(100);
+    PrintLine("Box after Set(100):");
+    PrintInt(b.Get());
     PrintLine("");
     
     let p: Pair<int, String> = Pair<int, String> { first: 10, second: "hello" };
     PrintLine("Pair first:");
-    PrintInt(p.first);
+    PrintInt(p.GetFirst());
+    PrintLine("");
+    
+    let bp: *Box<int> = &b;
+    PrintLine("Box via pointer:");
+    PrintInt(bp.Get());
     PrintLine("");
     
     return 0;
