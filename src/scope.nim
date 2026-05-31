@@ -1,3 +1,4 @@
+import std/tables
 import types, ast, source_location
 
 type
@@ -18,30 +19,27 @@ type
 
   Scope* = ref object
     parent*: Scope
-    symbols*: seq[Symbol]
+    table*: Table[string, Symbol]  ## O(1) lookup via hash table
 
 proc newScope*(parent: Scope = nil): Scope =
   result = Scope(parent: parent)
 
 proc define*(scope: Scope, sym: Symbol): bool =
   ## Returns false if name already exists in this scope
-  for s in scope.symbols:
-    if s.name == sym.name:
-      return false
-  scope.symbols.add(sym)
+  if scope.table.hasKey(sym.name):
+    return false
+  scope.table[sym.name] = sym
   return true
 
 proc lookup*(scope: Scope, name: string): Symbol =
   var cur = scope
   while cur != nil:
-    for s in cur.symbols:
-      if s.name == name:
-        return s
+    if cur.table.hasKey(name):
+      return cur.table[name]
     cur = cur.parent
   return nil
 
 proc lookupLocal*(scope: Scope, name: string): Symbol =
-  for s in scope.symbols:
-    if s.name == name:
-      return s
+  if scope.table.hasKey(name):
+    return scope.table[name]
   return nil
