@@ -99,7 +99,11 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
 
     // Literal
     if kind == hLit {
-        StringBuilder_Append(&cbe.sb, node.strValue);
+        if node.intValue == tkNull {
+            StringBuilder_Append(&cbe.sb, "0");
+        } else {
+            StringBuilder_Append(&cbe.sb, node.strValue);
+        }
         return;
     }
 
