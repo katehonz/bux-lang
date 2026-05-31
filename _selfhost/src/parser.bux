@@ -662,7 +662,13 @@ func parserParseBlock(p: *Parser) -> *Block {
             discard parserAdvance(p);
             continue;
         }
+        let beforePos: int = p.pos;
         let s: *Stmt = parserParseStmt(p);
+        // Infinite-loop safeguard: if no progress, advance past current token
+        if p.pos == beforePos {
+            discard parserAdvance(p);
+            continue;
+        }
         if s != null as *Stmt {
             s.nextStmt = null as *Stmt;
             if b.firstStmt == null as *Stmt {
