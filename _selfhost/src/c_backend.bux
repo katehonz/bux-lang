@@ -259,6 +259,26 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
+    // Field access: obj.field — emit as obj->field (since most are pointers)
+    if kind == hFieldPtr {
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, "->");
+        StringBuilder_Append(&cbe.sb, node.strValue);
+        return;
+    }
+
+    // Sizeof: sizeof(Type) — emit as sizeof(Type)
+    if kind == hSizeOf {
+        StringBuilder_Append(&cbe.sb, "sizeof(");
+        if !String_Eq(node.typeName, "") {
+            StringBuilder_Append(&cbe.sb, node.typeName);
+        } else {
+            StringBuilder_Append(&cbe.sb, "int");
+        }
+        StringBuilder_Append(&cbe.sb, ")");
+        return;
+    }
+
     // Index: arr[idx] — emit as arr[idx]
     if kind == hIndexPtr {
         CBE_EmitExpr(cbe, node.child1);
@@ -512,21 +532,24 @@ func CBackend_Generate(mod: *HirModule) -> String {
     i = 0;
     while i < mod.funcCount {
         if String_Eq(mod.funcs[i].name, "Main") { hasMain = true; }
+        // Skip forward declarations (functions without body)
+        let body: *HirNode = mod.funcs[i].body;
+        if body == null as *HirNode {
+            i = i + 1;
+            continue;
+        }
         CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
         StringBuilder_Append(&cbe.sb, " {\n");
         // Body
         var hasReturn: bool = false;
-        let body: *HirNode = mod.funcs[i].body;
-        if body != null as *HirNode {
-            cbe.indent = 1;
-            CBE_EmitExpr(cbe, body);
-            cbe.indent = 0;
-            // Check if body has a return statement
-            var stmt: *HirNode = body.child1;
-            while stmt != null as *HirNode {
-                if stmt.kind == hReturn { hasReturn = true; }
-                stmt = stmt.child3;
-            }
+        cbe.indent = 1;
+        CBE_EmitExpr(cbe, body);
+        cbe.indent = 0;
+        // Check if body has a return statement
+        var stmt: *HirNode = body.child1;
+        while stmt != null as *HirNode {
+            if stmt.kind == hReturn { hasReturn = true; }
+            stmt = stmt.child3;
         }
         // Add default return 0 only if function returns int and has no explicit return
         if String_Eq(mod.funcs[i].retTypeName, "int") && !hasReturn {

@@ -105,6 +105,15 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         return n;
     }
 
+    // Sizeof
+    if kind == ekSizeOf {
+        n.kind = hSizeOf;
+        if expr.refType != null as *TypeExpr {
+            n.typeName = expr.refType.typeName;
+        }
+        return n;
+    }
+
     // Field access
     if kind == ekField {
         n.kind = hFieldPtr;
