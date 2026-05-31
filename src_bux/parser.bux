@@ -92,6 +92,24 @@ func parserEmitDiag(p: *Parser, line: uint32, col: uint32, msg: String) {
     p.diagCount = p.diagCount + 1;
 }
 
+func parserIsKeyword(kind: int) -> bool {
+    if kind >= tkIf && kind <= tkSuper { return true; }
+    if kind == tkSizeOf { return true; }
+    return false;
+}
+
+func parserExpectIdentOrKeyword(p: *Parser, msg: String) -> LexToken {
+    let tok: LexToken = parserCurToken(p);
+    if tok.kind == tkIdent || parserIsKeyword(tok.kind) {
+        return parserAdvance(p);
+    }
+    p.diags[p.diagCount] = ParserDiag {
+        line: tok.line, column: tok.column, message: msg
+    };
+    p.diagCount = p.diagCount + 1;
+    return tok;
+}
+
 // ---------------------------------------------------------------------------
 // Type parsing
 // ---------------------------------------------------------------------------
@@ -379,7 +397,7 @@ func parserParsePostfix(p: *Parser) -> *Expr {
                     while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
                     if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile { break; }
                     let sip: int = p.pos;
-                    let fName: LexToken = parserExpect(p, tkIdent, "expected field name");
+                    let fName: LexToken = parserExpectIdentOrKeyword(p, "expected field name");
                     discard parserExpect(p, tkColon, "expected ':'");
                     let fValue: *Expr = parserParseExpr(p);
                     let fExpr: *Expr = parserMakeExpr(ekField, fName.line, fName.column);
@@ -487,7 +505,7 @@ func parserParseStmt(p: *Parser) -> *Stmt {
     if kind == tkLet || kind == tkVar {
         let isVar: bool = (kind == tkVar);
         discard parserAdvance(p);
-        let nameTok: LexToken = parserExpect(p, tkIdent, "expected variable name");
+        let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected variable name");
         var typeExpr: *TypeExpr = null as *TypeExpr;
         if parserMatch(p, tkColon) {
             typeExpr = parserParseType(p);
@@ -711,7 +729,7 @@ func parserParseParamList(p: *Parser) -> *Decl {
     discard parserExpect(p, tkLParen, "expected '('");
     while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
         if d.paramCount >= 6 { break; }
-        let nameTok: LexToken = parserExpect(p, tkIdent, "expected parameter name");
+        let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected parameter name");
         discard parserExpect(p, tkColon, "expected ':' in parameter");
         let ptype: *TypeExpr = parserParseType(p);
 
@@ -752,7 +770,7 @@ func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool) -> *Decl {
     let col: uint32 = parserCurToken(p).column;
     discard parserExpect(p, tkFunc, "expected 'func'");
 
-    let nameTok: LexToken = parserExpect(p, tkIdent, "expected function name");
+    let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected function name");
     let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
     d.kind = dkFunc;
     d.line = line;
@@ -803,7 +821,7 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
     let line: uint32 = parserCurToken(p).line;
     let col: uint32 = parserCurToken(p).column;
     discard parserExpect(p, tkStruct, "expected 'struct'");
-    let nameTok: LexToken = parserExpect(p, tkIdent, "expected struct name");
+    let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected struct name");
 
     let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
     d.kind = dkStruct;
@@ -832,7 +850,7 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
         if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
         if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
         let beforePos: int = p.pos;
-        let fName: LexToken = parserExpect(p, tkIdent, "expected field name");
+        let fName: LexToken = parserExpectIdentOrKeyword(p, "expected field name");
         discard parserExpect(p, tkColon, "expected ':' in struct field");
         let fType: *TypeExpr = parserParseType(p);
         parserMatch(p, tkSemicolon);

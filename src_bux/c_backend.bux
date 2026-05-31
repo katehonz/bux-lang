@@ -446,6 +446,49 @@ func CBackend_Generate(mod: *HirModule) -> String {
     StringBuilder_Append(&cbe.sb, "void* bux_alloc(unsigned int size);\n");
     StringBuilder_Append(&cbe.sb, "void bux_free(void* ptr);\n\n");
 
+    // Forward declare all struct types
+    var si: int = 0;
+    while si < mod.structCount {
+        StringBuilder_Append(&cbe.sb, "typedef struct ");
+        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+        StringBuilder_Append(&cbe.sb, " ");
+        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+        StringBuilder_Append(&cbe.sb, ";\n");
+        si = si + 1;
+    }
+    StringBuilder_Append(&cbe.sb, "\n");
+
+    // Struct definitions
+    si = 0;
+    while si < mod.structCount {
+        StringBuilder_Append(&cbe.sb, "typedef struct {\n");
+        var fi: int = 0;
+        while fi < mod.structs[si].fieldCount {
+            StringBuilder_Append(&cbe.sb, "    ");
+            var ft: String = mod.structs[si].fields[fi].typeName;
+            if String_Eq(ft, "int") || String_Eq(ft, "") {
+                StringBuilder_Append(&cbe.sb, "int");
+            } else if String_Eq(ft, "String") {
+                StringBuilder_Append(&cbe.sb, "String");
+            } else if String_Eq(ft, "bool") {
+                StringBuilder_Append(&cbe.sb, "bool");
+            } else if String_Eq(ft, "uint32") {
+                StringBuilder_Append(&cbe.sb, "uint32");
+            } else {
+                // Use the type name directly (handles "Foo*", "Bar", etc.)
+                StringBuilder_Append(&cbe.sb, ft);
+            }
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, mod.structs[si].fields[fi].name);
+            StringBuilder_Append(&cbe.sb, ";\n");
+            fi = fi + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "} ");
+        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+        StringBuilder_Append(&cbe.sb, ";\n\n");
+        si = si + 1;
+    }
+
     // Forward declarations for all functions
     var i: int = 0;
     while i < mod.funcCount {

@@ -382,6 +382,12 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     let hm: *HirModule = bux_alloc(sizeof(HirModule)) as *HirModule;
     hm.funcCount = 0;
     hm.funcs = ctx.funcs;
+    hm.structCount = 0;
+    hm.structs = bux_alloc(64 as uint * sizeof(HirStruct)) as *HirStruct;
+
+    // First pass: count structs (to allocate field arrays later)
+    // Second pass: actually collect them
+    // For simplicity, do single pass with pre-allocated field arrays
 
     // Iterate declarations
     var decl: *Decl = mod.firstItem;
@@ -397,6 +403,41 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             ctx.externCount = ctx.externCount + 1;
         }
         if decl.kind == dkStruct {
+            // Collect struct definition for C codegen
+            let si: int = hm.structCount;
+            hm.structs[si].name = decl.strValue;
+            hm.structs[si].fieldCount = decl.fieldCount;
+            hm.structs[si].fields = bux_alloc(decl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
+            var fi: int = 0;
+            while fi < decl.fieldCount {
+                var fname: String = "";
+                var ftype: *TypeExpr = null as *TypeExpr;
+                if fi == 0 { fname = decl.field0.name; ftype = decl.field0.refFieldType; }
+                else if fi == 1 { fname = decl.field1.name; ftype = decl.field1.refFieldType; }
+                else if fi == 2 { fname = decl.field2.name; ftype = decl.field2.refFieldType; }
+                else if fi == 3 { fname = decl.field3.name; ftype = decl.field3.refFieldType; }
+                else if fi == 4 { fname = decl.field4.name; ftype = decl.field4.refFieldType; }
+                else if fi == 5 { fname = decl.field5.name; ftype = decl.field5.refFieldType; }
+                else if fi == 6 { fname = decl.field6.name; ftype = decl.field6.refFieldType; }
+                else if fi == 7 { fname = decl.field7.name; ftype = decl.field7.refFieldType; }
+                // Skip empty field names
+                if String_Eq(fname, "") {
+                    fi = fi + 1;
+                    continue;
+                }
+                hm.structs[si].fields[fi].name = fname;
+                if ftype != null as *TypeExpr {
+                    if ftype.kind == tekPointer && ftype.pointerPointee != null as *TypeExpr {
+                        // Pointer type: emit "TypeName*"
+                        if !String_Eq(ftype.pointerPointee.typeName, "") {
+                            hm.structs[si].fields[fi].typeName = String_Concat(ftype.pointerPointee.typeName, "*");
+                        }
+                    } else if !String_Eq(ftype.typeName, "") {
+                        hm.structs[si].fields[fi].typeName = ftype.typeName;
+                    }
+                }
+                fi = fi + 1;
+            }
             hm.structCount = hm.structCount + 1;
         }
         if decl.kind == dkEnum {

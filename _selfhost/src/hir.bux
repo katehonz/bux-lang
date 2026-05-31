@@ -97,12 +97,24 @@ struct HirEnumVariant {
 // HirModule
 // ---------------------------------------------------------------------------
 
+struct HirStructField {
+    name: String,
+    typeName: String,
+}
+
+struct HirStruct {
+    name: String,
+    fieldCount: int,
+    fields: *HirStructField,
+}
+
 struct HirModule {
     funcCount: int,
     funcs: *HirFunc,
     externCount: int,
     externFuncs: *HirFunc,
     structCount: int,
+    structs: *HirStruct,
     enumCount: int,
 }
 
