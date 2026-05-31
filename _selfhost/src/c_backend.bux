@@ -13,23 +13,23 @@ func CBackend_TypeToC(kind: int) -> String {
     if kind == tyBool16 { return "bool"; }
     if kind == tyBool32 { return "bool"; }
     if kind == tyChar8 { return "char"; }
-    if kind == tyChar16 { return "uint16_t"; }
-    if kind == tyChar32 { return "uint32_t"; }
-    if kind == tyStr { return "const char*"; }
-    if kind == tyInt8 { return "int8_t"; }
-    if kind == tyInt16 { return "int16_t"; }
-    if kind == tyInt32 { return "int32_t"; }
-    if kind == tyInt64 { return "int64_t"; }
+    if kind == tyChar16 { return "uint16"; }
+    if kind == tyChar32 { return "uint32"; }
+    if kind == tyStr { return "String"; }
+    if kind == tyInt8 { return "int8"; }
+    if kind == tyInt16 { return "int16"; }
+    if kind == tyInt32 { return "int32"; }
+    if kind == tyInt64 { return "int64"; }
     if kind == tyInt{ return "int"; }
-    if kind == tyUInt8 { return "uint8_t"; }
-    if kind == tyUInt16 { return "uint16_t"; }
-    if kind == tyUInt32 { return "uint32_t"; }
-    if kind == tyUInt64 { return "uint64_t"; }
-    if kind == tyUInt { return "unsigned int"; }
-    if kind == tyFloat32 { return "float"; }
-    if kind == tyFloat64 { return "double"; }
+    if kind == tyUInt8 { return "uint8"; }
+    if kind == tyUInt16 { return "uint16"; }
+    if kind == tyUInt32 { return "uint32"; }
+    if kind == tyUInt64 { return "uint64"; }
+    if kind == tyUInt { return "uint"; }
+    if kind == tyFloat32 { return "float32"; }
+    if kind == tyFloat64 { return "float64"; }
     if kind == tyPointer { return "void*"; }
-    if kind == tyNamed { return "void*"; }
+    if kind == tyNamed { return "int"; }
     return "int";
 }
 
@@ -153,10 +153,13 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
 
     // Alloca
     if kind == hAlloca {
-        StringBuilder_Append(&cbe.sb, CBackend_TypeToC(tyInt)); // simplified type
+        if !String_Eq(node.typeName, "") {
+            StringBuilder_Append(&cbe.sb, node.typeName);
+        } else {
+            StringBuilder_Append(&cbe.sb, "int");
+        }
         StringBuilder_Append(&cbe.sb, " ");
         StringBuilder_Append(&cbe.sb, node.strValue);
-        StringBuilder_Append(&cbe.sb, ";\n");
         return;
     }
 
@@ -280,18 +283,18 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
     if String_Eq(f.retTypeName, "") || String_Eq(f.retTypeName, "void") {
         StringBuilder_Append(&cbe.sb, "void ");
     } else if String_Eq(f.retTypeName, "String") || String_Eq(f.retTypeName, "str") {
-        StringBuilder_Append(&cbe.sb, "const char* ");
+        StringBuilder_Append(&cbe.sb, "String ");
     } else if String_Eq(f.retTypeName, "bool") {
         StringBuilder_Append(&cbe.sb, "bool ");
     } else if String_Eq(f.retTypeName, "int") {
         StringBuilder_Append(&cbe.sb, "int ");
     } else if String_Eq(f.retTypeName, "int64") {
-        StringBuilder_Append(&cbe.sb, "int64_t ");
+        StringBuilder_Append(&cbe.sb, "int64 ");
     } else if String_Eq(f.retTypeName, "uint") {
-        StringBuilder_Append(&cbe.sb, "unsigned int ");
+        StringBuilder_Append(&cbe.sb, "uint ");
     } else if String_Eq(f.retTypeName, "float64") {
-        StringBuilder_Append(&cbe.sb, "double ");
-    } else if f.retTypeKind == tyNamed || String_StartsWith(f.retTypeName, "struct ") {
+        StringBuilder_Append(&cbe.sb, "float64 ");
+    } else if f.retTypeKind == tyNamed || !String_Eq(f.retTypeName, "") {
         // Use the struct name directly (e.g., "Point", "Type")
         StringBuilder_Append(&cbe.sb, f.retTypeName);
         StringBuilder_Append(&cbe.sb, " ");
@@ -319,17 +322,20 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
         if i == 5 { pname = f.param5.name; ptype = f.param5.typeName; }
         // Emit type
         if String_Eq(ptype, "String") || String_Eq(ptype, "str") {
-            StringBuilder_Append(&cbe.sb, "const char* ");
+            StringBuilder_Append(&cbe.sb, "String ");
         } else if String_Eq(ptype, "bool") {
             StringBuilder_Append(&cbe.sb, "bool ");
         } else if String_Eq(ptype, "int") {
             StringBuilder_Append(&cbe.sb, "int ");
         } else if String_Eq(ptype, "int64") {
-            StringBuilder_Append(&cbe.sb, "int64_t ");
+            StringBuilder_Append(&cbe.sb, "int64 ");
         } else if String_Eq(ptype, "uint") {
-            StringBuilder_Append(&cbe.sb, "unsigned int ");
+            StringBuilder_Append(&cbe.sb, "uint ");
         } else if String_Eq(ptype, "float64") {
-            StringBuilder_Append(&cbe.sb, "double ");
+            StringBuilder_Append(&cbe.sb, "float64 ");
+        } else if !String_Eq(ptype, "") {
+            StringBuilder_Append(&cbe.sb, ptype);
+            StringBuilder_Append(&cbe.sb, " ");
         } else {
             StringBuilder_Append(&cbe.sb, "int "); // fallback
         }
@@ -356,9 +362,32 @@ func CBackend_Generate(mod: *HirModule) -> String {
     StringBuilder_Append(&cbe.sb, "#include <string.h>\n");
     StringBuilder_Append(&cbe.sb, "#include <stdio.h>\n");
     StringBuilder_Append(&cbe.sb, "#include <stdlib.h>\n\n");
+    // Type aliases
+    StringBuilder_Append(&cbe.sb, "typedef const char* String;\n");
+    StringBuilder_Append(&cbe.sb, "typedef unsigned char uint8;\n");
+    StringBuilder_Append(&cbe.sb, "typedef unsigned short uint16;\n");
+    StringBuilder_Append(&cbe.sb, "typedef unsigned int uint32;\n");
+    StringBuilder_Append(&cbe.sb, "typedef unsigned long long uint64;\n");
+    StringBuilder_Append(&cbe.sb, "typedef signed char int8;\n");
+    StringBuilder_Append(&cbe.sb, "typedef short int16;\n");
+    StringBuilder_Append(&cbe.sb, "typedef long long int64;\n");
+    StringBuilder_Append(&cbe.sb, "typedef float float32;\n");
+    StringBuilder_Append(&cbe.sb, "typedef double float64;\n\n");
+    // Runtime declarations
+    StringBuilder_Append(&cbe.sb, "void* bux_alloc(unsigned int size);\n");
+    StringBuilder_Append(&cbe.sb, "void bux_free(void* ptr);\n\n");
+
+    // Forward declarations for all functions
+    var i: int = 0;
+    while i < mod.funcCount {
+        CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
+        StringBuilder_Append(&cbe.sb, ";\n");
+        i = i + 1;
+    }
+    StringBuilder_Append(&cbe.sb, "\n");
 
     // Extern declarations
-    var i: int = 0;
+    i = 0;
     while i < mod.externCount {
         CBE_EmitFuncDecl(cbe, &mod.externFuncs[i]);
         StringBuilder_Append(&cbe.sb, ";\n");
