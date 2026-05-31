@@ -368,6 +368,7 @@ func parserParsePostfix(p: *Parser) -> *Expr {
                 while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
                     while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
                     if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile { break; }
+                    let sip: int = p.pos;
                     let fName: LexToken = parserExpect(p, tkIdent, "expected field name");
                     discard parserExpect(p, tkColon, "expected ':'");
                     let fValue: *Expr = parserParseExpr(p);
@@ -383,6 +384,7 @@ func parserParsePostfix(p: *Parser) -> *Expr {
                     }
                     fieldCount = fieldCount + 1;
                     parserMatch(p, tkComma);
+                    if p.pos == sip { discard parserAdvance(p); }
                 }
                 discard parserExpect(p, tkRBrace, "expected '}'");
                 let e: *Expr = parserMakeExpr(ekStructInit, siLine, siCol);
@@ -614,10 +616,12 @@ func parserParseStmt(p: *Parser) -> *Stmt {
         // Skip match body (simplified — just parse arms as empty)
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+            let mp: int = p.pos;
             discard parserParseExpr(p);  // pattern
             if parserMatch(p, tkFatArrow) {
                 discard parserParseExpr(p);  // body
             }
+            if p.pos == mp { discard parserAdvance(p); }
         }
         discard parserExpect(p, tkRBrace, "expected '}' to close match");
         let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
