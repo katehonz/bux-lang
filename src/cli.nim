@@ -141,6 +141,8 @@ Output = "Bin"
     printInfo(&"Initialized Bux package '{name}'", useColor)
   return 0
 
+proc collectStdlibDecls(stdlibDir: string): seq[Decl]
+
 proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
   let root = getCurrentDir()
@@ -154,6 +156,8 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
     printError("no src/ directory found", useColor)
     return 1
 
+  # Phase 1: Parse all .bux files and collect declarations
+  var allModuleItems: seq[Decl] = @[]
   var foundMain = false
   for kind, path in walkDir(srcDir):
     if kind == pcFile and path.endsWith(".bux"):
@@ -170,20 +174,48 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
         for d in parseRes.diagnostics:
           echo &"error: {d.message} at {d.loc}"
         return 1
-      let semaRes = analyze(parseRes.module)
-      if semaRes.hasErrors:
-        printError(&"type errors in {path}", useColor)
-        for d in semaRes.diagnostics:
-          let sev = if d.severity == sdsError: "error" else: "warning"
-          echo &"{sev}: {d.message} at {d.loc}"
-        return 1
-      if opts.verbose:
-        printInfo(&"checked {path} ({lexRes.tokens.len} tokens, {parseRes.module.items.len} decls)", useColor)
+      
+      # Flatten declarations from module wrappers
+      for decl in parseRes.module.items:
+        if decl.kind == dkModule:
+          for sub in decl.declModuleItems:
+            allModuleItems.add(sub)
+        else:
+          allModuleItems.add(decl)
+      
       if splitFile(path).name == "Main":
         foundMain = true
 
   if not foundMain:
     printError("no Main.bux found in src/", useColor)
+    return 1
+
+  # Phase 2: Merge with stdlib and check
+  var stdlibDir = ""
+  let stdlibSearchPaths = @[
+    getAppDir() / ".." / "stdlib",
+    getAppDir() / "stdlib",
+    getCurrentDir() / "stdlib",
+    "/home/ziko/z-git/bux/bux/stdlib",
+  ]
+  for path in stdlibSearchPaths:
+    if dirExists(path):
+      stdlibDir = path
+      break
+  let stdlibDecls = collectStdlibDecls(stdlibDir)
+  var mergedItems = stdlibDecls
+  for decl in allModuleItems:
+    mergedItems.add(decl)
+  
+  var unifiedModule = newModule("main")
+  unifiedModule.items = mergedItems
+  
+  let semaRes = analyze(unifiedModule)
+  if semaRes.hasErrors:
+    printError("type errors in project", useColor)
+    for d in semaRes.diagnostics:
+      let sev = if d.severity == sdsError: "error" else: "warning"
+      echo &"{sev}: {d.message} at {d.loc}"
     return 1
 
   if not opts.quiet:
@@ -241,8 +273,8 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   # Collect stdlib declarations once
   let stdlibDecls = collectStdlibDecls(stdlibDir)
 
-  # Process all .bux files
-  var allCCode = ""
+  # Phase 1: Parse all .bux files and collect declarations
+  var allModuleItems: seq[Decl] = @[]
   var foundMain = false
   for kind, path in walkDir(srcDir):
     if kind == pcFile and path.endsWith(".bux"):
@@ -260,35 +292,42 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
           echo &"error: {d.message} at {d.loc}"
         return 1
       
-      # Merge stdlib declarations into the module (prepend so they are processed first)
-      var mergedItems = stdlibDecls
+      # Flatten: extract declarations from module wrappers
       for decl in parseRes.module.items:
-        mergedItems.add(decl)
-      parseRes.module.items = mergedItems
+        if decl.kind == dkModule:
+          for sub in decl.declModuleItems:
+            allModuleItems.add(sub)
+        else:
+          allModuleItems.add(decl)
       
-      let (semaRes, semaCtx) = analyzeFull(parseRes.module)
-      if semaRes.hasErrors:
-        printError(&"type errors in {path}", useColor)
-        for d in semaRes.diagnostics:
-          let sev = if d.severity == sdsError: "error" else: "warning"
-          echo &"{sev}: {d.message} at {d.loc}"
-        return 1
-
-      # Lower to HIR
-      let hirModule = lowerModule(parseRes.module, semaCtx)
-
-      # Generate C code
-      var cbe = initCBackend()
-      let cCode = cbe.emitModule(hirModule)
-      allCCode.add(cCode)
-      allCCode.add("\n")
-
       if splitFile(path).name == "Main":
         foundMain = true
-
+  
   if not foundMain:
     printError("no Main.bux found in src/", useColor)
     return 1
+
+  # Phase 2: Merge all project declarations with stdlib
+  var mergedItems = stdlibDecls
+  for decl in allModuleItems:
+    mergedItems.add(decl)
+  
+  # Create unified module
+  var unifiedModule = newModule("main")
+  unifiedModule.items = mergedItems
+  
+  # Phase 3: Sema + HIR + C codegen on unified module
+  let (semaRes, semaCtx) = analyzeFull(unifiedModule)
+  if semaRes.hasErrors:
+    printError("type errors in project", useColor)
+    for d in semaRes.diagnostics:
+      let sev = if d.severity == sdsError: "error" else: "warning"
+      echo &"{sev}: {d.message} at {d.loc}"
+    return 1
+  
+  let hirMod = lowerModule(unifiedModule, semaCtx)
+  var cbe = initCBackend()
+  var allCCode = cbe.emitModule(hirMod)
 
   # Write C file
   let cFile = buildDir / "main.c"

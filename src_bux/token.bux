@@ -311,3 +311,4 @@ func Token_KindName(kind: int) -> String {
     if kind == tkEndOfFile { return "end of file"; }
     return "unknown token";
 }
+}

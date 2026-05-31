@@ -516,6 +516,8 @@ proc parsePostfix(p: var Parser): Expr =
         discard p.advance()
         var fields: seq[tuple[name: string, value: Expr]] = @[]
         while not p.check(tkRBrace) and not p.isAtEnd:
+          while p.check(tkNewLine): discard p.advance()
+          if p.check(tkRBrace) or p.isAtEnd: break
           let fieldName = p.expect(tkIdent, "expected field name").text
           discard p.expect(tkColon, "expected ':'")
           let fieldValue = p.parseExpr()
@@ -737,9 +739,11 @@ proc parseStmt(p: var Parser): Stmt =
     let thenBlk = p.parseBlock()
     var elseIfs: seq[ElseIf] = @[]
     var elseBlk: Block = nil
+    while p.check(tkNewLine): discard p.advance()
     while p.check(tkElse):
       let elseLoc = p.currentLoc
       discard p.advance()
+      while p.check(tkNewLine): discard p.advance()
       if p.check(tkIf):
         discard p.advance()
         let elifCond = p.parseExpr()
