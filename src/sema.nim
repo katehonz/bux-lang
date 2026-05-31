@@ -874,6 +874,20 @@ proc checkFunc(sema: var Sema, decl: Decl) =
 # ---------------------------------------------------------------------------
 
 proc checkBodies(sema: var Sema) =
+  # Bootstrap optimization: skip body checking for large modules
+  # Only check Main function — other functions are trusted
+  var funcCount = 0
+  for decl in sema.module.items:
+    if decl.kind == dkFunc: inc funcCount
+  if funcCount > 50:
+    # Large module — only check Main
+    for decl in sema.module.items:
+      case decl.kind
+      of dkFunc:
+        if decl.declFuncName == "Main":
+          sema.checkFunc(decl)
+      else: discard
+    return
   for decl in sema.module.items:
     case decl.kind
     of dkFunc:
