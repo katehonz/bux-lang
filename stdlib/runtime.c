@@ -569,3 +569,82 @@ unsigned int bux_hash_string(const char* s) {
     }
     return hash;
 }
+
+/* ---------------------------------------------------------------------------
+ * Directory listing and build tools (for self-hosting compiler)
+ * --------------------------------------------------------------------------- */
+
+#include <dirent.h>
+#include <sys/stat.h>
+
+/* bux_list_dir: returns array of file paths in dir matching ext suffix.
+ * Result is malloc'd array of malloc'd strings. Caller must free.
+ * Sets *out_count to number of files found. */
+char** bux_list_dir(const char* dir, const char* ext, int* out_count) {
+    DIR* d = opendir(dir);
+    if (!d) { *out_count = 0; return NULL; }
+    
+    /* First pass: count matching files */
+    int count = 0;
+    size_t ext_len = strlen(ext);
+    struct dirent* entry;
+    while ((entry = readdir(d)) != NULL) {
+        size_t name_len = strlen(entry->d_name);
+        if (name_len > ext_len && strcmp(entry->d_name + name_len - ext_len, ext) == 0) {
+            count++;
+        }
+    }
+    
+    /* Allocate result array */
+    char** result = (char**)malloc(count * sizeof(char*));
+    if (!result) { closedir(d); *out_count = 0; return NULL; }
+    
+    /* Second pass: collect paths */
+    rewinddir(d);
+    int idx = 0;
+    size_t dir_len = strlen(dir);
+    while ((entry = readdir(d)) != NULL && idx < count) {
+        size_t name_len = strlen(entry->d_name);
+        if (name_len > ext_len && strcmp(entry->d_name + name_len - ext_len, ext) == 0) {
+            /* Build full path: dir/name */
+            size_t path_len = dir_len + 1 + name_len + 1;
+            char* path = (char*)malloc(path_len);
+            if (path) {
+                snprintf(path, path_len, "%s/%s", dir, entry->d_name);
+                result[idx++] = path;
+            }
+        }
+    }
+    closedir(d);
+    *out_count = idx;
+    return result;
+}
+
+/* bux_mkdir_if_needed: create directory if it doesn't exist */
+int bux_mkdir_if_needed(const char* path) {
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) return 0;
+    return mkdir(path, 0755);
+}
+
+/* bux_run_cc: invoke C compiler to compile c_file into out_bin,
+ * linking runtime.c and io.c. Returns exit code. */
+int bux_run_cc(const char* c_file, const char* out_bin,
+               const char* runtime_c, const char* io_c,
+               const char* math_lib) {
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+        "cc %s %s %s -o %s %s 2>&1",
+        c_file,
+        runtime_c ? runtime_c : "",
+        io_c ? io_c : "",
+        out_bin,
+        math_lib ? "-lm" : "");
+    return system(cmd);
+}
+
+/* bux_dir_exists: check if directory exists */
+int bux_dir_exists(const char* path) {
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+}

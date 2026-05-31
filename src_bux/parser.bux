@@ -447,8 +447,15 @@ func parserParseStmt(p: *Parser) -> *Stmt {
         var elseBlock: *Block = null as *Block;
         if parserMatch(p, tkElse) {
             if parserCheck(p, tkIf) {
-                // else if → recursively parse an if stmt inside else
-                elseBlock = parserParseBlock(p);
+                // else if → parse the if statement, wrap in a synthetic block
+                let innerIf: *Stmt = parserParseStmt(p);
+                elseBlock = bux_alloc(sizeof(Block)) as *Block;
+                elseBlock.line = innerIf.line;
+                elseBlock.column = innerIf.column;
+                elseBlock.stmtCount = 1;
+                elseBlock.firstStmt = innerIf;
+                elseBlock.lastStmt = innerIf;
+                innerIf.nextStmt = null as *Stmt;
             } else {
                 elseBlock = parserParseBlock(p);
             }
@@ -739,10 +746,17 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
     while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
         if d.fieldCount >= 8 { break; }
         if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+        if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
+        let beforePos: int = p.pos;
         let fName: LexToken = parserExpect(p, tkIdent, "expected field name");
         discard parserExpect(p, tkColon, "expected ':' in struct field");
         let fType: *TypeExpr = parserParseType(p);
         parserMatch(p, tkSemicolon);
+        // Infinite-loop safeguard
+        if p.pos == beforePos {
+            discard parserAdvance(p);
+            continue;
+        }
 
         if d.fieldCount == 0 {
             d.field0.name = fName.text;
@@ -939,10 +953,46 @@ func parserParseDecl(p: *Parser) -> *Decl {
     if kind == tkModule {
         discard parserAdvance(p);
         let name: LexToken = parserExpect(p, tkIdent, "expected module name");
-        parserMatch(p, tkSemicolon);
+        // Parse optional path segments (::Name)
+        while parserCheck(p, tkColonColon) {
+            discard parserAdvance(p);
+            discard parserExpect(p, tkIdent, "expected module path segment");
+        }
         let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
         d.kind = dkModule;
         d.strValue = name.text;
+        // Parse module body with braces
+        if parserCheck(p, tkLBrace) {
+            discard parserAdvance(p); // consume {
+            var items: *Decl = null as *Decl;
+            var lastItem: *Decl = null as *Decl;
+            while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+                if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+                    discard parserAdvance(p);
+                    continue;
+                }
+                let beforePos: int = p.pos;
+                let item: *Decl = parserParseDecl(p);
+                if item != null as *Decl {
+                    item.childDecl2 = null as *Decl;
+                    if items == null as *Decl {
+                        items = item;
+                        lastItem = item;
+                    } else {
+                        lastItem.childDecl2 = item;
+                        lastItem = item;
+                    }
+                }
+                // Infinite-loop safeguard: if no progress, skip token
+                if p.pos == beforePos {
+                    discard parserAdvance(p);
+                }
+            }
+            parserMatch(p, tkRBrace); // consume }
+            d.childDecl1 = items; // first item of module
+        } else {
+            parserMatch(p, tkSemicolon);
+        }
         return d;
     }
 
@@ -1012,5 +1062,40 @@ func Parser_DiagCount(p: *Parser) -> int {
 func Parser_Free(p: *Parser) {
     bux_free(p.diags as *void);
     bux_free(p as *void);
+}
+
+// ---------------------------------------------------------------------------
+// Module merging — merge multiple parsed modules into one
+// ---------------------------------------------------------------------------
+
+// Add a single declaration to the merged module (push front to linked list)
+func parserMergeAddDecl(mod: *Module, decl: *Decl) {
+    if decl == null as *Decl { return; }
+    // Flatten module declarations: extract inner items
+    if decl.kind == dkModule {
+        var inner: *Decl = decl.childDecl1;
+        while inner != null as *Decl {
+            let next: *Decl = inner.childDecl2;
+            inner.childDecl2 = mod.firstItem;
+            mod.firstItem = inner;
+            mod.itemCount = mod.itemCount + 1;
+            inner = next;
+        }
+    } else {
+        decl.childDecl2 = mod.firstItem;
+        mod.firstItem = decl;
+        mod.itemCount = mod.itemCount + 1;
+    }
+}
+
+func Parser_MergeModules(modules: *void, count: int) -> *Module {
+    // This function is kept for future use but not called by Cli_BuildProject
+    // which does inline merging for simplicity
+    let merged: *Module = bux_alloc(sizeof(Module)) as *Module;
+    merged.name = "main";
+    merged.path = "";
+    merged.itemCount = 0;
+    merged.firstItem = null as *Decl;
+    return merged;
 }
 }

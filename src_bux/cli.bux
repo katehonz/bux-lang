@@ -6,6 +6,12 @@ extern func PrintLine(s: String);
 extern func Print(s: String);
 extern func bux_read_file(path: String) -> String;
 extern func bux_write_file(path: String, content: String) -> bool;
+extern func bux_file_exists(path: String) -> int;
+extern func bux_dir_exists(path: String) -> int;
+extern func bux_path_join(a: String, b: String) -> String;
+extern func bux_mkdir_if_needed(path: String) -> int;
+extern func bux_run_cc(c_file: String, out_bin: String, runtime_c: String, io_c: String, math_lib: String) -> int;
+extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
 
 func ReadFile(path: String) -> String {
     return bux_read_file(path);
@@ -13,6 +19,14 @@ func ReadFile(path: String) -> String {
 
 func WriteFile(path: String, content: String) -> bool {
     return bux_write_file(path, content);
+}
+
+func FileExists(path: String) -> bool {
+    return bux_file_exists(path) != 0;
+}
+
+func DirExists(path: String) -> bool {
+    return bux_dir_exists(path) != 0;
 }
 
 // Import the compiler pipeline
@@ -128,6 +142,171 @@ func Cli_Check(srcPath: String) -> int {
 }
 
 // ---------------------------------------------------------------------------
+// Project build — compile all .bux files in src/ directory
+// ---------------------------------------------------------------------------
+
+func Cli_CompileSource(source: String, sourceName: String) -> *HirModule {
+    // Phase 1: Lex
+    let lex: *Lexer = Lexer_Tokenize(source);
+    if Lexer_DiagCount(lex) > 0 {
+        Print("Lex errors in ");
+        PrintLine(sourceName);
+        return null as *HirModule;
+    }
+
+    // Phase 2: Parse
+    let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
+    if mod == null as *Module {
+        Print("Parse failed for ");
+        PrintLine(sourceName);
+        return null as *HirModule;
+    }
+
+    // Phase 3: Semantic analysis
+    let sema: *Sema = Sema_Analyze(mod);
+    if Sema_HasError(sema) {
+        Print("Sema errors in ");
+        PrintLine(sourceName);
+        return null as *HirModule;
+    }
+
+    // Phase 4: HIR lowering
+    let hirMod: *HirModule = HirLower_LowerModule(mod, sema);
+    return hirMod;
+}
+
+func Cli_BuildProject(projectDir: String) -> int {
+    let srcDir: String = bux_path_join(projectDir, "src");
+    if !DirExists(srcDir) {
+        Print("Error: no src/ directory in ");
+        PrintLine(projectDir);
+        return 1;
+    }
+
+    Print("Scanning ");
+    PrintLine(srcDir);
+
+    // List all .bux files in src/
+    var fileCount: int = 0;
+    let files: *String = bux_list_dir(srcDir, ".bux", &fileCount);
+    if fileCount == 0 {
+        PrintLine("Error: no .bux files found in src/");
+        return 1;
+    }
+
+    Print("Found ");
+    PrintInt(fileCount);
+    PrintLine(" source files");
+
+    // Create merged module
+    let merged: *Module = bux_alloc(sizeof(Module)) as *Module;
+    merged.name = "main";
+    merged.path = "";
+    merged.itemCount = 0;
+    merged.firstItem = null as *Decl;
+
+    // Parse each file and merge declarations into merged module
+    var i: int = 0;
+    while i < fileCount {
+        let path: String = files[i];
+        Print("  Parsing ");
+        PrintLine(path);
+        let source: String = ReadFile(path);
+        if String_Eq(source, "") {
+            Print("  Error: cannot read ");
+            PrintLine(path);
+            return 1;
+        }
+        let lex: *Lexer = Lexer_Tokenize(source);
+        if Lexer_DiagCount(lex) > 0 {
+            Print("  Lex errors in ");
+            PrintLine(path);
+            return 1;
+        }
+        let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
+        if mod == null as *Module {
+            Print("  Parse failed for ");
+            PrintLine(path);
+            return 1;
+        }
+        // Merge declarations from this module into merged
+        var decl: *Decl = mod.firstItem;
+        while decl != null as *Decl {
+            let next: *Decl = decl.childDecl2;
+            decl.childDecl2 = null as *Decl;
+            // Flatten module declarations
+            if decl.kind == dkModule {
+                var inner: *Decl = decl.childDecl1;
+                while inner != null as *Decl {
+                    let innerNext: *Decl = inner.childDecl2;
+                    inner.childDecl2 = merged.firstItem;
+                    merged.firstItem = inner;
+                    merged.itemCount = merged.itemCount + 1;
+                    inner = innerNext;
+                }
+            } else {
+                decl.childDecl2 = merged.firstItem;
+                merged.firstItem = decl;
+                merged.itemCount = merged.itemCount + 1;
+            }
+            decl = next;
+        }
+        i = i + 1;
+    }
+
+    Print("Merged ");
+    PrintInt(merged.itemCount);
+    PrintLine(" declarations");
+
+    // Semantic analysis
+    PrintLine("Running sema...");
+    let sema: *Sema = Sema_Analyze(merged);
+    if Sema_HasError(sema) {
+        PrintLine("Sema errors found");
+        return 1;
+    }
+
+    // HIR lowering
+    PrintLine("Lowering to HIR...");
+    let hirMod: *HirModule = HirLower_LowerModule(merged, sema);
+
+    // C code generation
+    PrintLine("Generating C code...");
+    let cCode: String = CBackend_Generate(hirMod);
+
+    // Create build directory
+    let buildDir: String = bux_path_join(projectDir, "build");
+    discard bux_mkdir_if_needed(buildDir);
+
+    // Write C output
+    let cFile: String = bux_path_join(buildDir, "main.c");
+    if !WriteFile(cFile, cCode) {
+        PrintLine("Error: cannot write main.c");
+        return 1;
+    }
+
+    Print("C code written to ");
+    PrintLine(cFile);
+
+    // Find stdlib files
+    let runtimeC: String = bux_path_join(bux_path_join(projectDir, ".."), "stdlib/runtime.c");
+    let ioC: String = bux_path_join(bux_path_join(projectDir, ".."), "stdlib/io.c");
+
+    // Invoke C compiler
+    PrintLine("Invoking C compiler...");
+    let outBin: String = bux_path_join(buildDir, "buxc3");
+    let rc: int = bux_run_cc(cFile, outBin, runtimeC, ioC, "-lm");
+    if rc != 0 {
+        PrintLine("Error: C compilation failed");
+        return 1;
+    }
+
+    Print("Build successful: ");
+    PrintLine(outBin);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Main entry — dispatch based on args
 // ---------------------------------------------------------------------------
 
@@ -167,6 +346,12 @@ func Cli_Run(args: *String, argCount: int) -> int {
         if argCount >= 3 { src = args[2]; }
         if argCount >= 4 { out = args[3]; }
         return Cli_Build(src, out);
+    }
+
+    if String_Eq(cmd, "project") {
+        let dir: String = ".";
+        if argCount >= 3 { dir = args[2]; }
+        return Cli_BuildProject(dir);
     }
 
     Print("Unknown command: ");

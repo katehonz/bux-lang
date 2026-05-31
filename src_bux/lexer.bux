@@ -101,7 +101,7 @@ func lexIsAtEnd(lex: *Lexer) -> bool {
 func lexPeek(lex: *Lexer, ahead: int) -> uint32 {
     let i: int = lex.pos + ahead;
     if i < lex.sourceLen {
-        return lex.source[i] as uint32;
+        return (lex.source[i] as uint32) & 255;
     }
     return 0;
 }
