@@ -163,8 +163,12 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     // Store: combine alloca + value into single declaration
     if kind == hStore {
         if node.child1 != null as *HirNode && node.child1.kind == hAlloca {
-            // Declaration with initializer: int x = value;
-            StringBuilder_Append(&cbe.sb, CBackend_TypeToC(node.child1.intValue));
+            // Declaration with initializer: Type x = value;
+            if !String_Eq(node.child1.typeName, "") {
+                StringBuilder_Append(&cbe.sb, node.child1.typeName);
+            } else {
+                StringBuilder_Append(&cbe.sb, CBackend_TypeToC(node.child1.intValue));
+            }
             StringBuilder_Append(&cbe.sb, " ");
             StringBuilder_Append(&cbe.sb, node.child1.strValue);
             StringBuilder_Append(&cbe.sb, " = ");
@@ -222,6 +226,29 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
+    // Struct init: ((TypeName){.field = value, ...})
+    if kind == hStructInit {
+        StringBuilder_Append(&cbe.sb, "((");
+        StringBuilder_Append(&cbe.sb, node.strValue);
+        StringBuilder_Append(&cbe.sb, "){");
+        // Emit fields (chained via child3)
+        var field: *HirNode = node.child1;
+        var first: bool = true;
+        while field != null as *HirNode {
+            if !first {
+                StringBuilder_Append(&cbe.sb, ", ");
+            }
+            StringBuilder_Append(&cbe.sb, ".");
+            StringBuilder_Append(&cbe.sb, field.strValue);
+            StringBuilder_Append(&cbe.sb, " = ");
+            CBE_EmitExpr(cbe, field.child1);
+            first = false;
+            field = field.child3;
+        }
+        StringBuilder_Append(&cbe.sb, "})");
+        return;
+    }
+
     // Block — emit each statement via child3 linked list
     if kind == hBlock {
         var child: *HirNode = node.child1;
@@ -264,6 +291,10 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
         StringBuilder_Append(&cbe.sb, "unsigned int ");
     } else if String_Eq(f.retTypeName, "float64") {
         StringBuilder_Append(&cbe.sb, "double ");
+    } else if f.retTypeKind == tyNamed || String_StartsWith(f.retTypeName, "struct ") {
+        // Use the struct name directly (e.g., "Point", "Type")
+        StringBuilder_Append(&cbe.sb, f.retTypeName);
+        StringBuilder_Append(&cbe.sb, " ");
     } else {
         StringBuilder_Append(&cbe.sb, "int "); // fallback
     }

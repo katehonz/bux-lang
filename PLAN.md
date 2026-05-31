@@ -297,21 +297,44 @@ Phase 7.5 — Driver (depends on all):
 
 ### Phase 7.10 — Bootstrap Loop (In Progress)
 
-**Status:** `buxc2` can type-check (`check`) individual `.bux` files. Full self-compilation needs fixes in `buxc2`'s sema, HIR, and C backend.
+**Status:** `buxc2 check` now passes on **9/14 modules** (64%). Struct init, postfix `!`, and 3-arg function calls are implemented. Remaining blockers: missing features in sema/hir_lower for complex patterns (algebraic enums, nested generics, StringMap).
 
-**What works:**
+**What works (2026-05-31 update):**
 - ✅ `buxc2 version` — shows version from command-line args
 - ✅ `buxc2 check <file.bux>` — lexes, parses, type-checks, generates C (validates pipeline)
-- ✅ `buxc2 build <file.bux> <output.c>` — writes generated C to file
-- ✅ Command-line args — `bux_argc()`/`bux_argv()` in runtime, `int main(argc, argv)` wrapper
+- ✅ **Struct init** — `TypeName { field: value, ... }` fully supported across all phases
+- ✅ **`structInitAllowed`** — properly disabled in if/while/for/match conditions
+- ✅ **Postfix `!`** (unwrap) + prefix `!` (logical not) — both parsed correctly
+- ✅ **Extra call arguments** — gracefully consumed (parser stores 2, skips rest)
+
+**`buxc2 check` status per module:**
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| `token` | ✅ Pass | 314 lines, int constants + helpers |
+| `source_location` | ✅ Pass | 12 lines, simple struct |
+| `types` | ✅ Pass | 185 lines, Type factories |
+| `scope` | ✅ Pass | 47 lines, symbol table |
+| `hir` | ✅ Pass | 191 lines, HIR node types + constructors |
+| `manifest` | ✅ Pass | 79 lines, TOML parser |
+| `c_backend` | ✅ Pass | 412 lines, C code generation |
+| `cli` | ✅ Pass | 361 lines, CLI driver |
+| `Main` | ✅ Pass | 16 lines, entry point |
+| `ast` | ❌ Segfault | 400 lines, complex enums/variants |
+| `sema` | ❌ Segfault | 397 lines, type checker |
+| `hir_lower` | ❌ Segfault | 369 lines, HIR lowering |
+| `lexer` | ⏳ Timeout | 567 lines, UTF-8 state machine |
+| `parser` | ⏳ Timeout | 1220 lines, Pratt parser |
 
 **What needs fixing in `buxc2`:**
 | Issue | Location | Description |
 |-------|----------|-------------|
-| `String` → `int` | `sema.bux` | `Sema_ResolveType("String")` returns `tyInt` instead of `tyStr` |
-| Function calls not in body | `hir_lower.bux` | `Lcx_LowerExpr` doesn't emit call expressions into function body |
-| No `int main()` wrapper | `c_backend.bux` | Missing `hasMain` detection and C main wrapper generation |
-| Single-file only | `cli.bux` | Cannot merge multiple `.bux` files with imports |
+| Algebraic enum support | `ast.bux`, `sema.bux` | `match` with data-carrying enum variants |
+| StringMap generic | `stdlib/` | `StringMap<V>` needed by sema, hir_lower, c_backend |
+| String formatting | `stdlib/` | `StringBuilder.Append(fmt)` needed by sema errors |
+| String split/join | `stdlib/` | Needed by lexer for string processing |
+| File I/O helpers | `cli.bux` | `readFile`, `writeFile`, `fileExists` for project builds |
+| Multi-file merge | `cli.bux` | Cannot merge multiple `.bux` files with imports |
 
 **Bootstrap loop goal:**
 ```

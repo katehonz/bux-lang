@@ -270,6 +270,10 @@ func parserParsePostfix(p: *Parser) -> *Expr {
                 e.child2 = parserParseExpr(p);
                 if parserMatch(p, tkComma) {
                     e.child3 = parserParseExpr(p);
+                    // Consume any remaining arguments (we only store 2)
+                    while parserMatch(p, tkComma) {
+                        discard parserParseExpr(p);
+                    }
                 }
             }
             discard parserExpect(p, tkRParen, "expected ')'");
@@ -328,6 +332,17 @@ func parserParsePostfix(p: *Parser) -> *Expr {
             continue;
         }
 
+        // ! (unwrap operator)
+        if kind == tkBang {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let e: *Expr = parserMakeExpr(ekUnwrap, line, col);
+            e.child1 = left;
+            left = e;
+            continue;
+        }
+
         // ++, --
         if kind == tkPlusPlus || kind == tkMinusMinus {
             discard parserAdvance(p);
@@ -338,6 +353,47 @@ func parserParsePostfix(p: *Parser) -> *Expr {
             e.intValue = kind;
             left = e;
             continue;
+        }
+
+        // Struct init: TypeName { field: value, ... }
+        if kind == tkLBrace {
+            if p.structInitAllowed && left.kind == ekIdent {
+                discard parserAdvance(p); // consume {
+                let siLine: uint32 = parserCurToken(p).line;
+                let siCol: uint32 = parserCurToken(p).column;
+                let typeName: String = left.strValue;
+                var fieldCount: int = 0;
+                var firstField: *Expr = null as *Expr;
+                var lastField: *Expr = null as *Expr;
+                while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+                    while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                    if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile { break; }
+                    let fName: LexToken = parserExpect(p, tkIdent, "expected field name");
+                    discard parserExpect(p, tkColon, "expected ':'");
+                    let fValue: *Expr = parserParseExpr(p);
+                    let fExpr: *Expr = parserMakeExpr(ekField, fName.line, fName.column);
+                    fExpr.strValue = fName.text;
+                    fExpr.child1 = fValue;
+                    if firstField == null as *Expr {
+                        firstField = fExpr;
+                        lastField = fExpr;
+                    } else {
+                        lastField.child3 = fExpr;
+                        lastField = fExpr;
+                    }
+                    fieldCount = fieldCount + 1;
+                    parserMatch(p, tkComma);
+                }
+                discard parserExpect(p, tkRBrace, "expected '}'");
+                let e: *Expr = parserMakeExpr(ekStructInit, siLine, siCol);
+                e.structName = typeName;
+                e.structFieldCount = fieldCount;
+                e.child1 = firstField;
+                left = e;
+                continue;
+            } else {
+                break;
+            }
         }
 
         break;
@@ -442,7 +498,9 @@ func parserParseStmt(p: *Parser) -> *Stmt {
     // if
     if kind == tkIf {
         discard parserAdvance(p);
+        p.structInitAllowed = false;
         let cond: *Expr = parserParseExpr(p);
+        p.structInitAllowed = true;
         let thenBlock: *Block = parserParseBlock(p);
         var elseBlock: *Block = null as *Block;
         if parserMatch(p, tkElse) {
@@ -473,7 +531,9 @@ func parserParseStmt(p: *Parser) -> *Stmt {
     // while
     if kind == tkWhile {
         discard parserAdvance(p);
+        p.structInitAllowed = false;
         let cond: *Expr = parserParseExpr(p);
+        p.structInitAllowed = true;
         let body: *Block = parserParseBlock(p);
         let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
         s.kind = skWhile;
@@ -501,7 +561,9 @@ func parserParseStmt(p: *Parser) -> *Stmt {
         discard parserAdvance(p);
         let varName: LexToken = parserExpect(p, tkIdent, "expected loop variable");
         discard parserExpect(p, tkIn, "expected 'in'");
+        p.structInitAllowed = false;
         let iter: *Expr = parserParseExpr(p);
+        p.structInitAllowed = true;
         let body: *Block = parserParseBlock(p);
         let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
         s.kind = skFor;
@@ -545,7 +607,9 @@ func parserParseStmt(p: *Parser) -> *Stmt {
     // match
     if kind == tkMatch {
         discard parserAdvance(p);
+        p.structInitAllowed = false;
         let subject: *Expr = parserParseExpr(p);
+        p.structInitAllowed = true;
         discard parserExpect(p, tkLBrace, "expected '{' to start match body");
         // Skip match body (simplified — just parse arms as empty)
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {

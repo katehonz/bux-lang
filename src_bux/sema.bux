@@ -188,6 +188,11 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         return inner; // simplified
     }
 
+    // Struct init: TypeName { field: value, ... }
+    if kind == ekStructInit {
+        return tyNamed;
+    }
+
     return tyUnknown;
 }
 

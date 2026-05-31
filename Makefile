@@ -59,6 +59,6 @@ selfhost: build
 	@rm -rf _selfhost/src
 	@mkdir -p _selfhost/src
 	@cp src_bux/*.bux _selfhost/src/
-	@cp _selfhost/src/main.bux _selfhost/src/Main.bux 2>/dev/null || true
+	@mv _selfhost/src/main.bux _selfhost/src/Main.bux 2>/dev/null || true
 	@cd _selfhost && ../$(OUT) build
 	@echo "=== Self-hosted compiler built successfully ==="

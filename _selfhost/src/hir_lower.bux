@@ -113,6 +113,34 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         return n;
     }
 
+    // Struct init: TypeName { field: value, ... }
+    if kind == ekStructInit {
+        n.kind = hStructInit;
+        n.strValue = expr.structName;
+        // Lower each field (fields are chained via child3 on synthetic ekField exprs)
+        var field: *Expr = expr.child1;
+        var firstField: *HirNode = null as *HirNode;
+        var lastField: *HirNode = null as *HirNode;
+        while field != null as *Expr {
+            let fNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            fNode.kind = hBlock; // placeholder, field is identified by name+value
+            fNode.line = expr.line;
+            fNode.column = expr.column;
+            fNode.strValue = field.strValue;  // field name
+            fNode.child1 = Lcx_LowerExpr(ctx, field.child1); // field value
+            if firstField == null as *HirNode {
+                firstField = fNode;
+                lastField = fNode;
+            } else {
+                lastField.child3 = fNode;
+                lastField = fNode;
+            }
+            field = field.child3;
+        }
+        n.child1 = firstField;
+        return n;
+    }
+
     return n;
 }
 
@@ -141,6 +169,11 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         alloca.line = line;
         alloca.column = col;
         alloca.strValue = stmt.strValue;
+        // Set type from the declared type expression
+        if stmt.refStmtType != null as *TypeExpr {
+            alloca.intValue = stmt.refStmtType.kind;
+            alloca.typeName = stmt.refStmtType.typeName;
+        }
         // store the init value
         n.kind = hStore;
         n.child1 = alloca;
@@ -272,8 +305,10 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
 
     if decl.retType != null as *TypeExpr {
         f.retTypeName = decl.retType.typeName;
+        f.retTypeKind = decl.retType.kind;
     } else {
         f.retTypeName = "";
+        f.retTypeKind = 0;
     }
 
     if decl.refBody != null as *Block {

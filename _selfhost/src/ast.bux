@@ -90,6 +90,7 @@ const ekTuple: int = 17;
 const ekCast: int = 18;
 const ekIs: int = 19;
 const ekTry: int = 20;
+const ekUnwrap: int = 23;
 const ekBlock: int = 21;
 const ekMatch: int = 22;
 
