@@ -1,0 +1,191 @@
+// hir.bux — HIR (High-level Intermediate Representation) node types
+module Hir {
+
+// HIR node kinds
+const hLit: int = 0;
+const hVar: int = 1;
+const hSelf: int = 2;
+const hUnary: int = 3;
+const hBinary: int = 4;
+const hAssign: int = 5;
+const hIf: int = 6;
+const hWhile: int = 7;
+const hLoop: int = 8;
+const hBreak: int = 9;
+const hContinue: int = 10;
+const hReturn: int = 11;
+const hAlloca: int = 12;
+const hLoad: int = 13;
+const hStore: int = 14;
+const hFieldPtr: int = 15;
+const hArrowField: int = 16;
+const hIndexPtr: int = 17;
+const hCall: int = 18;
+const hCallIndirect: int = 19;
+const hCast: int = 20;
+const hIs: int = 21;
+const hSizeOf: int = 22;
+const hBlock: int = 23;
+const hStructInit: int = 24;
+const hSliceInit: int = 25;
+const hRange: int = 26;
+const hTupleInit: int = 27;
+const hMatch: int = 28;
+
+// ---------------------------------------------------------------------------
+// HirNode — unified struct with tagged union pattern
+// ---------------------------------------------------------------------------
+
+struct HirNode {
+    kind: int,
+    line: uint32,
+    column: uint32,
+    typeKind: int,
+    typeName: String,
+    // Common fields (used by multiple kinds)
+    strValue: String,       // var name, callee name, field name, label
+    intValue: int,          // token kind (for lit, unary op, binary op)
+    boolValue: bool,        // range inclusive, isScope
+    // Child nodes (up to 3)
+    child1: *HirNode,       // left/operand/condition/base
+    child2: *HirNode,       // right/value/then/body
+    child3: *HirNode,       // else/third
+    // Extra data pointer (for children arrays, field lists, etc.)
+    extraData: *void,
+    extraCount: int,
+}
+
+// ---------------------------------------------------------------------------
+// HirFunc
+// ---------------------------------------------------------------------------
+
+struct HirParam {
+    name: String,
+    typeKind: int,
+    typeName: String,
+}
+
+struct HirFunc {
+    name: String,
+    paramCount: int,
+    param0: HirParam,
+    param1: HirParam,
+    param2: HirParam,
+    param3: HirParam,
+    param4: HirParam,
+    param5: HirParam,
+    retTypeKind: int,
+    retTypeName: String,
+    body: *HirNode,
+    isPublic: bool,
+}
+
+// ---------------------------------------------------------------------------
+// HirEnumVariant
+// ---------------------------------------------------------------------------
+
+struct HirEnumVariant {
+    name: String,
+    fieldCount: int,
+    fieldType0: int,
+    fieldName0: String,
+    fieldType1: int,
+    fieldName1: String,
+}
+
+// ---------------------------------------------------------------------------
+// HirModule
+// ---------------------------------------------------------------------------
+
+struct HirModule {
+    funcCount: int,
+    funcs: *HirFunc,
+    externCount: int,
+    externFuncs: *HirFunc,
+    structCount: int,
+    enumCount: int,
+}
+
+// ---------------------------------------------------------------------------
+// Constructor helpers
+// ---------------------------------------------------------------------------
+
+func Hir_MakeNode(kind: int, line: uint32, column: uint32) -> HirNode {
+    return HirNode { kind: kind, line: line, column: column,
+        typeKind: 0, typeName: "",
+        strValue: "", intValue: 0, boolValue: false,
+        child1: null as *HirNode, child2: null as *HirNode, child3: null as *HirNode,
+        extraData: null as *void, extraCount: 0 };
+}
+
+func Hir_MakeLit(tokKind: int, tokText: String, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hLit, line, col);
+    n.intValue = tokKind;
+    n.strValue = tokText;
+    return n;
+}
+
+func Hir_MakeVar(name: String, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hVar, line, col);
+    n.strValue = name;
+    return n;
+}
+
+func Hir_MakeBinary(op: int, left: *HirNode, right: *HirNode, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hBinary, line, col);
+    n.intValue = op;
+    n.child1 = left;
+    n.child2 = right;
+    return n;
+}
+
+func Hir_MakeCall(callee: String, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hCall, line, col);
+    n.strValue = callee;
+    return n;
+}
+
+func Hir_MakeReturn(value: *HirNode, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hReturn, line, col);
+    n.child1 = value;
+    return n;
+}
+
+func Hir_MakeBlock(line: uint32, col: uint32) -> HirNode {
+    return Hir_MakeNode(hBlock, line, col);
+}
+
+func Hir_MakeIf(cond: *HirNode, thenBody: *HirNode, elseBody: *HirNode, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hIf, line, col);
+    n.child1 = cond;
+    n.child2 = thenBody;
+    n.child3 = elseBody;
+    return n;
+}
+
+func Hir_MakeWhile(cond: *HirNode, body: *HirNode, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hWhile, line, col);
+    n.child1 = cond;
+    n.child2 = body;
+    return n;
+}
+
+func Hir_MakeAlloca(name: String, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hAlloca, line, col);
+    n.strValue = name;
+    return n;
+}
+
+func Hir_MakeLoad(ptr: *HirNode, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hLoad, line, col);
+    n.child1 = ptr;
+    return n;
+}
+
+func Hir_MakeStore(ptr: *HirNode, value: *HirNode, line: uint32, col: uint32) -> HirNode {
+    var n: HirNode = Hir_MakeNode(hStore, line, col);
+    n.child1 = ptr;
+    n.child2 = value;
+    return n;
+}
+}

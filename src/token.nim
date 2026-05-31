@@ -50,6 +50,7 @@ type
     tkSuper           # super
     tkSizeOf          # sizeof
     tkOwn             # own (gradual ownership transfer)
+    tkDiscard         # discard (evaluate and throw away)
 
     ##Punctuation
     tkLParen          # (
@@ -141,7 +142,7 @@ proc isKeyword*(kind: TokenKind): bool =
      tkBreak, tkContinue, tkReturn, tkMatch,
      tkFunc, tkLet, tkVar, tkConst, tkType, tkStruct, tkEnum,
      tkUnion, tkInterface, tkExtend, tkModule, tkImport,
-      tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn:
+      tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkDiscard:
     true
   else:
     false
@@ -196,6 +197,7 @@ proc keywordKind*(text: string): TokenKind =
   of "super": tkSuper
   of "sizeof": tkSizeOf
   of "own": tkOwn
+  of "discard": tkDiscard
   of "true", "false": tkBoolLiteral
   else: tkIdent
 
@@ -240,6 +242,7 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkSelf: "'self'"
   of tkSuper: "'super'"
   of tkOwn: "'own'"
+  of tkDiscard: "'discard'"
   of tkLParen: "'('"
   of tkRParen: "')'"
   of tkLBrace: "'{'"

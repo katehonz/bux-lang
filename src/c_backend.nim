@@ -188,6 +188,19 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     return &"({callee})({argsStr})"
 
   of hLoad:
+    # Optimize: load(field_ptr(base, field)) → base.field (avoids & on temporaries)
+    if node.loadPtr != nil and node.loadPtr.kind == hFieldPtr:
+      let base = be.emitExpr(node.loadPtr.fieldPtrBase)
+      return &"({base}.{node.loadPtr.fieldName})"
+    # Optimize: load(arrow_field(base, field)) → base->field
+    if node.loadPtr != nil and node.loadPtr.kind == hArrowField:
+      let base = be.emitExpr(node.loadPtr.arrowFieldBase)
+      return &"({base}->{node.loadPtr.arrowFieldName})"
+    # Optimize: load(index_ptr(base, idx)) → base[idx]
+    if node.loadPtr != nil and node.loadPtr.kind == hIndexPtr:
+      let base = be.emitExpr(node.loadPtr.indexPtrBase)
+      let idx = be.emitExpr(node.loadPtr.indexPtrIndex)
+      return &"({base}[{idx}])"
     let ptrExpr = be.emitExpr(node.loadPtr)
     return &"(*{ptrExpr})"
 
@@ -480,6 +493,26 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
     be.emitLine("/* Extern function declarations */")
     for ef in module.externFuncs:
       be.emitExternDecl(ef)
+    be.emitLine("")
+
+  # Const declarations as #define
+  if module.consts.len > 0:
+    be.emitLine("/* Constants */")
+    for c in module.consts:
+      let val = c.value
+      if val != nil and val.kind == hLit:
+        let tok = val.litToken
+        case tok.kind
+        of tkIntLiteral:
+          be.emitLine(&"#define {c.name} {tok.text}")
+        of tkStringLiteral:
+          be.emitLine(&"#define {c.name} \"{tok.text}\"")
+        of tkBoolLiteral:
+          be.emitLine(&"#define {c.name} {tok.text}")
+        else:
+          be.emitLine(&"/* const {c.name} (unsupported literal kind) */")
+      else:
+        be.emitLine(&"/* const {c.name} (complex expression) */")
     be.emitLine("")
 
   # Struct definitions

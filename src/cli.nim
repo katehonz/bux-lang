@@ -1,4 +1,4 @@
-import std/[os, strutils, terminal, strformat, osproc]
+import std/[os, strutils, terminal, strformat, osproc, sets]
 import lexer, parser, ast, sema, manifest, hir, hir_lower, c_backend, types, scope
 
 type
@@ -142,6 +142,8 @@ Output = "Bin"
   return 0
 
 proc collectStdlibDecls(stdlibDir: string): seq[Decl]
+proc getDeclName(d: Decl): string
+proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl]
 
 proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
@@ -203,13 +205,11 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
       stdlibDir = path
       break
   let stdlibDecls = collectStdlibDecls(stdlibDir)
-  var mergedItems = stdlibDecls
-  for decl in allModuleItems:
-    mergedItems.add(decl)
-  
+  let mergedItems = mergeDecls(stdlibDecls, allModuleItems)
+
   var unifiedModule = newModule("main")
   unifiedModule.items = mergedItems
-  
+
   let semaRes = analyze(unifiedModule)
   if semaRes.hasErrors:
     printError("type errors in project", useColor)
@@ -238,6 +238,34 @@ proc collectStdlibDecls(stdlibDir: string): seq[Decl] =
             result.add(sub)
         else:
           result.add(item)
+
+proc getDeclName(d: Decl): string =
+  case d.kind
+  of dkFunc: d.declFuncName
+  of dkExternFunc: d.declExtFuncName
+  of dkStruct: d.declStructName
+  of dkEnum: d.declEnumName
+  of dkUnion: d.declUnionName
+  of dkInterface: d.declInterfaceName
+  of dkConst: d.declConstName
+  of dkTypeAlias: d.declAliasName
+  else: ""
+
+proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl] =
+  ## Merge stdlib and user declarations.
+  ## User funcs shadow stdlib funcs with the same name (simple overload avoidance).
+  var userNames: HashSet[string]
+  for d in userDecls:
+    let name = getDeclName(d)
+    if name != "":
+      userNames.incl(name)
+  result = @[]
+  for d in stdlibDecls:
+    let name = getDeclName(d)
+    if name == "" or name notin userNames:
+      result.add(d)
+  for d in userDecls:
+    result.add(d)
 
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
@@ -308,14 +336,12 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     return 1
 
   # Phase 2: Merge all project declarations with stdlib
-  var mergedItems = stdlibDecls
-  for decl in allModuleItems:
-    mergedItems.add(decl)
-  
+  let mergedItems = mergeDecls(stdlibDecls, allModuleItems)
+
   # Create unified module
   var unifiedModule = newModule("main")
   unifiedModule.items = mergedItems
-  
+
   # Phase 3: Sema + HIR + C codegen on unified module
   let (semaRes, semaCtx) = analyzeFull(unifiedModule)
   if semaRes.hasErrors:

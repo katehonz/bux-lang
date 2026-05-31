@@ -3,7 +3,7 @@ SRC := src/main.nim
 OUT := buxc
 BUILD_DIR := build
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics pattern_matching strings map result_option try_operator generics_struct
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator
 
 .PHONY: all build dev test clean test-examples
 
@@ -53,3 +53,12 @@ clean:
 	rm -rf nimcache
 	rm -rf examples_pkg
 	rm -rf _test_tmp_pkg
+
+selfhost: build
+	@echo "=== Phase 7.9: Building self-hosted compiler ==="
+	@rm -rf _selfhost/src
+	@mkdir -p _selfhost/src
+	@cp src_bux/*.bux _selfhost/src/
+	@cp _selfhost/src/main.bux _selfhost/src/Main.bux 2>/dev/null || true
+	@cd _selfhost && ../$(OUT) build
+	@echo "=== Self-hosted compiler built successfully ==="

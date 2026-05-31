@@ -1,0 +1,355 @@
+// ast.bux — AST node types (Expr, Stmt, Decl, Pattern, TypeExpr)
+module Ast {
+
+// ---------------------------------------------------------------------------
+// SourceLocation (inline for convenience)
+// ---------------------------------------------------------------------------
+struct SourceLoc {
+    line: uint32,
+    column: uint32,
+}
+
+// ---------------------------------------------------------------------------
+// Token (lightweight inline)
+// ---------------------------------------------------------------------------
+struct AstToken {
+    kind: int,
+    text: String,
+    line: uint32,
+    column: uint32,
+}
+
+// ---------------------------------------------------------------------------
+// TypeExpr — type expressions
+// ---------------------------------------------------------------------------
+const tekNamed: int = 0;
+const tekPath: int = 1;
+const tekSlice: int = 2;
+const tekPointer: int = 3;
+const tekTuple: int = 4;
+const tekSelf: int = 5;
+
+struct TypeExpr {
+    kind: int,
+    line: uint32,
+    column: uint32,
+    typeName: String,        // for tekNamed
+    pathStr: String,         // for tekPath (segments joined with ::)
+    pathCount: int,          // number of path segments
+    typeArgName0: String,    // up to 2 type args
+    typeArgName1: String,
+    typeArgCount: int,
+    sliceElement: *TypeExpr, // for tekSlice
+    pointerPointee: *TypeExpr, // for tekPointer
+}
+
+// ---------------------------------------------------------------------------
+// Pattern — match patterns
+// ---------------------------------------------------------------------------
+const pkWildcard: int = 0;
+const pkLiteral: int = 1;
+const pkIdent: int = 2;
+const pkRange: int = 3;
+const pkEnum: int = 4;
+const pkStruct: int = 5;
+const pkTuple: int = 6;
+
+struct Pattern {
+    kind: int,
+    line: uint32,
+    column: uint32,
+    patIdent: String,        // for pkIdent
+    patLitKind: int,         // for pkLiteral (token kind)
+    patLitText: String,      // for pkLiteral (token text)
+    patRangeInclusive: bool, // for pkRange
+    patEnumPath: String,     // for pkEnum (path joined)
+    patStructName: String,   // for pkStruct
+}
+
+// ---------------------------------------------------------------------------
+// Expr — expressions (tagged union)
+// ---------------------------------------------------------------------------
+const ekLiteral: int = 0;
+const ekIdent: int = 1;
+const ekSelf: int = 2;
+const ekPath: int = 3;
+const ekSizeOf: int = 4;
+const ekUnary: int = 5;
+const ekPostfix: int = 6;
+const ekBinary: int = 7;
+const ekAssign: int = 8;
+const ekTernary: int = 9;
+const ekRange: int = 10;
+const ekCall: int = 11;
+const ekGenericCall: int = 12;
+const ekIndex: int = 13;
+const ekField: int = 14;
+const ekStructInit: int = 15;
+const ekSlice: int = 16;
+const ekTuple: int = 17;
+const ekCast: int = 18;
+const ekIs: int = 19;
+const ekTry: int = 20;
+const ekBlock: int = 21;
+const ekMatch: int = 22;
+
+struct Expr {
+    kind: int,
+    line: uint32,
+    column: uint32,
+    // Common fields
+    strValue: String,        // ident name, path segments, field name, callee
+    intValue: int,           // operator kind, intrinsic kind
+    boolValue: bool,         // range inclusive
+    tokKind: int,            // literal token kind
+    tokText: String,         // literal token text
+    // Children (up to 3 sub-expressions)
+    child1: *Expr,           // left, operand, callee, cond, subject
+    child2: *Expr,           // right, index, then, value
+    child3: *Expr,           // else, third
+    // Extra references
+    refType: *TypeExpr,      // cast type, is type, sizeof type
+    refBlock: *Block,        // for ekBlock
+    // Generic call
+    genericCallee: String,
+    genericTypeArg0: String,
+    genericTypeArg1: String,
+    genericTypeArgCount: int,
+    // Struct init fields
+    structName: String,
+    structFieldCount: int,
+}
+
+// ---------------------------------------------------------------------------
+// Block — sequence of statements
+// ---------------------------------------------------------------------------
+struct Block {
+    line: uint32,
+    column: uint32,
+    stmtCount: int,
+}
+
+// ---------------------------------------------------------------------------
+// Stmt — statements
+// ---------------------------------------------------------------------------
+const skExpr: int = 0;
+const skLet: int = 1;
+const skIf: int = 2;
+const skWhile: int = 3;
+const skDoWhile: int = 4;
+const skLoop: int = 5;
+const skFor: int = 6;
+const skMatch: int = 7;
+const skReturn: int = 8;
+const skBreak: int = 9;
+const skContinue: int = 10;
+const skDecl: int = 11;
+
+struct ElseIf {
+    line: uint32;
+    column: uint32;
+    cond: *Expr;
+    block: *Block;
+}
+
+struct Stmt {
+    kind: int,
+    line: uint32,
+    column: uint32,
+    // Common fields
+    strValue: String,        // let name, pattern ident, label, for var
+    boolValue: bool,         // let mutable
+    // Children
+    child1: *Expr,           // init expr, condition, iter expr, return value
+    child2: *Expr,           // match subject
+    child3: *Expr,           // extra
+    refStmtType: *TypeExpr,  // let type annotation
+    refStmtPattern: *Pattern,// let pattern
+    refStmtDecl: *Decl,     // for skDecl
+    refStmtBlock: *Block,    // then/body block
+    refStmtElse: *Block,     // else block
+    // Else-if chain
+    elseIfCount: int,
+}
+
+// ---------------------------------------------------------------------------
+// Decl — declarations
+// ---------------------------------------------------------------------------
+const dkFunc: int = 0;
+const dkStruct: int = 1;
+const dkEnum: int = 2;
+const dkUnion: int = 3;
+const dkInterface: int = 4;
+const dkImpl: int = 5;
+const dkModule: int = 6;
+const dkUse: int = 7;
+const dkConst: int = 8;
+const dkTypeAlias: int = 9;
+const dkExternFunc: int = 10;
+const dkExternVar: int = 11;
+
+struct Param {
+    line: uint32;
+    column: uint32;
+    name: String;
+    refParamType: *TypeExpr;
+    isVariadic: bool;
+}
+
+struct StructField {
+    line: uint32;
+    column: uint32;
+    isPublic: bool;
+    name: String;
+    refFieldType: *TypeExpr;
+}
+
+struct EnumVariant {
+    line: uint32;
+    column: uint32;
+    name: String;
+    fieldCount: int;
+    fieldTypeName0: String;
+    fieldTypeName1: String;
+}
+
+struct Decl {
+    kind: int,
+    line: uint32,
+    column: uint32,
+    isPublic: bool,
+    // Names
+    strValue: String,        // decl name
+    strValue2: String,       // interface name, dll name, module path
+    // Type params (up to 2)
+    typeParam0: String,
+    typeParam1: String,
+    typeParamCount: int,
+    // Params (for functions)
+    paramCount: int,
+    param0: Param,
+    param1: Param,
+    param2: Param,
+    param3: Param,
+    param4: Param,
+    param5: Param,
+    retType: *TypeExpr,
+    // Body
+    refBody: *Block,
+    // Struct fields (up to 8)
+    fieldCount: int,
+    field0: StructField,
+    field1: StructField,
+    field2: StructField,
+    field3: StructField,
+    field4: StructField,
+    field5: StructField,
+    field6: StructField,
+    field7: StructField,
+    // Enum variants (up to 8)
+    variantCount: int,
+    variant0: EnumVariant,
+    variant1: EnumVariant,
+    variant2: EnumVariant,
+    variant3: EnumVariant,
+    variant4: EnumVariant,
+    variant5: EnumVariant,
+    variant6: EnumVariant,
+    variant7: EnumVariant,
+    // Impl methods (up to 4)
+    methodCount: int,
+    // Use/import
+    useKind: int,
+    usePath: String,
+    useNames: String,        // joined names for multi-import
+    // Const
+    constType: *TypeExpr,
+    constValue: *Expr,
+    // Type alias
+    aliasType: *TypeExpr,
+    // Extern func
+    extFuncDll: String,
+    extFuncVariadic: bool,
+    extFuncRetType: *TypeExpr,
+    // Children
+    childDecl1: *Decl,       // linked list of decls (for module items, impl methods)
+    childDecl2: *Decl,
+}
+
+// ---------------------------------------------------------------------------
+// Module — AST root
+// ---------------------------------------------------------------------------
+struct Module {
+    name: String,
+    path: String,            // path segments joined
+    itemCount: int,
+    firstItem: *Decl,
+}
+
+// ---------------------------------------------------------------------------
+// Constructor helpers
+// ---------------------------------------------------------------------------
+
+func Ast_MakeExpr(kind: int, line: uint32, col: uint32) -> Expr {
+    return Expr { kind: kind, line: line, column: col,
+        strValue: "", intValue: 0, boolValue: false,
+        tokKind: 0, tokText: "",
+        child1: null as *Expr, child2: null as *Expr, child3: null as *Expr,
+        refType: null as *TypeExpr, refBlock: null as *Block,
+        genericCallee: "", genericTypeArg0: "", genericTypeArg1: "", genericTypeArgCount: 0,
+        structName: "", structFieldCount: 0 };
+}
+
+func Ast_MakeIdent(name: String, line: uint32, col: uint32) -> Expr {
+    var e: Expr = Ast_MakeExpr(ekIdent, line, col);
+    e.strValue = name;
+    return e;
+}
+
+func Ast_MakeLiteral(tokKind: int, text: String, line: uint32, col: uint32) -> Expr {
+    var e: Expr = Ast_MakeExpr(ekLiteral, line, col);
+    e.tokKind = tokKind;
+    e.tokText = text;
+    return e;
+}
+
+func Ast_MakeBinary(op: int, left: *Expr, right: *Expr, line: uint32, col: uint32) -> Expr {
+    var e: Expr = Ast_MakeExpr(ekBinary, line, col);
+    e.intValue = op;
+    e.child1 = left;
+    e.child2 = right;
+    return e;
+}
+
+func Ast_MakeCall(callee: *Expr, line: uint32, col: uint32) -> Expr {
+    var e: Expr = Ast_MakeExpr(ekCall, line, col);
+    e.child1 = callee;
+    return e;
+}
+
+func Ast_MakeStmt(kind: int, line: uint32, col: uint32) -> Stmt {
+    return Stmt { kind: kind, line: line, column: col,
+        strValue: "", boolValue: false,
+        child1: null as *Expr, child2: null as *Expr, child3: null as *Expr,
+        refStmtType: null as *TypeExpr, refStmtPattern: null as *Pattern,
+        refStmtDecl: null as *Decl, refStmtBlock: null as *Block, refStmtElse: null as *Block,
+        elseIfCount: 0 };
+}
+
+func Ast_MakeDecl(kind: int, line: uint32, col: uint32) -> Decl {
+    return Decl { kind: kind, line: line, column: col, isPublic: false,
+        strValue: "", strValue2: "",
+        typeParam0: "", typeParam1: "", typeParamCount: 0,
+        paramCount: 0,
+        retType: null as *TypeExpr,
+        refBody: null as *Block,
+        fieldCount: 0,
+        variantCount: 0,
+        methodCount: 0,
+        useKind: 0, usePath: "", useNames: "",
+        constType: null as *TypeExpr, constValue: null as *Expr,
+        aliasType: null as *TypeExpr,
+        extFuncDll: "", extFuncVariadic: false, extFuncRetType: null as *TypeExpr,
+        childDecl1: null as *Decl, childDecl2: null as *Decl };
+}
+}

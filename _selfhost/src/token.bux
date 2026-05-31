@@ -1,0 +1,314 @@
+// token.bux — Token kinds and helpers
+module Token {
+
+// ---------------------------------------------------------------------------
+// TokenKind enum
+// ---------------------------------------------------------------------------
+
+// Literals
+const tkIntLiteral: int = 0;
+const tkFloatLiteral: int = 1;
+const tkStringLiteral: int = 2;
+const tkCharLiteral: int = 3;
+const tkBoolLiteral: int = 4;
+
+// Identifiers
+const tkIdent: int = 5;
+const tkUnderscore: int = 6;
+
+// Control flow keywords
+const tkIf: int = 7;
+const tkElse: int = 8;
+const tkWhile: int = 9;
+const tkDo: int = 10;
+const tkLoop: int = 11;
+const tkFor: int = 12;
+const tkIn: int = 13;
+const tkBreak: int = 14;
+const tkContinue: int = 15;
+const tkReturn: int = 16;
+const tkMatch: int = 17;
+
+// Declaration keywords
+const tkFunc: int = 18;
+const tkLet: int = 19;
+const tkVar: int = 20;
+const tkConst: int = 21;
+const tkType: int = 22;
+const tkStruct: int = 23;
+const tkEnum: int = 24;
+const tkUnion: int = 25;
+const tkInterface: int = 26;
+const tkExtend: int = 27;
+const tkModule: int = 28;
+const tkImport: int = 29;
+const tkPub: int = 30;
+const tkExtern: int = 31;
+
+// Other keywords
+const tkAs: int = 32;
+const tkIs: int = 33;
+const tkNull: int = 34;
+const tkSelf: int = 35;
+const tkSuper: int = 36;
+const tkSizeOf: int = 37;
+
+// Punctuation
+const tkLParen: int = 38;
+const tkRParen: int = 39;
+const tkLBrace: int = 40;
+const tkRBrace: int = 41;
+const tkLBracket: int = 42;
+const tkRBracket: int = 43;
+const tkComma: int = 44;
+const tkSemicolon: int = 45;
+const tkColon: int = 46;
+const tkColonColon: int = 47;
+const tkDot: int = 48;
+const tkDotDot: int = 49;
+const tkDotDotDot: int = 50;
+const tkDotDotEqual: int = 51;
+const tkArrow: int = 52;
+const tkFatArrow: int = 53;
+const tkAt: int = 54;
+const tkHash: int = 55;
+const tkQuestion: int = 56;
+
+// Arithmetic operators
+const tkPlus: int = 57;
+const tkMinus: int = 58;
+const tkStar: int = 59;
+const tkSlash: int = 60;
+const tkPercent: int = 61;
+const tkStarStar: int = 62;
+const tkPlusPlus: int = 63;
+const tkMinusMinus: int = 64;
+
+// Bitwise operators
+const tkAmp: int = 65;
+const tkPipe: int = 66;
+const tkCaret: int = 67;
+const tkTilde: int = 68;
+const tkShl: int = 69;
+const tkShr: int = 70;
+
+// Logical operators
+const tkAmpAmp: int = 71;
+const tkPipePipe: int = 72;
+const tkBang: int = 73;
+
+// Comparison operators
+const tkEq: int = 74;
+const tkNe: int = 75;
+const tkLt: int = 76;
+const tkLe: int = 77;
+const tkGt: int = 78;
+const tkGe: int = 79;
+
+// Assignment operators
+const tkAssign: int = 80;
+const tkPlusAssign: int = 81;
+const tkMinusAssign: int = 82;
+const tkStarAssign: int = 83;
+const tkSlashAssign: int = 84;
+const tkPercentAssign: int = 85;
+const tkAmpAssign: int = 86;
+const tkPipeAssign: int = 87;
+const tkCaretAssign: int = 88;
+const tkShlAssign: int = 89;
+const tkShrAssign: int = 90;
+
+// Compile-time intrinsics
+const tkHashLine: int = 91;
+const tkHashColumn: int = 92;
+const tkHashFile: int = 93;
+const tkHashFunction: int = 94;
+const tkHashDate: int = 95;
+const tkHashTime: int = 96;
+const tkHashModule: int = 97;
+
+// Special
+const tkOwn: int = 98;
+const tkNewLine: int = 99;
+const tkEndOfFile: int = 100;
+const tkUnknown: int = 101;
+
+// ---------------------------------------------------------------------------
+// Token struct
+// ---------------------------------------------------------------------------
+
+struct Token {
+    kind: int,
+    text: String,
+    line: uint32,
+    column: uint32,
+    offset: uint32,
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func Token_IsKeyword(kind: int) -> bool {
+    if kind >= tkIf && kind <= tkIn { return true; }
+    if kind >= tkBreak && kind <= tkMatch { return true; }
+    if kind >= tkFunc && kind <= tkExtern { return true; }
+    if kind >= tkAs && kind <= tkSuper { return true; }
+    return false;
+}
+
+func Token_IsLiteral(kind: int) -> bool {
+    if kind >= tkIntLiteral && kind <= tkBoolLiteral { return true; }
+    return false;
+}
+
+func Token_IsOperator(kind: int) -> bool {
+    if kind >= tkPlus && kind <= tkShrAssign { return true; }
+    return false;
+}
+
+func Token_IsEof(kind: int) -> bool {
+    return kind == tkEndOfFile;
+}
+
+func Token_KeywordKind(text: String) -> int {
+    if String_Eq(text, "func") { return tkFunc; }
+    if String_Eq(text, "let") { return tkLet; }
+    if String_Eq(text, "var") { return tkVar; }
+    if String_Eq(text, "const") { return tkConst; }
+    if String_Eq(text, "type") { return tkType; }
+    if String_Eq(text, "struct") { return tkStruct; }
+    if String_Eq(text, "enum") { return tkEnum; }
+    if String_Eq(text, "union") { return tkUnion; }
+    if String_Eq(text, "interface") { return tkInterface; }
+    if String_Eq(text, "extend") { return tkExtend; }
+    if String_Eq(text, "module") { return tkModule; }
+    if String_Eq(text, "import") { return tkImport; }
+    if String_Eq(text, "pub") { return tkPub; }
+    if String_Eq(text, "extern") { return tkExtern; }
+    if String_Eq(text, "if") { return tkIf; }
+    if String_Eq(text, "else") { return tkElse; }
+    if String_Eq(text, "while") { return tkWhile; }
+    if String_Eq(text, "do") { return tkDo; }
+    if String_Eq(text, "loop") { return tkLoop; }
+    if String_Eq(text, "for") { return tkFor; }
+    if String_Eq(text, "in") { return tkIn; }
+    if String_Eq(text, "break") { return tkBreak; }
+    if String_Eq(text, "continue") { return tkContinue; }
+    if String_Eq(text, "return") { return tkReturn; }
+    if String_Eq(text, "match") { return tkMatch; }
+    if String_Eq(text, "as") { return tkAs; }
+    if String_Eq(text, "is") { return tkIs; }
+    if String_Eq(text, "null") { return tkNull; }
+    if String_Eq(text, "self") { return tkSelf; }
+    if String_Eq(text, "super") { return tkSuper; }
+    if String_Eq(text, "sizeof") { return tkSizeOf; }
+    if String_Eq(text, "true") { return tkBoolLiteral; }
+    if String_Eq(text, "false") { return tkBoolLiteral; }
+    return tkIdent;
+}
+
+func Token_KindName(kind: int) -> String {
+    if kind == tkIntLiteral { return "integer literal"; }
+    if kind == tkFloatLiteral { return "float literal"; }
+    if kind == tkStringLiteral { return "string literal"; }
+    if kind == tkCharLiteral { return "char literal"; }
+    if kind == tkBoolLiteral { return "boolean literal"; }
+    if kind == tkIdent { return "identifier"; }
+    if kind == tkUnderscore { return "_"; }
+    if kind == tkSizeOf { return "sizeof"; }
+    if kind == tkIf { return "if"; }
+    if kind == tkElse { return "else"; }
+    if kind == tkWhile { return "while"; }
+    if kind == tkDo { return "do"; }
+    if kind == tkLoop { return "loop"; }
+    if kind == tkFor { return "for"; }
+    if kind == tkIn { return "in"; }
+    if kind == tkBreak { return "break"; }
+    if kind == tkContinue { return "continue"; }
+    if kind == tkReturn { return "return"; }
+    if kind == tkMatch { return "match"; }
+    if kind == tkFunc { return "func"; }
+    if kind == tkLet { return "let"; }
+    if kind == tkVar { return "var"; }
+    if kind == tkConst { return "const"; }
+    if kind == tkType { return "type"; }
+    if kind == tkStruct { return "struct"; }
+    if kind == tkEnum { return "enum"; }
+    if kind == tkUnion { return "union"; }
+    if kind == tkInterface { return "interface"; }
+    if kind == tkExtend { return "extend"; }
+    if kind == tkModule { return "module"; }
+    if kind == tkImport { return "import"; }
+    if kind == tkPub { return "pub"; }
+    if kind == tkExtern { return "extern"; }
+    if kind == tkAs { return "as"; }
+    if kind == tkIs { return "is"; }
+    if kind == tkNull { return "null"; }
+    if kind == tkSelf { return "self"; }
+    if kind == tkSuper { return "super"; }
+    if kind == tkLParen { return "("; }
+    if kind == tkRParen { return ")"; }
+    if kind == tkLBrace { return "{"; }
+    if kind == tkRBrace { return "}"; }
+    if kind == tkLBracket { return "["; }
+    if kind == tkRBracket { return "]"; }
+    if kind == tkComma { return ","; }
+    if kind == tkSemicolon { return ";"; }
+    if kind == tkColon { return ":"; }
+    if kind == tkColonColon { return "::"; }
+    if kind == tkDot { return "."; }
+    if kind == tkDotDot { return ".."; }
+    if kind == tkDotDotDot { return "..."; }
+    if kind == tkDotDotEqual { return "..="; }
+    if kind == tkArrow { return "->"; }
+    if kind == tkFatArrow { return "=>"; }
+    if kind == tkAt { return "@"; }
+    if kind == tkHash { return "#"; }
+    if kind == tkQuestion { return "?"; }
+    if kind == tkPlus { return "+"; }
+    if kind == tkMinus { return "-"; }
+    if kind == tkStar { return "*"; }
+    if kind == tkSlash { return "/"; }
+    if kind == tkPercent { return "%"; }
+    if kind == tkStarStar { return "**"; }
+    if kind == tkPlusPlus { return "++"; }
+    if kind == tkMinusMinus { return "--"; }
+    if kind == tkAmp { return "&"; }
+    if kind == tkPipe { return "|"; }
+    if kind == tkCaret { return "^"; }
+    if kind == tkTilde { return "~"; }
+    if kind == tkShl { return "<<"; }
+    if kind == tkShr { return ">>"; }
+    if kind == tkAmpAmp { return "&&"; }
+    if kind == tkPipePipe { return "||"; }
+    if kind == tkBang { return "!"; }
+    if kind == tkEq { return "=="; }
+    if kind == tkNe { return "!="; }
+    if kind == tkLt { return "<"; }
+    if kind == tkLe { return "<="; }
+    if kind == tkGt { return ">"; }
+    if kind == tkGe { return ">="; }
+    if kind == tkAssign { return "="; }
+    if kind == tkPlusAssign { return "+="; }
+    if kind == tkMinusAssign { return "-="; }
+    if kind == tkStarAssign { return "*="; }
+    if kind == tkSlashAssign { return "/="; }
+    if kind == tkPercentAssign { return "%="; }
+    if kind == tkAmpAssign { return "&="; }
+    if kind == tkPipeAssign { return "|="; }
+    if kind == tkCaretAssign { return "^="; }
+    if kind == tkShlAssign { return "<<="; }
+    if kind == tkShrAssign { return ">>="; }
+    if kind == tkHashLine { return "#line"; }
+    if kind == tkHashColumn { return "#column"; }
+    if kind == tkHashFile { return "#file"; }
+    if kind == tkHashFunction { return "#function"; }
+    if kind == tkHashDate { return "#date"; }
+    if kind == tkHashTime { return "#time"; }
+    if kind == tkHashModule { return "#module"; }
+    if kind == tkNewLine { return "newline"; }
+    if kind == tkEndOfFile { return "end of file"; }
+    return "unknown token";
+}
+}

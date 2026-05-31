@@ -1,0 +1,13 @@
+// main.bux — Entry point for the Bux self-hosting compiler
+module Main {
+
+// Forward declaration from Cli module
+func Cli_Run(args: *String, argCount: int) -> int;
+
+func Main() -> int {
+    // In a full implementation, parse command-line arguments
+    // For now, just show version info
+    var emptyArgs: *String = null as *String;
+    return Cli_Run(emptyArgs, 0);
+}
+}

@@ -209,7 +209,19 @@ proc collectGlobals*(sema: var Sema) =
       let retType = if decl.declFuncReturnType != nil: sema.resolveType(decl.declFuncReturnType) else: makeVoid()
       sym.typ = makeFunc(params, retType)
       if not sema.globalScope.define(sym):
-        sema.emitError(decl.loc, &"duplicate symbol '{decl.declFuncName}'")
+        let existing = sema.globalScope.lookup(decl.declFuncName)
+        if existing != nil and existing.kind == skFunc:
+          if existing.decl != nil and existing.decl.declFuncBody == nil and decl.declFuncBody != nil:
+            # First was forward declaration, update with definition
+            existing.decl = decl
+            existing.typ = sym.typ
+          elif decl.declFuncBody == nil:
+            # New one is a forward declaration, existing already has it — skip
+            discard
+          else:
+            sema.emitError(decl.loc, &"duplicate symbol '{decl.declFuncName}'")
+        else:
+          sema.emitError(decl.loc, &"duplicate symbol '{decl.declFuncName}'")
       # Auto-register func Type_Method(self: Type, ...) as a method
       if decl.declFuncParams.len > 0 and decl.declFuncParams[0].name == "self":
         var typeName = ""
@@ -243,7 +255,10 @@ proc collectGlobals*(sema: var Sema) =
       let retType = if decl.declExtFuncReturnType != nil: sema.resolveType(decl.declExtFuncReturnType) else: makeVoid()
       sym.typ = makeFunc(params, retType)
       if not sema.globalScope.define(sym):
-        sema.emitError(decl.loc, &"duplicate symbol '{decl.declExtFuncName}'")
+        # Allow duplicate extern func declarations (same func declared in multiple files)
+        let existing = sema.globalScope.lookup(decl.declExtFuncName)
+        if existing == nil or existing.kind != skFunc:
+          sema.emitError(decl.loc, &"duplicate symbol '{decl.declExtFuncName}'")
     of dkStruct:
       let t = makeNamed(decl.declStructName)
       let sym = Symbol(kind: skType, name: decl.declStructName, typ: t,
@@ -776,10 +791,14 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
   of skExpr:
     return sema.checkExpr(stmt.stmtExpr, scope)
   of skLet:
-    let initType = sema.checkExpr(stmt.stmtLetInit, scope)
+    var initType: Type = makeVoid()
+    if stmt.stmtLetInit != nil:
+      initType = sema.checkExpr(stmt.stmtLetInit, scope)
     let declaredType = if stmt.stmtLetType != nil: sema.resolveType(stmt.stmtLetType) else: initType
-    if stmt.stmtLetType != nil and not initType.isAssignableTo(declaredType) and not (initType.kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
+    if stmt.stmtLetInit != nil and stmt.stmtLetType != nil and not initType.isAssignableTo(declaredType) and not (initType.kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
       sema.emitError(stmt.loc, &"cannot assign {initType.toString} to {declaredType.toString}")
+    if stmt.stmtLetInit == nil and stmt.stmtLetType == nil:
+      sema.emitError(stmt.loc, "variable must have either type annotation or initializer")
     let sym = Symbol(kind: skVar, name: stmt.stmtLetName, typ: declaredType,
                      isMutable: stmt.stmtLetMut)
     if not scope.define(sym):

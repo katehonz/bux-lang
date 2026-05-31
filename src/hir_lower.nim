@@ -773,7 +773,9 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     return ctx.flushPending(ctx.lowerExpr(stmt.stmtExpr))
 
   of skLet:
-    let initHir = ctx.lowerExpr(stmt.stmtLetInit)
+    var initHir: HirNode = nil
+    if stmt.stmtLetInit != nil:
+      initHir = ctx.lowerExpr(stmt.stmtLetInit)
     let allocaType = if stmt.stmtLetType != nil:
       case stmt.stmtLetType.kind
       of tekNamed:
@@ -785,16 +787,17 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
         let elemType = ctx.resolveTypeExpr(stmt.stmtLetType.sliceElement)
         makeSlice(elemType)
       else: makeUnknown()
-    else:
+    elif stmt.stmtLetInit != nil:
       ctx.resolveExprType(stmt.stmtLetInit)
+    else:
+      makeUnknown()
 
     let alloca = hirAlloca(stmt.stmtLetName, allocaType, loc)
     let varNode = hirVar(stmt.stmtLetName, makePointer(allocaType), loc)
-    let store = hirStore(varNode, initHir, loc)
     # Track type expr for generic method inference
     if stmt.stmtLetType != nil:
       ctx.varTypeExprs[stmt.stmtLetName] = stmt.stmtLetType
-    elif stmt.stmtLetInit.kind == ekStructInit and stmt.stmtLetInit.exprStructInitTypeArgs.len > 0:
+    elif stmt.stmtLetInit != nil and stmt.stmtLetInit.kind == ekStructInit and stmt.stmtLetInit.exprStructInitTypeArgs.len > 0:
       ctx.varTypeExprs[stmt.stmtLetName] = TypeExpr(
         kind: tekNamed,
         loc: stmt.stmtLetInit.loc,
@@ -804,7 +807,9 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     var stmts = ctx.pendingStmts
     ctx.pendingStmts = @[]
     stmts.add(alloca)
-    stmts.add(store)
+    if initHir != nil:
+      let store = hirStore(varNode, initHir, loc)
+      stmts.add(store)
     return hirBlock(stmts, nil, makeVoid(), loc)
 
   of skReturn:

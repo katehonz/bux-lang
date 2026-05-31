@@ -93,6 +93,25 @@ proc expect(p: var Parser, kind: TokenKind, message: string): Token =
   ))
   result = tok
 
+proc isKeywordToken(kind: TokenKind): bool =
+  return kind in {tkIf, tkElse, tkWhile, tkDo, tkLoop, tkFor, tkIn, tkBreak,
+    tkContinue, tkReturn, tkMatch, tkFunc, tkLet, tkVar, tkConst, tkType,
+    tkStruct, tkEnum, tkUnion, tkInterface, tkExtend, tkModule, tkImport,
+    tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkSizeOf, tkOwn,
+    tkDiscard}
+
+proc expectIdentOrKeyword(p: var Parser, message: string): Token =
+  ## Accept identifier OR keyword token as a name (for field names, param names, etc.)
+  if p.check(tkIdent) or isKeywordToken(p.at.kind):
+    return p.advance()
+  let tok = p.at
+  p.diagnostics.add(ParserDiagnostic(
+    severity: pdsError,
+    loc: tok.loc,
+    message: message & " (got " & tokenKindName(tok.kind) & ")"
+  ))
+  result = tok
+
 proc previous(p: Parser): Token =
   if p.pos > 0 and p.pos <= p.tokens.len:
     return p.tokens[p.pos - 1]
@@ -103,6 +122,9 @@ proc currentLoc(p: Parser): SourceLocation =
 
 proc emitError(p: var Parser, loc: SourceLocation, message: string) =
   p.diagnostics.add(ParserDiagnostic(severity: pdsError, loc: loc, message: message))
+
+proc skipNewlines(p: var Parser) =
+  while p.check(tkNewLine): discard p.advance()
 
 proc emitError(p: var Parser, message: string) =
   p.emitError(p.currentLoc, message)
@@ -492,7 +514,7 @@ proc parsePostfix(p: var Parser): Expr =
     of tkDot:
       # Field expression
       discard p.advance()
-      let fieldName = p.expect(tkIdent, "expected field name after '.'").text
+      let fieldName = p.expectIdentOrKeyword("expected field name after '.'").text
       left = Expr(kind: ekField, loc: loc, exprFieldObj: left, exprFieldName: fieldName)
     of tkPlusPlus, tkMinusMinus:
       let op = p.advance().kind
@@ -656,19 +678,25 @@ proc parseBitOr(p: var Parser): Expr =
 proc parseAnd(p: var Parser): Expr =
   let loc = p.currentLoc
   var left = p.parseBitOr()
+  p.skipNewlines()
   while p.check(tkAmpAmp):
     let op = p.advance().kind
+    p.skipNewlines()
     let right = p.parseBitOr()
     left = newBinaryExpr(op, left, right, loc)
+    p.skipNewlines()
   return left
 
 proc parseOr(p: var Parser): Expr =
   let loc = p.currentLoc
   var left = p.parseAnd()
+  p.skipNewlines()
   while p.check(tkPipePipe):
     let op = p.advance().kind
+    p.skipNewlines()
     let right = p.parseAnd()
     left = newBinaryExpr(op, left, right, loc)
+    p.skipNewlines()
   return left
 
 proc parseTernary(p: var Parser): Expr =
@@ -725,8 +753,12 @@ proc parseStmt(p: var Parser): Stmt =
     if p.check(tkColon):
       discard p.advance()
       ty = p.parseType()
-    discard p.expect(tkAssign, "expected '=' in let/var statement")
-    let initExpr = p.parseExpr()
+    var initExpr: Expr = nil
+    if p.check(tkAssign):
+      discard p.advance()
+      initExpr = p.parseExpr()
+    elif not isMut:
+      discard p.expect(tkAssign, "expected '=' in let statement")
     if p.check(tkSemicolon):
       discard p.advance()
     return Stmt(kind: skLet, loc: loc, stmtLetMut: isMut, stmtLetName: name,
@@ -749,6 +781,7 @@ proc parseStmt(p: var Parser): Stmt =
         let elifCond = p.parseExpr()
         let elifBlk = p.parseBlock()
         elseIfs.add(ElseIf(loc: elseLoc, cond: elifCond, blk: elifBlk))
+        while p.check(tkNewLine): discard p.advance()
       else:
         elseBlk = p.parseBlock()
         break
@@ -831,6 +864,20 @@ proc parseStmt(p: var Parser): Stmt =
     if p.check(tkSemicolon):
       discard p.advance()
     return Stmt(kind: skContinue, loc: loc, stmtContinueLabel: label)
+  of tkDiscard:
+    discard p.advance()
+    var val: Expr = nil
+    if not p.check(tkSemicolon) and not p.check(tkRBrace) and not p.check(tkNewLine):
+      val = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    # discard expr → expression statement; discard; → no-op (nil expr)
+    if val != nil:
+      return Stmt(kind: skExpr, loc: loc, stmtExpr: val)
+    else:
+      # No-op: emit literal 0 as expression statement
+      let zeroTok = Token(kind: tkIntLiteral, text: "0", loc: loc)
+      return Stmt(kind: skExpr, loc: loc, stmtExpr: Expr(kind: ekLiteral, loc: loc, exprLit: zeroTok))
   of tkFunc, tkStruct, tkEnum, tkUnion, tkInterface, tkExtend, tkModule,
      tkImport, tkConst, tkType, tkExtern, tkPub:
     # Local declaration
@@ -931,17 +978,21 @@ proc parseStructDecl(p: var Parser, isPublic: bool): Decl =
       discard p.advance()
     if p.check(tkRBrace) or p.isAtEnd:
       break
+    let startPos = p.pos  # Track position for infinite-loop safeguard
     let fLoc = p.currentLoc
     var fPub = false
     if p.check(tkPub):
       fPub = true
       discard p.advance()
-    let fName = p.expect(tkIdent, "expected field name").text
+    let fName = p.expectIdentOrKeyword("expected field name").text
     discard p.expect(tkColon, "expected ':' after field name")
     let fType = p.parseType()
     if p.check(tkSemicolon) or p.check(tkComma):
       discard p.advance()
     fields.add(StructField(loc: fLoc, isPublic: fPub, name: fName, ftype: fType))
+    # Infinite-loop safeguard: if no progress, advance
+    if p.pos == startPos:
+      discard p.advance()
   discard p.expect(tkRBrace, "expected '}' to close struct")
   return Decl(kind: dkStruct, loc: loc, isPublic: isPublic,
               declStructName: name, declStructTypeParams: typeParams,
