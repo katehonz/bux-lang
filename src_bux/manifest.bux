@@ -1,0 +1,85 @@
+// manifest.bux — Manifest parser for bux.toml files
+// Parses package metadata: name, version, type, build output.
+module Manifest;
+
+// ---------------------------------------------------------------------------
+// Manifest struct
+// ---------------------------------------------------------------------------
+struct Manifest {
+    name: String,
+    version: String,
+    pkgType: String,
+    output: String,
+}
+
+// ---------------------------------------------------------------------------
+// Simple TOML parser (handles [Package] and [Build] sections)
+// ---------------------------------------------------------------------------
+
+func Manifest_Parse(content: String) -> Manifest {
+    var m: Manifest;
+    m.name = "";
+    m.version = "0.1.0";
+    m.pkgType = "bin";
+    m.output = "Bin";
+
+    if String_Eq(content, "") { return m; }
+
+    var currentSection: String = "";
+    let count: uint = String_SplitCount(content, "\n");
+    var i: uint = 0;
+    while i < count {
+        let line: String = String_SplitPart(content, "\n", i);
+
+        // Skip empty lines and comments
+        if String_Eq(line, "") { i = i + 1; continue; }
+        if String_StartsWith(line, "#") { i = i + 1; continue; }
+
+        // Section header: [Section]
+        if String_StartsWith(line, "[") {
+            if String_StartsWith(line, "[Package]") {
+                currentSection = "Package";
+            } else if String_StartsWith(line, "[Build]") {
+                currentSection = "Build";
+            } else {
+                currentSection = "";
+            }
+            i = i + 1; continue;
+        }
+
+        // Key = Value
+        let eqCount: uint = String_SplitCount(line, "=");
+        if eqCount >= 2 {
+            let key: String = String_Trim(String_SplitPart(line, "=", 0));
+            let rawVal: String = String_Trim(String_SplitPart(line, "=", 1));
+
+            // Strip quotes from value
+            var val: String = rawVal;
+            if String_StartsWith(val, "\"") && String_EndsWith(val, "\"") {
+                let len: uint = String_SplitCount(val, ""); // dummy to get length indirectly
+                // Simple strip: just use the string between quotes
+                val = String_Slice(rawVal, 1, String_SplitCount(rawVal, "") as uint - 2);
+            }
+
+            if String_Eq(currentSection, "Package") {
+                if String_Eq(key, "Name") { m.name = val; }
+                if String_Eq(key, "Version") { m.version = val; }
+                if String_Eq(key, "Type") { m.pkgType = val; }
+            } else if String_Eq(currentSection, "Build") {
+                if String_Eq(key, "Output") { m.output = val; }
+            }
+        }
+        i = i + 1;
+    }
+
+    return m;
+}
+
+// ---------------------------------------------------------------------------
+// Load manifest from file
+// ---------------------------------------------------------------------------
+
+func Manifest_Load(path: String) -> Manifest {
+    let content: String = ReadFile(path);
+    return Manifest_Parse(content);
+}
