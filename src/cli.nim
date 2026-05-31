@@ -20,6 +20,8 @@ Usage: bux [options] <command> [command-options]
 Commands:
   new <name>          Create a new Bux package
   init                Initialize a Bux package in the current directory
+  add <name> [ver]    Add a dependency (--path, --git)
+  install             Resolve and install dependencies
   build               Build the current package
   run                 Build and run the current package
   check               Type-check the current package
@@ -141,9 +143,118 @@ Output = "Bin"
     printInfo(&"Initialized Bux package '{name}'", useColor)
   return 0
 
+proc cmdAdd*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let root = getCurrentDir()
+  let manifestPath = root / "bux.toml"
+  if not fileExists(manifestPath):
+    printError("no bux.toml found", useColor)
+    return 1
+  if args.len == 0:
+    printError("usage: bux add <name> [version] [--path <path>] [--git <url>]", useColor)
+    return 1
+  let depName = args[0]
+  var version = "*"
+  var path = ""
+  var gitUrl = ""
+  var i = 1
+  while i < args.len:
+    case args[i]
+    of "--path":
+      if i + 1 < args.len:
+        path = args[i + 1]
+        inc i
+      else:
+        printError("--path requires a value", useColor)
+        return 1
+    of "--git":
+      if i + 1 < args.len:
+        gitUrl = args[i + 1]
+        inc i
+      else:
+        printError("--git requires a value", useColor)
+        return 1
+    else:
+      version = args[i]
+    inc i
+  # Append to bux.toml
+  var depLine = ""
+  if path.len > 0:
+    depLine = &"{depName} = {{ Path = \"{path}\" }}"
+  elif gitUrl.len > 0:
+    depLine = &"{depName} = {{ Version = \"{version}\", Source = \"{gitUrl}\" }}"
+  else:
+    depLine = &"{depName} = \"{version}\""
+  var content = readFile(manifestPath)
+  # Ensure [Dependencies] section exists
+  if content.find("[Dependencies]") < 0:
+    content.add("\n[Dependencies]\n")
+  # Append dependency line
+  content.add(depLine & "\n")
+  writeFile(manifestPath, content)
+  if not opts.quiet:
+    printInfo(&"Added dependency '{depName}' to bux.toml", useColor)
+  return 0
+
+proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let root = getCurrentDir()
+  let manifestPath = root / "bux.toml"
+  if not fileExists(manifestPath):
+    printError("no bux.toml found", useColor)
+    return 1
+  let man = loadManifest(manifestPath)
+  var lock = Lockfile(entries: @[])
+  let cacheDir = getHomeDir() / ".bux" / "packages"
+  if not dirExists(cacheDir):
+    createDir(cacheDir)
+  # Resolve each dependency
+  for dep in man.dependencies:
+    case dep.kind
+    of dkPath:
+      let absPath = if dep.path.isAbsolute: dep.path else: root / dep.path
+      if not dirExists(absPath):
+        printError(&"path dependency not found: {absPath}", useColor)
+        return 1
+      # Read dependency manifest
+      let depManifestPath = absPath / "bux.toml"
+      if fileExists(depManifestPath):
+        let depMan = loadManifest(depManifestPath)
+        lock.entries.add(LockEntry(name: dep.name, version: depMan.version, source: absPath))
+      else:
+        lock.entries.add(LockEntry(name: dep.name, version: "0.0.0", source: absPath))
+      if not opts.quiet:
+        printInfo(&"Resolved path dependency '{dep.name}' from {absPath}", useColor)
+    of dkGit:
+      let depDir = cacheDir / dep.name
+      if not dirExists(depDir):
+        if not opts.quiet:
+          printInfo(&"Cloning '{dep.name}' from {dep.gitUrl}...", useColor)
+        let (outp, code) = execCmdEx(&"git clone {dep.gitUrl} {depDir} 2>&1")
+        if code != 0:
+          printError(&"failed to clone {dep.gitUrl}: {outp}", useColor)
+          return 1
+      else:
+        if not opts.quiet:
+          printInfo(&"Using cached '{dep.name}' from {depDir}", useColor)
+      lock.entries.add(LockEntry(name: dep.name, version: dep.gitVersion, source: dep.gitUrl))
+    of dkVersion:
+      # For version-based deps without a registry, we just record them
+      # TODO: lookup in registry
+      lock.entries.add(LockEntry(name: dep.name, version: dep.versionReq, source: "registry"))
+      if not opts.quiet:
+        printInfo(&"Recorded dependency '{dep.name}' = {dep.versionReq}", useColor)
+  # Save lockfile
+  let lockPath = root / "bux.lock"
+  saveLockfile(lockPath, lock)
+  if not opts.quiet:
+    printInfo(&"Generated {lockPath}", useColor)
+  return 0
+
 proc collectStdlibDecls(stdlibDir: string): seq[Decl]
 proc getDeclName(d: Decl): string
 proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl]
+proc collectDepDecls(lock: Lockfile, root: string, opts: GlobalOptions): seq[Decl]
 
 proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
@@ -205,7 +316,10 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
       stdlibDir = path
       break
   let stdlibDecls = collectStdlibDecls(stdlibDir)
-  let mergedItems = mergeDecls(stdlibDecls, allModuleItems)
+  let lock = loadLockfile(root / "bux.lock")
+  let depDecls = collectDepDecls(lock, root, opts)
+  let stdlibAndDeps = mergeDecls(stdlibDecls, depDecls)
+  let mergedItems = mergeDecls(stdlibAndDeps, allModuleItems)
 
   var unifiedModule = newModule("main")
   unifiedModule.items = mergedItems
@@ -250,6 +364,38 @@ proc getDeclName(d: Decl): string =
   of dkConst: d.declConstName
   of dkTypeAlias: d.declAliasName
   else: ""
+
+proc collectDepDecls(lock: Lockfile, root: string, opts: GlobalOptions): seq[Decl] =
+  ## Collect declarations from all locked dependencies.
+  let cacheDir = getHomeDir() / ".bux" / "packages"
+  let useColor = shouldUseColor(opts)
+  for entry in lock.entries:
+    var depSrcDir = ""
+    if dirExists(entry.source):
+      # Path-based dependency
+      depSrcDir = entry.source / "src"
+    elif entry.source.startsWith("http") or entry.source.startsWith("git@"):
+      # Git-based dependency in cache
+      depSrcDir = cacheDir / entry.name / "src"
+    if depSrcDir == "" or not dirExists(depSrcDir):
+      continue
+    for kind, path in walkDir(depSrcDir):
+      if kind == pcFile and path.endsWith(".bux"):
+        let source = readFile(path)
+        let lexRes = tokenize(source, path)
+        if lexRes.hasErrors:
+          continue
+        let parseRes = parse(lexRes.tokens, path)
+        if parseRes.diagnostics.len > 0:
+          continue
+        for decl in parseRes.module.items:
+          if decl.kind == dkModule:
+            for sub in decl.declModuleItems:
+              result.add(sub)
+          else:
+            result.add(decl)
+    if not opts.quiet:
+      printInfo(&"Loaded dependency '{entry.name}' from {depSrcDir}", useColor)
 
 proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl] =
   ## Merge stdlib and user declarations.
@@ -301,6 +447,10 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   # Collect stdlib declarations once
   let stdlibDecls = collectStdlibDecls(stdlibDir)
 
+  # Collect dependency declarations from lockfile
+  let lock = loadLockfile(root / "bux.lock")
+  let depDecls = collectDepDecls(lock, root, opts)
+
   # Phase 1: Parse all .bux files and collect declarations
   var allModuleItems: seq[Decl] = @[]
   var foundMain = false
@@ -335,8 +485,9 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     printError("no Main.bux found in src/", useColor)
     return 1
 
-  # Phase 2: Merge all project declarations with stdlib
-  let mergedItems = mergeDecls(stdlibDecls, allModuleItems)
+  # Phase 2: Merge stdlib + deps + project (later shadow earlier)
+  let stdlibAndDeps = mergeDecls(stdlibDecls, depDecls)
+  let mergedItems = mergeDecls(stdlibAndDeps, allModuleItems)
 
   # Create unified module
   var unifiedModule = newModule("main")
@@ -441,6 +592,8 @@ proc runCli*(args: seq[string]): int =
   case cmd
   of "new": return cmdNew(cmdArgs, opts)
   of "init": return cmdInit(cmdArgs, opts)
+  of "add": return cmdAdd(cmdArgs, opts)
+  of "install": return cmdInstall(cmdArgs, opts)
   of "build": return cmdBuild(cmdArgs, opts)
   of "run": return cmdRun(cmdArgs, opts)
   of "check": return cmdCheck(cmdArgs, opts)

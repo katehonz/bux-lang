@@ -273,6 +273,13 @@ type
       stmtDecl*: Decl
 
   # ---------------------------------------------------------------------------
+  # Type Parameters (for generics with trait bounds)
+  # ---------------------------------------------------------------------------
+  TypeParam* = object
+    name*: string
+    bounds*: seq[string]   ## e.g. ["Comparable"] for <T: Comparable>
+
+  # ---------------------------------------------------------------------------
   # Declarations
   # ---------------------------------------------------------------------------
   DeclKind* = enum
@@ -325,13 +332,13 @@ type
       declFuncCallConv*: CallingConvention
       declFuncConst*: bool          ## const func — evaluable at compile time
       declFuncName*: string
-      declFuncTypeParams*: seq[string]
+      declFuncTypeParams*: seq[TypeParam]
       declFuncParams*: seq[Param]
       declFuncReturnType*: TypeExpr  ## nil if void/inferred
       declFuncBody*: Block           ## nil for signature-only
     of dkStruct:
       declStructName*: string
-      declStructTypeParams*: seq[string]
+      declStructTypeParams*: seq[TypeParam]
       declStructFields*: seq[StructField]
     of dkEnum:
       declEnumName*: string
@@ -345,7 +352,7 @@ type
       declInterfaceMethods*: seq[Decl]  ## FuncDecl signatures only
     of dkImpl:
       declImplTypeName*: string
-      declImplTypeParams*: seq[string]  ## type parameters for generic impl: extend Box<T>
+      declImplTypeParams*: seq[TypeParam]  ## type parameters for generic impl: extend Box<T>
       declImplInterface*: string        ## empty if not for interface
       declImplMethods*: seq[Decl]
     of dkModule:

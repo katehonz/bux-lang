@@ -56,7 +56,7 @@ proc typeToC*(typ: Type): string =
   of tkUInt: return "unsigned int"
   of tkFloat32: return "float"
   of tkFloat64: return "double"
-  of tkPointer:
+  of tkPointer, tkRef, tkMutRef:
     if typ.inner.len > 0:
       return typeToC(typ.inner[0]) & "*"
     return "void*"

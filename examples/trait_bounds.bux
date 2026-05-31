@@ -1,0 +1,28 @@
+import Std::Io::{PrintLine, PrintInt};
+
+// Trait (interface) definition
+interface Drawable {
+    func Draw(self: &Self);
+}
+
+// Type that implements the trait
+struct Circle {
+    radius: int;
+}
+
+extend Circle for Drawable {
+    func Draw(self: &Circle) {
+        PrintLine("Drawing circle");
+    }
+}
+
+// Generic function with trait bound: T must implement Drawable
+func Render<T: Drawable>(obj: T) {
+    obj.Draw();
+}
+
+func Main() -> int {
+    let c: Circle = Circle { radius: 5 };
+    Render(c);  // OK: Circle implements Drawable
+    return 0;
+}

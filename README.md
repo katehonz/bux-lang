@@ -120,6 +120,10 @@ func Main() -> int {
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
 | **Standard Library** | `Io`, `Array`, `String`, `Map` |
 | **Backend** | C transpiler (bootstrap) |
+| **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
+| **CTFE** | `const func` — compile-time function execution |
+| **Trait Bounds** | `func Max<T: Comparable>(a: T, b: T) -> T` |
+| **Package Manager** | `bux add`, `bux install`, `bux.lock`, path + git deps |
 | **Tooling** | `bux new`, `bux build`, `bux run`, `bux check` |
 
 ---

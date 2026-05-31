@@ -353,14 +353,14 @@ func Main() -> int {
 
 ---
 
-## Gradual Ownership (Phase 8.2)
+## Gradual Ownership (Phase 8.2) ✅ Implemented
 
-Bux introduces **gradual ownership** — the first language to offer opt-in borrow checking.
+Bux introduces **gradual ownership** — opt-in borrow checking. By default, Bux is permissive like C. With `@[Checked]`, the borrow checker enforces memory safety rules.
 
 ### Syntax
 
 ```bux
-// Default: permissive mode (like C/Nim)
+// Default: permissive mode (like C/Nim) — raw pointers, no checks
 func QuickSort(arr: *int, len: int) {
     for i in 0..len {
         arr[i] = arr[i] * 2;
@@ -369,10 +369,18 @@ func QuickSort(arr: *int, len: int) {
 
 // Opt-in: @[Checked] enables borrow checking
 @[Checked]
-func SafeMerge(a: &[int], b: &[int]) -> Vec<int> {
-    // &T = shared reference (borrow checker enforced)
-    // &mut T = mutable reference (exclusive)
-    // own T = ownership transfer
+func Scale(val: &mut int) {
+    *val = *val * 2;  // OK: &mut T allows mutation
+}
+
+@[Checked]
+func Read(val: &int) -> int {
+    return *val;       // OK: &T allows reading
+}
+
+@[Checked]
+func BadWrite(val: &int) {
+    *val = 42;         // ERROR: cannot write through shared reference '&T'
 }
 ```
 
@@ -381,9 +389,50 @@ func SafeMerge(a: &[int], b: &[int]) -> Vec<int> {
 | Type | Syntax | Description |
 |------|--------|-------------|
 | Raw pointer | `*T` | C-style pointer, no checks |
-| Shared ref | `&T` | Borrowed reference (checked) |
-| Mutable ref | `&mut T` | Exclusive mutable borrow |
-| Owned | `own T` | Ownership transfer |
+| Shared ref | `&T` | Borrowed reference (read-only in checked functions) |
+| Mutable ref | `&mut T` | Exclusive mutable borrow (allows mutation) |
+| Owned | `own T` | Ownership transfer (syntax parsed, not yet enforced) |
+
+### Rules in @[Checked] functions
+
+- `&T` cannot be used to mutate data (compile-time error)
+- `&mut T` allows mutation
+- `*T` pointers are unrestricted (escape hatch)
+- `&mut T` coerces to `&T` and `*T`
+
+---
+
+## Compile-Time Function Execution (CTFE) ✅ Implemented
+
+`const func` functions are evaluated at compile time. Their results can be used in type sizes, array lengths, or other constant contexts.
+
+```bux
+const func Factorial(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * Factorial(n - 1);
+}
+
+const TABLE_SIZE = Factorial(10);  // 3628800 — computed at compile time
+
+func Main() -> int {
+    let arr: [TABLE_SIZE]int;  // Array size from compile-time value
+    return 0;
+}
+```
+
+### Supported in CTFE
+- Integer, boolean, and string literals
+- Arithmetic (`+`, `-`, `*`, `/`, `%`)
+- Comparisons and logical operators
+- `if` / `else` with constant conditions
+- Calls to other `const func` functions (including recursion)
+
+### Limitations
+- No `while` / `for` loops (use recursion)
+- No `mut` references or heap allocation
+- No non-const function calls
 
 ---
 

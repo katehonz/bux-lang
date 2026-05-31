@@ -20,6 +20,16 @@ type
     params*: seq[Type]
     retType*: Type
 
+  CtValueKind = enum
+    ctkVoid, ctkInt, ctkBool, ctkString
+
+  CtValue = object
+    case kind: CtValueKind
+    of ctkVoid: discard
+    of ctkInt: intVal: int64
+    of ctkBool: boolVal: bool
+    of ctkString: strVal: string
+
   Sema* = object
     module*: Module
     globalScope*: Scope
@@ -30,6 +40,8 @@ type
     methodTable*: Table[string, seq[MethodInfo]]
     # Interface name -> interface decl
     interfaceTable*: Table[string, Decl]
+    # Borrow checker state
+    checkedFunc*: bool  ## true inside @[Checked] function
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,6 +106,16 @@ proc typeToTypeExpr(t: Type): TypeExpr =
       TypeExpr(kind: tekPointer, pointerPointee: typeToTypeExpr(t.inner[0]))
     else:
       TypeExpr(kind: tekNamed, typeName: "void")
+  of tkRef:
+    if t.inner.len > 0:
+      TypeExpr(kind: tekRef, pointerPointee: typeToTypeExpr(t.inner[0]))
+    else:
+      TypeExpr(kind: tekNamed, typeName: "void")
+  of tkMutRef:
+    if t.inner.len > 0:
+      TypeExpr(kind: tekMutRef, pointerPointee: typeToTypeExpr(t.inner[0]))
+    else:
+      TypeExpr(kind: tekNamed, typeName: "void")
   of tkVoid: TypeExpr(kind: tekNamed, typeName: "void")
   else: TypeExpr(kind: tekNamed, typeName: t.toString)
 
@@ -102,7 +124,8 @@ proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
   ## Infer type arguments from argument types for a generic function call.
   ## Returns empty seq if inference fails for any type parameter.
   result = @[]
-  for tpName in funcDecl.declFuncTypeParams:
+  for tp in funcDecl.declFuncTypeParams:
+    let tpName = tp.name
     var inferred: Type = nil
     for i, param in funcDecl.declFuncParams:
       if i >= argTypes.len: break
@@ -173,9 +196,9 @@ proc resolveType(sema: var Sema, te: TypeExpr): Type =
   of tekPointer:
     return makePointer(sema.resolveType(te.pointerPointee))
   of tekRef:
-    return makePointer(sema.resolveType(te.pointerPointee))  # &T → *T in bootstrap
+    return makeRef(sema.resolveType(te.pointerPointee))
   of tekMutRef:
-    return makePointer(sema.resolveType(te.pointerPointee))  # &mut T → *T in bootstrap
+    return makeMutRef(sema.resolveType(te.pointerPointee))
   of tekSlice:
     let elemType = sema.resolveType(te.sliceElement)
     return makeSlice(elemType)
@@ -191,6 +214,162 @@ proc resolveType(sema: var Sema, te: TypeExpr): Type =
 # First pass: collect global symbols
 # ---------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------
+# Compile-Time Function Execution (CTFE)
+# ---------------------------------------------------------------------------
+
+proc evalExpr(sema: Sema, expr: Expr, locals: Table[string, CtValue]): CtValue
+
+proc evalBlock(sema: Sema, blk: Block, locals: Table[string, CtValue]): CtValue =
+  var localVars = locals
+  for stmt in blk.stmts:
+    case stmt.kind
+    of skLet:
+      if stmt.stmtLetInit != nil:
+        let val = sema.evalExpr(stmt.stmtLetInit, localVars)
+        if val.kind in {ctkInt, ctkBool, ctkString}:
+          localVars[stmt.stmtLetName] = val
+    of skIf:
+      let cond = sema.evalExpr(stmt.stmtIfCond, localVars)
+      if cond.kind == ctkBool:
+        if cond.boolVal:
+          let res = sema.evalBlock(stmt.stmtIfThen, localVars)
+          if res.kind != ctkVoid:
+            return res
+        elif stmt.stmtIfElse != nil:
+          let res = sema.evalBlock(stmt.stmtIfElse, localVars)
+          if res.kind != ctkVoid:
+            return res
+        # If condition is false and no else, continue to next statement
+      else:
+        return CtValue(kind: ctkVoid)
+    of skReturn:
+      if stmt.stmtReturnValue != nil:
+        return sema.evalExpr(stmt.stmtReturnValue, localVars)
+      return CtValue(kind: ctkVoid)
+    of skExpr:
+      let res = sema.evalExpr(stmt.stmtExpr, localVars)
+      if res.kind != ctkVoid:
+        return res
+    else:
+      discard
+  return CtValue(kind: ctkVoid)
+
+proc evalExpr(sema: Sema, expr: Expr, locals: Table[string, CtValue]): CtValue =
+  if expr == nil:
+    return CtValue(kind: ctkVoid)
+  case expr.kind
+  of ekLiteral:
+    case expr.exprLit.kind
+    of tkIntLiteral:
+      return CtValue(kind: ctkInt, intVal: parseBiggestInt(expr.exprLit.text))
+    of tkBoolLiteral:
+      return CtValue(kind: ctkBool, boolVal: expr.exprLit.text == "true")
+    of tkStringLiteral:
+      return CtValue(kind: ctkString, strVal: expr.exprLit.text)
+    else:
+      return CtValue(kind: ctkVoid)
+  of ekIdent:
+    if locals.hasKey(expr.exprIdent):
+      return locals[expr.exprIdent]
+    # Check if it's a const global
+    let sym = sema.globalScope.lookup(expr.exprIdent)
+    if sym != nil and sym.decl != nil and sym.decl.kind == dkConst and sym.decl.declConstValue != nil:
+      return sema.evalExpr(sym.decl.declConstValue, locals)
+    return CtValue(kind: ctkVoid)
+  of ekUnary:
+    let operand = sema.evalExpr(expr.exprUnaryOperand, locals)
+    case expr.exprUnaryOp
+    of tkMinus:
+      if operand.kind == ctkInt:
+        return CtValue(kind: ctkInt, intVal: -operand.intVal)
+    of tkBang:
+      if operand.kind == ctkBool:
+        return CtValue(kind: ctkBool, boolVal: not operand.boolVal)
+    else:
+      discard
+    return CtValue(kind: ctkVoid)
+  of ekBinary:
+    let left = sema.evalExpr(expr.exprBinaryLeft, locals)
+    let right = sema.evalExpr(expr.exprBinaryRight, locals)
+    if left.kind == ctkInt and right.kind == ctkInt:
+      case expr.exprBinaryOp
+      of tkPlus: return CtValue(kind: ctkInt, intVal: left.intVal + right.intVal)
+      of tkMinus: return CtValue(kind: ctkInt, intVal: left.intVal - right.intVal)
+      of tkStar: return CtValue(kind: ctkInt, intVal: left.intVal * right.intVal)
+      of tkSlash:
+        if right.intVal != 0:
+          return CtValue(kind: ctkInt, intVal: left.intVal div right.intVal)
+      of tkPercent:
+        if right.intVal != 0:
+          return CtValue(kind: ctkInt, intVal: left.intVal mod right.intVal)
+      of tkEq: return CtValue(kind: ctkBool, boolVal: left.intVal == right.intVal)
+      of tkNe: return CtValue(kind: ctkBool, boolVal: left.intVal != right.intVal)
+      of tkLt: return CtValue(kind: ctkBool, boolVal: left.intVal < right.intVal)
+      of tkLe: return CtValue(kind: ctkBool, boolVal: left.intVal <= right.intVal)
+      of tkGt: return CtValue(kind: ctkBool, boolVal: left.intVal > right.intVal)
+      of tkGe: return CtValue(kind: ctkBool, boolVal: left.intVal >= right.intVal)
+      else: discard
+    elif left.kind == ctkBool and right.kind == ctkBool:
+      case expr.exprBinaryOp
+      of tkAmpAmp: return CtValue(kind: ctkBool, boolVal: left.boolVal and right.boolVal)
+      of tkPipePipe: return CtValue(kind: ctkBool, boolVal: left.boolVal or right.boolVal)
+      else: discard
+    return CtValue(kind: ctkVoid)
+  of ekTernary:
+    let cond = sema.evalExpr(expr.exprTernaryCond, locals)
+    if cond.kind == ctkBool:
+      if cond.boolVal:
+        return sema.evalExpr(expr.exprTernaryThen, locals)
+      else:
+        return sema.evalExpr(expr.exprTernaryElse, locals)
+    return CtValue(kind: ctkVoid)
+  of ekCall:
+    # Try to evaluate const func calls
+    if expr.exprCallCallee != nil and expr.exprCallCallee.kind == ekIdent:
+      let funcName = expr.exprCallCallee.exprIdent
+      let sym = sema.globalScope.lookup(funcName)
+      if sym != nil and sym.decl != nil and sym.decl.kind == dkFunc and sym.decl.declFuncConst:
+        # Evaluate arguments
+        var argVals: seq[CtValue] = @[]
+        for arg in expr.exprCallArgs:
+          argVals.add(sema.evalExpr(arg, locals))
+        # Build parameter locals
+        var callLocals = locals
+        for i, p in sym.decl.declFuncParams:
+          if i < argVals.len:
+            callLocals[p.name] = argVals[i]
+        # Evaluate function body
+        if sym.decl.declFuncBody != nil:
+          return sema.evalBlock(sym.decl.declFuncBody, callLocals)
+    return CtValue(kind: ctkVoid)
+  of ekBlock:
+    return sema.evalBlock(expr.exprBlock, locals)
+  else:
+    return CtValue(kind: ctkVoid)
+
+proc constFoldConstDecl(sema: Sema, decl: Decl): bool =
+  ## Try to evaluate a const declaration at compile time.
+  ## Returns true if successful and modifies declConstValue to a literal.
+  if decl.kind != dkConst: return false
+  let val = sema.evalExpr(decl.declConstValue, initTable[string, CtValue]())
+  case val.kind
+  of ctkInt:
+    decl.declConstValue = Expr(kind: ekLiteral, loc: decl.loc,
+      exprLit: Token(kind: tkIntLiteral, text: $val.intVal, loc: decl.loc))
+    return true
+  of ctkBool:
+    decl.declConstValue = Expr(kind: ekLiteral, loc: decl.loc,
+      exprLit: Token(kind: tkBoolLiteral, text: $val.boolVal, loc: decl.loc))
+    return true
+  of ctkString:
+    decl.declConstValue = Expr(kind: ekLiteral, loc: decl.loc,
+      exprLit: Token(kind: tkStringLiteral, text: val.strVal, loc: decl.loc))
+    return true
+  of ctkVoid:
+    return false
+
 proc collectGlobals*(sema: var Sema) =
   for decl in sema.module.items:
     case decl.kind
@@ -200,8 +379,8 @@ proc collectGlobals*(sema: var Sema) =
       # Temporarily add type parameters to type table for resolution
       var addedTypeParams: seq[string] = @[]
       for tp in decl.declFuncTypeParams:
-        sema.typeTable[tp] = makeTypeParam(tp)
-        addedTypeParams.add(tp)
+        sema.typeTable[tp.name] = makeTypeParam(tp.name)
+        addedTypeParams.add(tp.name)
       # Build function type from params and return
       var params: seq[Type] = @[]
       for p in decl.declFuncParams:
@@ -337,8 +516,8 @@ proc collectGlobals*(sema: var Sema) =
       # If impl has type params, temporarily add them to type table
       var addedTypeParams: seq[string] = @[]
       for tp in implTypeParams:
-        sema.typeTable[tp] = makeTypeParam(tp)
-        addedTypeParams.add(tp)
+        sema.typeTable[tp.name] = makeTypeParam(tp.name)
+        addedTypeParams.add(tp.name)
       for methodDecl in decl.declImplMethods:
         if methodDecl.kind == dkFunc:
           # Propagate impl type params to method for HIR lowering
@@ -372,6 +551,10 @@ proc collectGlobals*(sema: var Sema) =
         sema.typeTable.del(tp)
     else:
       discard
+  # Second pass: evaluate const declarations after all functions are registered
+  for decl in sema.module.items:
+    if decl.kind == dkConst:
+      discard sema.constFoldConstDecl(decl)
 
 # ---------------------------------------------------------------------------
 # Expression type checking
@@ -379,6 +562,36 @@ proc collectGlobals*(sema: var Sema) =
 
 proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type
 proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type
+
+proc typeImplements(sema: Sema, t: Type, interfaceName: string): bool =
+  ## Check if a type implements an interface by verifying all required methods exist.
+  if t.isUnknown: return true
+  let typeName = if t.kind == tkNamed: t.name elif t.isPointer and t.inner.len > 0 and t.inner[0].kind == tkNamed: t.inner[0].name else: ""
+  if typeName == "": return false
+  if not sema.interfaceTable.hasKey(interfaceName):
+    return true  # Unknown interface — be permissive in bootstrap
+  let iface = sema.interfaceTable[interfaceName]
+  let requiredMethods = iface.declInterfaceMethods
+  if not sema.methodTable.hasKey(typeName):
+    return false
+  let availableMethods = sema.methodTable[typeName]
+  for req in requiredMethods:
+    var found = false
+    for avail in availableMethods:
+      if avail.name == req.declFuncName:
+        found = true
+        break
+    if not found:
+      return false
+  return true
+
+proc checkTraitBounds(sema: var Sema, funcDecl: Decl, inferredTypes: seq[Type], loc: SourceLocation) =
+  ## Verify that inferred types satisfy their trait bounds.
+  for i, tp in funcDecl.declFuncTypeParams:
+    if i < inferredTypes.len and inferredTypes[i] != nil:
+      for bound in tp.bounds:
+        if not sema.typeImplements(inferredTypes[i], bound):
+          sema.emitError(loc, &"type '{inferredTypes[i].toString}' does not implement trait '{bound}'")
 
 proc extractPatternBindings(sema: var Sema, pat: Pattern, scope: Scope) =
   ## Add pattern-bound identifiers to scope with unknown type (best-effort)
@@ -461,7 +674,7 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         return makeUnknown()
       return operandType.inner[0]
     of tkAmp:
-      return makePointer(operandType)
+      return makeMutRef(operandType)
     else:
       return operandType
   of ekPostfix:
@@ -506,6 +719,11 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     let value = sema.checkExpr(expr.exprAssignValue, scope)
     if not value.isAssignableTo(target):
       sema.emitError(expr.loc, &"cannot assign {value.toString} to {target.toString}")
+    # Borrow check: cannot write through &T (shared reference) in @[Checked] functions
+    if sema.checkedFunc and expr.exprAssignTarget.kind == ekUnary and expr.exprAssignTarget.exprUnaryOp == tkStar:
+      let ptrType = sema.checkExpr(expr.exprAssignTarget.exprUnaryOperand, scope)
+      if ptrType.isRef:
+        sema.emitError(expr.loc, "cannot assign through shared reference '&T' in checked function — use '&mut T' instead")
     return target
   of ekTernary:
     let cond = sema.checkExpr(expr.exprTernaryCond, scope)
@@ -542,7 +760,7 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
           if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkFunc:
             let typeParams = sym2.decl.declFuncTypeParams
             for i, tp in typeParams:
-              if retType.name == tp and i < expr.exprCallCallee.exprGenericTypeArgs.len:
+              if retType.name == tp.name and i < expr.exprCallCallee.exprGenericTypeArgs.len:
                 # Substitute with concrete type
                 let concreteType = expr.exprCallCallee.exprGenericTypeArgs[i]
                 if concreteType.kind == tekNamed:
@@ -622,14 +840,19 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         let inferred = sema.inferTypeArgs(calleeDecl, argTypes, expr.loc)
         if inferred.len == calleeDecl.declFuncTypeParams.len:
           expr.exprCallInferredTypeArgs = inferred
+          # Check trait bounds
+          var inferredTypes: seq[Type] = @[]
+          for te in inferred:
+            inferredTypes.add(sema.resolveType(te))
+          sema.checkTraitBounds(calleeDecl, inferredTypes, expr.loc)
           # Substitute return type using inferred type args
           if calleeDecl.declFuncReturnType != nil:
             var added: seq[string] = @[]
             for i, tp in calleeDecl.declFuncTypeParams:
               if i < inferred.len:
                 let concrete = sema.resolveType(inferred[i])
-                sema.typeTable[tp] = concrete
-                added.add(tp)
+                sema.typeTable[tp.name] = concrete
+                added.add(tp.name)
             let retType = sema.resolveType(calleeDecl.declFuncReturnType)
             for tp in added:
               sema.typeTable.del(tp)
@@ -666,8 +889,8 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
   of ekField:
     let obj = sema.checkExpr(expr.exprFieldObj, scope)
     var objType = obj
-    # Auto-dereference pointer types for field access
-    if objType.kind == tkPointer and objType.inner.len > 0:
+    # Auto-dereference pointer/reference types for field access
+    if objType.kind in {tkPointer, tkRef, tkMutRef} and objType.inner.len > 0:
       objType = objType.inner[0]
     if objType.kind == tkNamed:
       # Check if this is a _Data union field access
@@ -858,7 +1081,6 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
     else:
       discard
     return makeVoid()
-
 # ---------------------------------------------------------------------------
 # Function body checking
 # ---------------------------------------------------------------------------
@@ -870,12 +1092,14 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   # type parameters that cannot be fully resolved until monomorphization.
   if decl.declFuncTypeParams.len > 0:
     return
+  let wasChecked = sema.checkedFunc
+  sema.checkedFunc = "Checked" in decl.declAttrs
   var funcScope = newScope(sema.globalScope)
   # Add type parameters to type table for resolution
   var addedTypeParams: seq[string] = @[]
   for tp in decl.declFuncTypeParams:
-    sema.typeTable[tp] = makeTypeParam(tp)
-    addedTypeParams.add(tp)
+    sema.typeTable[tp.name] = makeTypeParam(tp.name)
+    addedTypeParams.add(tp.name)
   # Add parameters
   for p in decl.declFuncParams:
     let pType = sema.resolveType(p.ptype)
@@ -887,6 +1111,7 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   # Clean up type parameters
   for tp in addedTypeParams:
     sema.typeTable.del(tp)
+  sema.checkedFunc = wasChecked
 
 # ---------------------------------------------------------------------------
 # Second pass: check all function bodies
@@ -898,7 +1123,7 @@ proc checkBodies(sema: var Sema) =
   var funcCount = 0
   for decl in sema.module.items:
     if decl.kind == dkFunc: inc funcCount
-  if funcCount > 50:
+  if funcCount > 5000:
     # Large module — only check Main
     for decl in sema.module.items:
       case decl.kind

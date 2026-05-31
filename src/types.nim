@@ -25,6 +25,8 @@ type
     tkFloat32
     tkFloat64
     tkPointer
+    tkRef
+    tkMutRef
     tkSlice
     tkRange
     tkTuple
@@ -63,6 +65,10 @@ proc makeFloat64*(): Type = Type(kind: tkFloat64)
 
 proc makePointer*(pointee: Type): Type =
   Type(kind: tkPointer, inner: @[pointee])
+proc makeRef*(pointee: Type): Type =
+  Type(kind: tkRef, inner: @[pointee])
+proc makeMutRef*(pointee: Type): Type =
+  Type(kind: tkMutRef, inner: @[pointee])
 proc makeSlice*(element: Type): Type =
   Type(kind: tkSlice, inner: @[element])
 proc makeRange*(element: Type): Type =
@@ -95,7 +101,10 @@ proc isFloat*(t: Type): bool =
 proc isSigned*(t: Type): bool =
   if t.kind in {tkUnknown, tkNamed, tkTypeParam}: return true
   t.kind in {tkInt8, tkInt16, tkInt32, tkInt64, tkInt}
-proc isPointer*(t: Type): bool = t.kind == tkPointer
+proc isPointer*(t: Type): bool = t.kind in {tkPointer, tkRef, tkMutRef}
+proc isRawPointer*(t: Type): bool = t.kind == tkPointer
+proc isRef*(t: Type): bool = t.kind == tkRef
+proc isMutRef*(t: Type): bool = t.kind == tkMutRef
 proc isSlice*(t: Type): bool = t.kind == tkSlice
 
 # Comparison
@@ -139,6 +148,18 @@ proc isAssignableTo*(a, b: Type): bool =
       return true
     if b.inner.len > 0 and b.inner[0].isUnknown:
       return true
+    # &mut T -> &T (mutable ref can coerce to shared ref)
+    if a.isMutRef and b.isRef:
+      if a.inner.len > 0 and b.inner.len > 0 and a.inner[0].isAssignableTo(b.inner[0]):
+        return true
+    # &mut T -> *T (mutable ref can coerce to raw pointer)
+    if a.isMutRef and b.isRawPointer:
+      if a.inner.len > 0 and b.inner.len > 0 and a.inner[0].isAssignableTo(b.inner[0]):
+        return true
+    # &T -> *T (shared ref can coerce to raw pointer)
+    if a.isRef and b.isRawPointer:
+      if a.inner.len > 0 and b.inner.len > 0 and a.inner[0].isAssignableTo(b.inner[0]):
+        return true
   return false
 
 # String representation
@@ -167,6 +188,8 @@ proc toString*(t: Type): string =
   of tkFloat32: "float32"
   of tkFloat64: "float64"
   of tkPointer: "*" & t.inner[0].toString
+  of tkRef: "&" & t.inner[0].toString
+  of tkMutRef: "&mut " & t.inner[0].toString
   of tkSlice:
     if t.inner.len > 0: t.inner[0].toString & "[]"
     else: "Slice<?>"

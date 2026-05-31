@@ -404,15 +404,15 @@ func ReadFile(path: String) -> Result<String, IoError> {
 }
 ```
 
-### 8.2 — Ownership & Borrowing (Gradual Safety) 🔄 (Syntax Only)
+### 8.2 — Ownership & Borrowing (Gradual Safety) ✅ (Basic Implementation Complete)
 
 | Task | Status | Details |
 |------|--------|---------|
 | `8.2.1` `own` keyword | 🔄 | Syntax parsed, semantic checking not yet implemented |
-| `8.2.2` `borrow` / `&` | 🔄 | `&T` reference syntax parsed, not yet semantically checked |
-| `8.2.3` `mut` references | ⏳ | `&mut T` for mutable borrows (exclusive) |
+| `8.2.2` `borrow` / `&` | ✅ | `&T` shared reference type checked and enforced |
+| `8.2.3` `mut` references | ✅ | `&mut T` mutable reference type checked and enforced |
 | `8.2.4` Lifetime elision | ⏳ | Simple rules for common cases; explicit `'a` for complex |
-| `8.2.5` Opt-in checker | 🔄 | `@[Checked]` attribute syntax parsed, checker not implemented |
+| `8.2.5` Opt-in checker | ✅ | `@[Checked]` attribute enables borrow checking: writes through `&T` are rejected |
 
 ```bux
 // Opt-in safety — by default, Bux is permissive like Nim
@@ -462,14 +462,15 @@ func Main() -> int {
 }
 ```
 
-### 8.4 — Compile-Time Function Execution (CTFE) 🔄 (Syntax Only)
+### 8.4 — Compile-Time Function Execution (CTFE) ✅ (Basic Implementation Complete)
 
 | Task | Status | Details |
 |------|--------|---------|
-| `8.4.1` `const` functions | 🔄 | `const func` syntax parsed (AST field `declFuncConst`), compile-time evaluation not implemented |
-| `8.4.2` Compile-time blocks | ⏳ | `comptime { ... }` for arbitrary compile-time code |
-| `8.4.3` Static assertions | ⏳ | `static_assert(cond, msg)` for compile-time checks |
-| `8.4.4` Generated code | ⏳ | `#emit` for compile-time code generation |
+| `8.4.1` `const` functions | ✅ | `const func` evaluated at compile time; supports recursion, if/else, arithmetic |
+| `8.4.2` `const` variables | ✅ | `const X = expr` — compile-time evaluated; C backend emits `#define` |
+| `8.4.3` Compile-time blocks | ⏳ | `comptime { ... }` for arbitrary compile-time code |
+| `8.4.4` Static assertions | ⏳ | `static_assert(cond, msg)` for compile-time checks |
+| `8.4.5` Generated code | ⏳ | `#emit` for compile-time code generation |
 
 ```bux
 const func Factorial(n: int) -> int {
@@ -480,15 +481,15 @@ const func Factorial(n: int) -> int {
 const TABLE_SIZE = Factorial(10);  // Computed at compile time
 ```
 
-### 8.5 — Trait System (Interfaces++)
+### 8.5 — Trait System (Interfaces++) ✅ (Basic Implementation)
 
-| Task | Details |
-|------|---------|
-| `8.5.1` Traits | Like Rust traits or Go interfaces, but with default implementations |
-| `8.5.2` Associated types | `type Output` inside trait definitions |
-| `8.5.3` Trait bounds | `func Sort<T: Comparable>(arr: &mut Array<T>)` |
-| `8.5.4` Trait objects | `&dyn Trait` for dynamic dispatch (fat pointer) |
-| `8.5.5` Blanket impls | `impl<T: Display> Printable for T` |
+| Task | Status | Details |
+|------|--------|---------|
+| `8.5.1` Traits | ✅ | `interface` + `extend Type for Interface` |
+| `8.5.2` Associated types | ⏳ | `type Output` inside trait definitions |
+| `8.5.3` Trait bounds | ✅ | `func Sort<T: Comparable>(arr: &mut Array<T>)` — semantic check at call sites |
+| `8.5.4` Trait objects | ⏳ | `&dyn Trait` for dynamic dispatch (fat pointer) |
+| `8.5.5` Blanket impls | ⏳ | `impl<T: Display> Printable for T` |
 
 ### 8.6 — Metaprogramming
 
@@ -502,17 +503,17 @@ const TABLE_SIZE = Factorial(10);  // Computed at compile time
 
 ## Phase 9 — Ecosystem & Tooling (Week 35+)
 
-| Task | Details |
-|------|---------|
-| `9.1` Package manager | `bux add`, `bux remove`, `bux update`, `bux install` with lockfile |
-| `9.2` Registry protocol | Simple HTTP git-based registry (like Go modules or Cargo) |
-| `9.3` Formatter | `bux fmt` — auto-format Bux source |
-| `9.4` LSP | Language Server Protocol for autocomplete, hover, go-to-definition |
-| `9.5` Tests | `bux test` runner with assertions and golden tests |
-| `9.6` Documentation | `bux doc` — generate HTML from `///` doc comments |
-| `9.7` Cross-compilation | `--target` flag leveraging C backend portability |
-| `9.8` Debugger support | DWARF/PDB debug info generation for gdb/lldb/VSCode |
-| `9.9` Profiler integration | `bux build --profile` with basic profiling hooks |
+| Task | Status | Details |
+|------|--------|---------|
+| `9.1` Package manager | ✅ | `bux add`, `bux install`, `bux.lock` — path-based and git-based deps |
+| `9.2` Registry protocol | ⏳ | Simple HTTP git-based registry (like Go modules or Cargo) |
+| `9.3` Formatter | ⏳ | `bux fmt` — auto-format Bux source |
+| `9.4` LSP | ⏳ | Language Server Protocol for autocomplete, hover, go-to-definition |
+| `9.5` Tests | ⏳ | `bux test` runner with assertions and golden tests |
+| `9.6` Documentation | ⏳ | `bux doc` — generate HTML from `///` doc comments |
+| `9.7` Cross-compilation | ⏳ | `--target` flag leveraging C backend portability |
+| `9.8` Debugger support | ⏳ | DWARF/PDB debug info generation for gdb/lldb/VSCode |
+| `9.9` Profiler integration | ⏳ | `bux build --profile` with basic profiling hooks |
 
 ---
 
@@ -694,7 +695,9 @@ func Main() -> int {
 | **M4** | 5A | ✅ | `bux run` produces working binary via C transpiler |
 | **M5** | 6 | ✅ | Can write compiler-adjacent tools in Bux (18 examples) |
 | **M6** | 7 | ✅ | **Self-hosted**: `buxc2` (Bux) compiles via `buxc` (Nim) — 88KB working binary |
-| **M7** | 8 | 🔄 | Result/Option/`?`/`!` done; ownership syntax parsed; CTFE syntax parsed |
+| **M7** | 8 | ✅ | Result/Option/`?`/`!` done; **borrow checker working**; **CTFE working** |
+| **M8** | 8-9 | ✅ | **Borrow checker**, **CTFE**, **Package manager** working |
+| **M9** | 8.5 | ✅ | **Trait bounds** (`<T: Comparable>`) — semantic checking implemented |
 | **M8** | 9 | ⏳ | Package manager + LSP + formatter shipped |
 
 ---

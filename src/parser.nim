@@ -212,6 +212,9 @@ proc parseBaseType(p: var Parser): TypeExpr =
     return TypeExpr(kind: tekPointer, loc: loc, pointerPointee: p.parseBaseType())
   of tkAmp:
     discard p.advance()
+    if p.check(tkMut):
+      discard p.advance()
+      return TypeExpr(kind: tekMutRef, loc: loc, pointerPointee: p.parseBaseType())
     return TypeExpr(kind: tekRef, loc: loc, pointerPointee: p.parseBaseType())
   of tkLParen:
     discard p.advance()
@@ -894,11 +897,27 @@ proc parseStmt(p: var Parser): Stmt =
 # Declarations
 # ---------------------------------------------------------------------------
 
-proc parseTypeParams(p: var Parser): seq[string] =
+proc parseTypeParams(p: var Parser): seq[TypeParam] =
   if p.check(tkLt):
     discard p.advance()
     while not p.check(tkGt) and not p.isAtEnd:
-      result.add(p.expect(tkIdent, "expected type parameter name").text)
+      let name = p.expect(tkIdent, "expected type parameter name").text
+      var bounds: seq[string] = @[]
+      if p.check(tkColon):
+        discard p.advance()
+        # Parse bound: single identifier or path like Std::Comparable
+        var boundName = ""
+        while true:
+          let part = p.expect(tkIdent, "expected trait/interface name").text
+          if boundName.len > 0:
+            boundName.add("_")
+          boundName.add(part)
+          if p.check(tkColonColon):
+            discard p.advance()
+          else:
+            break
+        bounds.add(boundName)
+      result.add(TypeParam(name: name, bounds: bounds))
       if p.check(tkComma):
         discard p.advance()
     discard p.expect(tkGt, "expected '>' to close type parameters")
@@ -1241,6 +1260,7 @@ proc parseDecl(p: var Parser): Decl =
   var attrs = ParsedAttrs()
   if p.check(tkAt):
     attrs = p.parseAttrs()
+  p.skipNewlines()
   
   var isConst = false
   if p.check(tkConst) and p.peek(1) == tkFunc:

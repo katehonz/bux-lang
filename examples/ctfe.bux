@@ -1,0 +1,19 @@
+import Std::Io::PrintInt;
+
+// const func — evaluated at compile time
+const func Factorial(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * Factorial(n - 1);
+}
+
+// Compile-time constants
+const FIB_10 = Factorial(10);
+const SIMPLE = 5 + 3 * 2;
+
+func Main() -> int {
+    PrintInt(FIB_10);   // 3628800 — computed at compile time
+    PrintInt(SIMPLE);   // 11 — computed at compile time
+    return 0;
+}

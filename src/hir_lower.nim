@@ -166,6 +166,10 @@ proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type])
     return ctx.resolveTypeExpr(te)
   of tekPointer:
     return makePointer(substituteType(ctx, te.pointerPointee, subst))
+  of tekRef:
+    return makeRef(substituteType(ctx, te.pointerPointee, subst))
+  of tekMutRef:
+    return makeMutRef(substituteType(ctx, te.pointerPointee, subst))
   of tekSlice:
     return makeSlice(substituteType(ctx, te.sliceElement, subst))
   of tekTuple:
@@ -194,7 +198,7 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
         var concreteArgs: seq[Type] = @[]
         for j, tp in genericDecl.declStructTypeParams:
           if j < te.typeArgs.len:
-            subst[tp] = ctx.resolveTypeExpr(te.typeArgs[j])
+            subst[tp.name] = ctx.resolveTypeExpr(te.typeArgs[j])
         for arg in te.typeArgs:
           concreteArgs.add(ctx.resolveTypeExpr(arg))
         for f in genericDecl.declStructFields:
@@ -257,7 +261,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     if sym != nil and sym.typ != nil: return sym.typ
     # Check local variables and parameters tracked in varTypeExprs
     if ctx.varTypeExprs.hasKey(expr.exprIdent):
-      return ctx.resolveTypeExpr(ctx.varTypeExprs[expr.exprIdent])
+      return substituteType(ctx, ctx.varTypeExprs[expr.exprIdent], ctx.typeSubst)
     # Check current function parameters (fallback for untracked params)
     if ctx.currentFuncDecl != nil:
       var params: seq[Param] = @[]
@@ -267,21 +271,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
       else: discard
       for p in params:
         if p.name == expr.exprIdent and p.ptype != nil:
-          case p.ptype.kind
-          of tekNamed:
-            case p.ptype.typeName
-            of "int", "int32": return makeInt()
-            of "int64": return makeInt64()
-            of "float64": return makeFloat64()
-            of "float32": return makeFloat32()
-            of "bool": return makeBool()
-            of "uint": return makeUInt()
-            of "void": return makeVoid()
-            else: return makeNamed(p.ptype.typeName)
-          of tekPointer:
-            let pointeeType = ctx.resolveTypeExpr(p.ptype.pointerPointee)
-            return makePointer(pointeeType)
-          else: discard
+          return substituteType(ctx, p.ptype, ctx.typeSubst)
     return makeUnknown()
   of ekSelf:
     # Look up self parameter type from current function
@@ -329,7 +319,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
   of ekField:
     var objType = ctx.resolveExprType(expr.exprFieldObj)
     # Auto-dereference pointer types for field access
-    if objType.kind == tkPointer and objType.inner.len > 0:
+    if objType.isPointer and objType.inner.len > 0:
       objType = objType.inner[0]
     if objType.kind == tkNamed:
       let sym = ctx.globalScope.lookup(objType.name)
@@ -460,7 +450,13 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       var receiverTypeName = ""
       if receiverType.kind == tkNamed:
         receiverTypeName = receiverType.name
-      elif receiverType.kind == tkPointer and receiverType.inner.len > 0 and receiverType.inner[0].kind == tkNamed:
+        if ctx.typeSubst.hasKey(receiverTypeName):
+          let substituted = ctx.typeSubst[receiverTypeName]
+          if substituted.kind == tkNamed:
+            receiverTypeName = substituted.name
+          elif substituted.isPointer and substituted.inner.len > 0 and substituted.inner[0].kind == tkNamed:
+            receiverTypeName = substituted.inner[0].name
+      elif receiverType.isPointer and receiverType.inner.len > 0 and receiverType.inner[0].kind == tkNamed:
         receiverTypeName = receiverType.inner[0].name
 
       # Look up method for receiver type specifically
@@ -477,7 +473,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
             var args: seq[HirNode] = @[]
             let loweredReceiver = ctx.lowerExpr(receiverExpr)
             # Auto-address if method expects pointer but receiver is value
-            if minfo.params.len > 0 and minfo.params[0].kind == tkPointer and receiverType.kind != tkPointer:
+            if minfo.params.len > 0 and minfo.params[0].isPointer and not receiverType.isPointer:
               args.add(hirUnary(tkAmp, loweredReceiver, makePointer(receiverType), loc))
             else:
               args.add(loweredReceiver)
@@ -558,7 +554,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     let objType = ctx.resolveExprType(expr.exprFieldObj)
     let base = ctx.lowerExpr(expr.exprFieldObj)
     # Auto-dereference pointer types for field access
-    if objType.kind == tkPointer:
+    if objType.isPointer:
       let arrowPtr = HirNode(kind: hArrowField, arrowFieldBase: base,
                              arrowFieldName: expr.exprFieldName,
                              typ: makePointer(typ), loc: loc)
@@ -1010,7 +1006,7 @@ proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs:
     if i > 0: typeSuffix.add("_")
     if i < typeArgs.len:
       let argType = ctx.resolveTypeExpr(typeArgs[i])
-      subst[tp] = argType
+      subst[tp.name] = argType
       typeSuffix.add(argType.toString)
     else:
       typeSuffix.add("unknown")
@@ -1178,12 +1174,12 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
             let targ = inst.typeArgs[j]
             if targ.kind == tekNamed:
               case targ.typeName
-              of "int", "int32": subst[tp] = makeInt()
-              of "int64": subst[tp] = makeInt64()
-              of "float64": subst[tp] = makeFloat64()
-              of "float32": subst[tp] = makeFloat32()
-              of "bool": subst[tp] = makeBool()
-              else: subst[tp] = makeNamed(targ.typeName)
+              of "int", "int32": subst[tp.name] = makeInt()
+              of "int64": subst[tp.name] = makeInt64()
+              of "float64": subst[tp.name] = makeFloat64()
+              of "float32": subst[tp.name] = makeFloat32()
+              of "bool": subst[tp.name] = makeBool()
+              else: subst[tp.name] = makeNamed(targ.typeName)
         
         # Create specialized declaration
         var specDecl = Decl(

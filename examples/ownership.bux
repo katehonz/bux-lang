@@ -1,0 +1,47 @@
+import Std::Io::{PrintLine, PrintInt};
+
+// @[Checked] enables borrow checking for this function.
+// &T = shared reference (read-only)
+// &mut T = mutable reference (exclusive)
+
+@[Checked]
+func ScaleInPlace(val: &mut int, factor: int) {
+    *val = *val * factor;
+}
+
+@[Checked]
+func GetValue(val: &int) -> int {
+    return *val;
+}
+
+// Unchecked functions allow raw pointers without restrictions
+func UncheckedSwap(a: *int, b: *int) {
+    let tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+func Main() -> int {
+    var x: int = 10;
+    
+    // &mut allows mutation
+    ScaleInPlace(&x, 3);
+    PrintInt(x);  // 30
+    PrintLine("");
+    
+    // & allows reading
+    let y: int = GetValue(&x);
+    PrintInt(y);  // 30
+    PrintLine("");
+    
+    // Unchecked: raw pointers work like C
+    var a: int = 5;
+    var b: int = 7;
+    UncheckedSwap(&a, &b);
+    PrintInt(a);  // 7
+    PrintLine("");
+    PrintInt(b);  // 5
+    PrintLine("");
+    
+    return 0;
+}
