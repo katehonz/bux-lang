@@ -1,0 +1,35 @@
+module Std::Channel {
+
+extern func bux_channel_new(capacity: int64, elem_size: int64) -> *void;
+extern func bux_channel_send(handle: *void, elem: *void);
+extern func bux_channel_recv(handle: *void, out: *void) -> int;
+extern func bux_channel_close(handle: *void);
+extern func bux_channel_free(handle: *void);
+
+struct Channel<T> {
+    handle: *void;
+}
+
+func Channel_New<T>(capacity: int64) -> Channel<T> {
+    return Channel<T> { handle: bux_channel_new(capacity, sizeof(T)) };
+}
+
+func Channel_Send<T>(ch: *Channel<T>, value: T) {
+    bux_channel_send(ch.handle, &value);
+}
+
+func Channel_Recv<T>(ch: *Channel<T>) -> T {
+    var result: T;
+    bux_channel_recv(ch.handle, &result);
+    return result;
+}
+
+func Channel_Close<T>(ch: *Channel<T>) {
+    bux_channel_close(ch.handle);
+}
+
+func Channel_Free<T>(ch: *Channel<T>) {
+    bux_channel_free(ch.handle);
+}
+
+}

@@ -117,6 +117,7 @@ type
     ekIs
     ekTry
     ekUnwrap        ## expr! — unwrap or panic
+    ekSpawn         ## spawn expr — create a new task
     ekBlock
     ekMatch
 
@@ -196,6 +197,9 @@ type
       exprTryType*: TypeExpr  # nil for Result?, or explicit target type
     of ekUnwrap:
       exprUnwrapOperand*: Expr
+    of ekSpawn:
+      exprSpawnCallee*: Expr
+      exprSpawnArgs*: seq[Expr]
     of ekBlock:
       exprBlock*: Block
     of ekMatch:

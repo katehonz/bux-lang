@@ -31,6 +31,8 @@ type
     hCast
     hIs
     hSizeOf
+    # Concurrency
+    hSpawn
     # Composite
     hBlock
     hStructInit
@@ -107,6 +109,9 @@ type
       isType*: Type
     of hSizeOf:
       sizeOfType*: Type
+    of hSpawn:
+      spawnCallee*: string
+      spawnArgs*: seq[HirNode]
     of hBlock:
       blockStmts*: seq[HirNode]
       blockExpr*: HirNode

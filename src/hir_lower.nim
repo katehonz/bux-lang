@@ -756,6 +756,18 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return HirNode(kind: hLit, litToken: Token(kind: tkStringLiteral, text: "\"\"", loc: loc),
                    typ: makeStr(), loc: loc)
 
+  of ekSpawn:
+    var calleeName = ""
+    if expr.exprSpawnCallee.kind == ekIdent:
+      calleeName = expr.exprSpawnCallee.exprIdent
+    elif expr.exprSpawnCallee.kind == ekPath:
+      calleeName = expr.exprSpawnCallee.exprPath.join("_")
+    var args: seq[HirNode] = @[]
+    for arg in expr.exprSpawnArgs:
+      args.add(ctx.lowerExpr(arg))
+    return HirNode(kind: hSpawn, spawnCallee: calleeName, spawnArgs: args,
+                   typ: makePointer(makeVoid()), loc: loc)
+
   else:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
                    typ: makeVoid(), loc: loc)

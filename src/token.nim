@@ -52,6 +52,9 @@ type
     tkOwn             # own (gradual ownership transfer)
     tkMut             # mut (mutable reference)
     tkDiscard         # discard (evaluate and throw away)
+    tkAsync           # async
+    tkAwait           # await
+    tkSpawn           # spawn
 
     ##Punctuation
     tkLParen          # (
@@ -143,7 +146,7 @@ proc isKeyword*(kind: TokenKind): bool =
      tkBreak, tkContinue, tkReturn, tkMatch,
      tkFunc, tkLet, tkVar, tkConst, tkType, tkStruct, tkEnum,
      tkUnion, tkInterface, tkExtend, tkModule, tkImport,
-      tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkDiscard:
+      tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkDiscard, tkAsync, tkAwait, tkSpawn:
     true
   else:
     false
@@ -200,6 +203,9 @@ proc keywordKind*(text: string): TokenKind =
   of "own": tkOwn
   of "mut": tkMut
   of "discard": tkDiscard
+  of "async": tkAsync
+  of "await": tkAwait
+  of "spawn": tkSpawn
   of "true", "false": tkBoolLiteral
   else: tkIdent
 
@@ -246,6 +252,9 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkOwn: "'own'"
   of tkMut: "'mut'"
   of tkDiscard: "'discard'"
+  of tkAsync: "'async'"
+  of tkAwait: "'await'"
+  of tkSpawn: "'spawn'"
   of tkLParen: "'('"
   of tkRParen: "')'"
   of tkLBrace: "'{'"

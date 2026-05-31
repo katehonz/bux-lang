@@ -1000,6 +1000,11 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     case expr.exprIntrinsic
     of ikLine, ikColumn: return makeInt()
     of ikFile, ikFunction, ikDate, ikTime, ikModule: return makeStr()
+  of ekSpawn:
+    discard sema.checkExpr(expr.exprSpawnCallee, scope)
+    for arg in expr.exprSpawnArgs:
+      discard sema.checkExpr(arg, scope)
+    return makePointer(makeVoid())
   of ekSpread:
     return sema.checkExpr(expr.exprSpreadOperand, scope)
 

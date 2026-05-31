@@ -252,6 +252,16 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     let typ = typeToC(node.sizeOfType)
     return &"sizeof({typ})"
 
+  of hSpawn:
+    var argsStr = ""
+    if node.spawnArgs.len > 0:
+      # Package arguments into a heap-allocated struct (simplified: single arg)
+      let arg = be.emitExpr(node.spawnArgs[0])
+      argsStr = &"(void*){arg}"
+    else:
+      argsStr = "NULL"
+    return &"bux_task_spawn({node.spawnCallee}, {argsStr})"
+
   of hIf:
     # Ternary expression
     let cond = be.emitExpr(node.ifCond)

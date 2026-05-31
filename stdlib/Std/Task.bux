@@ -1,0 +1,23 @@
+module Std::Task {
+
+extern func bux_task_spawn(fn: *void, arg: *void) -> *void;
+extern func bux_task_join(handle: *void);
+extern func bux_task_sleep(ms: int64);
+
+struct TaskHandle {
+    handle: *void;
+}
+
+func Task_Spawn(fn: *void, arg: *void) -> TaskHandle {
+    return TaskHandle { handle: bux_task_spawn(fn, arg) };
+}
+
+func Task_Join(t: TaskHandle) {
+    bux_task_join(t.handle);
+}
+
+func Task_Sleep(ms: int64) {
+    bux_task_sleep(ms);
+}
+
+}

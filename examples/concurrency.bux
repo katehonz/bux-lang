@@ -1,0 +1,15 @@
+import Std::Io::{PrintLine, PrintInt};
+import Std::Task::TaskHandle;
+import Std::Channel::Channel;
+
+func Worker(arg: *void) -> *void {
+    PrintLine("Hello from thread!");
+    return null;
+}
+
+func Main() -> int {
+    let handle: *void = spawn Worker();
+    Task_Join(TaskHandle { handle: handle });
+    PrintLine("Thread finished");
+    return 0;
+}

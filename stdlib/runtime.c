@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <pthread.h>
 
 /* Command-line argument storage */
 int g_argc = 0;
@@ -654,4 +655,142 @@ int bux_run_cc(const char* c_file, const char* out_bin,
 int bux_dir_exists(const char* path) {
     struct stat st;
     return (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+}
+
+/* ============================================================================
+ * Concurrency primitives (Phase 8.3)
+ * ============================================================================ */
+
+typedef struct {
+    pthread_t thread;
+} BuxTask;
+
+typedef struct {
+    uint8_t* buffer;
+    size_t capacity;
+    size_t elem_size;
+    size_t head;
+    size_t tail;
+    size_t count;
+    pthread_mutex_t mutex;
+    pthread_cond_t not_empty;
+    pthread_cond_t not_full;
+    int closed;
+} BuxChannel;
+
+/* Task / thread spawning */
+void* bux_task_spawn(void* (*func)(void*), void* arg) {
+    BuxTask* task = (BuxTask*)malloc(sizeof(BuxTask));
+    if (!task) {
+        fprintf(stderr, "bux runtime: out of memory (task spawn)\n");
+        abort();
+    }
+    int rc = pthread_create(&task->thread, NULL, func, arg);
+    if (rc != 0) {
+        fprintf(stderr, "bux runtime: pthread_create failed (%d)\n", rc);
+        free(task);
+        return NULL;
+    }
+    return task;
+}
+
+void bux_task_join(void* handle) {
+    if (!handle) return;
+    BuxTask* task = (BuxTask*)handle;
+    pthread_join(task->thread, NULL);
+    free(task);
+}
+
+void bux_task_sleep(int64_t ms) {
+    if (ms <= 0) return;
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000;
+    nanosleep(&ts, NULL);
+}
+
+/* Channel implementation */
+void* bux_channel_new(int64_t capacity, int64_t elem_size) {
+    if (capacity <= 0) capacity = 1;
+    if (elem_size <= 0) elem_size = 1;
+    BuxChannel* ch = (BuxChannel*)malloc(sizeof(BuxChannel));
+    if (!ch) {
+        fprintf(stderr, "bux runtime: out of memory (channel new)\n");
+        abort();
+    }
+    ch->buffer = (uint8_t*)malloc((size_t)capacity * (size_t)elem_size);
+    if (!ch->buffer) {
+        fprintf(stderr, "bux runtime: out of memory (channel buffer)\n");
+        free(ch);
+        abort();
+    }
+    ch->capacity = (size_t)capacity;
+    ch->elem_size = (size_t)elem_size;
+    ch->head = 0;
+    ch->tail = 0;
+    ch->count = 0;
+    ch->closed = 0;
+    pthread_mutex_init(&ch->mutex, NULL);
+    pthread_cond_init(&ch->not_empty, NULL);
+    pthread_cond_init(&ch->not_full, NULL);
+    return ch;
+}
+
+void bux_channel_send(void* handle, void* elem) {
+    if (!handle || !elem) return;
+    BuxChannel* ch = (BuxChannel*)handle;
+    pthread_mutex_lock(&ch->mutex);
+    while (ch->count >= ch->capacity && !ch->closed) {
+        pthread_cond_wait(&ch->not_full, &ch->mutex);
+    }
+    if (ch->closed) {
+        pthread_mutex_unlock(&ch->mutex);
+        return;
+    }
+    uint8_t* dst = ch->buffer + ch->tail * ch->elem_size;
+    memcpy(dst, elem, ch->elem_size);
+    ch->tail = (ch->tail + 1) % ch->capacity;
+    ch->count++;
+    pthread_cond_signal(&ch->not_empty);
+    pthread_mutex_unlock(&ch->mutex);
+}
+
+int bux_channel_recv(void* handle, void* out) {
+    if (!handle || !out) return 0;
+    BuxChannel* ch = (BuxChannel*)handle;
+    pthread_mutex_lock(&ch->mutex);
+    while (ch->count == 0 && !ch->closed) {
+        pthread_cond_wait(&ch->not_empty, &ch->mutex);
+    }
+    if (ch->count == 0) {
+        pthread_mutex_unlock(&ch->mutex);
+        return 0; /* channel empty and closed */
+    }
+    uint8_t* src = ch->buffer + ch->head * ch->elem_size;
+    memcpy(out, src, ch->elem_size);
+    ch->head = (ch->head + 1) % ch->capacity;
+    ch->count--;
+    pthread_cond_signal(&ch->not_full);
+    pthread_mutex_unlock(&ch->mutex);
+    return 1;
+}
+
+void bux_channel_close(void* handle) {
+    if (!handle) return;
+    BuxChannel* ch = (BuxChannel*)handle;
+    pthread_mutex_lock(&ch->mutex);
+    ch->closed = 1;
+    pthread_cond_broadcast(&ch->not_empty);
+    pthread_cond_broadcast(&ch->not_full);
+    pthread_mutex_unlock(&ch->mutex);
+}
+
+void bux_channel_free(void* handle) {
+    if (!handle) return;
+    BuxChannel* ch = (BuxChannel*)handle;
+    pthread_mutex_destroy(&ch->mutex);
+    pthread_cond_destroy(&ch->not_empty);
+    pthread_cond_destroy(&ch->not_full);
+    free(ch->buffer);
+    free(ch);
 }

@@ -444,6 +444,18 @@ proc parsePrimary(p: var Parser): Expr =
     let ty = p.parseType()
     discard p.expect(tkRParen, "expected ')'")
     return Expr(kind: ekSizeOf, loc: loc, exprSizeOfType: ty)
+  of tkSpawn:
+    discard p.advance()  # spawn
+    let callee = p.parsePrimary()
+    var args: seq[Expr] = @[]
+    if p.check(tkLParen):
+      discard p.advance()  # (
+      while not p.check(tkRParen) and not p.isAtEnd:
+        args.add(p.parseExpr())
+        if p.check(tkComma):
+          discard p.advance()
+      discard p.expect(tkRParen, "expected ')' after spawn arguments")
+    return Expr(kind: ekSpawn, loc: loc, exprSpawnCallee: callee, exprSpawnArgs: args)
   of tkHashLine:
     discard p.advance()
     return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikLine)
