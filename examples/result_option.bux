@@ -1,0 +1,116 @@
+// Result and Option - Error handling and optional values
+import Std::Io::{PrintLine, PrintInt};
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+func Result_NewOk(value: int) -> Result {
+    let r: Result = Result { tag: Result_Ok };
+    r.data.Ok_0 = value;
+    return r;
+}
+
+func Result_NewErr(msg: String) -> Result {
+    let r: Result = Result { tag: Result_Err };
+    r.data.Err_0 = msg;
+    return r;
+}
+
+func Result_IsOk(r: Result) -> bool {
+    return r.tag == Result_Ok;
+}
+
+func Result_IsErr(r: Result) -> bool {
+    return r.tag == Result_Err;
+}
+
+func Result_Unwrap(r: Result) -> int {
+    if r.tag == Result_Ok {
+        return r.data.Ok_0;
+    }
+    return 0;
+}
+
+func Result_UnwrapOr(r: Result, fallback: int) -> int {
+    if r.tag == Result_Ok {
+        return r.data.Ok_0;
+    }
+    return fallback;
+}
+
+enum Option {
+    Some(int),
+    None
+}
+
+func Option_NewSome(value: int) -> Option {
+    let o: Option = Option { tag: Option_Some };
+    o.data.Some_0 = value;
+    return o;
+}
+
+func Option_NewNone() -> Option {
+    return Option { tag: Option_None };
+}
+
+func Option_IsSome(o: Option) -> bool {
+    return o.tag == Option_Some;
+}
+
+func Option_UnwrapOr(o: Option, fallback: int) -> int {
+    if o.tag == Option_Some {
+        return o.data.Some_0;
+    }
+    return fallback;
+}
+
+func Divide(a: int, b: int) -> Result {
+    if b == 0 {
+        return Result_NewErr("division by zero");
+    }
+    return Result_NewOk(a / b);
+}
+
+func SafeDivide(a: int, b: int) -> Option {
+    if b == 0 {
+        return Option_NewNone();
+    }
+    return Option_NewSome(a / b);
+}
+
+func Main() -> int {
+    PrintLine("Result demo:");
+    
+    let r1: Result = Divide(10, 2);
+    if Result_IsOk(r1) {
+        PrintLine("10 / 2 = ");
+        PrintInt(Result_Unwrap(r1));
+        PrintLine("");
+    }
+    
+    let r2: Result = Divide(10, 0);
+    if Result_IsErr(r2) {
+        PrintLine("10 / 0 failed");
+    }
+    PrintLine("unwrap_or = ");
+    PrintInt(Result_UnwrapOr(r2, -1));
+    PrintLine("");
+    
+    PrintLine("Option demo:");
+    
+    let o1: Option = SafeDivide(20, 4);
+    if Option_IsSome(o1) {
+        PrintLine("20 / 4 = ");
+        PrintInt(Option_UnwrapOr(o1, 0));
+        PrintLine("");
+    }
+    
+    let o2: Option = SafeDivide(20, 0);
+    PrintLine("20 / 0 fallback = ");
+    PrintInt(Option_UnwrapOr(o2, -1));
+    PrintLine("");
+    
+    return 0;
+}

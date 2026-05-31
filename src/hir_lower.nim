@@ -9,12 +9,26 @@ type
     currentFuncRetType*: Type
     currentFuncDecl*: Decl
     varCounter*: int
+    tryCounter*: int
+    pendingStmts*: seq[HirNode]
     typeSubst*: Table[string, Type]  # Type parameter substitution for generics
     importTable*: Table[string, string]  # Local name → fully qualified name for imports
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
   result = "__tmp_" & $ctx.varCounter
+
+proc freshTryVar(ctx: var LowerCtx): string =
+  inc ctx.tryCounter
+  result = "__try_" & $ctx.tryCounter
+
+proc flushPending(ctx: var LowerCtx, node: HirNode): HirNode =
+  if ctx.pendingStmts.len > 0:
+    var stmts = ctx.pendingStmts
+    ctx.pendingStmts = @[]
+    stmts.add(node)
+    return hirBlock(stmts, nil, makeVoid(), node.loc)
+  return node
 
 proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ: Type, loc: SourceLocation): HirNode =
   # Lower match expression to a block with if-else chain.
@@ -100,6 +114,8 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.globalScope = sema.globalScope
   result.methodTable = sema.methodTable
   result.varCounter = 0
+  result.tryCounter = 0
+  result.pendingStmts = @[]
   result.typeSubst = initTable[string, Type]()
   result.importTable = initTable[string, string]()
 
@@ -110,14 +126,26 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
     case te.typeName
     of "void": return makeVoid()
     of "bool": return makeBool()
+    of "bool8": return makeBool8()
+    of "bool16": return makeBool16()
+    of "bool32": return makeBool32()
+    of "char8": return makeChar8()
+    of "char16": return makeChar16()
+    of "char32": return makeChar32()
+    of "String", "str": return makeStr()
     of "int": return makeInt()
-    of "int32": return makeInt()
+    of "int8": return makeInt8()
+    of "int16": return makeInt16()
+    of "int32": return makeInt32()
     of "int64": return makeInt64()
-    of "float64": return makeFloat64()
-    of "float32": return makeFloat32()
     of "uint": return makeUInt()
-    of "uint32": return makeUInt()
+    of "uint8": return makeUInt8()
+    of "uint16": return makeUInt16()
+    of "uint32": return makeUInt32()
     of "uint64": return makeUInt64()
+    of "float": return makeFloat64()
+    of "float32": return makeFloat32()
+    of "float64": return makeFloat64()
     else: return makeNamed(te.typeName)
   of tekPointer: return makePointer(ctx.resolveTypeExpr(te.pointerPointee))
   of tekSlice: return makeSlice(ctx.resolveTypeExpr(te.sliceElement))
@@ -241,6 +269,9 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     if expr.exprCastType != nil:
       return ctx.resolveTypeExpr(expr.exprCastType)
     return makeUnknown()
+  of ekTry:
+    # For now, assume Result<int, String> -> int or Option<int> -> int
+    return makeInt()
   of ekBlock:
     if expr.exprBlock.stmts.len > 0:
       let last = expr.exprBlock.stmts[^1]
@@ -426,6 +457,60 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return HirNode(kind: hIs, isOperand: operand, isType: isType,
                    typ: makeBool(), loc: loc)
 
+  of ekTry:
+    let operand = ctx.lowerExpr(expr.exprTryOperand)
+    let operandType = ctx.resolveExprType(expr.exprTryOperand)
+
+    var typeName = ""
+    var errTag = ""
+    var okField = ""
+    if operandType.kind == tkNamed:
+      typeName = operandType.name
+      case typeName
+      of "Result":
+        errTag = "Result_Err"
+        okField = "Ok_0"
+      of "Option":
+        errTag = "Option_None"
+        okField = "Some_0"
+      else:
+        errTag = typeName & "_Err"
+        okField = "Ok_0"
+    else:
+      errTag = "Result_Err"
+      okField = "Ok_0"
+      typeName = "Result"
+
+    let tmpName = ctx.freshTryVar()
+    let tmpAlloca = hirAlloca(tmpName, operandType, loc)
+    let tmpVar = hirVar(tmpName, makePointer(operandType), loc)
+    let tmpStore = hirStore(tmpVar, operand, loc)
+
+    let tagPtr = HirNode(kind: hFieldPtr, fieldPtrBase: tmpVar, fieldName: "tag",
+                         typ: makePointer(makeNamed(typeName & "_Tag")), loc: loc)
+    let tagLoad = HirNode(kind: hLoad, loadPtr: tagPtr,
+                          typ: makeNamed(typeName & "_Tag"), loc: loc)
+    let errConst = hirVar(errTag, makeNamed(typeName & "_Tag"), loc)
+    let cond = hirBinary(tkEq, tagLoad, errConst, makeBool(), loc)
+
+    let retNode = hirReturn(tmpVar, loc)
+    let thenBlock = hirBlock(@[retNode], nil, makeVoid(), loc)
+    let ifNode = HirNode(kind: hIf, ifCond: cond, ifThen: thenBlock,
+                         ifElse: nil, typ: makeVoid(), loc: loc)
+
+    let dataPtr = HirNode(kind: hFieldPtr, fieldPtrBase: tmpVar, fieldName: "data",
+                          typ: makePointer(makeNamed(typeName & "_Data")), loc: loc)
+    let dataLoad = HirNode(kind: hLoad, loadPtr: dataPtr,
+                           typ: makeNamed(typeName & "_Data"), loc: loc)
+    let okPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: okField,
+                        typ: makePointer(makeInt()), loc: loc)
+    let okLoad = HirNode(kind: hLoad, loadPtr: okPtr, typ: makeInt(), loc: loc)
+
+    ctx.pendingStmts.add(tmpAlloca)
+    ctx.pendingStmts.add(tmpStore)
+    ctx.pendingStmts.add(ifNode)
+    return okLoad
+
   of ekMatch:
     let subject = ctx.lowerExpr(expr.exprMatchSubject)
     var arms: seq[HirMatchArm] = @[]
@@ -434,8 +519,8 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return lowerMatch(ctx, subject, arms, typ, loc)
 
   of ekSizeOf:
-    return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
-                   typ: makeInt(), loc: loc)
+    let ty = ctx.resolveTypeExpr(expr.exprSizeOfType)
+    return HirNode(kind: hSizeOf, sizeOfType: ty, typ: makeInt(), loc: loc)
 
   of ekIntrinsic:
     return HirNode(kind: hLit, litToken: Token(kind: tkStringLiteral, text: "\"\"", loc: loc),
@@ -451,21 +536,20 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
 
   case stmt.kind
   of skExpr:
-    return ctx.lowerExpr(stmt.stmtExpr)
+    return ctx.flushPending(ctx.lowerExpr(stmt.stmtExpr))
 
   of skLet:
     let initHir = ctx.lowerExpr(stmt.stmtLetInit)
     let allocaType = if stmt.stmtLetType != nil:
       case stmt.stmtLetType.kind
       of tekNamed:
-        case stmt.stmtLetType.typeName
-        of "int", "int32": makeInt()
-        of "int64": makeInt64()
-        of "float64": makeFloat64()
-        of "float32": makeFloat32()
-        of "bool": makeBool()
-        else: makeNamed(stmt.stmtLetType.typeName)
-      of tekPointer: makePointer(makeUnknown())
+        ctx.resolveTypeExpr(stmt.stmtLetType)
+      of tekPointer:
+        let pointeeType = ctx.resolveTypeExpr(stmt.stmtLetType.pointerPointee)
+        makePointer(pointeeType)
+      of tekSlice:
+        let elemType = ctx.resolveTypeExpr(stmt.stmtLetType.sliceElement)
+        makeSlice(elemType)
       else: makeUnknown()
     else:
       ctx.resolveExprType(stmt.stmtLetInit)
@@ -473,12 +557,15 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     let alloca = hirAlloca(stmt.stmtLetName, allocaType, loc)
     let varNode = hirVar(stmt.stmtLetName, makePointer(allocaType), loc)
     let store = hirStore(varNode, initHir, loc)
-    return HirNode(kind: hBlock, blockStmts: @[alloca, store],
-                   blockExpr: nil, typ: makeVoid(), loc: loc)
+    var stmts = ctx.pendingStmts
+    ctx.pendingStmts = @[]
+    stmts.add(alloca)
+    stmts.add(store)
+    return hirBlock(stmts, nil, makeVoid(), loc)
 
   of skReturn:
     let value = if stmt.stmtReturnValue != nil: ctx.lowerExpr(stmt.stmtReturnValue) else: nil
-    return hirReturn(value, loc)
+    return ctx.flushPending(hirReturn(value, loc))
 
   of skIf:
     let cond = ctx.lowerExpr(stmt.stmtIfCond)
@@ -496,26 +583,26 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
         current = HirNode(kind: hIf, ifCond: elifCond, ifThen: elifBlock,
                          ifElse: current, typ: makeVoid(), loc: elifBranch.loc)
       elseBlock = current
-    return HirNode(kind: hIf, ifCond: cond, ifThen: thenBlock, ifElse: elseBlock,
-                   typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hIf, ifCond: cond, ifThen: thenBlock, ifElse: elseBlock,
+                   typ: makeVoid(), loc: loc))
 
   of skWhile:
     let cond = ctx.lowerExpr(stmt.stmtWhileCond)
     let body = ctx.lowerBlock(stmt.stmtWhileBody)
-    return HirNode(kind: hWhile, whileCond: cond, whileBody: body,
-                   typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hWhile, whileCond: cond, whileBody: body,
+                   typ: makeVoid(), loc: loc))
 
   of skLoop:
     let body = ctx.lowerBlock(stmt.stmtLoopBody)
-    return HirNode(kind: hLoop, loopBody: body, typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hLoop, loopBody: body, typ: makeVoid(), loc: loc))
 
   of skBreak:
-    return HirNode(kind: hBreak, breakLabel: stmt.stmtBreakLabel,
-                   typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hBreak, breakLabel: stmt.stmtBreakLabel,
+                   typ: makeVoid(), loc: loc))
 
   of skContinue:
-    return HirNode(kind: hContinue, continueLabel: stmt.stmtContinueLabel,
-                   typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hContinue, continueLabel: stmt.stmtContinueLabel,
+                   typ: makeVoid(), loc: loc))
 
   of skFor:
     let iterExpr = stmt.stmtForIter
@@ -559,28 +646,28 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
       
       # Wrap in a block so loop variable doesn't leak into outer scope
       let forBlock = hirBlock(@[initStmt, initStore, whileNode], nil, makeVoid(), loc, isScope = true)
-      return forBlock
+      return ctx.flushPending(forBlock)
     
     # Generic iterator for loop (simplified - just infinite loop for now)
     let loweredIter = ctx.lowerExpr(iterExpr)
     let loweredBody = ctx.lowerBlock(body)
-    return HirNode(kind: hLoop, loopBody: loweredBody, typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hLoop, loopBody: loweredBody, typ: makeVoid(), loc: loc))
 
   of skDoWhile:
     let body = ctx.lowerBlock(stmt.stmtDoWhileBody)
     let cond = ctx.lowerExpr(stmt.stmtDoWhileCond)
     let whileNode = HirNode(kind: hWhile, whileCond: cond, whileBody: body,
                            typ: makeVoid(), loc: loc)
-    return HirNode(kind: hBlock, blockStmts: @[body, whileNode],
-                   blockExpr: nil, typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hBlock, blockStmts: @[body, whileNode],
+                   blockExpr: nil, typ: makeVoid(), loc: loc))
 
   of skMatch:
     let subject = ctx.lowerExpr(stmt.stmtMatchSubject)
     var arms: seq[HirMatchArm] = @[]
     for arm in stmt.stmtMatchArms:
       arms.add(HirMatchArm(pattern: arm.pattern, body: ctx.lowerExpr(arm.body)))
-    return HirNode(kind: hMatch, matchSubject: subject, matchArms: arms,
-                   typ: makeVoid(), loc: loc)
+    return ctx.flushPending(HirNode(kind: hMatch, matchSubject: subject, matchArms: arms,
+                   typ: makeVoid(), loc: loc))
 
   of skDecl:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
@@ -642,14 +729,7 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
         if ctx.typeSubst.hasKey(p.ptype.typeName):
           pType = ctx.typeSubst[p.ptype.typeName]
         else:
-          case p.ptype.typeName
-          of "int", "int32": pType = makeInt()
-          of "int64": pType = makeInt64()
-          of "float64": pType = makeFloat64()
-          of "float32": pType = makeFloat32()
-          of "bool": pType = makeBool()
-          of "Point", "Self": pType = makeNamed(p.ptype.typeName)
-          else: pType = makeNamed(p.ptype.typeName)
+          pType = ctx.resolveTypeExpr(p.ptype)
       of tekPointer:
         let pointeeType = ctx.resolveTypeExpr(p.ptype.pointerPointee)
         pType = makePointer(pointeeType)
@@ -664,13 +744,7 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
       if ctx.typeSubst.hasKey(funcReturnType.typeName):
         retType = ctx.typeSubst[funcReturnType.typeName]
       else:
-        case funcReturnType.typeName
-        of "int", "int32": retType = makeInt()
-        of "int64": retType = makeInt64()
-        of "float64": retType = makeFloat64()
-        of "float32": retType = makeFloat32()
-        of "bool": retType = makeBool()
-        else: retType = makeNamed(funcReturnType.typeName)
+        retType = ctx.resolveTypeExpr(funcReturnType)
     of tekPointer:
       let pointeeType = ctx.resolveTypeExpr(funcReturnType.pointerPointee)
       retType = makePointer(pointeeType)
@@ -751,6 +825,8 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       result.add(findGenericCalls(expr.exprBinaryRight))
     of ekUnary:
       result.add(findGenericCalls(expr.exprUnaryOperand))
+    of ekTry:
+      result.add(findGenericCalls(expr.exprTryOperand))
     of ekAssign:
       result.add(findGenericCalls(expr.exprAssignTarget))
       result.add(findGenericCalls(expr.exprAssignValue))

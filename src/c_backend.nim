@@ -235,6 +235,10 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
   of hIs:
     return "true"  # TODO: proper type checking
 
+  of hSizeOf:
+    let typ = typeToC(node.sizeOfType)
+    return &"sizeof({typ})"
+
   of hIf:
     # Ternary expression
     let cond = be.emitExpr(node.ifCond)

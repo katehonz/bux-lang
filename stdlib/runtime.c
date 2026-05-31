@@ -127,3 +127,38 @@ void bux_bounds_check(size_t index, size_t len) {
         abort();
     }
 }
+
+/* String wrappers with Bux-compatible signatures */
+unsigned int bux_strlen(const char* s) {
+    return (unsigned int)strlen(s);
+}
+
+int bux_strcmp(const char* a, const char* b) {
+    return strcmp(a, b);
+}
+
+int bux_strncmp(const char* a, const char* b, unsigned int n) {
+    return strncmp(a, b, (size_t)n);
+}
+
+char* bux_strcpy(char* dest, const char* src) {
+    return strcpy(dest, src);
+}
+
+char* bux_strcat(char* dest, const char* src) {
+    return strcat(dest, src);
+}
+
+char* bux_strncpy(char* dest, const char* src, unsigned int n) {
+    return strncpy(dest, src, (size_t)n);
+}
+
+/* Hash function (djb2) for string keys */
+unsigned int bux_hash_string(const char* s) {
+    unsigned int hash = 5381;
+    int c;
+    while ((c = *s++)) {
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+    }
+    return hash;
+}

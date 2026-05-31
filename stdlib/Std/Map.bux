@@ -1,0 +1,79 @@
+module Std::Map {
+
+extern func bux_hash_string(s: String) -> uint;
+
+struct MapEntry {
+    key: String,
+    value: int,
+    occupied: bool,
+}
+
+struct Map {
+    entries: *MapEntry,
+    cap: uint,
+    len: uint,
+}
+
+func Map_New(cap: uint) -> Map {
+    let total: uint = cap * sizeof(MapEntry);
+    let data: *MapEntry = bux_alloc(total) as *MapEntry;
+    var i: uint = 0;
+    while i < cap {
+        data[i].occupied = false;
+        i = i + 1;
+    }
+    return Map { entries: data, cap: cap, len: 0 };
+}
+
+func Map_Set(m: *Map, key: String, value: int) {
+    let hash: uint = bux_hash_string(key);
+    var idx: uint = hash % m.cap;
+    while m.entries[idx].occupied {
+        if String_Eq(m.entries[idx].key, key) {
+            m.entries[idx].value = value;
+            return;
+        }
+        idx = (idx + 1) % m.cap;
+    }
+    m.entries[idx].key = key;
+    m.entries[idx].value = value;
+    m.entries[idx].occupied = true;
+    m.len = m.len + 1;
+}
+
+func Map_Get(m: *Map, key: String) -> int {
+    let hash: uint = bux_hash_string(key);
+    var idx: uint = hash % m.cap;
+    while m.entries[idx].occupied {
+        if String_Eq(m.entries[idx].key, key) {
+            return m.entries[idx].value;
+        }
+        idx = (idx + 1) % m.cap;
+    }
+    return 0;
+}
+
+func Map_Has(m: *Map, key: String) -> bool {
+    let hash: uint = bux_hash_string(key);
+    var idx: uint = hash % m.cap;
+    while m.entries[idx].occupied {
+        if String_Eq(m.entries[idx].key, key) {
+            return true;
+        }
+        idx = (idx + 1) % m.cap;
+    }
+    return false;
+}
+
+func Map_Len(m: *Map) -> uint {
+    return m.len;
+}
+
+func Map_Free(m: *Map) {
+    bux_free(m.entries as *void);
+    m.entries = null as *MapEntry;
+    m.cap = 0;
+    m.len = 0;
+}
+
+}

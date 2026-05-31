@@ -1,0 +1,58 @@
+// Try operator ? - Error propagation
+import Std::Io::{PrintLine, PrintInt};
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+func Result_NewOk(value: int) -> Result {
+    let r: Result = Result { tag: Result_Ok };
+    r.data.Ok_0 = value;
+    return r;
+}
+
+func Result_NewErr(msg: String) -> Result {
+    let r: Result = Result { tag: Result_Err };
+    r.data.Err_0 = msg;
+    return r;
+}
+
+func Divide(a: int, b: int) -> Result {
+    if b == 0 {
+        return Result_NewErr("division by zero");
+    }
+    return Result_NewOk(a / b);
+}
+
+func Compute() -> Result {
+    let x: int = Divide(10, 2)?;
+    let y: int = Divide(x, 5)?;
+    return Result_NewOk(y);
+}
+
+func ComputeWithError() -> Result {
+    let x: int = Divide(10, 0)?;
+    let y: int = Divide(x, 5)?;
+    return Result_NewOk(y);
+}
+
+func Main() -> int {
+    PrintLine("Try operator demo:");
+    
+    let r1: Result = Compute();
+    if r1.tag == Result_Ok {
+        PrintLine("Compute() = ");
+        PrintInt(r1.data.Ok_0);
+        PrintLine("");
+    } else {
+        PrintLine("Compute() failed");
+    }
+    
+    let r2: Result = ComputeWithError();
+    if r2.tag == Result_Err {
+        PrintLine("ComputeWithError() failed as expected");
+    }
+    
+    return 0;
+}

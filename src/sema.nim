@@ -562,6 +562,11 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
   of ekIs:
     discard sema.checkExpr(expr.exprIsOperand, scope)
     return makeBool()
+  of ekTry:
+    let operandType = sema.checkExpr(expr.exprTryOperand, scope)
+    # For now, assume Result<int, String> -> int
+    # TODO: check operand is Result/Option and current function returns same type
+    return makeInt()
   of ekBlock:
     var blockScope = newScope(scope)
     var lastType = makeVoid()

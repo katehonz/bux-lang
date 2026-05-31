@@ -1,0 +1,45 @@
+module Std::String {
+
+extern func bux_strlen(s: String) -> uint;
+extern func bux_strcmp(a: String, b: String) -> int;
+extern func bux_strncmp(a: String, b: String, n: uint) -> int;
+extern func bux_strcpy(dest: *char8, src: String) -> *char8;
+extern func bux_strcat(dest: *char8, src: String) -> *char8;
+extern func bux_strncpy(dest: *char8, src: String, n: uint) -> *char8;
+
+func String_Len(s: String) -> uint {
+    return bux_strlen(s);
+}
+
+func String_Eq(a: String, b: String) -> bool {
+    return bux_strcmp(a, b) == 0;
+}
+
+func String_Concat(a: String, b: String) -> String {
+    let len_a: uint = bux_strlen(a);
+    let len_b: uint = bux_strlen(b);
+    let total: uint = len_a + len_b + 1;
+    let buf: *char8 = bux_alloc(total) as *char8;
+    bux_strcpy(buf, a);
+    bux_strcat(buf, b);
+    return buf;
+}
+
+func String_Copy(s: String) -> String {
+    let len: uint = bux_strlen(s);
+    let buf: *char8 = bux_alloc(len + 1) as *char8;
+    bux_strcpy(buf, s);
+    return buf;
+}
+
+func String_StartsWith(s: String, prefix: String) -> bool {
+    let s_len: uint = bux_strlen(s);
+    let p_len: uint = bux_strlen(prefix);
+    if p_len > s_len {
+        return false;
+    }
+    let r: int = bux_strncmp(s, prefix, p_len);
+    return r == 0;
+}
+
+}

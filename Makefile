@@ -3,7 +3,7 @@ SRC := src/main.nim
 OUT := buxc
 BUILD_DIR := build
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics pattern_matching
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics pattern_matching strings map result_option try_operator
 
 .PHONY: all build dev test clean test-examples
 
@@ -25,6 +25,7 @@ test: build test-examples
 	@echo "Running HIR tests..."
 	$(NIM) c -r tests/hir_test.nim
 	@echo "Running integration tests..."
+	rm -rf _test_tmp_pkg
 	./$(OUT) new _test_tmp_pkg
 	./$(OUT) --version
 

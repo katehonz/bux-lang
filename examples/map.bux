@@ -1,0 +1,44 @@
+// Map - Hash map with String keys and int values
+import Std::Io::{PrintLine, PrintInt};
+import Std::Map::{Map, Map_New, Map_Set, Map_Get, Map_Has, Map_Len};
+
+func Main() -> int {
+    let m: Map = Map_New(16);
+    
+    PrintLine("Map operations:");
+    
+    Map_Set(&m, "one", 1);
+    Map_Set(&m, "two", 2);
+    Map_Set(&m, "three", 3);
+    
+    PrintLine("Length:");
+    PrintInt(Map_Len(&m));
+    PrintLine("");
+    
+    PrintLine("Get 'one':");
+    PrintInt(Map_Get(&m, "one"));
+    PrintLine("");
+    
+    PrintLine("Get 'two':");
+    PrintInt(Map_Get(&m, "two"));
+    PrintLine("");
+    
+    PrintLine("Get 'three':");
+    PrintInt(Map_Get(&m, "three"));
+    PrintLine("");
+    
+    Map_Set(&m, "two", 22);
+    PrintLine("Updated 'two':");
+    PrintInt(Map_Get(&m, "two"));
+    PrintLine("");
+    
+    if Map_Has(&m, "one") {
+        PrintLine("Has 'one': yes");
+    }
+    
+    if !Map_Has(&m, "four") {
+        PrintLine("Has 'four': no");
+    }
+    
+    return 0;
+}

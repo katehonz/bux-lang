@@ -21,8 +21,8 @@ void Print(const char* s) {
 }
 
 /* PrintInt - print integer */
-void PrintInt(int64_t n) {
-    printf("%lld", (long long)n);
+void PrintInt(int n) {
+    printf("%d", n);
 }
 
 /* PrintFloat - print float */

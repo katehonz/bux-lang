@@ -30,6 +30,7 @@ type
     # Type operations
     hCast
     hIs
+    hSizeOf
     # Composite
     hBlock
     hStructInit
@@ -104,6 +105,8 @@ type
     of hIs:
       isOperand*: HirNode
       isType*: Type
+    of hSizeOf:
+      sizeOfType*: Type
     of hBlock:
       blockStmts*: seq[HirNode]
       blockExpr*: HirNode

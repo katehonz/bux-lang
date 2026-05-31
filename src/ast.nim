@@ -113,6 +113,7 @@ type
     ekTuple
     ekCast
     ekIs
+    ekTry
     ekBlock
     ekMatch
 
@@ -186,6 +187,9 @@ type
     of ekIs:
       exprIsOperand*: Expr
       exprIsType*: TypeExpr
+    of ekTry:
+      exprTryOperand*: Expr
+      exprTryType*: TypeExpr  # nil for Result?, or explicit target type
     of ekBlock:
       exprBlock*: Block
     of ekMatch:
