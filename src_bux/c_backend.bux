@@ -160,11 +160,55 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
-    // Store
+    // Store: combine alloca + value into single declaration
     if kind == hStore {
+        if node.child1 != null as *HirNode && node.child1.kind == hAlloca {
+            // Declaration with initializer: int x = value;
+            StringBuilder_Append(&cbe.sb, CBackend_TypeToC(node.child1.intValue));
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, node.child1.strValue);
+            StringBuilder_Append(&cbe.sb, " = ");
+            CBE_EmitExpr(cbe, node.child2);
+            return;
+        }
+        // Plain assignment
         CBE_EmitExpr(cbe, node.child1);
         StringBuilder_Append(&cbe.sb, " = ");
         CBE_EmitExpr(cbe, node.child2);
+        return;
+    }
+
+    // If
+    if kind == hIf {
+        StringBuilder_Append(&cbe.sb, "if (");
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, ") {\n");
+        if node.child2 != null as *HirNode {
+            cbe.indent = cbe.indent + 1;
+            CBE_EmitExpr(cbe, node.child2);
+            cbe.indent = cbe.indent - 1;
+        }
+        var sp: int = 0;
+        while sp < cbe.indent {
+            StringBuilder_Append(&cbe.sb, "    ");
+            sp = sp + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "}");
+        let elseBlock: *HirNode = node.extraData as *HirNode;
+        if elseBlock != null as *HirNode {
+            StringBuilder_Append(&cbe.sb, " else {\n");
+            cbe.indent = cbe.indent + 1;
+            CBE_EmitExpr(cbe, elseBlock);
+            cbe.indent = cbe.indent - 1;
+            sp = 0;
+            while sp < cbe.indent {
+                StringBuilder_Append(&cbe.sb, "    ");
+                sp = sp + 1;
+            }
+            StringBuilder_Append(&cbe.sb, "}\n");
+        } else {
+            StringBuilder_Append(&cbe.sb, "\n");
+        }
         return;
     }
 
@@ -177,6 +221,27 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         StringBuilder_Append(&cbe.sb, ")");
         return;
     }
+
+    // Block — emit each statement via child3 linked list
+    if kind == hBlock {
+        var child: *HirNode = node.child1;
+        while child != null as *HirNode {
+            // Indent
+            var sp: int = 0;
+            while sp < cbe.indent {
+                StringBuilder_Append(&cbe.sb, "    ");
+                sp = sp + 1;
+            }
+            CBE_EmitExpr(cbe, child);
+            // Add semicolon for statements that need it
+            if child.kind != hBlock && child.kind != hIf && child.kind != hWhile && child.kind != hLoop {
+                StringBuilder_Append(&cbe.sb, ";");
+            }
+            StringBuilder_Append(&cbe.sb, "\n");
+            child = child.child3;
+        }
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -187,8 +252,20 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
     // Return type
     if String_Eq(f.retTypeName, "") || String_Eq(f.retTypeName, "void") {
         StringBuilder_Append(&cbe.sb, "void ");
+    } else if String_Eq(f.retTypeName, "String") || String_Eq(f.retTypeName, "str") {
+        StringBuilder_Append(&cbe.sb, "const char* ");
+    } else if String_Eq(f.retTypeName, "bool") {
+        StringBuilder_Append(&cbe.sb, "bool ");
+    } else if String_Eq(f.retTypeName, "int") {
+        StringBuilder_Append(&cbe.sb, "int ");
+    } else if String_Eq(f.retTypeName, "int64") {
+        StringBuilder_Append(&cbe.sb, "int64_t ");
+    } else if String_Eq(f.retTypeName, "uint") {
+        StringBuilder_Append(&cbe.sb, "unsigned int ");
+    } else if String_Eq(f.retTypeName, "float64") {
+        StringBuilder_Append(&cbe.sb, "double ");
     } else {
-        StringBuilder_Append(&cbe.sb, "int "); // simplified
+        StringBuilder_Append(&cbe.sb, "int "); // fallback
     }
 
     StringBuilder_Append(&cbe.sb, f.name);
@@ -200,14 +277,31 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
         if i > 0 {
             StringBuilder_Append(&cbe.sb, ", ");
         }
-        StringBuilder_Append(&cbe.sb, "int "); // simplified param type
+        // Use param type info
         var pname: String = "";
-        if i == 0 { pname = f.param0.name; }
-        if i == 1 { pname = f.param1.name; }
-        if i == 2 { pname = f.param2.name; }
-        if i == 3 { pname = f.param3.name; }
-        if i == 4 { pname = f.param4.name; }
-        if i == 5 { pname = f.param5.name; }
+        var ptype: String = "";
+        if i == 0 { pname = f.param0.name; ptype = f.param0.typeName; }
+        if i == 1 { pname = f.param1.name; ptype = f.param1.typeName; }
+        if i == 2 { pname = f.param2.name; ptype = f.param2.typeName; }
+        if i == 3 { pname = f.param3.name; ptype = f.param3.typeName; }
+        if i == 4 { pname = f.param4.name; ptype = f.param4.typeName; }
+        if i == 5 { pname = f.param5.name; ptype = f.param5.typeName; }
+        // Emit type
+        if String_Eq(ptype, "String") || String_Eq(ptype, "str") {
+            StringBuilder_Append(&cbe.sb, "const char* ");
+        } else if String_Eq(ptype, "bool") {
+            StringBuilder_Append(&cbe.sb, "bool ");
+        } else if String_Eq(ptype, "int") {
+            StringBuilder_Append(&cbe.sb, "int ");
+        } else if String_Eq(ptype, "int64") {
+            StringBuilder_Append(&cbe.sb, "int64_t ");
+        } else if String_Eq(ptype, "uint") {
+            StringBuilder_Append(&cbe.sb, "unsigned int ");
+        } else if String_Eq(ptype, "float64") {
+            StringBuilder_Append(&cbe.sb, "double ");
+        } else {
+            StringBuilder_Append(&cbe.sb, "int "); // fallback
+        }
         StringBuilder_Append(&cbe.sb, pname);
         i = i + 1;
     }
@@ -242,18 +336,43 @@ func CBackend_Generate(mod: *HirModule) -> String {
     StringBuilder_Append(&cbe.sb, "\n");
 
     // Function definitions
+    var hasMain: bool = false;
     i = 0;
     while i < mod.funcCount {
+        if String_Eq(mod.funcs[i].name, "Main") { hasMain = true; }
         CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
         StringBuilder_Append(&cbe.sb, " {\n");
-        // Body (simplified)
-        if mod.funcs[i].body != null as *HirNode {
-            StringBuilder_Append(&cbe.sb, "    ");
-            CBE_EmitExpr(cbe, mod.funcs[i].body);
-            StringBuilder_Append(&cbe.sb, ";\n");
+        // Body
+        var hasReturn: bool = false;
+        let body: *HirNode = mod.funcs[i].body;
+        if body != null as *HirNode {
+            cbe.indent = 1;
+            CBE_EmitExpr(cbe, body);
+            cbe.indent = 0;
+            // Check if body has a return statement
+            var stmt: *HirNode = body.child1;
+            while stmt != null as *HirNode {
+                if stmt.kind == hReturn { hasReturn = true; }
+                stmt = stmt.child3;
+            }
         }
-        StringBuilder_Append(&cbe.sb, "    return 0;\n}\n\n");
+        // Add default return 0 only if function returns int and has no explicit return
+        if String_Eq(mod.funcs[i].retTypeName, "int") && !hasReturn {
+            StringBuilder_Append(&cbe.sb, "    return 0;\n");
+        }
+        StringBuilder_Append(&cbe.sb, "}\n\n");
         i = i + 1;
+    }
+
+    // Generate C main wrapper if Main function exists
+    if hasMain {
+        StringBuilder_Append(&cbe.sb, "extern int g_argc;\n");
+        StringBuilder_Append(&cbe.sb, "extern char** g_argv;\n");
+        StringBuilder_Append(&cbe.sb, "int main(int argc, char** argv) {\n");
+        StringBuilder_Append(&cbe.sb, "    g_argc = argc;\n");
+        StringBuilder_Append(&cbe.sb, "    g_argv = argv;\n");
+        StringBuilder_Append(&cbe.sb, "    return Main();\n");
+        StringBuilder_Append(&cbe.sb, "}\n");
     }
 
     return StringBuilder_Build(&cbe.sb);

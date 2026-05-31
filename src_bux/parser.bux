@@ -583,6 +583,8 @@ func parserParseBlock(p: *Parser) -> *Block {
     b.line = parserCurToken(p).line;
     b.column = parserCurToken(p).column;
     b.stmtCount = 0;
+    b.firstStmt = null as *Stmt;
+    b.lastStmt = null as *Stmt;
 
     while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
         if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
@@ -591,6 +593,14 @@ func parserParseBlock(p: *Parser) -> *Block {
         }
         let s: *Stmt = parserParseStmt(p);
         if s != null as *Stmt {
+            s.nextStmt = null as *Stmt;
+            if b.firstStmt == null as *Stmt {
+                b.firstStmt = s;
+                b.lastStmt = s;
+            } else {
+                b.lastStmt.nextStmt = s;
+                b.lastStmt = s;
+            }
             b.stmtCount = b.stmtCount + 1;
         }
     }

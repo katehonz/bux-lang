@@ -127,6 +127,8 @@ struct Block {
     line: uint32,
     column: uint32,
     stmtCount: int,
+    firstStmt: *Stmt,
+    lastStmt: *Stmt,
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +172,8 @@ struct Stmt {
     refStmtElse: *Block,     // else block
     // Else-if chain
     elseIfCount: int,
+    // Linked list
+    nextStmt: *Stmt,
 }
 
 // ---------------------------------------------------------------------------

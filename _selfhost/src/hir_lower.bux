@@ -170,7 +170,8 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
             n.child2 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
         }
         if stmt.refStmtElse != null as *Block {
-            n.child3 = Lcx_LowerBlock(ctx, stmt.refStmtElse, -1);
+            // Store else block in extraData (child3 is reserved for block chaining)
+            n.extraData = Lcx_LowerBlock(ctx, stmt.refStmtElse, -1) as *void;
         }
         return n;
     }
@@ -203,15 +204,38 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
 
 func Lcx_LowerBlock(ctx: *LowerCtx, block: *Block, retTypeKind: int) -> *HirNode {
     if block == null as *Block { return null as *HirNode; }
+    if block.stmtCount == 0 { return null as *HirNode; }
 
-    // For simplicity, create a block node with first statement
+    // Build a linked list of HirNodes via child3:
+    //   node1 (stmt1) → child3 → node2 (stmt2) → child3 → node3 (stmt3) → null
+    // child3 is safe for chaining because:
+    //   hStore: child1=alloca, child2=value, child3 unused
+    //   hReturn: child1=value, child2/child3 unused
+    //   hCall: child1=arg1, child2=arg2, child3 unused
+    var firstNode: *HirNode = null as *HirNode;
+    var prevNode: *HirNode = null as *HirNode;
+    var stmt: *Stmt = block.firstStmt;
+    while stmt != null as *Stmt {
+        let lowered: *HirNode = Lcx_LowerStmt(ctx, stmt);
+        if lowered != null as *HirNode {
+            if firstNode == null as *HirNode {
+                firstNode = lowered;
+                prevNode = lowered;
+            } else {
+                prevNode.child3 = lowered;
+                prevNode = lowered;
+            }
+        }
+        stmt = stmt.nextStmt;
+    }
+
+    // Wrap in an hBlock node with child1 = first statement in chain
     let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
     n.kind = hBlock;
     n.line = block.line;
     n.column = block.column;
-    n.boolValue = true; // isScope
-
-    // In a full implementation, lower all statements
+    n.boolValue = true;
+    n.child1 = firstNode;
     return n;
 }
 
