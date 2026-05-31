@@ -227,16 +227,20 @@ func lexSkipBlockComment(lex: *Lexer) {
 func lexSkipWhitespace(lex: *Lexer) {
     while !lexIsAtEnd(lex) {
         let c: uint32 = lexPeek(lex, 0);
-        if c == 32 || c == 9 || c == 13 { // space, tab, CR
+        if c == 32 || c == 9 || c == 13 {
             discard lexAdvance(lex);
-        } else if c == 47 && lexPeek(lex, 1) == 47 { // //
-            lexSkipLineComment(lex);
-        } else if c == 47 && lexPeek(lex, 1) == 42 { // /*
-            discard lexAdvance(lex);
-            discard lexAdvance(lex);
-            lexSkipBlockComment(lex);
         } else {
-            break;
+            if c == 47 && lexPeek(lex, 1) == 47 {
+                lexSkipLineComment(lex);
+            } else {
+                if c == 47 && lexPeek(lex, 1) == 42 {
+                    discard lexAdvance(lex);
+                    discard lexAdvance(lex);
+                    lexSkipBlockComment(lex);
+                } else {
+                    break;
+                }
+            }
         }
     }
 }
