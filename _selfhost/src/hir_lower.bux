@@ -318,11 +318,11 @@ func Lcx_LowerParam(out: *HirParam, p: *Param) {
     out.name = p.name;
     if p.refParamType != null as *TypeExpr {
         out.typeKind = p.refParamType.kind;
-        // For pointer types, construct "PointeeType*"
-        if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
-            out.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
-        } else if !String_Eq(p.refParamType.typeName, "") {
+        // Use typeName directly if set (parser may have constructed "String*")
+        if !String_Eq(p.refParamType.typeName, "") {
             out.typeName = p.refParamType.typeName;
+        } else if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
+            out.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
         } else {
             out.typeName = "";
         }

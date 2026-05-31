@@ -109,6 +109,16 @@ func parserParseType(p: *Parser) -> *TypeExpr {
         te.line = line;
         te.column = col;
         te.pointerPointee = parserParseType(p);
+        // Set typeName to "String*" for String pointer, else "int*"
+        if te.pointerPointee != null as *TypeExpr {
+            if String_Eq(te.pointerPointee.typeName, "String") {
+                te.typeName = "String*";
+            } else if String_Eq(te.pointerPointee.typeName, "int") {
+                te.typeName = "int*";
+            } else {
+                te.typeName = "int*";
+            }
+        }
         return te;
     }
 
