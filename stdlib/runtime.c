@@ -520,6 +520,18 @@ char* bux_path_ext(const char* path) {
     return result;
 }
 
+/* Math functions — wrap C math.h */
+#include <math.h>
+
+double bux_sqrt(double x) { return sqrt(x); }
+double bux_pow(double x, double y) { return pow(x, y); }
+int64_t bux_abs_i64(int64_t x) { return x < 0 ? -x : x; }
+double bux_abs_f64(double x) { return x < 0 ? -x : x; }
+int64_t bux_min_i64(int64_t a, int64_t b) { return a < b ? a : b; }
+int64_t bux_max_i64(int64_t a, int64_t b) { return a > b ? a : b; }
+double bux_min_f64(double a, double b) { return a < b ? a : b; }
+double bux_max_f64(double a, double b) { return a > b ? a : b; }
+
 /* Hash function (djb2) over raw bytes — for generic key types */
 unsigned int bux_hash_bytes(const void* ptr, size_t size) {
     if (!ptr) return 0;
