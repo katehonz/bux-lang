@@ -1,5 +1,5 @@
 // token.bux — Token kinds and helpers
-module Token;
+module Token {
 
 // ---------------------------------------------------------------------------
 // TokenKind enum

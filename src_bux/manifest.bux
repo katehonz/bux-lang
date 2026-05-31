@@ -1,6 +1,6 @@
 // manifest.bux — Manifest parser for bux.toml files
 // Parses package metadata: name, version, type, build output.
-module Manifest;
+module Manifest {
 
 // ---------------------------------------------------------------------------
 // Manifest struct

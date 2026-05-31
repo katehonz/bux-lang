@@ -1,6 +1,6 @@
 // sema.bux — Semantic analysis (type checker, ported from sema.nim)
 // Validates types, resolves identifiers, checks function calls.
-module Sema;
+module Sema {
 
 // ---------------------------------------------------------------------------
 // Sema context

@@ -1,6 +1,6 @@
 // parser.bux — Recursive descent parser (ported from parser.nim)
 // Parses Bux source tokens into an AST.
-module Parser;
+module Parser {
 
 extern func bux_strlen(s: String) -> uint;
 

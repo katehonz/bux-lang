@@ -1,6 +1,6 @@
 // c_backend.bux — C transpiler backend (ported from c_backend.nim)
 // Generates C code from the HIR.
-module CBackend;
+module CBackend {
 
 // ---------------------------------------------------------------------------
 // Type → C type name

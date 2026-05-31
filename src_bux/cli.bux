@@ -1,6 +1,6 @@
 // cli.bux — CLI driver for the Bux self-hosting compiler
 // Wires together: Lexer → Parser → Sema → HirLower → CBackend
-module Cli;
+module Cli {
 
 extern func PrintLine(s: String);
 extern func Print(s: String);

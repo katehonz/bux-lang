@@ -1,6 +1,6 @@
 // hir_lower.bux — HIR lowering: AST → HIR transformation (ported from hir_lower.nim)
 // Transforms the typed AST into a lower-level IR suitable for code generation.
-module HirLower;
+module HirLower {
 
 // ---------------------------------------------------------------------------
 // Lowering context

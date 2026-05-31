@@ -1,5 +1,5 @@
 // ast.bux — AST node types (Expr, Stmt, Decl, Pattern, TypeExpr)
-module Ast;
+module Ast {
 
 // ---------------------------------------------------------------------------
 // SourceLocation (inline for convenience)

@@ -1,6 +1,6 @@
 // lexer.bux — Lexer state machine (ported from lexer.nim)
 // Tokenizes Bux source into a stream of tokens.
-module Lexer;
+module Lexer {
 
 extern func bux_strlen(s: String) -> uint;
 

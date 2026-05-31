@@ -1,5 +1,5 @@
 // source_location.bux — Source position tracking
-module SourceLocation;
+module SourceLocation {
 
 struct SourceLocation {
     line: uint32,

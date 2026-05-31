@@ -1,5 +1,5 @@
 // types.bux — Type system definitions and factories
-module Types;
+module Types {
 
 // ---------------------------------------------------------------------------
 // TypeKind constants

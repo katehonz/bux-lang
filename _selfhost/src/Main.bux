@@ -1,603 +1,607 @@
 module BuxC {
-src_bux/source_location.bux:// source_location.bux — Source position tracking
-src_bux/source_location.bux:
-src_bux/source_location.bux:struct SourceLocation {
-src_bux/source_location.bux:    line: uint32,
-src_bux/source_location.bux:    column: uint32,
-src_bux/source_location.bux:    offset: uint32,
-src_bux/source_location.bux:}
-src_bux/source_location.bux:
-src_bux/source_location.bux:func SourceLocation_New(line: uint32, column: uint32, offset: uint32) -> SourceLocation {
-src_bux/source_location.bux:    return SourceLocation { line: line, column: column, offset: offset };
-src_bux/source_location.bux:}
-src_bux/token.bux:// token.bux — Token kinds and helpers
-src_bux/token.bux:
-src_bux/token.bux:// ---------------------------------------------------------------------------
-src_bux/token.bux:// TokenKind enum
-src_bux/token.bux:// ---------------------------------------------------------------------------
-src_bux/token.bux:
-src_bux/token.bux:// Literals
-src_bux/token.bux:const tkIntLiteral: int = 0;
-src_bux/token.bux:const tkFloatLiteral: int = 1;
-src_bux/token.bux:const tkStringLiteral: int = 2;
-src_bux/token.bux:const tkCharLiteral: int = 3;
-src_bux/token.bux:const tkBoolLiteral: int = 4;
-src_bux/token.bux:
-src_bux/token.bux:// Identifiers
-src_bux/token.bux:const tkIdent: int = 5;
-src_bux/token.bux:const tkUnderscore: int = 6;
-src_bux/token.bux:
-src_bux/token.bux:// Control flow keywords
-src_bux/token.bux:const tkIf: int = 7;
-src_bux/token.bux:const tkElse: int = 8;
-src_bux/token.bux:const tkWhile: int = 9;
-src_bux/token.bux:const tkDo: int = 10;
-src_bux/token.bux:const tkLoop: int = 11;
-src_bux/token.bux:const tkFor: int = 12;
-src_bux/token.bux:const tkIn: int = 13;
-src_bux/token.bux:const tkBreak: int = 14;
-src_bux/token.bux:const tkContinue: int = 15;
-src_bux/token.bux:const tkReturn: int = 16;
-src_bux/token.bux:const tkMatch: int = 17;
-src_bux/token.bux:
-src_bux/token.bux:// Declaration keywords
-src_bux/token.bux:const tkFunc: int = 18;
-src_bux/token.bux:const tkLet: int = 19;
-src_bux/token.bux:const tkVar: int = 20;
-src_bux/token.bux:const tkConst: int = 21;
-src_bux/token.bux:const tkType: int = 22;
-src_bux/token.bux:const tkStruct: int = 23;
-src_bux/token.bux:const tkEnum: int = 24;
-src_bux/token.bux:const tkUnion: int = 25;
-src_bux/token.bux:const tkInterface: int = 26;
-src_bux/token.bux:const tkExtend: int = 27;
-src_bux/token.bux:const tkModule: int = 28;
-src_bux/token.bux:const tkImport: int = 29;
-src_bux/token.bux:const tkPub: int = 30;
-src_bux/token.bux:const tkExtern: int = 31;
-src_bux/token.bux:
-src_bux/token.bux:// Other keywords
-src_bux/token.bux:const tkAs: int = 32;
-src_bux/token.bux:const tkIs: int = 33;
-src_bux/token.bux:const tkNull: int = 34;
-src_bux/token.bux:const tkSelf: int = 35;
-src_bux/token.bux:const tkSuper: int = 36;
-src_bux/token.bux:const tkSizeOf: int = 37;
-src_bux/token.bux:
-src_bux/token.bux:// Punctuation
-src_bux/token.bux:const tkLParen: int = 38;
-src_bux/token.bux:const tkRParen: int = 39;
-src_bux/token.bux:const tkLBrace: int = 40;
-src_bux/token.bux:const tkRBrace: int = 41;
-src_bux/token.bux:const tkLBracket: int = 42;
-src_bux/token.bux:const tkRBracket: int = 43;
-src_bux/token.bux:const tkComma: int = 44;
-src_bux/token.bux:const tkSemicolon: int = 45;
-src_bux/token.bux:const tkColon: int = 46;
-src_bux/token.bux:const tkColonColon: int = 47;
-src_bux/token.bux:const tkDot: int = 48;
-src_bux/token.bux:const tkDotDot: int = 49;
-src_bux/token.bux:const tkDotDotDot: int = 50;
-src_bux/token.bux:const tkDotDotEqual: int = 51;
-src_bux/token.bux:const tkArrow: int = 52;
-src_bux/token.bux:const tkFatArrow: int = 53;
-src_bux/token.bux:const tkAt: int = 54;
-src_bux/token.bux:const tkHash: int = 55;
-src_bux/token.bux:const tkQuestion: int = 56;
-src_bux/token.bux:
-src_bux/token.bux:// Arithmetic operators
-src_bux/token.bux:const tkPlus: int = 57;
-src_bux/token.bux:const tkMinus: int = 58;
-src_bux/token.bux:const tkStar: int = 59;
-src_bux/token.bux:const tkSlash: int = 60;
-src_bux/token.bux:const tkPercent: int = 61;
-src_bux/token.bux:const tkStarStar: int = 62;
-src_bux/token.bux:const tkPlusPlus: int = 63;
-src_bux/token.bux:const tkMinusMinus: int = 64;
-src_bux/token.bux:
-src_bux/token.bux:// Bitwise operators
-src_bux/token.bux:const tkAmp: int = 65;
-src_bux/token.bux:const tkPipe: int = 66;
-src_bux/token.bux:const tkCaret: int = 67;
-src_bux/token.bux:const tkTilde: int = 68;
-src_bux/token.bux:const tkShl: int = 69;
-src_bux/token.bux:const tkShr: int = 70;
-src_bux/token.bux:
-src_bux/token.bux:// Logical operators
-src_bux/token.bux:const tkAmpAmp: int = 71;
-src_bux/token.bux:const tkPipePipe: int = 72;
-src_bux/token.bux:const tkBang: int = 73;
-src_bux/token.bux:
-src_bux/token.bux:// Comparison operators
-src_bux/token.bux:const tkEq: int = 74;
-src_bux/token.bux:const tkNe: int = 75;
-src_bux/token.bux:const tkLt: int = 76;
-src_bux/token.bux:const tkLe: int = 77;
-src_bux/token.bux:const tkGt: int = 78;
-src_bux/token.bux:const tkGe: int = 79;
-src_bux/token.bux:
-src_bux/token.bux:// Assignment operators
-src_bux/token.bux:const tkAssign: int = 80;
-src_bux/token.bux:const tkPlusAssign: int = 81;
-src_bux/token.bux:const tkMinusAssign: int = 82;
-src_bux/token.bux:const tkStarAssign: int = 83;
-src_bux/token.bux:const tkSlashAssign: int = 84;
-src_bux/token.bux:const tkPercentAssign: int = 85;
-src_bux/token.bux:const tkAmpAssign: int = 86;
-src_bux/token.bux:const tkPipeAssign: int = 87;
-src_bux/token.bux:const tkCaretAssign: int = 88;
-src_bux/token.bux:const tkShlAssign: int = 89;
-src_bux/token.bux:const tkShrAssign: int = 90;
-src_bux/token.bux:
-src_bux/token.bux:// Compile-time intrinsics
-src_bux/token.bux:const tkHashLine: int = 91;
-src_bux/token.bux:const tkHashColumn: int = 92;
-src_bux/token.bux:const tkHashFile: int = 93;
-src_bux/token.bux:const tkHashFunction: int = 94;
-src_bux/token.bux:const tkHashDate: int = 95;
-src_bux/token.bux:const tkHashTime: int = 96;
-src_bux/token.bux:const tkHashModule: int = 97;
-src_bux/token.bux:
-src_bux/token.bux:// Special
-src_bux/token.bux:const tkOwn: int = 98;
-src_bux/token.bux:const tkNewLine: int = 99;
-src_bux/token.bux:const tkEndOfFile: int = 100;
-src_bux/token.bux:const tkUnknown: int = 101;
-src_bux/token.bux:
-src_bux/token.bux:// ---------------------------------------------------------------------------
-src_bux/token.bux:// Token struct
-src_bux/token.bux:// ---------------------------------------------------------------------------
-src_bux/token.bux:
-src_bux/token.bux:struct Token {
-src_bux/token.bux:    kind: int,
-src_bux/token.bux:    text: String,
-src_bux/token.bux:    line: uint32,
-src_bux/token.bux:    column: uint32,
-src_bux/token.bux:    offset: uint32,
-src_bux/token.bux:}
-src_bux/token.bux:
-src_bux/token.bux:// ---------------------------------------------------------------------------
-src_bux/token.bux:// Helpers
-src_bux/token.bux:// ---------------------------------------------------------------------------
-src_bux/token.bux:
-src_bux/token.bux:func Token_IsKeyword(kind: int) -> bool {
-src_bux/token.bux:    if kind >= tkIf && kind <= tkIn { return true; }
-src_bux/token.bux:    if kind >= tkBreak && kind <= tkMatch { return true; }
-src_bux/token.bux:    if kind >= tkFunc && kind <= tkExtern { return true; }
-src_bux/token.bux:    if kind >= tkAs && kind <= tkSuper { return true; }
-src_bux/token.bux:    return false;
-src_bux/token.bux:}
-src_bux/token.bux:
-src_bux/token.bux:func Token_IsLiteral(kind: int) -> bool {
-src_bux/token.bux:    if kind >= tkIntLiteral && kind <= tkBoolLiteral { return true; }
-src_bux/token.bux:    return false;
-src_bux/token.bux:}
-src_bux/token.bux:
-src_bux/token.bux:func Token_IsOperator(kind: int) -> bool {
-src_bux/token.bux:    if kind >= tkPlus && kind <= tkShrAssign { return true; }
-src_bux/token.bux:    return false;
-src_bux/token.bux:}
-src_bux/token.bux:
-src_bux/token.bux:func Token_IsEof(kind: int) -> bool {
-src_bux/token.bux:    return kind == tkEndOfFile;
-src_bux/token.bux:}
-src_bux/token.bux:
-src_bux/token.bux:func Token_KeywordKind(text: String) -> int {
-src_bux/token.bux:    if String_Eq(text, "func") { return tkFunc; }
-src_bux/token.bux:    if String_Eq(text, "let") { return tkLet; }
-src_bux/token.bux:    if String_Eq(text, "var") { return tkVar; }
-src_bux/token.bux:    if String_Eq(text, "const") { return tkConst; }
-src_bux/token.bux:    if String_Eq(text, "type") { return tkType; }
-src_bux/token.bux:    if String_Eq(text, "struct") { return tkStruct; }
-src_bux/token.bux:    if String_Eq(text, "enum") { return tkEnum; }
-src_bux/token.bux:    if String_Eq(text, "union") { return tkUnion; }
-src_bux/token.bux:    if String_Eq(text, "interface") { return tkInterface; }
-src_bux/token.bux:    if String_Eq(text, "extend") { return tkExtend; }
-src_bux/token.bux:    if String_Eq(text, "module") { return tkModule; }
-src_bux/token.bux:    if String_Eq(text, "import") { return tkImport; }
-src_bux/token.bux:    if String_Eq(text, "pub") { return tkPub; }
-src_bux/token.bux:    if String_Eq(text, "extern") { return tkExtern; }
-src_bux/token.bux:    if String_Eq(text, "if") { return tkIf; }
-src_bux/token.bux:    if String_Eq(text, "else") { return tkElse; }
-src_bux/token.bux:    if String_Eq(text, "while") { return tkWhile; }
-src_bux/token.bux:    if String_Eq(text, "do") { return tkDo; }
-src_bux/token.bux:    if String_Eq(text, "loop") { return tkLoop; }
-src_bux/token.bux:    if String_Eq(text, "for") { return tkFor; }
-src_bux/token.bux:    if String_Eq(text, "in") { return tkIn; }
-src_bux/token.bux:    if String_Eq(text, "break") { return tkBreak; }
-src_bux/token.bux:    if String_Eq(text, "continue") { return tkContinue; }
-src_bux/token.bux:    if String_Eq(text, "return") { return tkReturn; }
-src_bux/token.bux:    if String_Eq(text, "match") { return tkMatch; }
-src_bux/token.bux:    if String_Eq(text, "as") { return tkAs; }
-src_bux/token.bux:    if String_Eq(text, "is") { return tkIs; }
-src_bux/token.bux:    if String_Eq(text, "null") { return tkNull; }
-src_bux/token.bux:    if String_Eq(text, "self") { return tkSelf; }
-src_bux/token.bux:    if String_Eq(text, "super") { return tkSuper; }
-src_bux/token.bux:    if String_Eq(text, "sizeof") { return tkSizeOf; }
-src_bux/token.bux:    if String_Eq(text, "true") { return tkBoolLiteral; }
-src_bux/token.bux:    if String_Eq(text, "false") { return tkBoolLiteral; }
-src_bux/token.bux:    return tkIdent;
-src_bux/token.bux:}
-src_bux/token.bux:
-src_bux/token.bux:func Token_KindName(kind: int) -> String {
-src_bux/token.bux:    if kind == tkIntLiteral { return "integer literal"; }
-src_bux/token.bux:    if kind == tkFloatLiteral { return "float literal"; }
-src_bux/token.bux:    if kind == tkStringLiteral { return "string literal"; }
-src_bux/token.bux:    if kind == tkCharLiteral { return "char literal"; }
-src_bux/token.bux:    if kind == tkBoolLiteral { return "boolean literal"; }
-src_bux/token.bux:    if kind == tkIdent { return "identifier"; }
-src_bux/token.bux:    if kind == tkUnderscore { return "_"; }
-src_bux/token.bux:    if kind == tkSizeOf { return "sizeof"; }
-src_bux/token.bux:    if kind == tkIf { return "if"; }
-src_bux/token.bux:    if kind == tkElse { return "else"; }
-src_bux/token.bux:    if kind == tkWhile { return "while"; }
-src_bux/token.bux:    if kind == tkDo { return "do"; }
-src_bux/token.bux:    if kind == tkLoop { return "loop"; }
-src_bux/token.bux:    if kind == tkFor { return "for"; }
-src_bux/token.bux:    if kind == tkIn { return "in"; }
-src_bux/token.bux:    if kind == tkBreak { return "break"; }
-src_bux/token.bux:    if kind == tkContinue { return "continue"; }
-src_bux/token.bux:    if kind == tkReturn { return "return"; }
-src_bux/token.bux:    if kind == tkMatch { return "match"; }
-src_bux/token.bux:    if kind == tkFunc { return "func"; }
-src_bux/token.bux:    if kind == tkLet { return "let"; }
-src_bux/token.bux:    if kind == tkVar { return "var"; }
-src_bux/token.bux:    if kind == tkConst { return "const"; }
-src_bux/token.bux:    if kind == tkType { return "type"; }
-src_bux/token.bux:    if kind == tkStruct { return "struct"; }
-src_bux/token.bux:    if kind == tkEnum { return "enum"; }
-src_bux/token.bux:    if kind == tkUnion { return "union"; }
-src_bux/token.bux:    if kind == tkInterface { return "interface"; }
-src_bux/token.bux:    if kind == tkExtend { return "extend"; }
-src_bux/token.bux:    if kind == tkModule { return "module"; }
-src_bux/token.bux:    if kind == tkImport { return "import"; }
-src_bux/token.bux:    if kind == tkPub { return "pub"; }
-src_bux/token.bux:    if kind == tkExtern { return "extern"; }
-src_bux/token.bux:    if kind == tkAs { return "as"; }
-src_bux/token.bux:    if kind == tkIs { return "is"; }
-src_bux/token.bux:    if kind == tkNull { return "null"; }
-src_bux/token.bux:    if kind == tkSelf { return "self"; }
-src_bux/token.bux:    if kind == tkSuper { return "super"; }
-src_bux/token.bux:    if kind == tkLParen { return "("; }
-src_bux/token.bux:    if kind == tkRParen { return ")"; }
-src_bux/token.bux:    if kind == tkLBrace { return "{"; }
-src_bux/token.bux:    if kind == tkRBrace { return "}"; }
-src_bux/token.bux:    if kind == tkLBracket { return "["; }
-src_bux/token.bux:    if kind == tkRBracket { return "]"; }
-src_bux/token.bux:    if kind == tkComma { return ","; }
-src_bux/token.bux:    if kind == tkSemicolon { return ";"; }
-src_bux/token.bux:    if kind == tkColon { return ":"; }
-src_bux/token.bux:    if kind == tkColonColon { return "::"; }
-src_bux/token.bux:    if kind == tkDot { return "."; }
-src_bux/token.bux:    if kind == tkDotDot { return ".."; }
-src_bux/token.bux:    if kind == tkDotDotDot { return "..."; }
-src_bux/token.bux:    if kind == tkDotDotEqual { return "..="; }
-src_bux/token.bux:    if kind == tkArrow { return "->"; }
-src_bux/token.bux:    if kind == tkFatArrow { return "=>"; }
-src_bux/token.bux:    if kind == tkAt { return "@"; }
-src_bux/token.bux:    if kind == tkHash { return "#"; }
-src_bux/token.bux:    if kind == tkQuestion { return "?"; }
-src_bux/token.bux:    if kind == tkPlus { return "+"; }
-src_bux/token.bux:    if kind == tkMinus { return "-"; }
-src_bux/token.bux:    if kind == tkStar { return "*"; }
-src_bux/token.bux:    if kind == tkSlash { return "/"; }
-src_bux/token.bux:    if kind == tkPercent { return "%"; }
-src_bux/token.bux:    if kind == tkStarStar { return "**"; }
-src_bux/token.bux:    if kind == tkPlusPlus { return "++"; }
-src_bux/token.bux:    if kind == tkMinusMinus { return "--"; }
-src_bux/token.bux:    if kind == tkAmp { return "&"; }
-src_bux/token.bux:    if kind == tkPipe { return "|"; }
-src_bux/token.bux:    if kind == tkCaret { return "^"; }
-src_bux/token.bux:    if kind == tkTilde { return "~"; }
-src_bux/token.bux:    if kind == tkShl { return "<<"; }
-src_bux/token.bux:    if kind == tkShr { return ">>"; }
-src_bux/token.bux:    if kind == tkAmpAmp { return "&&"; }
-src_bux/token.bux:    if kind == tkPipePipe { return "||"; }
-src_bux/token.bux:    if kind == tkBang { return "!"; }
-src_bux/token.bux:    if kind == tkEq { return "=="; }
-src_bux/token.bux:    if kind == tkNe { return "!="; }
-src_bux/token.bux:    if kind == tkLt { return "<"; }
-src_bux/token.bux:    if kind == tkLe { return "<="; }
-src_bux/token.bux:    if kind == tkGt { return ">"; }
-src_bux/token.bux:    if kind == tkGe { return ">="; }
-src_bux/token.bux:    if kind == tkAssign { return "="; }
-src_bux/token.bux:    if kind == tkPlusAssign { return "+="; }
-src_bux/token.bux:    if kind == tkMinusAssign { return "-="; }
-src_bux/token.bux:    if kind == tkStarAssign { return "*="; }
-src_bux/token.bux:    if kind == tkSlashAssign { return "/="; }
-src_bux/token.bux:    if kind == tkPercentAssign { return "%="; }
-src_bux/token.bux:    if kind == tkAmpAssign { return "&="; }
-src_bux/token.bux:    if kind == tkPipeAssign { return "|="; }
-src_bux/token.bux:    if kind == tkCaretAssign { return "^="; }
-src_bux/token.bux:    if kind == tkShlAssign { return "<<="; }
-src_bux/token.bux:    if kind == tkShrAssign { return ">>="; }
-src_bux/token.bux:    if kind == tkHashLine { return "#line"; }
-src_bux/token.bux:    if kind == tkHashColumn { return "#column"; }
-src_bux/token.bux:    if kind == tkHashFile { return "#file"; }
-src_bux/token.bux:    if kind == tkHashFunction { return "#function"; }
-src_bux/token.bux:    if kind == tkHashDate { return "#date"; }
-src_bux/token.bux:    if kind == tkHashTime { return "#time"; }
-src_bux/token.bux:    if kind == tkHashModule { return "#module"; }
-src_bux/token.bux:    if kind == tkNewLine { return "newline"; }
-src_bux/token.bux:    if kind == tkEndOfFile { return "end of file"; }
-src_bux/token.bux:    return "unknown token";
-src_bux/token.bux:}
-src_bux/types.bux:// types.bux — Type system definitions and factories
-src_bux/types.bux:
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:// TypeKind constants
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:
-src_bux/types.bux:const tkUnknown: int = 0;
-src_bux/types.bux:const tkVoid: int = 1;
-src_bux/types.bux:const tkBool: int = 2;
-src_bux/types.bux:const tkBool8: int = 3;
-src_bux/types.bux:const tkBool16: int = 4;
-src_bux/types.bux:const tkBool32: int = 5;
-src_bux/types.bux:const tkChar8: int = 6;
-src_bux/types.bux:const tkChar16: int = 7;
-src_bux/types.bux:const tkChar32: int = 8;
-src_bux/types.bux:const tkStr: int = 9;
-src_bux/types.bux:const tkInt8: int = 10;
-src_bux/types.bux:const tkInt16: int = 11;
-src_bux/types.bux:const tkInt32: int = 12;
-src_bux/types.bux:const tkInt64: int = 13;
-src_bux/types.bux:const tkInt: int = 14;
-src_bux/types.bux:const tkUInt8: int = 15;
-src_bux/types.bux:const tkUInt16: int = 16;
-src_bux/types.bux:const tkUInt32: int = 17;
-src_bux/types.bux:const tkUInt64: int = 18;
-src_bux/types.bux:const tkUInt: int = 19;
-src_bux/types.bux:const tkFloat32: int = 20;
-src_bux/types.bux:const tkFloat64: int = 21;
-src_bux/types.bux:const tkPointer: int = 22;
-src_bux/types.bux:const tkSlice: int = 23;
-src_bux/types.bux:const tkRange: int = 24;
-src_bux/types.bux:const tkTuple: int = 25;
-src_bux/types.bux:const tkNamed: int = 26;
-src_bux/types.bux:const tkTypeParam: int = 27;
-src_bux/types.bux:const tkFunc: int = 28;
-src_bux/types.bux:
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:// Type struct
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:
-src_bux/types.bux:struct Type {
-src_bux/types.bux:    kind: int,
-src_bux/types.bux:    name: String,
-src_bux/types.bux:    // inner types stored as array of pointers (simplified)
-src_bux/types.bux:    innerKind1: int,
-src_bux/types.bux:    innerName1: String,
-src_bux/types.bux:    innerKind2: int,
-src_bux/types.bux:    innerName2: String,
-src_bux/types.bux:    innerKind3: int,
-src_bux/types.bux:    innerName3: String,
-src_bux/types.bux:    innerCount: int,
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:// Factories
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeUnknown() -> Type {
-src_bux/types.bux:    return Type { kind: tkUnknown, name: "", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeVoid() -> Type {
-src_bux/types.bux:    return Type { kind: tkVoid, name: "void", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeBool() -> Type {
-src_bux/types.bux:    return Type { kind: tkBool, name: "bool", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeInt() -> Type {
-src_bux/types.bux:    return Type { kind: tkInt, name: "int", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeInt64() -> Type {
-src_bux/types.bux:    return Type { kind: tkInt64, name: "int64", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeUInt() -> Type {
-src_bux/types.bux:    return Type { kind: tkUInt, name: "uint", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeFloat64() -> Type {
-src_bux/types.bux:    return Type { kind: tkFloat64, name: "float64", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeStr() -> Type {
-src_bux/types.bux:    return Type { kind: tkStr, name: "String", innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakePointer(pointee: Type) -> Type {
-src_bux/types.bux:    return Type { kind: tkPointer, name: "", innerCount: 1,
-src_bux/types.bux:        innerKind1: pointee.kind, innerName1: pointee.name,
-src_bux/types.bux:        innerKind2: 0, innerName2: "", innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeNamed(name: String) -> Type {
-src_bux/types.bux:    return Type { kind: tkNamed, name: name, innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_MakeTypeParam(name: String) -> Type {
-src_bux/types.bux:    return Type { kind: tkTypeParam, name: name, innerCount: 0,
-src_bux/types.bux:        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-src_bux/types.bux:        innerKind3: 0, innerName3: "" };
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:// Predicates
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:
-src_bux/types.bux:func Type_IsNumeric(t: Type) -> bool {
-src_bux/types.bux:    let k: int = t.kind;
-src_bux/types.bux:    if k == tkInt8 || k == tkInt16 || k == tkInt32 || k == tkInt64 || k == tkInt { return true; }
-src_bux/types.bux:    if k == tkUInt8 || k == tkUInt16 || k == tkUInt32 || k == tkUInt64 || k == tkUInt { return true; }
-src_bux/types.bux:    if k == tkFloat32 || k == tkFloat64 { return true; }
-src_bux/types.bux:    if k == tkUnknown || k == tkNamed || k == tkTypeParam { return true; }
-src_bux/types.bux:    return false;
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_IsInteger(t: Type) -> bool {
-src_bux/types.bux:    let k: int = t.kind;
-src_bux/types.bux:    if k == tkInt8 || k == tkInt16 || k == tkInt32 || k == tkInt64 || k == tkInt { return true; }
-src_bux/types.bux:    if k == tkUInt8 || k == tkUInt16 || k == tkUInt32 || k == tkUInt64 || k == tkUInt { return true; }
-src_bux/types.bux:    if k == tkUnknown || k == tkNamed || k == tkTypeParam { return true; }
-src_bux/types.bux:    return false;
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_IsBool(t: Type) -> bool {
-src_bux/types.bux:    let k: int = t.kind;
-src_bux/types.bux:    return k == tkBool || k == tkBool8 || k == tkBool16 || k == tkBool32;
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_IsPointer(t: Type) -> bool {
-src_bux/types.bux:    return t.kind == tkPointer;
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:func Type_IsSlice(t: Type) -> bool {
-src_bux/types.bux:    return t.kind == tkSlice;
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:// Comparison (structural, limited to kind + name for simplicity)
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:
-src_bux/types.bux:func Type_Eq(a: Type, b: Type) -> bool {
-src_bux/types.bux:    if a.kind != b.kind { return false; }
-src_bux/types.bux:    if a.kind == tkNamed || a.kind == tkTypeParam {
-src_bux/types.bux:        return String_Eq(a.name, b.name);
-src_bux/types.bux:    }
-src_bux/types.bux:    return true;
-src_bux/types.bux:}
-src_bux/types.bux:
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:// toString
-src_bux/types.bux:// ---------------------------------------------------------------------------
-src_bux/types.bux:
-src_bux/types.bux:func Type_ToString(t: Type) -> String {
-src_bux/types.bux:    if t.kind == tkVoid { return "void"; }
-src_bux/types.bux:    if t.kind == tkBool { return "bool"; }
-src_bux/types.bux:    if t.kind == tkStr { return "String"; }
-src_bux/types.bux:    if t.kind == tkInt { return "int"; }
-src_bux/types.bux:    if t.kind == tkInt64 { return "int64"; }
-src_bux/types.bux:    if t.kind == tkUInt { return "uint"; }
-src_bux/types.bux:    if t.kind == tkFloat64 { return "float64"; }
-src_bux/types.bux:    if t.kind == tkNamed { return t.name; }
-src_bux/types.bux:    if t.kind == tkTypeParam { return t.name; }
-src_bux/types.bux:    if t.kind == tkPointer { return "*" + t.innerName1; }
-src_bux/types.bux:    return "?";
-src_bux/types.bux:}
-src_bux/scope.bux:// scope.bux — Symbol table with parent-chain lookup
-src_bux/scope.bux:
-src_bux/scope.bux:// Symbol kinds
-src_bux/scope.bux:const skVar: int = 0;
-src_bux/scope.bux:const skFunc: int = 1;
-src_bux/scope.bux:const skType: int = 2;
-src_bux/scope.bux:const skConst: int = 3;
-src_bux/scope.bux:const skModule: int = 4;
-src_bux/scope.bux:
-src_bux/scope.bux:// Maximum symbols per scope
-src_bux/scope.bux:const maxSymbols: int = 256;
-src_bux/scope.bux:
-src_bux/scope.bux:struct Symbol {
-src_bux/scope.bux:    kind: int,
-src_bux/scope.bux:    name: String,
-src_bux/scope.bux:    typeKind: int,
-src_bux/scope.bux:    typeName: String,
-src_bux/scope.bux:    isMutable: bool,
-src_bux/scope.bux:    isPublic: bool,
-src_bux/scope.bux:}
-src_bux/scope.bux:
-src_bux/scope.bux:struct Scope {
-src_bux/scope.bux:    symbols: *Symbol,
-src_bux/scope.bux:    count: int,
-src_bux/scope.bux:    parent: *Scope,
-src_bux/scope.bux:}
-src_bux/scope.bux:
-src_bux/scope.bux:// ---------------------------------------------------------------------------
-src_bux/scope.bux:// Scope operations
-src_bux/scope.bux:// ---------------------------------------------------------------------------
-src_bux/scope.bux:
-src_bux/scope.bux:func Scope_New() -> Scope {
-src_bux/scope.bux:    let sz: uint = maxSymbols as uint * sizeof(Symbol);
-src_bux/scope.bux:    let data: *Symbol = bux_alloc(sz) as *Symbol;
-src_bux/scope.bux:    return Scope { symbols: data, count: 0, parent: null as *Scope };
-src_bux/scope.bux:}
-src_bux/scope.bux:
-src_bux/scope.bux:func Scope_NewChild(parent: *Scope) -> Scope {
-src_bux/scope.bux:    let sz: uint = maxSymbols as uint * sizeof(Symbol);
-src_bux/scope.bux:    let data: *Symbol = bux_alloc(sz) as *Symbol;
-src_bux/scope.bux:    return Scope { symbols: data, count: 0, parent: parent };
-src_bux/scope.bux:}
-src_bux/scope.bux:
-src_bux/scope.bux:func Scope_Define(scope: *Scope, sym: Symbol) -> bool {
-src_bux/scope.bux:    // Check local scope for duplicates
-src_bux/scope.bux:    var i: int = 0;
-src_bux/scope.bux:    while i < scope.count {
-src_bux/scope.bux:        if String_Eq(scope.symbols[i].name, sym.name) {
-src_bux/scope.bux:            return false;
-src_bux/scope.bux:        }
-src_bux/scope.bux:        i = i + 1;
-src_bux/scope.bux:    }
-src_bux/scope.bux:    if scope.count < maxSymbols {
-src_bux/scope.bux:        scope.symbols[scope.count] = sym;
-src_bux/scope.bux:        scope.count = scope.count + 1;
-src_bux/scope.bux:        return true;
-src_bux/scope.bux:    }
-src_bux/scope.bux:    return false;
-src_bux/scope.bux:}
-src_bux/scope.bux:
-src_bux/scope.bux:func Scope_Lookup(scope: *Scope, name: String) -> Symbol {
-src_bux/scope.bux:    var cur: *Scope = scope;
-src_bux/scope.bux:    while cur != null as *Scope {
-src_bux/scope.bux:        var i: int = 0;
-src_bux/scope.bux:        while i < cur.count {
-src_bux/scope.bux:            if String_Eq(cur.symbols[i].name, name) {
-src_bux/scope.bux:                return cur.symbols[i];
-src_bux/scope.bux:            }
-src_bux/scope.bux:            i = i + 1;
-src_bux/scope.bux:        }
-src_bux/scope.bux:        cur = cur.parent;
-src_bux/scope.bux:    }
-src_bux/scope.bux:    var empty: Symbol;
-src_bux/scope.bux:    return empty;
-src_bux/scope.bux:}
-src_bux/scope.bux:
-src_bux/scope.bux:func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
-src_bux/scope.bux:    var i: int = 0;
-src_bux/scope.bux:    while i < scope.count {
-src_bux/scope.bux:        if String_Eq(scope.symbols[i].name, name) {
-src_bux/scope.bux:            return scope.symbols[i];
-src_bux/scope.bux:        }
-src_bux/scope.bux:        i = i + 1;
-src_bux/scope.bux:    }
-src_bux/scope.bux:    var empty: Symbol;
-src_bux/scope.bux:    return empty;
-src_bux/scope.bux:}
-src_bux/scope.bux:
-src_bux/scope.bux:func Scope_Free(scope: *Scope) {
-src_bux/scope.bux:    bux_free(scope.symbols as *void);
-src_bux/scope.bux:}
+// source_location.bux — Source position tracking
+module SourceLocation {
+
+struct SourceLocation {
+    line: uint32,
+    column: uint32,
+    offset: uint32,
+}
+
+func SourceLocation_New(line: uint32, column: uint32, offset: uint32) -> SourceLocation {
+    return SourceLocation { line: line, column: column, offset: offset };
+}
+// token.bux — Token kinds and helpers
+module Token {
+
+// ---------------------------------------------------------------------------
+// TokenKind enum
+// ---------------------------------------------------------------------------
+
+// Literals
+const tkIntLiteral: int = 0;
+const tkFloatLiteral: int = 1;
+const tkStringLiteral: int = 2;
+const tkCharLiteral: int = 3;
+const tkBoolLiteral: int = 4;
+
+// Identifiers
+const tkIdent: int = 5;
+const tkUnderscore: int = 6;
+
+// Control flow keywords
+const tkIf: int = 7;
+const tkElse: int = 8;
+const tkWhile: int = 9;
+const tkDo: int = 10;
+const tkLoop: int = 11;
+const tkFor: int = 12;
+const tkIn: int = 13;
+const tkBreak: int = 14;
+const tkContinue: int = 15;
+const tkReturn: int = 16;
+const tkMatch: int = 17;
+
+// Declaration keywords
+const tkFunc: int = 18;
+const tkLet: int = 19;
+const tkVar: int = 20;
+const tkConst: int = 21;
+const tkType: int = 22;
+const tkStruct: int = 23;
+const tkEnum: int = 24;
+const tkUnion: int = 25;
+const tkInterface: int = 26;
+const tkExtend: int = 27;
+const tkModule: int = 28;
+const tkImport: int = 29;
+const tkPub: int = 30;
+const tkExtern: int = 31;
+
+// Other keywords
+const tkAs: int = 32;
+const tkIs: int = 33;
+const tkNull: int = 34;
+const tkSelf: int = 35;
+const tkSuper: int = 36;
+const tkSizeOf: int = 37;
+
+// Punctuation
+const tkLParen: int = 38;
+const tkRParen: int = 39;
+const tkLBrace: int = 40;
+const tkRBrace: int = 41;
+const tkLBracket: int = 42;
+const tkRBracket: int = 43;
+const tkComma: int = 44;
+const tkSemicolon: int = 45;
+const tkColon: int = 46;
+const tkColonColon: int = 47;
+const tkDot: int = 48;
+const tkDotDot: int = 49;
+const tkDotDotDot: int = 50;
+const tkDotDotEqual: int = 51;
+const tkArrow: int = 52;
+const tkFatArrow: int = 53;
+const tkAt: int = 54;
+const tkHash: int = 55;
+const tkQuestion: int = 56;
+
+// Arithmetic operators
+const tkPlus: int = 57;
+const tkMinus: int = 58;
+const tkStar: int = 59;
+const tkSlash: int = 60;
+const tkPercent: int = 61;
+const tkStarStar: int = 62;
+const tkPlusPlus: int = 63;
+const tkMinusMinus: int = 64;
+
+// Bitwise operators
+const tkAmp: int = 65;
+const tkPipe: int = 66;
+const tkCaret: int = 67;
+const tkTilde: int = 68;
+const tkShl: int = 69;
+const tkShr: int = 70;
+
+// Logical operators
+const tkAmpAmp: int = 71;
+const tkPipePipe: int = 72;
+const tkBang: int = 73;
+
+// Comparison operators
+const tkEq: int = 74;
+const tkNe: int = 75;
+const tkLt: int = 76;
+const tkLe: int = 77;
+const tkGt: int = 78;
+const tkGe: int = 79;
+
+// Assignment operators
+const tkAssign: int = 80;
+const tkPlusAssign: int = 81;
+const tkMinusAssign: int = 82;
+const tkStarAssign: int = 83;
+const tkSlashAssign: int = 84;
+const tkPercentAssign: int = 85;
+const tkAmpAssign: int = 86;
+const tkPipeAssign: int = 87;
+const tkCaretAssign: int = 88;
+const tkShlAssign: int = 89;
+const tkShrAssign: int = 90;
+
+// Compile-time intrinsics
+const tkHashLine: int = 91;
+const tkHashColumn: int = 92;
+const tkHashFile: int = 93;
+const tkHashFunction: int = 94;
+const tkHashDate: int = 95;
+const tkHashTime: int = 96;
+const tkHashModule: int = 97;
+
+// Special
+const tkOwn: int = 98;
+const tkNewLine: int = 99;
+const tkEndOfFile: int = 100;
+const tkUnknown: int = 101;
+
+// ---------------------------------------------------------------------------
+// Token struct
+// ---------------------------------------------------------------------------
+
+struct Token {
+    kind: int,
+    text: String,
+    line: uint32,
+    column: uint32,
+    offset: uint32,
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func Token_IsKeyword(kind: int) -> bool {
+    if kind >= tkIf && kind <= tkIn { return true; }
+    if kind >= tkBreak && kind <= tkMatch { return true; }
+    if kind >= tkFunc && kind <= tkExtern { return true; }
+    if kind >= tkAs && kind <= tkSuper { return true; }
+    return false;
+}
+
+func Token_IsLiteral(kind: int) -> bool {
+    if kind >= tkIntLiteral && kind <= tkBoolLiteral { return true; }
+    return false;
+}
+
+func Token_IsOperator(kind: int) -> bool {
+    if kind >= tkPlus && kind <= tkShrAssign { return true; }
+    return false;
+}
+
+func Token_IsEof(kind: int) -> bool {
+    return kind == tkEndOfFile;
+}
+
+func Token_KeywordKind(text: String) -> int {
+    if String_Eq(text, "func") { return tkFunc; }
+    if String_Eq(text, "let") { return tkLet; }
+    if String_Eq(text, "var") { return tkVar; }
+    if String_Eq(text, "const") { return tkConst; }
+    if String_Eq(text, "type") { return tkType; }
+    if String_Eq(text, "struct") { return tkStruct; }
+    if String_Eq(text, "enum") { return tkEnum; }
+    if String_Eq(text, "union") { return tkUnion; }
+    if String_Eq(text, "interface") { return tkInterface; }
+    if String_Eq(text, "extend") { return tkExtend; }
+    if String_Eq(text, "module") { return tkModule; }
+    if String_Eq(text, "import") { return tkImport; }
+    if String_Eq(text, "pub") { return tkPub; }
+    if String_Eq(text, "extern") { return tkExtern; }
+    if String_Eq(text, "if") { return tkIf; }
+    if String_Eq(text, "else") { return tkElse; }
+    if String_Eq(text, "while") { return tkWhile; }
+    if String_Eq(text, "do") { return tkDo; }
+    if String_Eq(text, "loop") { return tkLoop; }
+    if String_Eq(text, "for") { return tkFor; }
+    if String_Eq(text, "in") { return tkIn; }
+    if String_Eq(text, "break") { return tkBreak; }
+    if String_Eq(text, "continue") { return tkContinue; }
+    if String_Eq(text, "return") { return tkReturn; }
+    if String_Eq(text, "match") { return tkMatch; }
+    if String_Eq(text, "as") { return tkAs; }
+    if String_Eq(text, "is") { return tkIs; }
+    if String_Eq(text, "null") { return tkNull; }
+    if String_Eq(text, "self") { return tkSelf; }
+    if String_Eq(text, "super") { return tkSuper; }
+    if String_Eq(text, "sizeof") { return tkSizeOf; }
+    if String_Eq(text, "true") { return tkBoolLiteral; }
+    if String_Eq(text, "false") { return tkBoolLiteral; }
+    return tkIdent;
+}
+
+func Token_KindName(kind: int) -> String {
+    if kind == tkIntLiteral { return "integer literal"; }
+    if kind == tkFloatLiteral { return "float literal"; }
+    if kind == tkStringLiteral { return "string literal"; }
+    if kind == tkCharLiteral { return "char literal"; }
+    if kind == tkBoolLiteral { return "boolean literal"; }
+    if kind == tkIdent { return "identifier"; }
+    if kind == tkUnderscore { return "_"; }
+    if kind == tkSizeOf { return "sizeof"; }
+    if kind == tkIf { return "if"; }
+    if kind == tkElse { return "else"; }
+    if kind == tkWhile { return "while"; }
+    if kind == tkDo { return "do"; }
+    if kind == tkLoop { return "loop"; }
+    if kind == tkFor { return "for"; }
+    if kind == tkIn { return "in"; }
+    if kind == tkBreak { return "break"; }
+    if kind == tkContinue { return "continue"; }
+    if kind == tkReturn { return "return"; }
+    if kind == tkMatch { return "match"; }
+    if kind == tkFunc { return "func"; }
+    if kind == tkLet { return "let"; }
+    if kind == tkVar { return "var"; }
+    if kind == tkConst { return "const"; }
+    if kind == tkType { return "type"; }
+    if kind == tkStruct { return "struct"; }
+    if kind == tkEnum { return "enum"; }
+    if kind == tkUnion { return "union"; }
+    if kind == tkInterface { return "interface"; }
+    if kind == tkExtend { return "extend"; }
+    if kind == tkModule { return "module"; }
+    if kind == tkImport { return "import"; }
+    if kind == tkPub { return "pub"; }
+    if kind == tkExtern { return "extern"; }
+    if kind == tkAs { return "as"; }
+    if kind == tkIs { return "is"; }
+    if kind == tkNull { return "null"; }
+    if kind == tkSelf { return "self"; }
+    if kind == tkSuper { return "super"; }
+    if kind == tkLParen { return "("; }
+    if kind == tkRParen { return ")"; }
+    if kind == tkLBrace { return "{"; }
+    if kind == tkRBrace { return "}"; }
+    if kind == tkLBracket { return "["; }
+    if kind == tkRBracket { return "]"; }
+    if kind == tkComma { return ","; }
+    if kind == tkSemicolon { return ";"; }
+    if kind == tkColon { return ":"; }
+    if kind == tkColonColon { return "::"; }
+    if kind == tkDot { return "."; }
+    if kind == tkDotDot { return ".."; }
+    if kind == tkDotDotDot { return "..."; }
+    if kind == tkDotDotEqual { return "..="; }
+    if kind == tkArrow { return "->"; }
+    if kind == tkFatArrow { return "=>"; }
+    if kind == tkAt { return "@"; }
+    if kind == tkHash { return "#"; }
+    if kind == tkQuestion { return "?"; }
+    if kind == tkPlus { return "+"; }
+    if kind == tkMinus { return "-"; }
+    if kind == tkStar { return "*"; }
+    if kind == tkSlash { return "/"; }
+    if kind == tkPercent { return "%"; }
+    if kind == tkStarStar { return "**"; }
+    if kind == tkPlusPlus { return "++"; }
+    if kind == tkMinusMinus { return "--"; }
+    if kind == tkAmp { return "&"; }
+    if kind == tkPipe { return "|"; }
+    if kind == tkCaret { return "^"; }
+    if kind == tkTilde { return "~"; }
+    if kind == tkShl { return "<<"; }
+    if kind == tkShr { return ">>"; }
+    if kind == tkAmpAmp { return "&&"; }
+    if kind == tkPipePipe { return "||"; }
+    if kind == tkBang { return "!"; }
+    if kind == tkEq { return "=="; }
+    if kind == tkNe { return "!="; }
+    if kind == tkLt { return "<"; }
+    if kind == tkLe { return "<="; }
+    if kind == tkGt { return ">"; }
+    if kind == tkGe { return ">="; }
+    if kind == tkAssign { return "="; }
+    if kind == tkPlusAssign { return "+="; }
+    if kind == tkMinusAssign { return "-="; }
+    if kind == tkStarAssign { return "*="; }
+    if kind == tkSlashAssign { return "/="; }
+    if kind == tkPercentAssign { return "%="; }
+    if kind == tkAmpAssign { return "&="; }
+    if kind == tkPipeAssign { return "|="; }
+    if kind == tkCaretAssign { return "^="; }
+    if kind == tkShlAssign { return "<<="; }
+    if kind == tkShrAssign { return ">>="; }
+    if kind == tkHashLine { return "#line"; }
+    if kind == tkHashColumn { return "#column"; }
+    if kind == tkHashFile { return "#file"; }
+    if kind == tkHashFunction { return "#function"; }
+    if kind == tkHashDate { return "#date"; }
+    if kind == tkHashTime { return "#time"; }
+    if kind == tkHashModule { return "#module"; }
+    if kind == tkNewLine { return "newline"; }
+    if kind == tkEndOfFile { return "end of file"; }
+    return "unknown token";
+}
+// types.bux — Type system definitions and factories
+module Types {
+
+// ---------------------------------------------------------------------------
+// TypeKind constants
+// ---------------------------------------------------------------------------
+
+const tkUnknown: int = 0;
+const tkVoid: int = 1;
+const tkBool: int = 2;
+const tkBool8: int = 3;
+const tkBool16: int = 4;
+const tkBool32: int = 5;
+const tkChar8: int = 6;
+const tkChar16: int = 7;
+const tkChar32: int = 8;
+const tkStr: int = 9;
+const tkInt8: int = 10;
+const tkInt16: int = 11;
+const tkInt32: int = 12;
+const tkInt64: int = 13;
+const tkInt: int = 14;
+const tkUInt8: int = 15;
+const tkUInt16: int = 16;
+const tkUInt32: int = 17;
+const tkUInt64: int = 18;
+const tkUInt: int = 19;
+const tkFloat32: int = 20;
+const tkFloat64: int = 21;
+const tkPointer: int = 22;
+const tkSlice: int = 23;
+const tkRange: int = 24;
+const tkTuple: int = 25;
+const tkNamed: int = 26;
+const tkTypeParam: int = 27;
+const tkFunc: int = 28;
+
+// ---------------------------------------------------------------------------
+// Type struct
+// ---------------------------------------------------------------------------
+
+struct Type {
+    kind: int,
+    name: String,
+    // inner types stored as array of pointers (simplified)
+    innerKind1: int,
+    innerName1: String,
+    innerKind2: int,
+    innerName2: String,
+    innerKind3: int,
+    innerName3: String,
+    innerCount: int,
+}
+
+// ---------------------------------------------------------------------------
+// Factories
+// ---------------------------------------------------------------------------
+
+func Type_MakeUnknown() -> Type {
+    return Type { kind: tkUnknown, name: "", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeVoid() -> Type {
+    return Type { kind: tkVoid, name: "void", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeBool() -> Type {
+    return Type { kind: tkBool, name: "bool", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeInt() -> Type {
+    return Type { kind: tkInt, name: "int", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeInt64() -> Type {
+    return Type { kind: tkInt64, name: "int64", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeUInt() -> Type {
+    return Type { kind: tkUInt, name: "uint", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeFloat64() -> Type {
+    return Type { kind: tkFloat64, name: "float64", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeStr() -> Type {
+    return Type { kind: tkStr, name: "String", innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakePointer(pointee: Type) -> Type {
+    return Type { kind: tkPointer, name: "", innerCount: 1,
+        innerKind1: pointee.kind, innerName1: pointee.name,
+        innerKind2: 0, innerName2: "", innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeNamed(name: String) -> Type {
+    return Type { kind: tkNamed, name: name, innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+func Type_MakeTypeParam(name: String) -> Type {
+    return Type { kind: tkTypeParam, name: name, innerCount: 0,
+        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+        innerKind3: 0, innerName3: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Predicates
+// ---------------------------------------------------------------------------
+
+func Type_IsNumeric(t: Type) -> bool {
+    let k: int = t.kind;
+    if k == tkInt8 || k == tkInt16 || k == tkInt32 || k == tkInt64 || k == tkInt { return true; }
+    if k == tkUInt8 || k == tkUInt16 || k == tkUInt32 || k == tkUInt64 || k == tkUInt { return true; }
+    if k == tkFloat32 || k == tkFloat64 { return true; }
+    if k == tkUnknown || k == tkNamed || k == tkTypeParam { return true; }
+    return false;
+}
+
+func Type_IsInteger(t: Type) -> bool {
+    let k: int = t.kind;
+    if k == tkInt8 || k == tkInt16 || k == tkInt32 || k == tkInt64 || k == tkInt { return true; }
+    if k == tkUInt8 || k == tkUInt16 || k == tkUInt32 || k == tkUInt64 || k == tkUInt { return true; }
+    if k == tkUnknown || k == tkNamed || k == tkTypeParam { return true; }
+    return false;
+}
+
+func Type_IsBool(t: Type) -> bool {
+    let k: int = t.kind;
+    return k == tkBool || k == tkBool8 || k == tkBool16 || k == tkBool32;
+}
+
+func Type_IsPointer(t: Type) -> bool {
+    return t.kind == tkPointer;
+}
+
+func Type_IsSlice(t: Type) -> bool {
+    return t.kind == tkSlice;
+}
+
+// ---------------------------------------------------------------------------
+// Comparison (structural, limited to kind + name for simplicity)
+// ---------------------------------------------------------------------------
+
+func Type_Eq(a: Type, b: Type) -> bool {
+    if a.kind != b.kind { return false; }
+    if a.kind == tkNamed || a.kind == tkTypeParam {
+        return String_Eq(a.name, b.name);
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// toString
+// ---------------------------------------------------------------------------
+
+func Type_ToString(t: Type) -> String {
+    if t.kind == tkVoid { return "void"; }
+    if t.kind == tkBool { return "bool"; }
+    if t.kind == tkStr { return "String"; }
+    if t.kind == tkInt { return "int"; }
+    if t.kind == tkInt64 { return "int64"; }
+    if t.kind == tkUInt { return "uint"; }
+    if t.kind == tkFloat64 { return "float64"; }
+    if t.kind == tkNamed { return t.name; }
+    if t.kind == tkTypeParam { return t.name; }
+    if t.kind == tkPointer { return "*" + t.innerName1; }
+    return "?";
+}
+// scope.bux — Symbol table with parent-chain lookup
+module Scope {
+
+// Symbol kinds
+const skVar: int = 0;
+const skFunc: int = 1;
+const skType: int = 2;
+const skConst: int = 3;
+const skModule: int = 4;
+
+// Maximum symbols per scope
+const maxSymbols: int = 256;
+
+struct Symbol {
+    kind: int,
+    name: String,
+    typeKind: int,
+    typeName: String,
+    isMutable: bool,
+    isPublic: bool,
+}
+
+struct Scope {
+    symbols: *Symbol,
+    count: int,
+    parent: *Scope,
+}
+
+// ---------------------------------------------------------------------------
+// Scope operations
+// ---------------------------------------------------------------------------
+
+func Scope_New() -> Scope {
+    let sz: uint = maxSymbols as uint * sizeof(Symbol);
+    let data: *Symbol = bux_alloc(sz) as *Symbol;
+    return Scope { symbols: data, count: 0, parent: null as *Scope };
+}
+
+func Scope_NewChild(parent: *Scope) -> Scope {
+    let sz: uint = maxSymbols as uint * sizeof(Symbol);
+    let data: *Symbol = bux_alloc(sz) as *Symbol;
+    return Scope { symbols: data, count: 0, parent: parent };
+}
+
+func Scope_Define(scope: *Scope, sym: Symbol) -> bool {
+    // Check local scope for duplicates
+    var i: int = 0;
+    while i < scope.count {
+        if String_Eq(scope.symbols[i].name, sym.name) {
+            return false;
+        }
+        i = i + 1;
+    }
+    if scope.count < maxSymbols {
+        scope.symbols[scope.count] = sym;
+        scope.count = scope.count + 1;
+        return true;
+    }
+    return false;
+}
+
+func Scope_Lookup(scope: *Scope, name: String) -> Symbol {
+    var cur: *Scope = scope;
+    while cur != null as *Scope {
+        var i: int = 0;
+        while i < cur.count {
+            if String_Eq(cur.symbols[i].name, name) {
+                return cur.symbols[i];
+            }
+            i = i + 1;
+        }
+        cur = cur.parent;
+    }
+    var empty: Symbol;
+    return empty;
+}
+
+func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
+    var i: int = 0;
+    while i < scope.count {
+        if String_Eq(scope.symbols[i].name, name) {
+            return scope.symbols[i];
+        }
+        i = i + 1;
+    }
+    var empty: Symbol;
+    return empty;
+}
+
+func Scope_Free(scope: *Scope) {
+    bux_free(scope.symbols as *void);
+}
 }
 func Main() -> int { return 0; }

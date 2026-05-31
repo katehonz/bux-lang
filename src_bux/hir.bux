@@ -1,5 +1,5 @@
 // hir.bux — HIR (High-level Intermediate Representation) node types
-module Hir;
+module Hir {
 
 // HIR node kinds
 const hLit: int = 0;

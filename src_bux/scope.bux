@@ -1,5 +1,5 @@
 // scope.bux — Symbol table with parent-chain lookup
-module Scope;
+module Scope {
 
 // Symbol kinds
 const skVar: int = 0;

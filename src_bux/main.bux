@@ -1,5 +1,5 @@
 // main.bux — Entry point for the Bux self-hosting compiler
-module Main;
+module Main {
 
 // Forward declaration from Cli module
 func Cli_Run(args: *String, argCount: int) -> int;
