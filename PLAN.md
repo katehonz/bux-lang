@@ -78,10 +78,10 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | `2.4` Type checking | ✅ | Expression typing, operator overload resolution per Rux rules, assignment compatibility |
 | `2.5` Name resolution | ✅ | Resolve identifiers, paths, `self`, `super`; report undeclared / ambiguous names |
 | `2.6` Interface conformance | ✅ | Check that `extend T for I` provides all required methods; build vtable map |
-| `2.7` Generics (basic) | ✅ | Monomorphization of generic functions at call sites |
+| `2.7` Generics (basic) | ✅ | Monomorphization of generic functions and generic structs at call sites |
 | `2.8` Diagnostics | ✅ | Multi-file error messages with source locations |
 | `2.9` **Algebraic enums** | ✅ | Enums with data (like Rust's `enum Result<T,E> { Ok(T), Err(E) }`) — lowered to tagged unions |
-| `2.10` **Method resolution** | ✅ | Resolve `obj.method()` calls to `Type_method(obj)` based on receiver type |
+| `2.10` **Method resolution** | ✅ | Resolve `obj.method()` calls to `Type_method(obj)` based on receiver type; supports generic struct methods with lazy monomorphization |
 
 **Deliverable:** `bux check` rejects ill-typed programs and passes all 9 example programs.
 
@@ -97,7 +97,7 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | `3.2` Lowering | ✅ | Desugar `for` → `while`+counter, `match` → if-else chains, method calls to explicit receiver calls |
 | `3.3` Constant folding | ⏳ | Evaluate `const` and simple compile-time expressions |
 | `3.4` Interface lowering | ⏳ | Convert interface values to fat pointers `{data_ptr, vtable_ptr}`; generate vtable labels |
-| `3.5` **Generic instantiation** | ✅ | Monomorphize generic functions at call sites |
+| `3.5` **Generic instantiation** | ✅ | Monomorphize generic functions and generic structs at call sites |
 | `3.6` **Enum lowering** | ✅ | Lower algebraic enums to tagged unions `{tag: uint, data: union}` |
 
 **Deliverable:** HIR lowering produces valid C code for all example programs.
@@ -158,18 +158,18 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 |--------|--------|-------------|
 | `Std::Io` | ✅ | `Print`, `PrintLine`, `PrintInt`, `ReadLine` (wrap C stdio) |
 | `Std::Memory` | ✅ | `bux_alloc`, `bux_realloc`, `bux_free` (wrap `malloc`/`free`) |
-| `Std::String` | ⏳ | Basic string builder, concatenation, slicing |
-| `Std::Array` | ✅ | Dynamic array: `Array_New`, `Array_Push`, `Array_Get`, `Array_Len`, `Array_Free` |
-| `Std::Map` | ⏳ | Hash map with string keys (needed for symbol tables) |
+| `Std::String` | ✅ | `String_Len`, `String_Eq`, `String_Concat`, `String_Copy`, `String_StartsWith`; C wrappers in `runtime.c` |
+| `Std::Array` | ✅ | Fully generic `Array<T>` with `Array_New<T>`, `Array_Push<T>`, `Array_Get<T>`, `Array_Len<T>`, `Array_Free<T>`; uses `sizeof(T)` |
+| `Std::Map` | ✅ | Linear-probing hash map `String`→`int` with `Map_New`, `Map_Set`, `Map_Get`, `Map_Has`, `Map_Len`, `Map_Free` |
 | `Std::Math` | ⏳ | `Sqrt`, `Pow`, `Min`, `Max`, `Abs` |
 | `Std::Os` | ⏳ | `Args`, `Env`, `Exit`, `Cwd` |
 | `Std::Path` | ⏳ | Path joining, extension splitting |
 | `Std::Process` | ⏳ | Spawn subprocess, read stdout/stderr |
-| **`Std::Result`** | ⏳ | `Result<T, E>` + `Option<T>` types with `?` operator for error propagation |
+| **`Std::Result`** | ✅ | Algebraic enums `Result<T,E>` and `Option<T>` with `NewOk`/`NewErr`/`NewSome`/`NewNone`; `?` try operator desugared in HIR |
 | **`Std::Iter`** | ⏳ | Iterator trait with `map`, `filter`, `fold`, `collect` |
 | **`Std::Fmt`** | ⏳ | String formatting: `"Hello, {}!"` interpolation |
 
-**Deliverable:** Can write a non-trivial CLI tool (e.g., a file copier or a basic grep) entirely in Bux.
+**Deliverable:** Can write a non-trivial CLI tool entirely in Bux. ✅ `try_operator`, `result_option`, `map`, `strings` examples working.
 
 ---
 
@@ -197,14 +197,14 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 
 **Goal:** Features that make Bux better than Rux and competitive with Rust/Nim.
 
-### 8.1 — Error Handling (Result/Option + `?` operator)
+### 8.1 — Error Handling (Result/Option + `?` operator) ✅
 
-| Task | Details |
-|------|---------|
-| `8.1.1` Result type | `Result<T, E>` with `Ok(T)` and `Err(E)` constructors |
-| `8.1.2` Option type | `Option<T>` with `Some(T)` and `None` constructors |
-| `8.1.3` `?` operator | `expr?` desugars to: if `Err`/`None`, early-return from function |
-| `8.1.4` `!` suffix | `expr!` unwraps or panics (for prototyping) |
+| Task | Status | Details |
+|------|--------|---------|
+| `8.1.1` Result type | ✅ | `Result<T, E>` with `Ok(T)` and `Err(E)` constructors |
+| `8.1.2` Option type | ✅ | `Option<T>` with `Some(T)` and `None` constructors |
+| `8.1.3` `?` operator | ✅ | `expr?` desugars to: if `Err`/`None`, early-return from function |
+| `8.1.4` `!` suffix | ⏳ | `expr!` unwraps or panics (for prototyping) |
 
 ```bux
 func ReadFile(path: String) -> Result<String, IoError> {
@@ -502,7 +502,7 @@ func Main() -> int {
 | **M2** | 2 ✅ | Type-checker rejects invalid programs |
 | **M3** | 3 ✅ | HIR lowering works for all constructs |
 | **M4** | 5A ✅ | `bux run` produces working binary via C transpiler |
-| **M5** | 6 🔄 | Can write compiler-adjacent tools in Bux |
+| **M5** | 6 ✅ | Can write compiler-adjacent tools in Bux |
 | **M6** | 7 | **Self-hosted**: Bux compiler builds itself |
 | **M7** | 8 | Result/Option, ownership, concurrency shipped |
 | **M8** | 9 | Package manager + LSP + formatter shipped |
@@ -524,10 +524,10 @@ func Main() -> int {
 
 ## Next Immediate Steps
 
-1. **Generic struct monomorphization** — Enable `Array<T>`, `Map<K,V>` for self-hosting
-2. **Std::String module** — String builder, concatenation, slicing
-3. **Std::Map module** — Hash map with string keys (critical for symbol tables)
-4. **Std::Result / Std::Option** — Algebraic enums for error handling
+1. **Inferred generic function calls** — `UseBox(&b)` instead of `UseBox<int>(&b)`
+2. **`extend Box<T>` syntax** — Parser support for generic impl blocks
+3. **Std::String improvements** — String builder, slicing, interpolation
+4. **Std::Map generic** — `Map<K,V>` with generic keys and values
 5. **Self-hosting preparation** — Audit Nim compiler code for Bux-rewrite feasibility
 
 ---
@@ -560,8 +560,8 @@ Based on [Rux Documentation](https://rux-lang.dev/docs/), these are the features
 | **Slice** | `T[]` (unsized), `T[N]` (fixed-size) | ✅ Implemented |
 | **Tuple** | `(T1, T2, ...)` | ✅ Implemented |
 | **Function** | `func(T1, T2) -> R` | ✅ Implemented |
-| **Option** | `Option<T>` = `Some(T)` \| `None` | ⏳ Phase 6 |
-| **Result** | `Result<T, E>` = `Ok(T)` \| `Err(E)` | ⏳ Phase 6 |
+| **Option** | `Option<T>` = `Some(T)` \| `None` | ✅ Implemented |
+| **Result** | `Result<T, E>` = `Ok(T)` \| `Err(E)` | ✅ Implemented |
 
 ### A.2 Declarations
 
@@ -571,11 +571,11 @@ Based on [Rux Documentation](https://rux-lang.dev/docs/), these are the features
 | **Mutable variable** | `var x: int = 42;` | ✅ Implemented |
 | **Constant** | `const Max: uint32 = 100;` | ✅ Implemented |
 | **Function** | `func Add(a: int, b: int) -> int { ... }` | ✅ Implemented |
-| **Generic function** | `func Min<T>(x: T, y: T) -> T { ... }` | ⏳ Phase 2.7 |
+| **Generic function** | `func Min<T>(x: T, y: T) -> T { ... }` | ✅ Implemented |
 | **Variadic function** | `func Sum(values: int32...)` | ⏳ Phase 1 |
 | **Struct** | `struct Point { x: float64; y: float64; }` | ✅ Implemented |
 | **Enum** | `enum Color { Red, Green, Blue }` | ✅ Implemented |
-| **Data-carrying enum** | `enum Shape { Circle(float64), Rect(float64, float64) }` | ⏳ Phase 2.9 |
+| **Data-carrying enum** | `enum Shape { Circle(float64), Rect(float64, float64) }` | ✅ Implemented |
 | **Union (untagged)** | `union Bits { asByte: uint8; asInt: int32; }` | ✅ Implemented |
 | **Interface (trait)** | `interface Display { func ToString() -> String; }` | ✅ Implemented |
 | **Impl (extend)** | `extend Circle: Display { ... }` | ✅ Implemented |
