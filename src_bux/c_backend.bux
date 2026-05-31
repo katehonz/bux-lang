@@ -203,11 +203,11 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
         StringBuilder_Append(&cbe.sb, "int "); // simplified param type
         var pname: String = "";
         if i == 0 { pname = f.param0.name; }
-        else if i == 1 { pname = f.param1.name; }
-        else if i == 2 { pname = f.param2.name; }
-        else if i == 3 { pname = f.param3.name; }
-        else if i == 4 { pname = f.param4.name; }
-        else if i == 5 { pname = f.param5.name; }
+        if i == 1 { pname = f.param1.name; }
+        if i == 2 { pname = f.param2.name; }
+        if i == 3 { pname = f.param3.name; }
+        if i == 4 { pname = f.param4.name; }
+        if i == 5 { pname = f.param5.name; }
         StringBuilder_Append(&cbe.sb, pname);
         i = i + 1;
     }
