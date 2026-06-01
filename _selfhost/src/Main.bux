@@ -10,6 +10,9 @@ func Cli_Run(args: *String, argCount: int) -> int;
 
 func Main() -> int {
     let count: int = bux_argc();
+    Print("Main count=");
+    PrintInt(count);
+    PrintLine("");
     // Allocate array of String pointers
     let args: *String = bux_alloc(count as uint * 8) as *String;
     var i: int = 0;

@@ -51,13 +51,21 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     }
 
     // Phase 2: Parse
+    PrintLine("  Parsing...");
     let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
     if mod == null as *Module {
         PrintLine("Parse failed");
         return "";
     }
+    PrintLine("  Parse done");
+
+    // Flatten module wrappers: if the only item is a module decl, hoist its children
+    if mod.firstItem != null as *Decl && mod.firstItem.kind == dkModule && mod.firstItem.childDecl1 != null as *Decl {
+        mod.firstItem = mod.firstItem.childDecl1;
+    }
 
     // Phase 3: Semantic analysis
+    PrintLine("  Sema...");
     let sema: *Sema = Sema_Analyze(mod);
     if Sema_HasError(sema) {
         PrintLine("Sema errors:");
@@ -69,8 +77,10 @@ func Cli_Compile(source: String, sourceName: String) -> String {
         }
         return "";
     }
+    PrintLine("  Sema done");
 
     // Phase 4: HIR lowering
+    PrintLine("  HIR lowering...");
     let hirMod: *HirModule = HirLower_LowerModule(mod, sema);
     if hirMod == null as *HirModule {
         PrintLine("HIR lowering failed");
@@ -129,11 +139,14 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
 // ---------------------------------------------------------------------------
 
 func Cli_Check(srcPath: String) -> int {
+    Print("Check: ");
+    PrintLine(srcPath);
     let source: String = ReadFile(srcPath);
     if String_Eq(source, "") {
         PrintLine("Error: cannot read source file");
         return 1;
     }
+    PrintLine("  File read OK");
 
     let cCode: String = Cli_Compile(source, srcPath);
     if String_Eq(cCode, "") {
@@ -314,6 +327,9 @@ func Cli_BuildProject(projectDir: String) -> int {
 // ---------------------------------------------------------------------------
 
 func Cli_Run(args: *String, argCount: int) -> int {
+    Print("Cli_Run argCount=");
+    PrintInt(argCount);
+    PrintLine("");
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
@@ -330,6 +346,8 @@ func Cli_Run(args: *String, argCount: int) -> int {
     }
 
     let cmd: String = args[1];
+    Print("cmd=");
+    PrintLine(cmd);
     if String_Eq(cmd, "version") {
         PrintLine("Bux 0.2.0 (self-hosting bootstrap)");
         return 0;
