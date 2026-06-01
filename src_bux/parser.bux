@@ -78,10 +78,12 @@ func parserExpect(p: *Parser, kind: int, msg: String) -> LexToken {
         return parserAdvance(p);
     }
     let tok: LexToken = parserCurToken(p);
-    p.diags[p.diagCount] = ParserDiag {
-        line: tok.line, column: tok.column, message: msg
-    };
-    p.diagCount = p.diagCount + 1;
+    if p.diagCount < 256 {
+        p.diags[p.diagCount] = ParserDiag {
+            line: tok.line, column: tok.column, message: msg
+        };
+        p.diagCount = p.diagCount + 1;
+    }
     return tok;
 }
 
@@ -103,10 +105,12 @@ func parserExpectIdentOrKeyword(p: *Parser, msg: String) -> LexToken {
     if tok.kind == tkIdent || parserIsKeyword(tok.kind) {
         return parserAdvance(p);
     }
-    p.diags[p.diagCount] = ParserDiag {
-        line: tok.line, column: tok.column, message: msg
-    };
-    p.diagCount = p.diagCount + 1;
+    if p.diagCount < 256 {
+        p.diags[p.diagCount] = ParserDiag {
+            line: tok.line, column: tok.column, message: msg
+        };
+        p.diagCount = p.diagCount + 1;
+    }
     return tok;
 }
 
