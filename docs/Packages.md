@@ -1,6 +1,6 @@
 # Bux Package Manager
 
-> **Status:** Implemented (Phase 9.1) | **Format:** Compatible with Rux.toml spec
+> **Status:** Implemented (Phase 9.1)
 
 ---
 

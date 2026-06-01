@@ -2,9 +2,9 @@
 
 > **Status:** Self-hosting phase — `buxc2` (Bux compiler written in Bux) compiles `.bux` files to C. Bootstrap compiler (`buxc`, Nim) maintains backward compatibility.
 
-Bux is a fast, compiled, strongly-typed systems programming language inspired by [Rux](https://rux-lang.dev/). The long-term goal is a self-hosted compiler with a minimal runtime, native x86-64 backend, and modern tooling.
+Bux is a fast, compiled, strongly-typed systems programming language. The long-term goal is a self-hosted compiler with a minimal runtime, native x86-64 backend, and modern tooling.
 
-Bux improves on Rux with a richer standard library (`Map`, `String`), modern error handling (`Result`, `Option`, and the `?` operator), and a portable C transpiler backend that runs on Linux, macOS, and Windows.
+Bux features a rich standard library (`Map`, `String`), modern error handling (`Result`, `Option`, and the `?` operator), and a portable C transpiler backend that runs on Linux, macOS, and Windows.
 
 ---
 

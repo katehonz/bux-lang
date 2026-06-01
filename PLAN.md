@@ -1,6 +1,5 @@
 # Bux Programming Language — Roadmap to Self-Hosting
 
-> **Reference:** [Rux Language](https://rux-lang.dev/) | [Rux Source](../_rux/)
 > **Bootstrap Implementation:** Nim
 > **Target:** Bux compiler written in Bux (self-hosting)
 
@@ -8,27 +7,27 @@
 
 ## Overview
 
-Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming language inspired by Rux, Rust, and Nim. The strategy is **bootstrap via Nim** — we build the first Bux compiler in Nim, then progressively rewrite it in Bux until it compiles itself.
+Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming language. The strategy is **bootstrap via Nim** — we build the first Bux compiler in Nim, then progressively rewrite it in Bux until it compiles itself.
 
 **Core philosophy:** Systems-level control with modern ergonomics. No hidden costs, no hidden allocations, no hidden control flow.
 
 ---
 
-## Language Design Goals (Bux vs Rust vs Nim vs Zig vs Rux)
+## Language Design Goals (Bux vs Rust vs Nim vs Zig)
 
-| Dimension | Bux Target | Rust | Nim | Zig | Rux v0.2.0 |
-|-----------|-----------|------|-----|-----|------------|
-| **Memory safety** | Gradual ownership (opt-in borrow checking) | Strict borrow checker | GC / manual | Manual + comptime | Raw pointers only |
-| **Error handling** | `Result<T,E>` + `?` + `!` | `Result<T,E>` + `?` | Exceptions | Error unions + `try` | Basic Result, no `?` |
-| **Concurrency** | Lightweight tasks + channels + `async`/`await` | `async`/`await` + threads | Async/await + threads | Async I/O (io_uring) | None |
-| **Metaprogramming** | Compile-time function execution (CTFE) + macros | Proc/decl macros | Static generics + macros | `comptime` (best-in-class) | None |
-| **Generics** | Monomorphization + trait bounds | Monomorphization + trait bounds | Static generics | `comptime` generics | Limited |
-| **Backend** | C transpiler (bootstrap) → native x86-64 + LLVM | LLVM | C/JS/JS backend | LLVM + custom | Custom native only |
-| **Compile speed** | Fast (Nim-like goal: <1s for medium projects) | Slow (LLVM) | Fast | Very fast | Fast (custom backend) |
-| **FFI** | Seamless C interop (zero-cost) | Good | Good (native) | Excellent (best-in-class) | Basic extern |
-| **Stdlib** | Batteries-included (collections, IO, net, sync) | Rich | Rich | Minimal (allocators) | Minimal |
-| **Tooling** | Built-in formatter, LSP, test runner, debugger | External tools | External tools | `zig build` (excellent) | Minimal |
-| **Simplicity** | Rux-like clean syntax + modern ergonomics | Complex | Clean | Minimal, explicit | Clean, C-like |
+| Dimension | Bux Target | Rust | Nim | Zig |
+|-----------|-----------|------|-----|-----|
+| **Memory safety** | Gradual ownership (opt-in borrow checking) | Strict borrow checker | GC / manual | Manual + comptime |
+| **Error handling** | `Result<T,E>` + `?` + `!` | `Result<T,E>` + `?` | Exceptions | Error unions + `try` |
+| **Concurrency** | Lightweight tasks + channels + `async`/`await` | `async`/`await` + threads | Async/await + threads | Async I/O (io_uring) |
+| **Metaprogramming** | Compile-time function execution (CTFE) + macros | Proc/decl macros | Static generics + macros | `comptime` (best-in-class) |
+| **Generics** | Monomorphization + trait bounds | Monomorphization + trait bounds | Static generics | `comptime` generics |
+| **Backend** | C transpiler (bootstrap) → native x86-64 + LLVM | LLVM | C/JS/JS backend | LLVM + custom |
+| **Compile speed** | Fast (Nim-like goal: <1s for medium projects) | Slow (LLVM) | Fast | Very fast |
+| **FFI** | Seamless C interop (zero-cost) | Good | Good (native) | Excellent (best-in-class) |
+| **Stdlib** | Batteries-included (collections, IO, net, sync) | Rich | Rich | Minimal (allocators) |
+| **Tooling** | Built-in formatter, LSP, test runner, debugger | External tools | External tools | `zig build` (excellent) |
+| **Simplicity** | Clean C-like syntax + modern ergonomics | Complex | Clean | Minimal, explicit |
 
 ---
 
@@ -39,7 +38,7 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | Task | Status | Details |
 |------|--------|---------|
 | `0.1` Project skeleton | ✅ | `buxc` CLI in Nim, `bux.toml` manifest parser |
-| `0.2` Token model | ✅ | All Rux tokens (`TokenKind`, `SourceLocation`, literal suffixes) |
+| `0.2` Token model | ✅ | Full token set (`TokenKind`, `SourceLocation`, literal suffixes) |
 | `0.3` Lexer | ✅ | UTF-8 source, identifiers, numbers (dec/hex/bin/oct), strings (`c8""`, `c16""`, `c32""`), chars, operators, nested `/* */`, `//` comments, intrinsics (`#line`, `#file`, etc.) |
 | `0.4` CLI commands | ✅ | `bux new`, `bux init`, `bux build`, `bux run`, `bux check` |
 | `0.5` Test harness | ✅ | Golden-file tests for lexer output (`.tokens`) |
@@ -50,7 +49,7 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 
 ## Phase 1 — Frontend: Parser & AST ✅ (Complete)
 
-**Goal:** Parse every construct present in Rux v0.2.0 into a Nim AST.
+**Goal:** Parse every Bux language construct into a Nim AST.
 
 | Task | Status | Details |
 |------|--------|---------|
@@ -63,7 +62,7 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | `1.7` Attributes | ✅ | `@[Import(lib: "...")]`, calling-convention, platform-conditional imports |
 | `1.8` Error recovery | ✅ | Synchronize on declaration/statement boundaries; emit multiple diagnostics |
 
-**Deliverable:** All `_rux/Tests/**/*.rux` files parse without error and produce `.ast` dumps.
+**Deliverable:** All `tests/frontend/**/*.bux` files parse without error and produce `.ast` dumps.
 
 ---
 
@@ -76,7 +75,7 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | `2.1` Type model | ✅ | `TypeRef` with primitives, pointers, slices, tuples, named types, type parameters, functions |
 | `2.2` Scopes | ✅ | Module scope, block scope, namespace resolution for `Std::Io::PrintLine` |
 | `2.3` First pass | ✅ | Collect global symbols (functions, structs, enums, unions, interfaces, consts, type aliases, imports) |
-| `2.4` Type checking | ✅ | Expression typing, operator overload resolution per Rux rules, assignment compatibility |
+| `2.4` Type checking | ✅ | Expression typing, operator overload resolution, assignment compatibility |
 | `2.5` Name resolution | ✅ | Resolve identifiers, paths, `self`, `super`; report undeclared / ambiguous names |
 | `2.6` Interface conformance | ✅ | Check that `extend T for I` provides all required methods; build vtable map |
 | `2.7` Generics (basic) | ✅ | Monomorphization of generic functions and generic structs at call sites |
@@ -141,11 +140,11 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 
 | Task | Details |
 |------|---------|
-| `5B.1` Assembly emitter | NASM-syntax text output (like Rux `Asm`) |
+| `5B.1` Assembly emitter | NASM-syntax text output |
 | `5B.2` Register allocation | Naive stack-spill allocator first; later linear-scan |
 | `5B.3` ABI lowering | System V AMD64 ABI (Linux/macOS) and Win64 ABI (Windows) |
 | `5B.4` Object format | Emit ELF64 (Linux), Mach-O (macOS), PE/COFF (Windows) — or use `nasm` + system linker |
-| `5B.5` Custom linker (optional) | `.bcu` (Bux Compiled Unit) format + bespoke linker à la Rux `.rcu` |
+| `5B.5` Custom linker (optional) | `.bcu` (Bux Compiled Unit) format + bespoke linker |
 
 **Deliverable:** `bux build --backend=native` produces working Linux x86-64 binary.
 
@@ -392,7 +391,7 @@ Pipeline modules:
 
 ## Phase 8 — Advanced Language Features 🔄 (In Progress)
 
-**Goal:** Features that make Bux better than Rux and competitive with Rust/Nim/Zig.
+**Goal:** Features that make Bux competitive with Rust/Nim/Zig.
 
 ### 8.1 — Error Handling (Result/Option + `?` + `!` operators) ✅
 
@@ -580,27 +579,6 @@ bux/
 
 ## Language Design Decisions (Bux Improvements)
 
-### What Bux inherits from Rux
-| Feature | Rux | Bux |
-|---------|-----|-----|
-| Syntax | C-like with modern touches | Same base, extended |
-| Module system | `import Std::Io::PrintLine` | Same path syntax |
-| String literals | `c8""`, `c16""`, `c32""` + `""` | Same |
-| Build manifest | `Rux.toml` | `bux.toml` (compatible format) |
-| Backend philosophy | Self-contained (no LLVM required) | C transpiler first → native + optional LLVM |
-
-### What Bux improves over Rux
-| Gap in Rux | Bux Solution |
-|-----------|-------------|
-| No memory safety | Gradual ownership model (opt-in borrow checking) |
-| No error handling sugar | `Result<T,E>` + `?` operator |
-| No concurrency | Green threads + channels + `async`/`await` |
-| No metaprogramming | CTFE + declarative macros + derive macros |
-| Minimal stdlib | Batteries-included (collections, IO, net, sync, fmt) |
-| Custom backend only | C transpiler (portable) + native + LLVM option |
-| No debug symbols | DWARF/PDB generation for debugger integration |
-| Windows-only output | Cross-platform from day one (Linux, macOS, Windows) |
-
 ### What Bux learns from Rust
 | Rust feature | Bux adaptation |
 |-------------|----------------|
@@ -696,7 +674,7 @@ func Main() -> int {
 | Milestone | Phase | Status | Success Criteria |
 |-----------|-------|--------|------------------|
 | **M0** | 0 | ✅ | `bux check` lexes source |
-| **M1** | 1 | ✅ | All Rux test files parse |
+| **M1** | 1 | ✅ | All frontend test files parse |
 | **M2** | 2 | ✅ | Type-checker rejects invalid programs |
 | **M3** | 3 | ✅ | HIR lowering works for all constructs |
 | **M4** | 5A | ✅ | `bux run` produces working binary via C transpiler |
@@ -781,147 +759,9 @@ func Main() -> int {
 
 ---
 
-## Appendix A: Rux Language Reference (for Bux parity)
+## Appendix A: Bux Token Reference
 
-Based on [Rux Documentation](https://rux-lang.dev/docs/), these are the features Bux must support for Rux parity:
-
-### A.1 Types
-
-| Category | Rux Types | Bux Status |
-|----------|-----------|------------|
-| **Signed integers** | `int8`, `int16`, `int32`, `int64`, `int` (platform) | ✅ Implemented |
-| **Unsigned integers** | `uint8`, `uint16`, `uint32`, `uint64`, `uint` (platform) | ✅ Implemented |
-| **Floating-point** | `float32`, `float64` | ✅ Implemented |
-| **Boolean** | `bool`, `bool8`, `bool16`, `bool32` | ✅ Implemented |
-| **Character** | `char8`, `char16`, `char32` | ✅ Implemented |
-| **String** | `String` (UTF-8), `c8""`, `c16""`, `c32""` literals | ✅ Implemented |
-| **Pointer** | `*T` (raw pointer) | ✅ Implemented |
-| **Slice** | `T[]` (unsized), `T[N]` (fixed-size) | ✅ Implemented |
-| **Tuple** | `(T1, T2, ...)` | ✅ Implemented |
-| **Function** | `func(T1, T2) -> R` | ✅ Implemented |
-| **Option** | `Option<T>` = `Some(T)` \| `None` | ✅ Implemented |
-| **Result** | `Result<T, E>` = `Ok(T)` \| `Err(E)` | ✅ Implemented |
-
-### A.2 Declarations
-
-| Construct | Rux Syntax | Bux Status |
-|-----------|------------|------------|
-| **Immutable variable** | `let x: int = 42;` | ✅ Implemented |
-| **Mutable variable** | `var x: int = 42;` | ✅ Implemented |
-| **Constant** | `const Max: uint32 = 100;` | ✅ Implemented |
-| **Function** | `func Add(a: int, b: int) -> int { ... }` | ✅ Implemented |
-| **Generic function** | `func Min<T>(x: T, y: T) -> T { ... }` | ✅ Implemented |
-| **Variadic function** | `func Sum(values: int32...)` | ⏳ Phase 1 |
-| **Struct** | `struct Point { x: float64; y: float64; }` | ✅ Implemented |
-| **Enum** | `enum Color { Red, Green, Blue }` | ✅ Implemented |
-| **Data-carrying enum** | `enum Shape { Circle(float64), Rect(float64, float64) }` | ✅ Implemented |
-| **Union (untagged)** | `union Bits { asByte: uint8; asInt: int32; }` | ✅ Implemented |
-| **Interface (trait)** | `interface Display { func ToString() -> String; }` | ✅ Implemented |
-| **Impl (extend)** | `extend Circle: Display { ... }` | ✅ Implemented |
-| **Module** | `module Math;` | ✅ Implemented |
-| **Type alias** | `type Int = int32;` | ✅ Implemented |
-| **Extern function** | `extern func printf(fmt: *char8, ...);` | ✅ Implemented |
-
-### A.3 Statements & Control Flow
-
-| Construct | Rux Syntax | Bux Status |
-|-----------|------------|------------|
-| **If/else** | `if cond { ... } else { ... }` | ✅ Implemented |
-| **While loop** | `while cond { ... }` | ✅ Implemented |
-| **Do-while** | `do { ... } while cond;` | ✅ Implemented |
-| **Infinite loop** | `loop { ... }` | ✅ Implemented |
-| **For-in loop** | `for item in collection { ... }` | ✅ Implemented |
-| **Range (exclusive)** | `0..10` (0 to 9) | ✅ Implemented |
-| **Range (inclusive)** | `0..=10` (0 to 10) | ✅ Implemented |
-| **Match expression** | `match val { pat => expr, ... }` | ✅ Implemented |
-| **Break** | `break;` or `break label;` | ✅ Implemented |
-| **Continue** | `continue;` or `continue label;` | ✅ Implemented |
-| **Return** | `return expr;` | ✅ Implemented |
-| **Labeled loops** | `outer: loop { ... break outer; }` | ✅ Implemented |
-
-### A.4 Pattern Matching
-
-| Pattern | Rux Syntax | Bux Status |
-|---------|------------|------------|
-| **Wildcard** | `_` | ✅ Implemented |
-| **Literal** | `42`, `"hello"`, `true` | ✅ Implemented |
-| **Identifier** | `name` (binds value) | ✅ Implemented |
-| **Range** | `1..9`, `1..=9` | ✅ Implemented |
-| **Enum destructuring** | `Shape::Circle(r)` | ✅ Implemented |
-| **Struct destructuring** | `Point { x: 0, y: 0 }` | ✅ Implemented |
-| **Tuple** | `(a, b, c)` | ✅ Implemented |
-| **Guard** | `t if t < 0` | ✅ Implemented |
-
-### A.5 Expressions & Operators
-
-| Category | Rux Operators | Bux Status |
-|----------|---------------|------------|
-| **Arithmetic** | `+`, `-`, `*`, `/`, `%`, `**` | ✅ Implemented |
-| **Comparison** | `==`, `!=`, `<`, `<=`, `>`, `>=` | ✅ Implemented |
-| **Logical** | `&&`, `\|\|`, `!` | ✅ Implemented |
-| **Bitwise** | `&`, `\|`, `^`, `~`, `<<`, `>>` | ✅ Implemented |
-| **Assignment** | `=`, `+=`, `-=`, `*=`, `/=`, etc. | ✅ Implemented |
-| **Increment/Decrement** | `++`, `--` | ✅ Implemented |
-| **Cast** | `expr as Type` | ✅ Implemented |
-| **Type test** | `expr is Type` | ✅ Implemented |
-| **Ternary** | `cond ? then : else` | ✅ Implemented |
-| **Path** | `Module::Name` | ✅ Implemented |
-| **Field access** | `obj.field` | ✅ Implemented |
-| **Index** | `arr[idx]` | ✅ Implemented |
-| **Call** | `func(args...)` | ✅ Implemented |
-| **Spread** | `func(slice...)` | ✅ Implemented |
-| **Range expr** | `0..5`, `0..=5` | ✅ Implemented |
-| **Struct init** | `Point { x: 1.0, y: 2.0 }` | ✅ Implemented |
-| **Slice init** | `[1, 2, 3]` | ✅ Implemented |
-| **Tuple init** | `(a, b, c)` | ✅ Implemented |
-| **Sizeof** | `sizeof(Type)` | ✅ Implemented |
-| **Dereference** | `*ptr` | ✅ Implemented |
-| **Address-of** | `&var` | ✅ Implemented |
-
-### A.6 Modules & Imports
-
-| Feature | Rux Syntax | Bux Status |
-|---------|------------|------------|
-| **Single import** | `import Math::Sqrt;` | ✅ Implemented |
-| **Multiple imports** | `import Http::{ Request, Response };` | ✅ Implemented |
-| **Wildcard import** | `import Std::Io::*;` | ⏳ Phase 1 |
-| **Public visibility** | `pub struct Foo { ... }` | ✅ Implemented |
-| **Private (default)** | Items private to module by default | ✅ Implemented |
-
-### A.7 Functions
-
-| Feature | Rux Syntax | Bux Status |
-|---------|------------|------------|
-| **Basic function** | `func Name(params) -> RetType { body }` | ✅ Implemented |
-| **Parameters** | `name: type` | ✅ Implemented |
-| **Return type** | `-> type` | ✅ Implemented |
-| **Multiple returns** | `-> (type1, type2)` via tuple | ⏳ Phase 1 |
-| **Variadic** | `values: type...` | ⏳ Phase 1 |
-| **Generics** | `func Name<T>(...)` | ✅ Implemented |
-| **Assembler** | `asm func Name() { ... }` | ⏳ Phase 8 |
-| **Entry point** | `func Main() -> int` | ✅ Implemented |
-
-### A.8 Features Bux Adds Beyond Rux
-
-| Feature | Bux Syntax | Rux Equivalent |
-|---------|------------|----------------|
-| **Error propagation** | `expr?` | ❌ Not in Rux |
-| **Unwrap/panic** | `expr!` | ❌ Not in Rux |
-| **Ownership (opt-in)** | `@[Checked]` attribute | ❌ Not in Rux |
-| **Borrow checking** | `&T`, `&mut T` with lifetimes | ❌ Not in Rux |
-| **Async/await** | `async func`, `.await` | ❌ Not in Rux |
-| **Channels** | `Channel<T>` | ❌ Not in Rux |
-| **CTFE** | `const func` | Partial (const only) |
-| **String interpolation** | `"Hello, {name}!"` | ❌ Not in Rux |
-| **Iterators** | `for x in iter.map(...)` | ❌ Not in Rux |
-| **Derive macros** | `#[derive(Clone, Debug)]` | ❌ Not in Rux |
-| **Declarative macros** | `macro! Name { ... }` | ❌ Not in Rux |
-
----
-
-## Appendix B: Bux Token Reference
-
-Complete token list from the lexer (matches Rux token set):
+Complete token list from the lexer:
 
 ### Literals
 `tkIntLiteral`, `tkFloatLiteral`, `tkStringLiteral`, `tkCharLiteral`, `tkBoolLiteral`
@@ -946,7 +786,7 @@ Complete token list from the lexer (matches Rux token set):
 
 ---
 
-## Appendix C: Build & Tooling Commands
+## Appendix B: Build & Tooling Commands
 
 ```bash
 # Build the bootstrap compiler (Nim)
