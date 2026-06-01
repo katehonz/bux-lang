@@ -564,13 +564,30 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       else: discard
       if calleeName != "":
         var typeSuffix = ""
-        for i, targ in expr.exprCallInferredTypeArgs:
-          if i > 0:
-            typeSuffix.add("_")
-          if targ.kind == tekNamed:
-            typeSuffix.add(targ.typeName)
-          else:
-            typeSuffix.add("unknown")
+        var typeArgIdx = 0
+        if ctx.genericFuncs.hasKey(calleeName):
+          let genericDecl = ctx.genericFuncs[calleeName]
+          for j, tp in genericDecl.declFuncTypeParams:
+            if tp.isLifetime: continue
+            if typeArgIdx > 0:
+              typeSuffix.add("_")
+            if j < expr.exprCallInferredTypeArgs.len:
+              let targ = expr.exprCallInferredTypeArgs[j]
+              if targ.kind == tekNamed:
+                typeSuffix.add(targ.typeName)
+              else:
+                typeSuffix.add("unknown")
+            else:
+              typeSuffix.add("unknown")
+            inc(typeArgIdx)
+        else:
+          for i, targ in expr.exprCallInferredTypeArgs:
+            if i > 0:
+              typeSuffix.add("_")
+            if targ.kind == tekNamed:
+              typeSuffix.add(targ.typeName)
+            else:
+              typeSuffix.add("unknown")
         let mangledName = calleeName & "_" & typeSuffix
         let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
         return hirCall(mangledName, args, typ, loc)
@@ -1072,14 +1089,17 @@ proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs:
     return baseMethodName
   var subst = initTable[string, Type]()
   var typeSuffix = ""
+  var typeArgIdx = 0
   for i, tp in genericDecl.declFuncTypeParams:
-    if i > 0: typeSuffix.add("_")
-    if i < typeArgs.len:
-      let argType = ctx.resolveTypeExpr(typeArgs[i])
+    if tp.isLifetime: continue
+    if typeArgIdx > 0: typeSuffix.add("_")
+    if typeArgIdx < typeArgs.len:
+      let argType = ctx.resolveTypeExpr(typeArgs[typeArgIdx])
       subst[tp.name] = argType
       typeSuffix.add(argType.toString)
     else:
       typeSuffix.add("unknown")
+    inc(typeArgIdx)
   let mangledName = baseMethodName & "_" & typeSuffix
   if not ctx.generatedFuncInsts.hasKey(mangledName):
     var specDecl = Decl(
@@ -1225,21 +1245,29 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   for inst in instantiations:
     let baseName = inst.name
     if ctx.genericFuncs.hasKey(baseName):
+      let genericDecl = ctx.genericFuncs[baseName]
       var typeSuffix = ""
-      for i, targ in inst.typeArgs:
-        if i > 0: typeSuffix.add("_")
-        if targ.kind == tekNamed:
-          typeSuffix.add(targ.typeName)
+      var nonLifetimeIdx = 0
+      for j, tp in genericDecl.declFuncTypeParams:
+        if tp.isLifetime: continue
+        if nonLifetimeIdx > 0: typeSuffix.add("_")
+        if j < inst.typeArgs.len:
+          let targ = inst.typeArgs[j]
+          if targ.kind == tekNamed:
+            typeSuffix.add(targ.typeName)
+          else:
+            typeSuffix.add("unknown")
         else:
           typeSuffix.add("unknown")
+        inc(nonLifetimeIdx)
       let mangledName = baseName & "_" & typeSuffix
       if not generated.hasKey(mangledName):
         # Generate specialized version
-        let genericDecl = ctx.genericFuncs[baseName]
         
         # Build type substitution table
         var subst = initTable[string, Type]()
         for j, tp in genericDecl.declFuncTypeParams:
+          if tp.isLifetime: continue
           if j < inst.typeArgs.len:
             let targ = inst.typeArgs[j]
             if targ.kind == tekNamed:

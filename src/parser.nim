@@ -209,20 +209,23 @@ proc parseBaseType(p: var Parser): TypeExpr =
     return TypeExpr(kind: tekNamed, loc: loc, typeName: name)
   of tkOwn:
     discard p.advance()
-    return TypeExpr(kind: tekOwn, loc: loc, pointerPointee: p.parseBaseType())
+    return TypeExpr(kind: tekOwn, loc: loc, pointerPointee: p.parseBaseType(), refLifetime: "")
   of tkStar:
     discard p.advance()
-    return TypeExpr(kind: tekPointer, loc: loc, pointerPointee: p.parseBaseType())
+    return TypeExpr(kind: tekPointer, loc: loc, pointerPointee: p.parseBaseType(), refLifetime: "")
   of tkAmp:
     discard p.advance()
+    var lt = ""
+    if p.check(tkLifetime):
+      lt = p.advance().text
     if p.check(tkMut):
       discard p.advance()
-      return TypeExpr(kind: tekMutRef, loc: loc, pointerPointee: p.parseBaseType())
+      return TypeExpr(kind: tekMutRef, loc: loc, refLifetime: lt, pointerPointee: p.parseBaseType())
     if p.check(tkDyn):
       discard p.advance()
       let ifaceName = p.expect(tkIdent, "expected interface name after 'dyn'").text
       return TypeExpr(kind: tekDynRef, loc: loc, dynInterface: ifaceName)
-    return TypeExpr(kind: tekRef, loc: loc, pointerPointee: p.parseBaseType())
+    return TypeExpr(kind: tekRef, loc: loc, refLifetime: lt, pointerPointee: p.parseBaseType())
   of tkLParen:
     discard p.advance()
     var elems: seq[TypeExpr] = @[]
@@ -595,6 +598,8 @@ proc parseUnary(p: var Parser): Expr =
   case p.peek()
   of tkBang, tkMinus, tkTilde, tkStar, tkAmp:
     let op = p.advance().kind
+    if op == tkAmp and p.check(tkMut):
+      discard p.advance()  # mut
     let operand = p.parseUnary()
     return Expr(kind: ekUnary, loc: loc, exprUnaryOp: op, exprUnaryOperand: operand)
   of tkPlusPlus, tkMinusMinus:
@@ -944,7 +949,15 @@ proc parseTypeParams(p: var Parser): seq[TypeParam] =
   if p.check(tkLt):
     discard p.advance()
     while not p.check(tkGt) and not p.isAtEnd:
-      let name = p.expect(tkIdent, "expected type parameter name").text
+      var name = ""
+      var isLifetime = false
+      if p.check(tkIdent):
+        name = p.advance().text
+      elif p.check(tkLifetime):
+        name = p.advance().text
+        isLifetime = true
+      else:
+        discard p.expect(tkIdent, "expected type parameter name")
       var bounds: seq[string] = @[]
       if p.check(tkColon):
         discard p.advance()
@@ -960,7 +973,7 @@ proc parseTypeParams(p: var Parser): seq[TypeParam] =
           else:
             break
         bounds.add(boundName)
-      result.add(TypeParam(name: name, bounds: bounds))
+      result.add(TypeParam(name: name, bounds: bounds, isLifetime: isLifetime))
       if p.check(tkComma):
         discard p.advance()
     discard p.expect(tkGt, "expected '>' to close type parameters")

@@ -47,6 +47,7 @@ type
       sliceSize*: Expr          ## nil for unsized slices T[]
     of tekOwn, tekPointer, tekRef, tekMutRef:
       pointerPointee*: TypeExpr
+      refLifetime*: string  ## only meaningful for tekRef/tekMutRef
     of tekDynRef:
       dynInterface*: string
     of tekTuple:
@@ -300,6 +301,7 @@ type
   TypeParam* = object
     name*: string
     bounds*: seq[string]   ## e.g. ["Comparable"] for <T: Comparable>
+    isLifetime*: bool      ## true for lifetime params like 'a
 
   # ---------------------------------------------------------------------------
   # Declarations

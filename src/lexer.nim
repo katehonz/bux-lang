@@ -542,7 +542,25 @@ proc nextToken(lex: var Lexer): Token =
       return lex.scanChar(startLoc, 3)
 
   if c == '\'':
-    return lex.scanChar(startLoc, 0)
+    # Check if this is a lifetime (e.g., 'a) or char literal (e.g., 'a')
+    # Lifetime: ' followed by identifier chars, no closing '
+    # Char literal: ' followed by one char/escape, then closing '
+    let afterQuote = lex.peek(1)
+    if isIdentStart(afterQuote):
+      # Could be lifetime or char literal like 'x'
+      # If next char after ident start is NOT ', it's a lifetime
+      # (for char literals, the char/escape is consumed and then ')
+      # Simple heuristic: if peek(2) is ', it's a char literal; else lifetime
+      if lex.peek(2) == '\'':
+        return lex.scanChar(startLoc, 0)
+      else:
+        # Lifetime: consume ' and then identifier chars
+        discard lex.advance()  # '
+        while not lex.isAtEnd() and isIdentChar(lex.peek()):
+          discard lex.advance()
+        return lex.makeToken(tkLifetime, startLoc, startPos)
+    else:
+      return lex.scanChar(startLoc, 0)
 
   if isIdentStart(c):
     return lex.scanIdent(startLoc)

@@ -115,7 +115,10 @@ proc typeExprReferencesTypeParam(te: TypeExpr, name: string): bool =
     return false
   of tekSlice:
     return typeExprReferencesTypeParam(te.sliceElement, name)
-  of tekOwn, tekPointer, tekRef, tekMutRef:
+  of tekOwn, tekPointer:
+    return typeExprReferencesTypeParam(te.pointerPointee, name)
+  of tekRef, tekMutRef:
+    if te.refLifetime == name: return true
     return typeExprReferencesTypeParam(te.pointerPointee, name)
   of tekDynRef:
     return false
@@ -145,17 +148,17 @@ proc typeToTypeExpr(t: Type): TypeExpr =
   of tkNamed: TypeExpr(kind: tekNamed, typeName: t.name)
   of tkPointer:
     if t.inner.len > 0:
-      TypeExpr(kind: tekPointer, pointerPointee: typeToTypeExpr(t.inner[0]))
+      TypeExpr(kind: tekPointer, refLifetime: "", pointerPointee: typeToTypeExpr(t.inner[0]))
     else:
       TypeExpr(kind: tekNamed, typeName: "void")
   of tkRef:
     if t.inner.len > 0:
-      TypeExpr(kind: tekRef, pointerPointee: typeToTypeExpr(t.inner[0]))
+      TypeExpr(kind: tekRef, refLifetime: "", pointerPointee: typeToTypeExpr(t.inner[0]))
     else:
       TypeExpr(kind: tekNamed, typeName: "void")
   of tkMutRef:
     if t.inner.len > 0:
-      TypeExpr(kind: tekMutRef, pointerPointee: typeToTypeExpr(t.inner[0]))
+      TypeExpr(kind: tekMutRef, refLifetime: "", pointerPointee: typeToTypeExpr(t.inner[0]))
     else:
       TypeExpr(kind: tekNamed, typeName: "void")
   of tkVoid: TypeExpr(kind: tekNamed, typeName: "void")
@@ -168,6 +171,19 @@ proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
   result = @[]
   for tp in funcDecl.declFuncTypeParams:
     let tpName = tp.name
+    # Lifetime params are inferred from ref lifetime positions
+    if tp.isLifetime:
+      var found = false
+      for i, param in funcDecl.declFuncParams:
+        if i >= argTypes.len: break
+        if param.ptype.kind in {tekRef, tekMutRef} and param.ptype.refLifetime == tpName:
+          found = true
+          break
+      if found:
+        result.add(TypeExpr(kind: tekNamed, typeName: "lifetime"))
+        continue
+      # If not found in refs, treat as uninferrable
+      return @[]
     var inferred: Type = nil
     for i, param in funcDecl.declFuncParams:
       if i >= argTypes.len: break
@@ -176,9 +192,15 @@ proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
       if param.ptype.kind in {tekOwn, tekPointer}:
         continue
       if typeExprReferencesTypeParam(param.ptype, tpName):
+        var argType = argTypes[i]
+        # If type param is inside a ref/pointer pointee, unwrap the arg type
+        if param.ptype.kind in {tekRef, tekMutRef, tekPointer} and
+           typeExprReferencesTypeParam(param.ptype.pointerPointee, tpName) and
+           argType.isPointer and argType.inner.len > 0:
+          argType = argType.inner[0]
         if inferred == nil:
-          inferred = argTypes[i]
-        elif inferred != argTypes[i]:
+          inferred = argType
+        elif inferred != argType:
           # Check if one is assignable to the other (wider type wins)
           if argTypes[i].isAssignableTo(inferred):
             discard  # inferred stays the same
@@ -187,7 +209,7 @@ proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
           else:
             sema.emitError(loc,
               &"conflicting types for type parameter '{tpName}': " &
-              &"{inferred.toString} vs {argTypes[i].toString}")
+              &"{inferred.toString} vs {argType.toString}")
             return @[]
     if inferred != nil and not inferred.isUnknown:
       result.add(typeToTypeExpr(inferred))

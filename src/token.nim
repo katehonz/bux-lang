@@ -58,6 +58,7 @@ type
     tkStaticAssert    # static_assert
     tkComptime        # comptime
     tkDyn             # dyn
+    tkLifetime        # 'a (lifetime parameter)
 
     ##Punctuation
     tkLParen          # (
@@ -265,6 +266,7 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkStaticAssert: "'static_assert'"
   of tkComptime: "'comptime'"
   of tkDyn: "'dyn'"
+  of tkLifetime: "lifetime"
   of tkLParen: "'('"
   of tkRParen: "')'"
   of tkLBrace: "'{'"
