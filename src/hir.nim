@@ -24,6 +24,7 @@ type
     hFieldPtr
     hArrowField
     hIndexPtr
+    hSliceIndex
     # Functions
     hCall
     hCallIndirect
@@ -136,6 +137,11 @@ type
       structInitFields*: seq[tuple[name: string, value: HirNode]]
     of hSliceInit:
       sliceInitElements*: seq[HirNode]
+      sliceInitLen*: int
+    of hSliceIndex:
+      sliceIndexBase*: HirNode
+      sliceIndexIndex*: HirNode
+      sliceIndexBoundsCheck*: bool
     of hRange:
       rangeLo*: HirNode
       rangeHi*: HirNode

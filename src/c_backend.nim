@@ -7,6 +7,7 @@ type
     indent*: int
     varCounter*: int
     declaredVars*: seq[string]
+    sliceTypeDefs*: seq[tuple[name: string, elem: string]]  ## Generated Slice_<T> typedefs
 
 proc cEscape(s: string): string =
   ## Escape a string for use as a C string literal.
@@ -45,7 +46,7 @@ proc freshVar(be: var CBackend): string =
   result = &"__tmp_{be.varCounter}"
 
 # Type conversion: Bux Type → C type string
-proc typeToC*(typ: Type): string =
+proc typeToC*(be: var CBackend, typ: Type): string =
   if typ == nil: return "void"
   case typ.kind
   of tkVoid: return "void"
@@ -71,14 +72,21 @@ proc typeToC*(typ: Type): string =
   of tkFloat64: return "double"
   of tkPointer, tkRef, tkMutRef:
     if typ.inner.len > 0:
-      return typeToC(typ.inner[0]) & "*"
+      return typeToC(be, typ.inner[0]) & "*"
     return "void*"
   of tkDynRef:
     return typ.name & "_FatPtr"
   of tkSlice:
-    if typ.inner.len > 0:
-      return typeToC(typ.inner[0]) & "*"
-    return "void*"
+    let elemName = if typ.inner.len > 0: typeToC(be, typ.inner[0]) else: "void"
+    let sliceName = "Slice_" & elemName.replace(" ", "_").replace("*", "Ptr")
+    var alreadyDefined = false
+    for d in be.sliceTypeDefs:
+      if d.name == sliceName:
+        alreadyDefined = true
+        break
+    if not alreadyDefined:
+      be.sliceTypeDefs.add((name: sliceName, elem: elemName))
+    return sliceName
   of tkNamed:
     # Map common Bux type names to C types
     case typ.name
@@ -252,12 +260,20 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     return &"(({node.structInitName}){{{fieldsStr}}})"
 
   of hSliceInit:
-    # For now, use a static array
+    let sliceName = typeToC(be, node.typ)
     var elems: seq[string] = @[]
     for e in node.sliceInitElements:
       elems.add(be.emitExpr(e))
     let elemsStr = elems.join(", ")
-    return &"{{{elemsStr}}}"
+    let elemType = if node.typ.inner.len > 0: typeToC(be, node.typ.inner[0]) else: "void"
+    return &"({sliceName}){{.data = ({elemType}[]){{{elemsStr}}}, .len = {node.sliceInitLen}}}"
+  of hSliceIndex:
+    let base = be.emitExpr(node.sliceIndexBase)
+    let idx = be.emitExpr(node.sliceIndexIndex)
+    if node.sliceIndexBoundsCheck:
+      return &"(bux_bounds_check((size_t)({idx}), ({base}).len), ({base}).data[{idx}])"
+    else:
+      return &"({base}).data[{idx}]"
 
   of hTupleInit:
     var elems: seq[string] = @[]
@@ -267,14 +283,14 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
 
   of hCast:
     let operand = be.emitExpr(node.castOperand)
-    let typ = typeToC(node.castType)
+    let typ = typeToC(be, node.castType)
     return &"(({typ}){operand})"
 
   of hIs:
     return "true"  # TODO: proper type checking
 
   of hSizeOf:
-    let typ = typeToC(node.sizeOfType)
+    let typ = typeToC(be, node.sizeOfType)
     return &"sizeof({typ})"
 
   of hSpawn:
@@ -391,7 +407,7 @@ proc emitStmt(be: var CBackend, node: HirNode) =
       be.emitLine("}")
 
   of hAlloca:
-    let typ = typeToC(node.allocaType)
+    let typ = typeToC(be, node.allocaType)
     be.emitLine(&"{typ} {node.allocaName};")
 
   of hStore:
@@ -419,10 +435,10 @@ proc emitStmt(be: var CBackend, node: HirNode) =
     be.emitLine(&"{expr};")
 
 proc emitFunc*(be: var CBackend, hfunc: HirFunc) =
-  let retType = typeToC(hfunc.retType)
+  let retType = typeToC(be, hfunc.retType)
   var params: seq[string] = @[]
   for p in hfunc.params:
-    params.add(&"{typeToC(p.typ)} {p.name}")
+    params.add(&"{typeToC(be, p.typ)} {p.name}")
   if params.len == 0:
     params.add("void")
   let paramsStr = params.join(", ")
@@ -445,7 +461,7 @@ proc emitStruct*(be: var CBackend, name: string, fields: seq[tuple[name: string,
   be.emitLine(&"typedef struct {name} {{")
   inc be.indent
   for f in fields:
-    let typ = typeToC(f.typ)
+    let typ = typeToC(be, f.typ)
     be.emitLine(&"{typ} {f.name};")
   dec be.indent
   be.emitLine(&"}} {name};")
@@ -492,14 +508,14 @@ proc emitEnum*(be: var CBackend, name: string, variants: seq[HirEnumVariant]) =
       if v.fields.len > 0:
         # Positional fields
         for i, f in v.fields:
-          let typ = typeToC(f)
+          let typ = typeToC(be, f)
           be.emitLine(&"{typ} {v.name}_{i};")
       elif v.namedFields.len > 0:
         # Named fields - generate as struct
         be.emitLine(&"struct {{")
         inc be.indent
         for nf in v.namedFields:
-          let typ = typeToC(nf.typ)
+          let typ = typeToC(be, nf.typ)
           be.emitLine(&"{typ} {nf.name};")
         dec be.indent
         be.emitLine(&"}} {v.name};")
@@ -517,14 +533,33 @@ proc emitEnum*(be: var CBackend, name: string, variants: seq[HirEnumVariant]) =
     be.emitLine("")
 
 proc emitExternDecl*(be: var CBackend, efunc: HirFunc) =
-  let retType = typeToC(efunc.retType)
+  let retType = typeToC(be, efunc.retType)
   var params: seq[string] = @[]
   for p in efunc.params:
-    params.add(&"{typeToC(p.typ)} {p.name}")
+    params.add(&"{typeToC(be, p.typ)} {p.name}")
   if params.len == 0:
     params.add("void")
   let paramsStr = params.join(", ")
   be.emitLine(&"extern {retType} {efunc.name}({paramsStr});")
+
+proc collectSliceTypes(module: HirModule): seq[tuple[name: string, elem: string]] =
+  ## Pre-pass: collect all slice types used in the module.
+  var dummyBe = initCBackend()
+  for f in module.funcs:
+    discard typeToC(dummyBe, f.retType)
+    for p in f.params:
+      discard typeToC(dummyBe, p.typ)
+  for ef in module.externFuncs:
+    discard typeToC(dummyBe, ef.retType)
+    for p in ef.params:
+      discard typeToC(dummyBe, p.typ)
+  for s in module.structs:
+    for f in s.fields:
+      discard typeToC(dummyBe, f.typ)
+  for c in module.consts:
+    if c.value != nil:
+      discard typeToC(dummyBe, c.value.typ)
+  return dummyBe.sliceTypeDefs
 
 proc emitModule*(be: var CBackend, module: HirModule): string =
   # Header
@@ -535,6 +570,9 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
   be.emitLine("#include <stdbool.h>")
   be.emitLine("#include <string.h>")
   be.emitLine("")
+
+  # Pre-collect slice types so we can emit forward declarations early
+  let sliceTypes = collectSliceTypes(module)
 
   # Forward declarations
   for s in module.structs:
@@ -547,7 +585,6 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
       be.emitLine(&"typedef struct {iface.name}_FatPtr {iface.name}_FatPtr;")
   if module.interfaces.len > 0:
     be.emitLine("")
-
   # Extern function declarations
   if module.externFuncs.len > 0:
     be.emitLine("/* Extern function declarations */")
@@ -583,12 +620,19 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
   for e in module.enums:
     be.emitEnum(e.name, e.variants)
 
+  # Slice fat-pointer typedefs
+  if sliceTypes.len > 0:
+    be.emitLine("/* Slice types */")
+    for st in sliceTypes:
+      be.emitLine(&"typedef struct {{ {st.elem}* data; size_t len; }} {st.name};")
+    be.emitLine("")
+
   # Forward declarations for all functions
   for f in module.funcs:
-    let retType = typeToC(f.retType)
+    let retType = typeToC(be, f.retType)
     var params: seq[string] = @[]
     for p in f.params:
-      params.add(typeToC(p.typ) & " " & p.name)
+      params.add(typeToC(be, p.typ) & " " & p.name)
     if params.len == 0:
       params.add("void")
     be.emitLine(retType & " " & f.name & "(" & params.join(", ") & ");")
@@ -608,10 +652,10 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
         if i == 0:
           paramCtypes.add("void* self")  # First param is always self (erased)
         else:
-          paramCtypes.add(typeToC(p) & " param")
+          paramCtypes.add(typeToC(be, p) & " param")
       if paramCtypes.len == 0:
         paramCtypes.add("void")
-      let ret = typeToC(m.ret)
+      let ret = typeToC(be, m.ret)
       let paramsStr = paramCtypes.join(", ")
       be.emitLine(&"{ret} (*{m.name})({paramsStr});")
     dec be.indent

@@ -179,6 +179,7 @@ type
     of ekIndex:
       exprIndexObj*: Expr
       exprIndexIdx*: Expr
+      exprIndexBoundsCheck*: bool
     of ekField:
       exprFieldObj*: Expr
       exprFieldName*: string

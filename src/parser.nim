@@ -535,7 +535,7 @@ proc parsePostfix(p: var Parser): Expr =
       discard p.advance()
       let idx = p.parseExpr()
       discard p.expect(tkRBracket, "expected ']' to close index")
-      left = Expr(kind: ekIndex, loc: loc, exprIndexObj: left, exprIndexIdx: idx)
+      left = Expr(kind: ekIndex, loc: loc, exprIndexObj: left, exprIndexIdx: idx, exprIndexBoundsCheck: false)
     of tkDot:
       # Field expression or .await
       discard p.advance()

@@ -625,6 +625,13 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   of ekIndex:
     let base = ctx.lowerExpr(expr.exprIndexObj)
     let idx = ctx.lowerExpr(expr.exprIndexIdx)
+    let baseType = ctx.resolveExprType(expr.exprIndexObj)
+    if baseType.isSlice:
+      let sliceIdx = HirNode(kind: hSliceIndex, sliceIndexBase: base,
+                             sliceIndexIndex: idx,
+                             sliceIndexBoundsCheck: expr.exprIndexBoundsCheck,
+                             typ: typ, loc: loc)
+      return sliceIdx
     let basePtr = HirNode(kind: hIndexPtr, indexPtrBase: base,
                           indexPtrIndex: idx, typ: makePointer(typ), loc: loc)
     return HirNode(kind: hLoad, loadPtr: basePtr, typ: typ, loc: loc)
@@ -655,7 +662,8 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     var elems: seq[HirNode] = @[]
     for e in expr.exprSliceElements:
       elems.add(ctx.lowerExpr(e))
-    return HirNode(kind: hSliceInit, sliceInitElements: elems, typ: typ, loc: loc)
+    return HirNode(kind: hSliceInit, sliceInitElements: elems,
+                   sliceInitLen: elems.len, typ: typ, loc: loc)
 
   of ekRange:
     let lo = ctx.lowerExpr(expr.exprRangeLo)

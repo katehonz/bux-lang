@@ -999,6 +999,8 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     if not idx.isInteger:
       sema.emitError(expr.loc, "index must be integer")
     if obj.isSlice:
+      if sema.checkedFunc:
+        expr.exprIndexBoundsCheck = true
       return obj.inner[0]
     elif obj.isPointer:
       return obj.inner[0]
