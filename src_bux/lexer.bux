@@ -42,7 +42,7 @@ func Lex_IsIdentChar(c: uint32) -> bool {
 // Lexer state
 // ---------------------------------------------------------------------------
 
-const maxTokens: int = 4096;
+const maxTokens: int = 32768;
 const maxDiags: int = 128;
 
 struct LexerDiag {
@@ -587,7 +587,6 @@ func lexNextToken(lex: *Lexer) {
         lexEmitToken(lex, tkEndOfFile);
         return;
     }
-
     let c: uint32 = lexPeek(lex, 0);
 
     if c == 10 { // \n
@@ -673,6 +672,10 @@ func Lexer_Tokenize(source: String) -> *Lexer {
 
     while true {
         lexNextToken(lex);
+        if lex.tokenCount >= maxTokens {
+            lexEmitDiag(lex, "too many tokens");
+            break;
+        }
         if lex.tokens[lex.tokenCount - 1].kind == tkEndOfFile {
             break;
         }

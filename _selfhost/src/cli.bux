@@ -106,7 +106,7 @@ func Cli_Compile(source: String, sourceName: String) -> String {
 
 func Cli_Build(srcPath: String, outPath: String) -> int {
     let source: String = ReadFile(srcPath);
-    if String_Eq(source, "") || !FileExists(srcPath) {
+    if source == null as String || String_Eq(source, "") || !FileExists(srcPath) {
         Print("Error: cannot read source file: ");
         PrintLine(srcPath);
         return 1;
@@ -142,7 +142,7 @@ func Cli_Check(srcPath: String) -> int {
     Print("Check: ");
     PrintLine(srcPath);
     let source: String = ReadFile(srcPath);
-    if String_Eq(source, "") {
+    if source == null as String || String_Eq(source, "") {
         PrintLine("Error: cannot read source file");
         return 1;
     }

@@ -1195,11 +1195,16 @@ func Parser_Parse(tokens: *LexToken, tokenCount: int) -> *Module {
             discard parserAdvance(p);
             continue;
         }
+        let beforePos: int = p.pos;
         let decl: *Decl = parserParseDecl(p);
         if decl != null as *Decl {
             decl.childDecl2 = mod.firstItem; // push front
             mod.firstItem = decl;
             mod.itemCount = mod.itemCount + 1;
+        }
+        // Infinite-loop safeguard: if no progress, skip token
+        if p.pos == beforePos {
+            discard parserAdvance(p);
         }
     }
 
