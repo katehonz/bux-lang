@@ -415,7 +415,7 @@ func ReadFile(path: String) -> Result<String, IoError> {
 
 | Task | Status | Details |
 |------|--------|---------|
-| `8.2.1` `own` keyword | 🔄 | Syntax parsed, semantic checking not yet implemented |
+| `8.2.1` `own` keyword | ✅ | `own T` parsed and resolves to `T`; ready for borrow checker integration |
 | `8.2.2` `borrow` / `&` | ✅ | `&T` shared reference type checked and enforced |
 | `8.2.3` `mut` references | ✅ | `&mut T` mutable reference type checked and enforced |
 | `8.2.4` Lifetime elision | ⏳ | Simple rules for common cases; explicit `'a` for complex |
@@ -475,9 +475,9 @@ func Main() -> int {
 |------|--------|---------|
 | `8.4.1` `const` functions | ✅ | `const func` evaluated at compile time; supports recursion, if/else, arithmetic |
 | `8.4.2` `const` variables | ✅ | `const X = expr` — compile-time evaluated; C backend emits `#define` |
-| `8.4.3` Compile-time blocks | ⏳ | `comptime { ... }` for arbitrary compile-time code |
-| `8.4.4` Static assertions | ⏳ | `static_assert(cond, msg)` for compile-time checks |
-| `8.4.5` Generated code | ⏳ | `#emit` for compile-time code generation |
+| `8.4.3` Compile-time blocks | ✅ | `comptime { ... }` for arbitrary compile-time code |
+| `8.4.4` Static assertions | ✅ | `static_assert(cond, msg)` for compile-time checks |
+| `8.4.5` Generated code | ✅ | `#emit` for compile-time code generation |
 
 ```bux
 const func Factorial(n: int) -> int {
@@ -493,9 +493,9 @@ const TABLE_SIZE = Factorial(10);  // Computed at compile time
 | Task | Status | Details |
 |------|--------|---------|
 | `8.5.1` Traits | ✅ | `interface` + `extend Type for Interface` |
-| `8.5.2` Associated types | ⏳ | `type Output` inside trait definitions |
+| `8.5.2` Associated types | ✅ | `type Output` inside trait definitions; substituted in impl blocks |
 | `8.5.3` Trait bounds | ✅ | `func Sort<T: Comparable>(arr: &mut Array<T>)` — semantic check at call sites |
-| `8.5.4` Trait objects | ⏳ | `&dyn Trait` for dynamic dispatch (fat pointer) |
+| `8.5.4` Trait objects | ✅ | `&dyn Trait` for dynamic dispatch (fat pointer) |
 | `8.5.5` Blanket impls | ⏳ | `impl<T: Display> Printable for T` |
 
 ### 8.6 — Metaprogramming

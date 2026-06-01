@@ -27,8 +27,10 @@ type
     tekPath
     tekSlice
     tekPointer
+    tekOwn       ## own T — owned value (gradual ownership)
     tekRef       ## &T — shared reference (gradual ownership)
     tekMutRef    ## &mut T — mutable reference
+    tekDynRef    ## &dyn Trait — trait object (fat pointer)
     tekTuple
     tekSelf
 
@@ -43,8 +45,10 @@ type
     of tekSlice:
       sliceElement*: TypeExpr
       sliceSize*: Expr          ## nil for unsized slices T[]
-    of tekPointer, tekRef, tekMutRef:
+    of tekOwn, tekPointer, tekRef, tekMutRef:
       pointerPointee*: TypeExpr
+    of tekDynRef:
+      dynInterface*: string
     of tekTuple:
       tupleElements*: seq[TypeExpr]
     of tekSelf:
@@ -224,6 +228,9 @@ type
     skReturn
     skBreak
     skContinue
+    skStaticAssert
+    skComptime
+    skEmit
     skDecl
 
   ElseIf* = object
@@ -276,6 +283,14 @@ type
       stmtBreakLabel*: string
     of skContinue:
       stmtContinueLabel*: string
+    of skStaticAssert:
+      stmtStaticAssertCond*: Expr
+      stmtStaticAssertMsg*: Expr
+    of skComptime:
+      stmtComptimeBlock*: Block
+    of skEmit:
+      stmtEmitExpr*: Expr
+      stmtEmitEvaluated*: string  ## filled by sema CTFE
     of skDecl:
       stmtDecl*: Decl
 
@@ -357,11 +372,13 @@ type
       declUnionFields*: seq[UnionField]
     of dkInterface:
       declInterfaceName*: string
+      declInterfaceAssocTypes*: seq[string]  ## associated type names: type Output;
       declInterfaceMethods*: seq[Decl]  ## FuncDecl signatures only
     of dkImpl:
       declImplTypeName*: string
       declImplTypeParams*: seq[TypeParam]  ## type parameters for generic impl: extend Box<T>
       declImplInterface*: string        ## empty if not for interface
+      declImplAssocTypes*: seq[tuple[name: string, typ: TypeExpr]]  ## type Output = int;
       declImplMethods*: seq[Decl]
     of dkModule:
       declModuleName*: string

@@ -164,12 +164,16 @@ proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type])
         ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
       return makeNamed(mangledName)
     return ctx.resolveTypeExpr(te)
+  of tekOwn:
+    return substituteType(ctx, te.pointerPointee, subst)
   of tekPointer:
     return makePointer(substituteType(ctx, te.pointerPointee, subst))
   of tekRef:
     return makeRef(substituteType(ctx, te.pointerPointee, subst))
   of tekMutRef:
     return makeMutRef(substituteType(ctx, te.pointerPointee, subst))
+  of tekDynRef:
+    return makeDynRef(te.dynInterface)
   of tekSlice:
     return makeSlice(substituteType(ctx, te.sliceElement, subst))
   of tekTuple:
@@ -235,6 +239,8 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
       if ctx.typeSubst.hasKey(te.typeName):
         return ctx.typeSubst[te.typeName]
       return makeNamed(te.typeName)
+  of tekOwn: return ctx.resolveTypeExpr(te.pointerPointee)
+  of tekDynRef: return makeDynRef(te.dynInterface)
   of tekPointer: return makePointer(ctx.resolveTypeExpr(te.pointerPointee))
   of tekSlice: return makeSlice(ctx.resolveTypeExpr(te.sliceElement))
   else: return makeUnknown()
@@ -309,6 +315,10 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
       let methodName = expr.exprCallCallee.exprFieldName
       var typeName = ""
       if recvType.kind == tkNamed: typeName = recvType.name
+      elif recvType.kind in {tkInt, tkInt8, tkInt16, tkInt32, tkInt64,
+                            tkUInt, tkUInt8, tkUInt16, tkUInt32, tkUInt64,
+                            tkFloat32, tkFloat64, tkBool, tkStr, tkChar8}:
+        typeName = recvType.toString
       elif recvType.isPointer and recvType.inner.len > 0 and recvType.inner[0].kind == tkNamed:
         typeName = recvType.inner[0].name
       if typeName != "" and ctx.methodTable.hasKey(typeName):
@@ -335,7 +345,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
                 of "float32": return makeFloat32()
                 of "bool": return makeBool()
                 else: return makeNamed(f.ftype.typeName)
-              of tekPointer:
+              of tekOwn, tekPointer:
                 return ctx.resolveTypeExpr(f.ftype)
               else: return makeUnknown()
     return makeUnknown()
@@ -376,7 +386,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
 proc extractGenericStructInfo(ctx: LowerCtx, te: TypeExpr): tuple[baseName: string, typeArgs: seq[TypeExpr]] =
   if te == nil: return ("", @[])
   var baseTe = te
-  if baseTe.kind == tekPointer:
+  if baseTe.kind in {tekOwn, tekPointer}:
     baseTe = baseTe.pointerPointee
   if baseTe.kind == tekNamed and baseTe.typeArgs.len > 0 and ctx.genericStructs.hasKey(baseTe.typeName):
     return (baseTe.typeName, baseTe.typeArgs)
@@ -398,6 +408,30 @@ proc getReceiverTypeExpr(ctx: LowerCtx, expr: Expr): TypeExpr =
   return nil
 
 proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs: seq[TypeExpr]): string
+
+proc lowerExprWithDynRefCoerce(ctx: var LowerCtx, arg: Expr, expectedType: Type): HirNode =
+  ## Lower an expression, coercing &Concrete to &dyn Trait if needed.
+  let lowered = ctx.lowerExpr(arg)
+  if expectedType != nil and expectedType.isDynRef and arg.kind == ekUnary and arg.exprUnaryOp == tkAmp:
+    let concreteType = ctx.resolveExprType(arg.exprUnaryOperand)
+    var concreteName = ""
+    if concreteType.kind == tkNamed:
+      concreteName = concreteType.name
+    elif concreteType.isPointer and concreteType.inner.len > 0 and concreteType.inner[0].kind == tkNamed:
+      concreteName = concreteType.inner[0].name
+    if concreteName != "":
+      return hirDynRef(lowered, expectedType.name, concreteName, arg.loc)
+  return lowered
+
+proc lowerCallArgs(ctx: var LowerCtx, calleeExpr: Expr, argExprs: seq[Expr]): seq[HirNode] =
+  ## Lower call arguments with &Concrete -> &dyn Trait coercion.
+  var paramTypes: seq[Type] = @[]
+  let calleeType = ctx.resolveExprType(calleeExpr)
+  if calleeType.kind == tkFunc and calleeType.inner.len > 1:
+    paramTypes = calleeType.inner[0..^2]
+  for i, arg in argExprs:
+    let expected = if i < paramTypes.len: paramTypes[i] else: nil
+    result.add(ctx.lowerExprWithDynRefCoerce(arg, expected))
 
 proc findMethodEntry(ctx: LowerCtx, typeName: string): (string, seq[MethodInfo]) =
   if ctx.methodTable.hasKey(typeName):
@@ -456,6 +490,10 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
             receiverTypeName = substituted.name
           elif substituted.isPointer and substituted.inner.len > 0 and substituted.inner[0].kind == tkNamed:
             receiverTypeName = substituted.inner[0].name
+      elif receiverType.kind in {tkInt, tkInt8, tkInt16, tkInt32, tkInt64,
+                                 tkUInt, tkUInt8, tkUInt16, tkUInt32, tkUInt64,
+                                 tkFloat32, tkFloat64, tkBool, tkStr, tkChar8}:
+        receiverTypeName = receiverType.toString
       elif receiverType.isPointer and receiverType.inner.len > 0 and receiverType.inner[0].kind == tkNamed:
         receiverTypeName = receiverType.inner[0].name
 
@@ -477,15 +515,24 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
               args.add(hirUnary(tkAmp, loweredReceiver, makePointer(receiverType), loc))
             else:
               args.add(loweredReceiver)
-            for arg in expr.exprCallArgs:
-              args.add(ctx.lowerExpr(arg))
+            let extraArgs = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
+            for a in extraArgs:
+              args.add(a)
             return hirCall(calleeName, args, typ, loc)
+
+      # Trait object virtual dispatch: &dyn Trait -> method()
+      if receiverType.kind == tkDynRef:
+        let loweredReceiver = ctx.lowerExpr(receiverExpr)
+        var args: seq[HirNode] = @[]
+        args.add(loweredReceiver)
+        let extraArgs = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
+        for a in extraArgs:
+          args.add(a)
+        return hirDynCall(loweredReceiver, methodName, args, typ, loc)
 
       # Not a method call - treat as field access + call (function pointer)
       let callee = ctx.lowerExpr(expr.exprCallCallee)
-      var args: seq[HirNode] = @[]
-      for arg in expr.exprCallArgs:
-        args.add(ctx.lowerExpr(arg))
+      let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
       return HirNode(kind: hCallIndirect, callIndirectCallee: callee,
                      callIndirectArgs: args, typ: typ, loc: loc)
 
@@ -501,9 +548,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         else:
           typeSuffix.add("unknown")
       let mangledName = baseName & "_" & typeSuffix
-      var args: seq[HirNode] = @[]
-      for arg in expr.exprCallArgs:
-        args.add(ctx.lowerExpr(arg))
+      let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
       return hirCall(mangledName, args, typ, loc)
 
     # Inferred generic function call: Max(10, 20) → Max_int(10, 20)
@@ -527,9 +572,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
           else:
             typeSuffix.add("unknown")
         let mangledName = calleeName & "_" & typeSuffix
-        var args: seq[HirNode] = @[]
-        for arg in expr.exprCallArgs:
-          args.add(ctx.lowerExpr(arg))
+        let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
         return hirCall(mangledName, args, typ, loc)
 
     # Regular function call
@@ -540,9 +583,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         calleeName = ctx.importTable[calleeName]
     elif expr.exprCallCallee.kind == ekPath:
       calleeName = expr.exprCallCallee.exprPath.join("_")
-    var args: seq[HirNode] = @[]
-    for arg in expr.exprCallArgs:
-      args.add(ctx.lowerExpr(arg))
+    let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
     if calleeName != "":
       return hirCall(calleeName, args, typ, loc)
     else:
@@ -792,6 +833,8 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
       case stmt.stmtLetType.kind
       of tekNamed:
         ctx.resolveTypeExpr(stmt.stmtLetType)
+      of tekOwn:
+        ctx.resolveTypeExpr(stmt.stmtLetType.pointerPointee)
       of tekPointer:
         let pointeeType = ctx.resolveTypeExpr(stmt.stmtLetType.pointerPointee)
         makePointer(pointeeType)
@@ -809,7 +852,7 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     # Track type expr for generic method inference
     if stmt.stmtLetType != nil:
       ctx.varTypeExprs[stmt.stmtLetName] = stmt.stmtLetType
-    elif stmt.stmtLetInit != nil and stmt.stmtLetInit.kind == ekStructInit and stmt.stmtLetInit.exprStructInitTypeArgs.len > 0:
+    elif stmt.stmtLetInit != nil and stmt.stmtLetInit.kind == ekStructInit:
       ctx.varTypeExprs[stmt.stmtLetName] = TypeExpr(
         kind: tekNamed,
         loc: stmt.stmtLetInit.loc,
@@ -862,6 +905,15 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
   of skBreak:
     return ctx.flushPending(HirNode(kind: hBreak, breakLabel: stmt.stmtBreakLabel,
                    typ: makeVoid(), loc: loc))
+
+  of skStaticAssert, skComptime:
+    # Compile-time only: evaluated in sema, no runtime code
+    return nil
+
+  of skEmit:
+    if stmt.stmtEmitEvaluated.len > 0:
+      return hirEmit(stmt.stmtEmitEvaluated, loc)
+    return nil
 
   of skContinue:
     return ctx.flushPending(HirNode(kind: hContinue, continueLabel: stmt.stmtContinueLabel,
@@ -1232,6 +1284,13 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
     of dkExternFunc:
       externFuncs.add(ctx.lowerFunc(decl))
     of dkImpl:
+      # Add associated type substitutions for this impl block
+      var oldAssocSubst = initTable[string, Type]()
+      for assoc in decl.declImplAssocTypes:
+        let resolved = ctx.resolveTypeExpr(assoc.typ)
+        if ctx.typeSubst.hasKey(assoc.name):
+          oldAssocSubst[assoc.name] = ctx.typeSubst[assoc.name]
+        ctx.typeSubst[assoc.name] = resolved
       for methodDecl in decl.declImplMethods:
         if methodDecl.kind == dkFunc:
           # Skip generic methods — they are monomorphized via generateMethodInstance
@@ -1240,6 +1299,12 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
           var hf = ctx.lowerFunc(methodDecl)
           hf.name = decl.declImplTypeName & "_" & hf.name
           funcs.add(hf)
+      # Restore old substitutions
+      for name, typ in oldAssocSubst:
+        ctx.typeSubst[name] = typ
+      for assoc in decl.declImplAssocTypes:
+        if not oldAssocSubst.hasKey(assoc.name):
+          ctx.typeSubst.del(assoc.name)
     of dkStruct:
       if decl.declStructTypeParams.len == 0:  # Skip generic structs — monomorphized separately
         var fields: seq[tuple[name: string, typ: Type]] = @[]
@@ -1298,4 +1363,37 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   for f in ctx.extraFuncs:
     funcs.add(f)
 
-  result = HirModule(funcs: funcs, externFuncs: externFuncs, structs: structs, enums: enums, consts: consts)
+  # Collect interface info for vtable generation
+  var ifaceInfos: seq[tuple[name: string, hasAssocTypes: bool, methods: seq[tuple[name: string, params: seq[Type], ret: Type]]]] = @[]
+  for ifaceName, ifaceDecl in sema.interfaceTable:
+    var methods: seq[tuple[name: string, params: seq[Type], ret: Type]] = @[]
+    for m in ifaceDecl.declInterfaceMethods:
+      var params: seq[Type] = @[]
+      for p in m.declFuncParams:
+        params.add(ctx.resolveTypeExpr(p.ptype))
+      let ret = if m.declFuncReturnType != nil: ctx.resolveTypeExpr(m.declFuncReturnType) else: makeVoid()
+      methods.add((m.declFuncName, params, ret))
+    ifaceInfos.add((ifaceName, ifaceDecl.declInterfaceAssocTypes.len > 0, methods))
+
+  # Collect vtable instances: which concrete types implement which interfaces
+  var vtableInfos: seq[tuple[interfaceName: string, concreteType: string, methodNames: seq[string], hasAssocTypes: bool]] = @[]
+  for ifaceName, ifaceDecl in sema.interfaceTable:
+    let requiredMethods = ifaceDecl.declInterfaceMethods
+    let hasAssoc = ifaceDecl.declInterfaceAssocTypes.len > 0
+    for typeName, methods in sema.methodTable:
+      var allFound = true
+      var methodNames: seq[string] = @[]
+      for req in requiredMethods:
+        var found = false
+        for avail in methods:
+          if avail.name == req.declFuncName:
+            found = true
+            methodNames.add(req.declFuncName)
+            break
+        if not found:
+          allFound = false
+          break
+      if allFound:
+        vtableInfos.add((ifaceName, typeName, methodNames, hasAssoc))
+
+  result = HirModule(funcs: funcs, externFuncs: externFuncs, structs: structs, enums: enums, consts: consts, interfaces: ifaceInfos, vtables: vtableInfos)

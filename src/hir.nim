@@ -33,6 +33,11 @@ type
     hSizeOf
     # Concurrency
     hSpawn
+    # Compile-time code generation
+    hEmit
+    # Trait objects (dynamic dispatch)
+    hDynRef
+    hDynCall
     # Composite
     hBlock
     hStructInit
@@ -112,6 +117,16 @@ type
     of hSpawn:
       spawnCallee*: string
       spawnArgs*: seq[HirNode]
+    of hEmit:
+      emitCode*: string
+    of hDynRef:
+      dynRefData*: HirNode
+      dynRefInterface*: string
+      dynRefConcreteType*: string
+    of hDynCall:
+      dynCallReceiver*: HirNode
+      dynCallMethod*: string
+      dynCallArgs*: seq[HirNode]
     of hBlock:
       blockStmts*: seq[HirNode]
       blockExpr*: HirNode
@@ -153,6 +168,8 @@ type
     structs*: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]]
     enums*: seq[tuple[name: string, variants: seq[HirEnumVariant]]]
     consts*: seq[tuple[name: string, typ: Type, value: HirNode]]
+    interfaces*: seq[tuple[name: string, hasAssocTypes: bool, methods: seq[tuple[name: string, params: seq[Type], ret: Type]]]]
+    vtables*: seq[tuple[interfaceName: string, concreteType: string, methodNames: seq[string], hasAssocTypes: bool]]
 
 # Constructor helpers
 proc hirLit*(tok: Token, typ: Type, loc: SourceLocation): HirNode =
@@ -187,3 +204,14 @@ proc hirStore*(ptrNode, value: HirNode, loc: SourceLocation): HirNode =
 
 proc hirLoad*(ptrNode: HirNode, typ: Type, loc: SourceLocation): HirNode =
   HirNode(kind: hLoad, loadPtr: ptrNode, typ: typ, loc: loc)
+
+proc hirEmit*(code: string, loc: SourceLocation): HirNode =
+  HirNode(kind: hEmit, emitCode: code, typ: makeVoid(), loc: loc)
+
+proc hirDynRef*(data: HirNode, interfaceName, concreteType: string, loc: SourceLocation): HirNode =
+  HirNode(kind: hDynRef, dynRefData: data, dynRefInterface: interfaceName,
+          dynRefConcreteType: concreteType, typ: makeDynRef(interfaceName), loc: loc)
+
+proc hirDynCall*(receiver: HirNode, methodName: string, args: seq[HirNode], typ: Type, loc: SourceLocation): HirNode =
+  HirNode(kind: hDynCall, dynCallReceiver: receiver, dynCallMethod: methodName,
+          dynCallArgs: args, typ: typ, loc: loc)

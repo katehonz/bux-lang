@@ -27,6 +27,7 @@ type
     tkPointer
     tkRef
     tkMutRef
+    tkDynRef
     tkSlice
     tkRange
     tkTuple
@@ -69,6 +70,8 @@ proc makeRef*(pointee: Type): Type =
   Type(kind: tkRef, inner: @[pointee])
 proc makeMutRef*(pointee: Type): Type =
   Type(kind: tkMutRef, inner: @[pointee])
+proc makeDynRef*(interfaceName: string): Type =
+  Type(kind: tkDynRef, name: interfaceName)
 proc makeSlice*(element: Type): Type =
   Type(kind: tkSlice, inner: @[element])
 proc makeRange*(element: Type): Type =
@@ -101,10 +104,11 @@ proc isFloat*(t: Type): bool =
 proc isSigned*(t: Type): bool =
   if t.kind in {tkUnknown, tkNamed, tkTypeParam}: return true
   t.kind in {tkInt8, tkInt16, tkInt32, tkInt64, tkInt}
-proc isPointer*(t: Type): bool = t.kind in {tkPointer, tkRef, tkMutRef}
+proc isPointer*(t: Type): bool = t.kind in {tkPointer, tkRef, tkMutRef, tkDynRef}
 proc isRawPointer*(t: Type): bool = t.kind == tkPointer
 proc isRef*(t: Type): bool = t.kind == tkRef
 proc isMutRef*(t: Type): bool = t.kind == tkMutRef
+proc isDynRef*(t: Type): bool = t.kind == tkDynRef
 proc isSlice*(t: Type): bool = t.kind == tkSlice
 
 # Comparison
@@ -173,6 +177,11 @@ proc isAssignableTo*(a, b: Type): bool =
     if a.isRef and b.isRawPointer:
       if a.inner.len > 0 and b.inner.len > 0 and a.inner[0].isAssignableTo(b.inner[0]):
         return true
+    # &Concrete -> &dyn Trait (trait object coercion)
+    if b.isDynRef and a.isRef:
+      return true
+    if b.isDynRef and a.isMutRef:
+      return true
   return false
 
 # String representation
@@ -203,6 +212,7 @@ proc toString*(t: Type): string =
   of tkPointer: "*" & t.inner[0].toString
   of tkRef: "&" & t.inner[0].toString
   of tkMutRef: "&mut " & t.inner[0].toString
+  of tkDynRef: "&dyn " & t.name
   of tkSlice:
     if t.inner.len > 0: t.inner[0].toString & "[]"
     else: "Slice<?>"

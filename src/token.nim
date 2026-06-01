@@ -55,6 +55,9 @@ type
     tkAsync           # async
     tkAwait           # await
     tkSpawn           # spawn
+    tkStaticAssert    # static_assert
+    tkComptime        # comptime
+    tkDyn             # dyn
 
     ##Punctuation
     tkLParen          # (
@@ -129,6 +132,7 @@ type
     tkHashDate        # #date
     tkHashTime        # #time
     tkHashModule      # #module
+    tkHashEmit        # #emit
 
     ##Special
     tkNewLine         # significant newline (if grammar uses them)
@@ -146,7 +150,7 @@ proc isKeyword*(kind: TokenKind): bool =
      tkBreak, tkContinue, tkReturn, tkMatch,
      tkFunc, tkLet, tkVar, tkConst, tkType, tkStruct, tkEnum,
      tkUnion, tkInterface, tkExtend, tkModule, tkImport,
-      tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkDiscard, tkAsync, tkAwait, tkSpawn:
+      tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkDiscard, tkAsync, tkAwait, tkSpawn, tkStaticAssert, tkComptime, tkDyn:
     true
   else:
     false
@@ -206,6 +210,9 @@ proc keywordKind*(text: string): TokenKind =
   of "async": tkAsync
   of "await": tkAwait
   of "spawn": tkSpawn
+  of "static_assert": tkStaticAssert
+  of "comptime": tkComptime
+  of "dyn": tkDyn
   of "true", "false": tkBoolLiteral
   else: tkIdent
 
@@ -255,6 +262,9 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkAsync: "'async'"
   of tkAwait: "'await'"
   of tkSpawn: "'spawn'"
+  of tkStaticAssert: "'static_assert'"
+  of tkComptime: "'comptime'"
+  of tkDyn: "'dyn'"
   of tkLParen: "'('"
   of tkRParen: "')'"
   of tkLBrace: "'{'"
@@ -315,6 +325,7 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkHashDate: "'#date'"
   of tkHashTime: "'#time'"
   of tkHashModule: "'#module'"
+  of tkHashEmit: "'#emit'"
   of tkNewLine: "newline"
   of tkEndOfFile: "end of file"
   of tkUnknown: "unknown token"

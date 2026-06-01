@@ -476,6 +476,8 @@ proc scanSymbol(lex: var Lexer, startLoc: SourceLocation): Token =
       return lex.makeToken(tkHashTime, startLoc, startPos)
     elif afterHash == 'm' and lex.matchStr("module"):
       return lex.makeToken(tkHashModule, startLoc, startPos)
+    elif afterHash == 'e' and lex.matchStr("emit"):
+      return lex.makeToken(tkHashEmit, startLoc, startPos)
     else:
       return lex.makeToken(tkHash, startLoc, startPos)
   else:

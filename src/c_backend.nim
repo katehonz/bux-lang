@@ -8,6 +8,19 @@ type
     varCounter*: int
     declaredVars*: seq[string]
 
+proc cEscape(s: string): string =
+  ## Escape a string for use as a C string literal.
+  result = ""
+  for c in s:
+    case c
+    of '\\': result.add("\\\\")
+    of '"': result.add("\\\"")
+    of '\n': result.add("\\n")
+    of '\r': result.add("\\r")
+    of '\t': result.add("\\t")
+    of '\0': result.add("\\0")
+    else: result.add(c)
+
 proc initCBackend*(): CBackend =
   result.output = ""
   result.indent = 0
@@ -60,6 +73,8 @@ proc typeToC*(typ: Type): string =
     if typ.inner.len > 0:
       return typeToC(typ.inner[0]) & "*"
     return "void*"
+  of tkDynRef:
+    return typ.name & "_FatPtr"
   of tkSlice:
     if typ.inner.len > 0:
       return typeToC(typ.inner[0]) & "*"
@@ -137,13 +152,23 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
       else: return "false"
     of tkStringLiteral:
       var text = node.litToken.text
-      # Strip c8" c16" c32" prefixes — in C they are just regular string literals
-      if text.startsWith("c32\""):
-        text = text[3..^1]
-      elif text.startsWith("c16\""):
-        text = text[3..^1]
-      elif text.startsWith("c8\""):
-        text = text[2..^1]
+      # If text has no surrounding quotes, it's from constFoldConstDecl (already unescaped)
+      if text.len >= 2 and text[0] == '"' and text[text.len-1] == '"':
+        # Strip c8" c16" c32" prefixes — in C they are just regular string literals
+        if text.startsWith("c32\""):
+          text = "\"" & cEscape(text[4 ..< text.len-1]) & "\""
+        elif text.startsWith("c16\""):
+          text = "\"" & cEscape(text[4 ..< text.len-1]) & "\""
+        elif text.startsWith("c8\""):
+          text = "\"" & cEscape(text[3 ..< text.len-1]) & "\""
+        else:
+          text = "\"" & cEscape(text[1 ..< text.len-1]) & "\""
+      elif text.len >= 2 and text[0] == '"':
+        # Partial quote — escape anyway
+        text = "\"" & cEscape(text[1 ..< text.len]) & "\""
+      else:
+        # No quotes — from constFoldConstDecl, needs wrapping and escaping
+        text = "\"" & cEscape(text) & "\""
       return text
     of tkNull:
       return "NULL"
@@ -262,6 +287,22 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     else:
       return &"bux_async_spawn({node.spawnCallee})"
 
+  of hDynRef:
+    let data = be.emitExpr(node.dynRefData)
+    let iface = node.dynRefInterface
+    let concrete = node.dynRefConcreteType
+    return &"({iface}_FatPtr){{.data = {data}, .vtable = &{concrete}_{iface}_VTable}}"
+
+  of hDynCall:
+    let receiver = be.emitExpr(node.dynCallReceiver)
+    let methodName = node.dynCallMethod
+    var args: seq[string] = @[]
+    args.add(&"{receiver}.data")
+    for i in 1 ..< node.dynCallArgs.len:
+      args.add(be.emitExpr(node.dynCallArgs[i]))
+    let argsStr = args.join(", ")
+    return &"({receiver}.vtable->{methodName}({argsStr}))"
+
   of hIf:
     # Ternary expression
     let cond = be.emitExpr(node.ifCond)
@@ -332,6 +373,9 @@ proc emitStmt(be: var CBackend, node: HirNode) =
 
   of hContinue:
     be.emitLine("continue;")
+
+  of hEmit:
+    be.emitLine(node.emitCode)
 
   of hBlock:
     if node.isScope:
@@ -497,6 +541,12 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
     be.emitLine(&"typedef struct {s.name} {s.name};")
   if module.structs.len > 0:
     be.emitLine("")
+  # Forward declarations for trait object fat pointers
+  for iface in module.interfaces:
+    if not iface.hasAssocTypes:
+      be.emitLine(&"typedef struct {iface.name}_FatPtr {iface.name}_FatPtr;")
+  if module.interfaces.len > 0:
+    be.emitLine("")
 
   # Extern function declarations
   if module.externFuncs.len > 0:
@@ -516,7 +566,7 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
         of tkIntLiteral:
           be.emitLine(&"#define {c.name} {tok.text}")
         of tkStringLiteral:
-          be.emitLine(&"#define {c.name} \"{tok.text}\"")
+          be.emitLine(&"#define {c.name} \"{cEscape(tok.text)}\"")
         of tkBoolLiteral:
           be.emitLine(&"#define {c.name} {tok.text}")
         else:
@@ -543,6 +593,50 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
       params.add("void")
     be.emitLine(retType & " " & f.name & "(" & params.join(", ") & ");")
   be.emitLine("")
+
+  # Trait object vtable and fat pointer struct definitions
+  for iface in module.interfaces:
+    if iface.hasAssocTypes:
+      continue  # Skip vtables for interfaces with associated types (not yet supported)
+    let ifaceName = iface.name
+    # VTable struct
+    be.emitLine(&"typedef struct {ifaceName}_VTable {{")
+    inc be.indent
+    for m in iface.methods:
+      var paramCtypes: seq[string] = @[]
+      for i, p in m.params:
+        if i == 0:
+          paramCtypes.add("void* self")  # First param is always self (erased)
+        else:
+          paramCtypes.add(typeToC(p) & " param")
+      if paramCtypes.len == 0:
+        paramCtypes.add("void")
+      let ret = typeToC(m.ret)
+      let paramsStr = paramCtypes.join(", ")
+      be.emitLine(&"{ret} (*{m.name})({paramsStr});")
+    dec be.indent
+    be.emitLine(&"}} {ifaceName}_VTable;")
+    # Fat pointer struct
+    be.emitLine(&"typedef struct {ifaceName}_FatPtr {{")
+    inc be.indent
+    be.emitLine("void* data;")
+    be.emitLine(&"{ifaceName}_VTable* vtable;")
+    dec be.indent
+    be.emitLine(&"}} {ifaceName}_FatPtr;")
+    be.emitLine("")
+
+  # VTable instances
+  for vt in module.vtables:
+    if vt.hasAssocTypes:
+      continue  # Skip vtables for interfaces with associated types
+    let varName = vt.concreteType & "_" & vt.interfaceName & "_VTable"
+    be.emitLine(&"{vt.interfaceName}_VTable {varName} = {{")
+    inc be.indent
+    for m in vt.methodNames:
+      be.emitLine(&".{m} = (void*){vt.concreteType}_{m},")
+    dec be.indent
+    be.emitLine("};")
+    be.emitLine("")
 
   # Function definitions
   var hasMain = false

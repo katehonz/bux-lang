@@ -207,6 +207,9 @@ proc parseBaseType(p: var Parser): TypeExpr =
       discard p.expect(tkGt, "expected '>' to close type arguments")
       return TypeExpr(kind: tekNamed, loc: loc, typeName: name, typeArgs: typeArgs)
     return TypeExpr(kind: tekNamed, loc: loc, typeName: name)
+  of tkOwn:
+    discard p.advance()
+    return TypeExpr(kind: tekOwn, loc: loc, pointerPointee: p.parseBaseType())
   of tkStar:
     discard p.advance()
     return TypeExpr(kind: tekPointer, loc: loc, pointerPointee: p.parseBaseType())
@@ -215,6 +218,10 @@ proc parseBaseType(p: var Parser): TypeExpr =
     if p.check(tkMut):
       discard p.advance()
       return TypeExpr(kind: tekMutRef, loc: loc, pointerPointee: p.parseBaseType())
+    if p.check(tkDyn):
+      discard p.advance()
+      let ifaceName = p.expect(tkIdent, "expected interface name after 'dyn'").text
+      return TypeExpr(kind: tekDynRef, loc: loc, dynInterface: ifaceName)
     return TypeExpr(kind: tekRef, loc: loc, pointerPointee: p.parseBaseType())
   of tkLParen:
     discard p.advance()
@@ -883,6 +890,26 @@ proc parseStmt(p: var Parser): Stmt =
     if p.check(tkSemicolon):
       discard p.advance()
     return Stmt(kind: skContinue, loc: loc, stmtContinueLabel: label)
+  of tkStaticAssert:
+    discard p.advance()
+    let cond = p.parseExpr()
+    var msg: Expr = nil
+    if p.check(tkComma):
+      discard p.advance()
+      msg = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skStaticAssert, loc: loc, stmtStaticAssertCond: cond, stmtStaticAssertMsg: msg)
+  of tkComptime:
+    discard p.advance()
+    let blk = p.parseBlock()
+    return Stmt(kind: skComptime, loc: loc, stmtComptimeBlock: blk)
+  of tkHashEmit:
+    discard p.advance()
+    let expr = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skEmit, loc: loc, stmtEmitExpr: expr, stmtEmitEvaluated: "")
   of tkDiscard:
     discard p.advance()
     var val: Expr = nil
@@ -1103,16 +1130,25 @@ proc parseInterfaceDecl(p: var Parser, isPublic: bool): Decl =
   let name = p.expect(tkIdent, "expected interface name").text
   discard p.expect(tkLBrace, "expected '{' to start interface body")
   var methods: seq[Decl] = @[]
+  var assocTypes: seq[string] = @[]
   while not p.check(tkRBrace) and not p.isAtEnd:
     # Skip newlines
     while p.check(tkNewLine):
       discard p.advance()
     if p.check(tkRBrace) or p.isAtEnd:
       break
-    methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
+    if p.check(tkType):
+      discard p.advance()
+      let assocName = p.expect(tkIdent, "expected associated type name").text
+      if p.check(tkSemicolon):
+        discard p.advance()
+      assocTypes.add(assocName)
+    else:
+      methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
   discard p.expect(tkRBrace, "expected '}' to close interface")
   return Decl(kind: dkInterface, loc: loc, isPublic: isPublic,
-              declInterfaceName: name, declInterfaceMethods: methods)
+              declInterfaceName: name, declInterfaceAssocTypes: assocTypes,
+              declInterfaceMethods: methods)
 
 proc parseImplDecl(p: var Parser): Decl =
   let loc = p.currentLoc
@@ -1125,17 +1161,29 @@ proc parseImplDecl(p: var Parser): Decl =
     interfaceName = p.expect(tkIdent, "expected interface name").text
   discard p.expect(tkLBrace, "expected '{' to start impl block")
   var methods: seq[Decl] = @[]
+  var assocTypes: seq[tuple[name: string, typ: TypeExpr]] = @[]
   while not p.check(tkRBrace) and not p.isAtEnd:
     # Skip newlines
     while p.check(tkNewLine):
       discard p.advance()
     if p.check(tkRBrace) or p.isAtEnd:
       break
-    methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
+    if p.check(tkType):
+      discard p.advance()
+      let assocName = p.expect(tkIdent, "expected associated type name").text
+      discard p.expect(tkAssign, "expected '=' in associated type implementation")
+      let assocType = p.parseType()
+      if p.check(tkSemicolon):
+        discard p.advance()
+      assocTypes.add((assocName, assocType))
+    else:
+      methods.add(p.parseFuncDecl(false, false, ParsedAttrs()))
   discard p.expect(tkRBrace, "expected '}' to close impl block")
   return Decl(kind: dkImpl, loc: loc, declImplTypeName: typeName,
               declImplTypeParams: typeParams,
-              declImplInterface: interfaceName, declImplMethods: methods)
+              declImplInterface: interfaceName,
+              declImplAssocTypes: assocTypes,
+              declImplMethods: methods)
 
 proc parseModuleDecl(p: var Parser, isPublic: bool): Decl =
   let loc = p.currentLoc

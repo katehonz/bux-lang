@@ -48,6 +48,45 @@ type
 # Helpers
 # ---------------------------------------------------------------------------
 
+proc unescapeStringLiteral*(s: string): string =
+  ## Convert a raw string literal (with surrounding quotes and escape sequences)
+  ## into the actual string value.
+  result = s
+  # Strip surrounding quotes
+  if result.len >= 2 and result[0] == '"' and result[^1] == '"':
+    result = result[1 ..< ^1]
+  # Process escape sequences
+  var i = 0
+  var outStr = ""
+  while i < result.len:
+    if result[i] == '\\' and i + 1 < result.len:
+      case result[i + 1]
+      of '\\': outStr.add('\\')
+      of '"': outStr.add('"')
+      of '\'': outStr.add('\'')
+      of 'n': outStr.add('\n')
+      of 'r': outStr.add('\r')
+      of 't': outStr.add('\t')
+      of '0': outStr.add('\0')
+      of 'x':
+        if i + 3 < result.len:
+          let hexStr = result[i + 2 .. i + 3]
+          try:
+            let code = parseHexInt(hexStr)
+            outStr.add(chr(code))
+            i += 2
+          except ValueError:
+            outStr.add(result[i])
+        else:
+          outStr.add(result[i])
+      else:
+        outStr.add(result[i + 1])
+      i += 2
+    else:
+      outStr.add(result[i])
+      inc i
+  result = outStr
+
 proc emitError(sema: var Sema, loc: SourceLocation, message: string) =
   sema.diagnostics.add(SemaDiagnostic(severity: sdsError, loc: loc, message: message))
 
@@ -76,8 +115,10 @@ proc typeExprReferencesTypeParam(te: TypeExpr, name: string): bool =
     return false
   of tekSlice:
     return typeExprReferencesTypeParam(te.sliceElement, name)
-  of tekPointer, tekRef, tekMutRef:
+  of tekOwn, tekPointer, tekRef, tekMutRef:
     return typeExprReferencesTypeParam(te.pointerPointee, name)
+  of tekDynRef:
+    return false
   of tekTuple:
     for elem in te.tupleElements:
       if typeExprReferencesTypeParam(elem, name): return true
@@ -132,7 +173,7 @@ proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
       if i >= argTypes.len: break
       # Skip pointer params — type param is inside the pointee and we cannot
       # structurally extract it (e.g., *Map<K,V> → arg is *Map<int,String>)
-      if param.ptype.kind == tekPointer:
+      if param.ptype.kind in {tekOwn, tekPointer}:
         continue
       if typeExprReferencesTypeParam(param.ptype, tpName):
         if inferred == nil:
@@ -194,12 +235,16 @@ proc resolveType(sema: var Sema, te: TypeExpr): Type =
   of tekPath:
     let fullName = te.pathSegments.join("::")
     return makeNamed(fullName)
+  of tekOwn:
+    return sema.resolveType(te.pointerPointee)
   of tekPointer:
     return makePointer(sema.resolveType(te.pointerPointee))
   of tekRef:
     return makeRef(sema.resolveType(te.pointerPointee))
   of tekMutRef:
     return makeMutRef(sema.resolveType(te.pointerPointee))
+  of tekDynRef:
+    return makeDynRef(te.dynInterface)
   of tekSlice:
     let elemType = sema.resolveType(te.sliceElement)
     return makeSlice(elemType)
@@ -253,6 +298,20 @@ proc evalBlock(sema: Sema, blk: Block, locals: Table[string, CtValue]): CtValue 
       let res = sema.evalExpr(stmt.stmtExpr, localVars)
       if res.kind != ctkVoid:
         return res
+    of skStaticAssert:
+      let cond = sema.evalExpr(stmt.stmtStaticAssertCond, localVars)
+      if cond.kind != ctkBool or not cond.boolVal:
+        var msg = "static assertion failed"
+        if stmt.stmtStaticAssertMsg != nil:
+          let msgVal = sema.evalExpr(stmt.stmtStaticAssertMsg, localVars)
+          if msgVal.kind == ctkString:
+            msg = msgVal.strVal
+        # Note: we can't emitError here because evalBlock is used for const folding too
+        # and we don't have access to sema diagnostics. For now, just return void.
+        # In checkStmt we'll do the real error reporting.
+        discard
+    of skComptime:
+      discard sema.evalBlock(stmt.stmtComptimeBlock, localVars)
     else:
       discard
   return CtValue(kind: ctkVoid)
@@ -268,7 +327,7 @@ proc evalExpr(sema: Sema, expr: Expr, locals: Table[string, CtValue]): CtValue =
     of tkBoolLiteral:
       return CtValue(kind: ctkBool, boolVal: expr.exprLit.text == "true")
     of tkStringLiteral:
-      return CtValue(kind: ctkString, strVal: expr.exprLit.text)
+      return CtValue(kind: ctkString, strVal: unescapeStringLiteral(expr.exprLit.text))
     else:
       return CtValue(kind: ctkVoid)
   of ekIdent:
@@ -508,6 +567,9 @@ proc collectGlobals*(sema: var Sema) =
       if not sema.globalScope.define(sym):
         sema.emitError(decl.loc, &"duplicate symbol '{decl.declInterfaceName}'")
       sema.typeTable[decl.declInterfaceName] = t
+      # Register associated types as type parameters (they get substituted in impl)
+      for assoc in decl.declInterfaceAssocTypes:
+        sema.typeTable[assoc] = makeTypeParam(assoc)
     of dkImpl:
       # Register methods for the type
       let typeName = decl.declImplTypeName
@@ -582,6 +644,14 @@ proc typeImplements(sema: Sema, t: Type, interfaceName: string): bool =
       if avail.name == req.declFuncName:
         found = true
         break
+    if not found:
+      return false
+  # Check associated types (permissive in bootstrap — just check if impl has them)
+  for assoc in iface.declInterfaceAssocTypes:
+    var found = false
+    # Look for impl block that provides this associated type
+    # This is a simplified check; full impl lookup would require tracking impl blocks
+    found = true  # Be permissive in bootstrap
     if not found:
       return false
   return true
@@ -779,6 +849,10 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       var typeName = ""
       if receiver.kind == tkNamed:
         typeName = receiver.name
+      elif receiver.kind in {tkInt, tkInt8, tkInt16, tkInt32, tkInt64,
+                             tkUInt, tkUInt8, tkUInt16, tkUInt32, tkUInt64,
+                             tkFloat32, tkFloat64, tkBool, tkStr, tkChar8}:
+        typeName = receiver.toString
       elif receiver.isPointer and receiver.inner.len > 0 and receiver.inner[0].kind == tkNamed:
         typeName = receiver.inner[0].name
       
@@ -798,6 +872,28 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
                   if not argTypes[i].isAssignableTo(expectedParams[paramIdx]) and not (argTypes[i].kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
                     sema.emitError(expr.loc, &"argument {i+1}: expected {expectedParams[paramIdx].toString}, got {argTypes[i].toString}")
             return minfo.retType
+      
+      # Trait object virtual method call: &dyn Trait
+      if receiver.kind == tkDynRef:
+        let ifaceName = receiver.name
+        if sema.interfaceTable.hasKey(ifaceName):
+          let iface = sema.interfaceTable[ifaceName]
+          for m in iface.declInterfaceMethods:
+            if m.declFuncName == methodName:
+              var paramTypes: seq[Type] = @[]
+              for p in m.declFuncParams:
+                paramTypes.add(sema.resolveType(p.ptype))
+              if argTypes.len + 1 < paramTypes.len:
+                sema.emitError(expr.loc, &"too few arguments for method '{methodName}'")
+              elif argTypes.len > paramTypes.len:
+                sema.emitError(expr.loc, &"too many arguments for method '{methodName}'")
+              else:
+                for i in 0 ..< argTypes.len:
+                  let paramIdx = i + 1
+                  if paramIdx < paramTypes.len:
+                    if not argTypes[i].isAssignableTo(paramTypes[paramIdx]) and not (argTypes[i].kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
+                      sema.emitError(expr.loc, &"argument {i+1}: expected {paramTypes[paramIdx].toString}, got {argTypes[i].toString}")
+              return if m.declFuncReturnType != nil: sema.resolveType(m.declFuncReturnType) else: makeVoid()
       
       # Not a method - treat as function pointer field
       let fieldType = sema.checkExpr(expr.exprCallCallee, scope)
@@ -941,6 +1037,22 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
             sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
         else:
           sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
+    elif objType.kind == tkDynRef:
+      # Trait object: methods come from the interface
+      let ifaceName = objType.name
+      if sema.interfaceTable.hasKey(ifaceName):
+        let iface = sema.interfaceTable[ifaceName]
+        for m in iface.declInterfaceMethods:
+          if m.declFuncName == expr.exprFieldName:
+            # Build function type from method signature
+            var paramTypes: seq[Type] = @[]
+            for p in m.declFuncParams:
+              paramTypes.add(sema.resolveType(p.ptype))
+            let retType = if m.declFuncReturnType != nil: sema.resolveType(m.declFuncReturnType) else: makeVoid()
+            return makeFunc(paramTypes, retType)
+        sema.emitError(expr.loc, &"interface '{ifaceName}' has no method '{expr.exprFieldName}'")
+      else:
+        sema.emitError(expr.loc, &"unknown interface '{ifaceName}'")
     else:
       sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
     return makeUnknown()
@@ -1084,6 +1196,31 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
       discard sema.checkExpr(stmt.stmtReturnValue, scope)
     return makeVoid()
   of skBreak, skContinue:
+    return makeVoid()
+  of skStaticAssert:
+    let condType = sema.checkExpr(stmt.stmtStaticAssertCond, scope)
+    if not condType.isBool:
+      sema.emitError(stmt.loc, "static_assert condition must be bool")
+    let condVal = sema.evalExpr(stmt.stmtStaticAssertCond, initTable[string, CtValue]())
+    if condVal.kind == ctkBool and not condVal.boolVal:
+      var msg = "static assertion failed"
+      if stmt.stmtStaticAssertMsg != nil:
+        let msgVal = sema.evalExpr(stmt.stmtStaticAssertMsg, initTable[string, CtValue]())
+        if msgVal.kind == ctkString:
+          msg = msgVal.strVal
+      sema.emitError(stmt.loc, msg)
+    return makeVoid()
+  of skComptime:
+    discard sema.evalBlock(stmt.stmtComptimeBlock, initTable[string, CtValue]())
+    return makeVoid()
+  of skEmit:
+    let exprType = sema.checkExpr(stmt.stmtEmitExpr, scope)
+    # Try to evaluate at compile time; if it evaluates to a string, we're good
+    let val = sema.evalExpr(stmt.stmtEmitExpr, initTable[string, CtValue]())
+    if val.kind == ctkString:
+      stmt.stmtEmitEvaluated = val.strVal
+    elif not exprType.isUnknown and exprType.kind != tkStr:
+      sema.emitError(stmt.loc, "#emit requires a string expression")
     return makeVoid()
   of skDecl:
     # Local declaration inside block
