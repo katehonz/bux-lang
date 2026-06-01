@@ -22,7 +22,7 @@ char* bux_argv(int index) {
 
 /* Memory allocation */
 void* bux_alloc(size_t size) {
-    void* ptr = malloc(size);
+    void* ptr = calloc(1, size);
     if (ptr == NULL) {
         fprintf(stderr, "bux runtime: out of memory (alloc %zu bytes)\n", size);
         abort();
@@ -72,6 +72,11 @@ char* bux_escape_c_string(const char* s, int len) {
 int bux_run_nim(const char* nim_file, const char* out_bin) {
     char cmd[4096];
     snprintf(cmd, sizeof(cmd), "nim c -o:%s -d:release --gc:orc %s 2>&1", out_bin, nim_file);
+    return system(cmd);
+}
+
+int bux_system(const char* cmd) {
+    if (cmd == NULL) return -1;
     return system(cmd);
 }
 

@@ -111,7 +111,7 @@ suite "Parser":
     check ret.stmtReturnValue.exprCallCallee.kind == ekIdent
 
   test "full sample file":
-    let source = readFile("tests/testdata/sample.bux")
+    let source = readFile(currentSourcePath.parentDir / "testdata" / "sample.bux")
     let lexRes = tokenize(source, "sample.bux")
     check not lexRes.hasErrors
     let parseRes = parse(lexRes.tokens, "sample.bux")

@@ -12,6 +12,7 @@ extern func bux_path_join(a: String, b: String) -> String;
 extern func bux_mkdir_if_needed(path: String) -> int;
 extern func bux_run_nim(nim_file: String, out_bin: String) -> int;
 extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
+extern func bux_system(cmd: String) -> int;
 
 func ReadFile(path: String) -> String {
     return bux_read_file(path);
@@ -61,9 +62,14 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     }
     PrintLine("  Parse done");
 
-    // Flatten module wrappers: if the only item is a module decl, hoist its children
-    if mod.firstItem != null as *Decl && mod.firstItem.kind == dkModule && mod.firstItem.childDecl1 != null as *Decl {
-        mod.firstItem = mod.firstItem.childDecl1;
+    // Flatten module wrappers: find module decl and hoist its children
+    var decl: *Decl = mod.firstItem;
+    while decl != null as *Decl {
+        if decl.kind == dkModule && decl.childDecl1 != null as *Decl {
+            mod.firstItem = decl.childDecl1;
+            break;
+        }
+        decl = decl.childDecl2;
     }
 
     // Phase 3: Semantic analysis
@@ -167,8 +173,13 @@ func Cli_Check(srcPath: String) -> int {
     }
 
     // Flatten module wrappers
-    if mod.firstItem != null as *Decl && mod.firstItem.kind == dkModule && mod.firstItem.childDecl1 != null as *Decl {
-        mod.firstItem = mod.firstItem.childDecl1;
+    var decl2: *Decl = mod.firstItem;
+    while decl2 != null as *Decl {
+        if decl2.kind == dkModule && decl2.childDecl1 != null as *Decl {
+            mod.firstItem = decl2.childDecl1;
+            break;
+        }
+        decl2 = decl2.childDecl2;
     }
 
     // Phase 3: Sema
@@ -349,6 +360,26 @@ func Cli_BuildProject(projectDir: String) -> int {
 }
 
 // ---------------------------------------------------------------------------
+// Run command — build project and execute
+// ---------------------------------------------------------------------------
+
+func Cli_RunProject(projectDir: String) -> int {
+    let rc: int = Cli_BuildProject(projectDir);
+    if rc != 0 {
+        return rc;
+    }
+    let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
+    var outName: String = man.name;
+    if String_Eq(outName, "") {
+        outName = "bux_out";
+    }
+    let outBin: String = bux_path_join(bux_path_join(projectDir, "build"), outName);
+    Print("Running: ");
+    PrintLine(outBin);
+    return bux_system(outBin);
+}
+
+// ---------------------------------------------------------------------------
 // Main entry — dispatch based on args
 // ---------------------------------------------------------------------------
 
@@ -399,6 +430,12 @@ func Cli_Run(args: *String, argCount: int) -> int {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
         return Cli_BuildProject(dir);
+    }
+
+    if String_Eq(cmd, "run") {
+        let dir: String = ".";
+        if argCount >= 3 { dir = args[2]; }
+        return Cli_RunProject(dir);
     }
 
     Print("Unknown command: ");

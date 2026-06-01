@@ -553,6 +553,8 @@ proc nextToken(lex: var Lexer): Token =
       # Simple heuristic: if peek(2) is ', it's a char literal; else lifetime
       if lex.peek(2) == '\'':
         return lex.scanChar(startLoc, 0)
+      elif lex.peek(2) == '\0':
+        return lex.scanChar(startLoc, 0)
       else:
         # Lifetime: consume ' and then identifier chars
         discard lex.advance()  # '
