@@ -917,6 +917,174 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
         } else if d.fieldCount == 7 {
             d.field7.name = fName.text;
             d.field7.refFieldType = fType;
+        } else if d.fieldCount == 8 {
+            d.field8.name = fName.text;
+            d.field8.refFieldType = fType;
+        } else if d.fieldCount == 9 {
+            d.field9.name = fName.text;
+            d.field9.refFieldType = fType;
+        } else if d.fieldCount == 10 {
+            d.field10.name = fName.text;
+            d.field10.refFieldType = fType;
+        } else if d.fieldCount == 11 {
+            d.field11.name = fName.text;
+            d.field11.refFieldType = fType;
+        } else if d.fieldCount == 12 {
+            d.field12.name = fName.text;
+            d.field12.refFieldType = fType;
+        } else if d.fieldCount == 13 {
+            d.field13.name = fName.text;
+            d.field13.refFieldType = fType;
+        } else if d.fieldCount == 14 {
+            d.field14.name = fName.text;
+            d.field14.refFieldType = fType;
+        } else if d.fieldCount == 15 {
+            d.field15.name = fName.text;
+            d.field15.refFieldType = fType;
+        } else if d.fieldCount == 16 {
+            d.field16.name = fName.text;
+            d.field16.refFieldType = fType;
+        } else if d.fieldCount == 17 {
+            d.field17.name = fName.text;
+            d.field17.refFieldType = fType;
+        } else if d.fieldCount == 18 {
+            d.field18.name = fName.text;
+            d.field18.refFieldType = fType;
+        } else if d.fieldCount == 19 {
+            d.field19.name = fName.text;
+            d.field19.refFieldType = fType;
+        } else if d.fieldCount == 20 {
+            d.field20.name = fName.text;
+            d.field20.refFieldType = fType;
+        } else if d.fieldCount == 21 {
+            d.field21.name = fName.text;
+            d.field21.refFieldType = fType;
+        } else if d.fieldCount == 22 {
+            d.field22.name = fName.text;
+            d.field22.refFieldType = fType;
+        } else if d.fieldCount == 23 {
+            d.field23.name = fName.text;
+            d.field23.refFieldType = fType;
+        } else if d.fieldCount == 24 {
+            d.field24.name = fName.text;
+            d.field24.refFieldType = fType;
+        } else if d.fieldCount == 25 {
+            d.field25.name = fName.text;
+            d.field25.refFieldType = fType;
+        } else if d.fieldCount == 26 {
+            d.field26.name = fName.text;
+            d.field26.refFieldType = fType;
+        } else if d.fieldCount == 27 {
+            d.field27.name = fName.text;
+            d.field27.refFieldType = fType;
+        } else if d.fieldCount == 28 {
+            d.field28.name = fName.text;
+            d.field28.refFieldType = fType;
+        } else if d.fieldCount == 29 {
+            d.field29.name = fName.text;
+            d.field29.refFieldType = fType;
+        } else if d.fieldCount == 30 {
+            d.field30.name = fName.text;
+            d.field30.refFieldType = fType;
+        } else if d.fieldCount == 31 {
+            d.field31.name = fName.text;
+            d.field31.refFieldType = fType;
+        } else if d.fieldCount == 32 {
+            d.field32.name = fName.text;
+            d.field32.refFieldType = fType;
+        } else if d.fieldCount == 33 {
+            d.field33.name = fName.text;
+            d.field33.refFieldType = fType;
+        } else if d.fieldCount == 34 {
+            d.field34.name = fName.text;
+            d.field34.refFieldType = fType;
+        } else if d.fieldCount == 35 {
+            d.field35.name = fName.text;
+            d.field35.refFieldType = fType;
+        } else if d.fieldCount == 36 {
+            d.field36.name = fName.text;
+            d.field36.refFieldType = fType;
+        } else if d.fieldCount == 37 {
+            d.field37.name = fName.text;
+            d.field37.refFieldType = fType;
+        } else if d.fieldCount == 38 {
+            d.field38.name = fName.text;
+            d.field38.refFieldType = fType;
+        } else if d.fieldCount == 39 {
+            d.field39.name = fName.text;
+            d.field39.refFieldType = fType;
+        } else if d.fieldCount == 40 {
+            d.field40.name = fName.text;
+            d.field40.refFieldType = fType;
+        } else if d.fieldCount == 41 {
+            d.field41.name = fName.text;
+            d.field41.refFieldType = fType;
+        } else if d.fieldCount == 42 {
+            d.field42.name = fName.text;
+            d.field42.refFieldType = fType;
+        } else if d.fieldCount == 43 {
+            d.field43.name = fName.text;
+            d.field43.refFieldType = fType;
+        } else if d.fieldCount == 44 {
+            d.field44.name = fName.text;
+            d.field44.refFieldType = fType;
+        } else if d.fieldCount == 45 {
+            d.field45.name = fName.text;
+            d.field45.refFieldType = fType;
+        } else if d.fieldCount == 46 {
+            d.field46.name = fName.text;
+            d.field46.refFieldType = fType;
+        } else if d.fieldCount == 47 {
+            d.field47.name = fName.text;
+            d.field47.refFieldType = fType;
+        } else if d.fieldCount == 48 {
+            d.field48.name = fName.text;
+            d.field48.refFieldType = fType;
+        } else if d.fieldCount == 49 {
+            d.field49.name = fName.text;
+            d.field49.refFieldType = fType;
+        } else if d.fieldCount == 50 {
+            d.field50.name = fName.text;
+            d.field50.refFieldType = fType;
+        } else if d.fieldCount == 51 {
+            d.field51.name = fName.text;
+            d.field51.refFieldType = fType;
+        } else if d.fieldCount == 52 {
+            d.field52.name = fName.text;
+            d.field52.refFieldType = fType;
+        } else if d.fieldCount == 53 {
+            d.field53.name = fName.text;
+            d.field53.refFieldType = fType;
+        } else if d.fieldCount == 54 {
+            d.field54.name = fName.text;
+            d.field54.refFieldType = fType;
+        } else if d.fieldCount == 55 {
+            d.field55.name = fName.text;
+            d.field55.refFieldType = fType;
+        } else if d.fieldCount == 56 {
+            d.field56.name = fName.text;
+            d.field56.refFieldType = fType;
+        } else if d.fieldCount == 57 {
+            d.field57.name = fName.text;
+            d.field57.refFieldType = fType;
+        } else if d.fieldCount == 58 {
+            d.field58.name = fName.text;
+            d.field58.refFieldType = fType;
+        } else if d.fieldCount == 59 {
+            d.field59.name = fName.text;
+            d.field59.refFieldType = fType;
+        } else if d.fieldCount == 60 {
+            d.field60.name = fName.text;
+            d.field60.refFieldType = fType;
+        } else if d.fieldCount == 61 {
+            d.field61.name = fName.text;
+            d.field61.refFieldType = fType;
+        } else if d.fieldCount == 62 {
+            d.field62.name = fName.text;
+            d.field62.refFieldType = fType;
+        } else if d.fieldCount == 63 {
+            d.field63.name = fName.text;
+            d.field63.refFieldType = fType;
         }
         d.fieldCount = d.fieldCount + 1;
     }

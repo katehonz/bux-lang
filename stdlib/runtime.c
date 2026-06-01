@@ -43,6 +43,45 @@ void bux_free(void* ptr) {
     free(ptr);
 }
 
+/* Escape a string for C output (newlines -> \n, quotes -> \", etc.) */
+/* Returns escaped content WITHOUT surrounding quotes */
+char* bux_escape_c_string(const char* s, int len) {
+    if (s == NULL || len <= 0) {
+        char* empty = (char*)bux_alloc(1);
+        empty[0] = '\0';
+        return empty;
+    }
+    /* Worst case: every char needs escaping (e.g., all newlines -> 2 chars) */
+    char* buf = (char*)bux_alloc(len * 2 + 1);
+    int j = 0;
+    for (int i = 0; i < len; i++) {
+        char c = s[i];
+        switch (c) {
+            case '\n': buf[j++] = '\\'; buf[j++] = 'n'; break;
+            case '\r': buf[j++] = '\\'; buf[j++] = 'r'; break;
+            case '\t': buf[j++] = '\\'; buf[j++] = 't'; break;
+            case '\\': buf[j++] = '\\'; buf[j++] = '\\'; break;
+            case '"':  buf[j++] = '\\'; buf[j++] = '"'; break;
+            default:   buf[j++] = c; break;
+        }
+    }
+    buf[j] = '\0';
+    return buf;
+}
+
+int bux_run_nim(const char* nim_file, const char* out_bin) {
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "nim c -o:%s -d:release --gc:orc %s 2>&1", out_bin, nim_file);
+    return system(cmd);
+}
+
+int bux_strlen_c(const char* s) {
+    if (s == NULL) return 0;
+    const char* p = s;
+    while (*p) p++;
+    return (int)(p - s);
+}
+
 /* I/O */
 void bux_print(const char* s) {
     if (s != NULL) {
@@ -447,9 +486,33 @@ int bux_write_file(const char* path, const char* content) {
     FILE* f = fopen(path, "wb");
     if (!f) return 0;
     size_t len = strlen(content);
-    size_t written = fwrite(content, 1, len, f);
+    size_t written = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (content[i] == '\\' && i + 1 < len && content[i + 1] == 'n') {
+            if (fputc('\n', f) == EOF) break;
+            i++;
+        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == 't') {
+            if (fputc('\t', f) == EOF) break;
+            i++;
+        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == 'r') {
+            if (fputc('\r', f) == EOF) break;
+            i++;
+        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == '\\') {
+            if (fputc('\\', f) == EOF) break;
+            i++;
+        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == '"') {
+            if (fputc('"', f) == EOF) break;
+            i++;
+        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == '\'') {
+            if (fputc('\'', f) == EOF) break;
+            i++;
+        } else {
+            if (fputc(content[i], f) == EOF) break;
+        }
+        written++;
+    }
     fclose(f);
-    return written == len ? 1 : 0;
+    return written > 0 ? 1 : 0;
 }
 
 /* File I/O — check if file exists */

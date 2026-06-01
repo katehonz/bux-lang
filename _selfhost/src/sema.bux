@@ -6,19 +6,19 @@ module Sema {
 // Sema context
 // ---------------------------------------------------------------------------
 struct Sema {
-    module: *Module,
-    scope: *Scope,
-    typeTable: *void,
-    methodTable: *void,
-    diagCount: int,
-    diags: *SemaDiag,
-    hasError: bool,
+    module: *Module;
+    scope: *Scope;
+    typeTable: *void;
+    methodTable: *void;
+    diagCount: int;
+    diags: *SemaDiag;
+    hasError: bool;
 }
 
 struct SemaDiag {
-    line: uint32,
-    column: uint32,
-    message: String,
+    line: uint32;
+    column: uint32;
+    message: String;
 }
 
 // ---------------------------------------------------------------------------

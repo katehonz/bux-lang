@@ -39,22 +39,22 @@ const hAwait: int = 30;
 // ---------------------------------------------------------------------------
 
 struct HirNode {
-    kind: int,
-    line: uint32,
-    column: uint32,
-    typeKind: int,
-    typeName: String,
+    kind: int;
+    line: uint32;
+    column: uint32;
+    typeKind: int;
+    typeName: String;
     // Common fields (used by multiple kinds)
-    strValue: String,       // var name, callee name, field name, label
-    intValue: int,          // token kind (for lit, unary op, binary op)
-    boolValue: bool,        // range inclusive, isScope
+    strValue: String;       // var name; callee name; field name; label
+    intValue: int;          // token kind (for lit; unary op; binary op)
+    boolValue: bool;        // range inclusive; isScope
     // Child nodes (up to 3)
-    child1: *HirNode,       // left/operand/condition/base
-    child2: *HirNode,       // right/value/then/body
-    child3: *HirNode,       // else/third
+    child1: *HirNode;       // left/operand/condition/base
+    child2: *HirNode;       // right/value/then/body
+    child3: *HirNode;       // else/third
     // Extra data pointer (for children arrays, field lists, etc.)
-    extraData: *void,
-    extraCount: int,
+    extraData: *void;
+    extraCount: int;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,24 +62,24 @@ struct HirNode {
 // ---------------------------------------------------------------------------
 
 struct HirParam {
-    name: String,
-    typeKind: int,
-    typeName: String,
+    name: String;
+    typeKind: int;
+    typeName: String;
 }
 
 struct HirFunc {
-    name: String,
-    paramCount: int,
-    param0: HirParam,
-    param1: HirParam,
-    param2: HirParam,
-    param3: HirParam,
-    param4: HirParam,
-    param5: HirParam,
-    retTypeKind: int,
-    retTypeName: String,
-    body: *HirNode,
-    isPublic: bool,
+    name: String;
+    paramCount: int;
+    param0: HirParam;
+    param1: HirParam;
+    param2: HirParam;
+    param3: HirParam;
+    param4: HirParam;
+    param5: HirParam;
+    retTypeKind: int;
+    retTypeName: String;
+    body: *HirNode;
+    isPublic: bool;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,12 +87,12 @@ struct HirFunc {
 // ---------------------------------------------------------------------------
 
 struct HirEnumVariant {
-    name: String,
-    fieldCount: int,
-    fieldType0: int,
-    fieldName0: String,
-    fieldType1: int,
-    fieldName1: String,
+    name: String;
+    fieldCount: int;
+    fieldType0: int;
+    fieldName0: String;
+    fieldType1: int;
+    fieldName1: String;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,24 +100,31 @@ struct HirEnumVariant {
 // ---------------------------------------------------------------------------
 
 struct HirStructField {
-    name: String,
-    typeName: String,
+    name: String;
+    typeName: String;
 }
 
 struct HirStruct {
-    name: String,
-    fieldCount: int,
-    fields: *HirStructField,
+    name: String;
+    fieldCount: int;
+    fields: *HirStructField;
+}
+
+struct HirConst {
+    name: String;
+    value: int;
 }
 
 struct HirModule {
-    funcCount: int,
-    funcs: *HirFunc,
-    externCount: int,
-    externFuncs: *HirFunc,
-    structCount: int,
-    structs: *HirStruct,
-    enumCount: int,
+    funcCount: int;
+    funcs: *HirFunc;
+    externCount: int;
+    externFuncs: *HirFunc;
+    structCount: int;
+    structs: *HirStruct;
+    enumCount: int;
+    constCount: int;
+    consts: *HirConst;
 }
 
 // ---------------------------------------------------------------------------

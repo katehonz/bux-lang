@@ -137,17 +137,18 @@ const tkUnknown: int = 101;
 const tkAsync: int = 102;
 const tkAwait: int = 103;
 const tkSpawn: int = 104;
+const tkDiscard: int = 105;
 
 // ---------------------------------------------------------------------------
 // Token struct
 // ---------------------------------------------------------------------------
 
 struct Token {
-    kind: int,
-    text: String,
-    line: uint32,
-    column: uint32,
-    offset: uint32,
+    kind: int;
+    text: String;
+    line: uint32;
+    column: uint32;
+    offset: uint32;
 }
 
 // ---------------------------------------------------------------------------

@@ -9,21 +9,21 @@ const skConst: int = 3;
 const skModule: int = 4;
 
 // Maximum symbols per scope
-const maxSymbols: int = 256;
+const maxSymbols: int = 1024;
 
 struct Symbol {
-    kind: int,
-    name: String,
-    typeKind: int,
-    typeName: String,
-    isMutable: bool,
-    isPublic: bool,
+    kind: int;
+    name: String;
+    typeKind: int;
+    typeName: String;
+    isMutable: bool;
+    isPublic: bool;
 }
 
 struct Scope {
-    symbols: *Symbol,
-    count: int,
-    parent: *Scope,
+    symbols: *Symbol;
+    count: int;
+    parent: *Scope;
 }
 
 // ---------------------------------------------------------------------------

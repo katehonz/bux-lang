@@ -46,31 +46,31 @@ const maxTokens: int = 32768;
 const maxDiags: int = 128;
 
 struct LexerDiag {
-    line: uint32,
-    column: uint32,
-    message: String,
+    line: uint32;
+    column: uint32;
+    message: String;
 }
 
 struct Lexer {
-    source: String,
-    sourceLen: int,
-    pos: int,
-    line: uint32,
-    column: uint32,
-    startLine: uint32,
-    startColumn: uint32,
-    startPos: int,
-    tokenCount: int,
-    tokens: *LexToken,
-    diagCount: int,
-    diags: *LexerDiag,
+    source: String;
+    sourceLen: int;
+    pos: int;
+    line: uint32;
+    column: uint32;
+    startLine: uint32;
+    startColumn: uint32;
+    startPos: int;
+    tokenCount: int;
+    tokens: *LexToken;
+    diagCount: int;
+    diags: *LexerDiag;
 }
 
 struct LexToken {
-    kind: int,
-    text: String,
-    line: uint32,
-    column: uint32,
+    kind: int;
+    text: String;
+    line: uint32;
+    column: uint32;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +294,7 @@ func lexKeywordKind(text: String) -> int {
     if String_Eq(text, "self") { return tkSelf; }
     if String_Eq(text, "super") { return tkSuper; }
     if String_Eq(text, "sizeof") { return tkSizeOf; }
+    if String_Eq(text, "discard") { return tkDiscard; }
     if String_Eq(text, "async") { return tkAsync; }
     if String_Eq(text, "await") { return tkAwait; }
     if String_Eq(text, "spawn") { return tkSpawn; }

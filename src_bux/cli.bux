@@ -1,5 +1,5 @@
 // cli.bux — CLI driver for the Bux self-hosting compiler
-// Wires together: Lexer → Parser → Sema → HirLower → CBackend
+// Wires together: Lexer → Parser → Sema → HirLower → NimBackend
 module Cli {
 
 extern func PrintLine(s: String);
@@ -10,7 +10,7 @@ extern func bux_file_exists(path: String) -> int;
 extern func bux_dir_exists(path: String) -> int;
 extern func bux_path_join(a: String, b: String) -> String;
 extern func bux_mkdir_if_needed(path: String) -> int;
-extern func bux_run_cc(c_file: String, out_bin: String, runtime_c: String, io_c: String, math_lib: String) -> int;
+extern func bux_run_nim(nim_file: String, out_bin: String) -> int;
 extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
 
 func ReadFile(path: String) -> String {
@@ -38,7 +38,9 @@ func DirExists(path: String) -> bool {
 
 func Cli_Compile(source: String, sourceName: String) -> String {
     // Phase 1: Lex
+    PrintLine("  Lexing...");
     let lex: *Lexer = Lexer_Tokenize(source);
+    PrintLine("  Lex done");
     if Lexer_DiagCount(lex) > 0 {
         PrintLine("Lex errors:");
         var i: int = 0;
@@ -91,13 +93,13 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     PrintLine("");
 
     // Phase 5: C code generation
-    let cCode: String = CBackend_Generate(hirMod);
+    let nimCode: String = NimBackend_Generate(hirMod);
 
     // Cleanup
     Lexer_Free(lex);
     Sema_Free(sema);
 
-    return cCode;
+    return nimCode;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +127,7 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
     // Write C output
     let ok: bool = WriteFile(outPath, cCode);
     if ok {
-        Print("  → C code written to ");
+        Print("  → Nim code written to ");
         PrintLine(outPath);
         return 0;
     } else {
@@ -148,10 +150,36 @@ func Cli_Check(srcPath: String) -> int {
     }
     PrintLine("  File read OK");
 
-    let cCode: String = Cli_Compile(source, srcPath);
-    if String_Eq(cCode, "") {
+    // Phase 1: Lex
+    PrintLine("  Lexing...");
+    let lex: *Lexer = Lexer_Tokenize(source);
+    PrintLine("  Lex done");
+    if Lexer_DiagCount(lex) > 0 {
+        PrintLine("Lex errors found");
         return 1;
     }
+
+    // Phase 2: Parse
+    let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
+    if mod == null as *Module {
+        PrintLine("Parse failed");
+        return 1;
+    }
+
+    // Flatten module wrappers
+    if mod.firstItem != null as *Decl && mod.firstItem.kind == dkModule && mod.firstItem.childDecl1 != null as *Decl {
+        mod.firstItem = mod.firstItem.childDecl1;
+    }
+
+    // Phase 3: Sema
+    let sema: *Sema = Sema_Analyze(mod);
+    if Sema_HasError(sema) {
+        PrintLine("Sema errors found");
+        return 1;
+    }
+
+    // Phase 4: HIR lowering
+    let hirMod: *HirModule = HirLower_LowerModule(mod, sema);
 
     PrintLine("Check passed");
     return 0;
@@ -163,7 +191,9 @@ func Cli_Check(srcPath: String) -> int {
 
 func Cli_CompileSource(source: String, sourceName: String) -> *HirModule {
     // Phase 1: Lex
+    PrintLine("  Lexing...");
     let lex: *Lexer = Lexer_Tokenize(source);
+    PrintLine("  Lex done");
     if Lexer_DiagCount(lex) > 0 {
         Print("Lex errors in ");
         PrintLine(sourceName);
@@ -286,34 +316,30 @@ func Cli_BuildProject(projectDir: String) -> int {
     PrintLine("Lowering to HIR...");
     let hirMod: *HirModule = HirLower_LowerModule(merged, sema);
 
-    // C code generation
-    PrintLine("Generating C code...");
-    let cCode: String = CBackend_Generate(hirMod);
+    // Nim code generation
+    PrintLine("Generating Nim code...");
+    let nimCode: String = NimBackend_Generate(hirMod);
 
     // Create build directory
     let buildDir: String = bux_path_join(projectDir, "build");
     discard bux_mkdir_if_needed(buildDir);
 
-    // Write C output
-    let cFile: String = bux_path_join(buildDir, "main.c");
-    if !WriteFile(cFile, cCode) {
-        PrintLine("Error: cannot write main.c");
+    // Write Nim output
+    let nimFile: String = bux_path_join(buildDir, "main.nim");
+    if !WriteFile(nimFile, nimCode) {
+        PrintLine("Error: cannot write main.nim");
         return 1;
     }
 
-    Print("C code written to ");
-    PrintLine(cFile);
+    Print("Nim code written to ");
+    PrintLine(nimFile);
 
-    // Find stdlib files
-    let runtimeC: String = bux_path_join(bux_path_join(projectDir, ".."), "stdlib/runtime.c");
-    let ioC: String = bux_path_join(bux_path_join(projectDir, ".."), "stdlib/io.c");
-
-    // Invoke C compiler
-    PrintLine("Invoking C compiler...");
+    // Invoke Nim compiler
+    PrintLine("Invoking Nim compiler...");
     let outBin: String = bux_path_join(buildDir, "buxc3");
-    let rc: int = bux_run_cc(cFile, outBin, runtimeC, ioC, "-lm");
+    let rc: int = bux_run_nim(nimFile, outBin);
     if rc != 0 {
-        PrintLine("Error: C compilation failed");
+        PrintLine("Error: Nim compilation failed");
         return 1;
     }
 
@@ -363,7 +389,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
 
     if String_Eq(cmd, "build") {
         let src: String = "src/Main.bux";
-        let out: String = "build/main.c";
+        let out: String = "build/main.nim";
         if argCount >= 3 { src = args[2]; }
         if argCount >= 4 { out = args[3]; }
         return Cli_Build(src, out);

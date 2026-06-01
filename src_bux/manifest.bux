@@ -6,10 +6,10 @@ module Manifest {
 // Manifest struct
 // ---------------------------------------------------------------------------
 struct Manifest {
-    name: String,
-    version: String,
-    pkgType: String,
-    output: String,
+    name: String;
+    version: String;
+    pkgType: String;
+    output: String;
 }
 
 // ---------------------------------------------------------------------------

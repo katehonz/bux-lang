@@ -40,16 +40,16 @@ const tyFunc: int = 28;
 // ---------------------------------------------------------------------------
 
 struct Type {
-    kind: int,
-    name: String,
+    kind: int;
+    name: String;
     // inner types stored as array of pointers (simplified)
-    innerKind1: int,
-    innerName1: String,
-    innerKind2: int,
-    innerName2: String,
-    innerKind3: int,
-    innerName3: String,
-    innerCount: int,
+    innerKind1: int;
+    innerName1: String;
+    innerKind2: int;
+    innerName2: String;
+    innerKind3: int;
+    innerName3: String;
+    innerCount: int;
 }
 
 // ---------------------------------------------------------------------------

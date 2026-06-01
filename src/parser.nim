@@ -600,7 +600,10 @@ proc parseUnary(p: var Parser): Expr =
     let op = p.advance().kind
     if op == tkAmp and p.check(tkMut):
       discard p.advance()  # mut
+    let savedStructInit = p.structInitAllowed
+    p.structInitAllowed = false
     let operand = p.parseUnary()
+    p.structInitAllowed = savedStructInit
     return Expr(kind: ekUnary, loc: loc, exprUnaryOp: op, exprUnaryOperand: operand)
   of tkPlusPlus, tkMinusMinus:
     let op = p.advance().kind
@@ -809,7 +812,9 @@ proc parseStmt(p: var Parser): Stmt =
       while p.check(tkNewLine): discard p.advance()
       if p.check(tkIf):
         discard p.advance()
+        p.structInitAllowed = false
         let elifCond = p.parseExpr()
+        p.structInitAllowed = true
         let elifBlk = p.parseBlock()
         elseIfs.add(ElseIf(loc: elseLoc, cond: elifCond, blk: elifBlk))
         while p.check(tkNewLine): discard p.advance()
