@@ -465,7 +465,7 @@ proc parsePrimary(p: var Parser): Expr =
         if p.check(tkComma):
           discard p.advance()
       discard p.expect(tkRParen, "expected ')' after spawn arguments")
-    return Expr(kind: ekSpawn, loc: loc, exprSpawnCallee: callee, exprSpawnArgs: args)
+    return Expr(kind: ekSpawn, loc: loc, exprSpawnCallee: callee, exprSpawnArgs: args, exprSpawnAsync: false)
   of tkHashLine:
     discard p.advance()
     return Expr(kind: ekIntrinsic, loc: loc, exprIntrinsic: ikLine)

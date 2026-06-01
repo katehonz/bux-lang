@@ -207,6 +207,7 @@ type
     of ekSpawn:
       exprSpawnCallee*: Expr
       exprSpawnArgs*: seq[Expr]
+      exprSpawnAsync*: bool
     of ekAwait:
       exprAwaitOperand*: Expr
     of ekBlock:

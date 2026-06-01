@@ -1143,6 +1143,18 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     discard sema.checkExpr(expr.exprSpawnCallee, scope)
     for arg in expr.exprSpawnArgs:
       discard sema.checkExpr(arg, scope)
+    # Determine if callee is async
+    var calleeName = ""
+    case expr.exprSpawnCallee.kind
+    of ekIdent:
+      calleeName = expr.exprSpawnCallee.exprIdent
+    of ekPath:
+      calleeName = expr.exprSpawnCallee.exprPath.join("_")
+    else: discard
+    if calleeName != "":
+      let sym = sema.globalScope.lookup(calleeName)
+      if sym != nil and sym.decl != nil and sym.decl.kind == dkFunc and sym.decl.declFuncIsAsync:
+        expr.exprSpawnAsync = true
     return makePointer(makeVoid())
   of ekAwait:
     let operand = sema.checkExpr(expr.exprAwaitOperand, scope)

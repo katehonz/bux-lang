@@ -294,14 +294,15 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     return &"sizeof({typ})"
 
   of hSpawn:
-    if node.spawnArgs.len > 0:
-      # Fallback to OS thread spawn for functions with arguments
-      var argsStr = ""
-      let arg = be.emitExpr(node.spawnArgs[0])
-      argsStr = &"(void*){arg}"
-      return &"bux_task_spawn({node.spawnCallee}, {argsStr})"
-    else:
+    if node.spawnAsync:
+      # Async coroutine spawn
       return &"bux_async_spawn({node.spawnCallee})"
+    else:
+      # OS thread spawn
+      var argsStr = "NULL"
+      if node.spawnArgs.len > 0:
+        argsStr = &"(void*){be.emitExpr(node.spawnArgs[0])}"
+      return &"bux_task_spawn((void* (*)(void*)){node.spawnCallee}, {argsStr})"
 
   of hDynRef:
     let data = be.emitExpr(node.dynRefData)

@@ -118,6 +118,7 @@ type
     of hSpawn:
       spawnCallee*: string
       spawnArgs*: seq[HirNode]
+      spawnAsync*: bool
     of hEmit:
       emitCode*: string
     of hDynRef:

@@ -832,6 +832,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     for arg in expr.exprSpawnArgs:
       args.add(ctx.lowerExpr(arg))
     return HirNode(kind: hSpawn, spawnCallee: calleeName, spawnArgs: args,
+                   spawnAsync: expr.exprSpawnAsync,
                    typ: makePointer(makeVoid()), loc: loc)
 
   of ekAwait:
