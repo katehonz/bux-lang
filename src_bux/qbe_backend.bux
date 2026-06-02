@@ -317,8 +317,10 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             target = QBE_LocalName(node.child1.strValue);
         } else {
             target = QBE_EmitExpr(qbe, node.child1);
+            if String_Eq(target, "") { return "0"; }
         }
         let val: String = QBE_EmitExpr(qbe, node.child2);
+        if String_Eq(val, "") { val = "0"; }
         let ty: String = QbeBackend_TypeWord(node.typeKind);
         QBE_EmitIndent(qbe);
         QBE_Emit(qbe, "store");
@@ -608,6 +610,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             QBE_EmitLine(qbe, "");
             if node.child2 != null as *HirNode {
                 let val: String = QBE_EmitExpr(qbe, node.child2);
+                if String_Eq(val, "") { val = "0"; }
                 QBE_EmitIndent(qbe);
                 QBE_Emit(qbe, "store");
                 QBE_Emit(qbe, varTy);
@@ -622,6 +625,8 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         let target: String = QBE_EmitExpr(qbe, node.child1);
         let val: String = QBE_EmitExpr(qbe, node.child2);
         let ty: String = QbeBackend_TypeWord(node.typeKind);
+        if String_Eq(val, "") { val = "0"; }
+        if String_Eq(target, "") { return; }
         QBE_EmitIndent(qbe);
         QBE_Emit(qbe, "store");
         QBE_Emit(qbe, ty);
@@ -632,31 +637,6 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         return;
     }
 
-    // Assign: same as Store without alloca
-    if kind == hAssign {
-        var target: String = "";
-        if node.child1 != null as *HirNode && node.child1.kind == hVar {
-            target = QBE_LocalName(node.child1.strValue);
-        } else {
-            target = QBE_EmitExpr(qbe, node.child1);
-            if String_Eq(target, "") {
-                QBE_EmitLine(qbe, "# WARN: empty store target, skipping");
-                return;
-            }
-        }
-        let val: String = QBE_EmitExpr(qbe, node.child2);
-        let ty: String = QbeBackend_TypeWord(node.typeKind);
-        QBE_EmitIndent(qbe);
-        QBE_Emit(qbe, "store");
-        QBE_Emit(qbe, ty);
-        QBE_Emit(qbe, " ");
-        QBE_Emit(qbe, val);
-        QBE_Emit(qbe, ", ");
-        QBE_EmitLine(qbe, target);
-        return;
-    }
-
-    // Return
     if kind == hReturn {
         if node.child1 != null as *HirNode {
             let val: String = QBE_EmitExpr(qbe, node.child1);
