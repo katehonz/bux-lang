@@ -690,7 +690,12 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         QBE_Emit(qbe, ", ");
         QBE_Emit(qbe, lThen);
         QBE_Emit(qbe, ", ");
-        QBE_EmitLine(qbe, lElse);
+        var hasElse: bool = node.child3 != null as *HirNode;
+        if hasElse {
+            QBE_EmitLine(qbe, lElse);
+        } else {
+            QBE_EmitLine(qbe, lEnd);
+        }
 
         QBE_EmitLine(qbe, lThen);
         QBE_EmitStmt(qbe, node.child2);
@@ -700,8 +705,8 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             QBE_EmitLine(qbe, lEnd);
         }
 
-        QBE_EmitLine(qbe, lElse);
-        if node.child3 != null as *HirNode {
+        if hasElse {
+            QBE_EmitLine(qbe, lElse);
             QBE_EmitStmt(qbe, node.child3);
             if !QBE_IsTerminator(node.child3) {
                 QBE_EmitIndent(qbe);
@@ -710,13 +715,18 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             }
         }
 
-        // Only emit @lEnd if at least one branch falls through (doesn't return)
+        // Only emit @lEnd if at least one branch falls through
         var needEnd: bool = !QBE_IsTerminator(node.child2);
-        if node.child3 != null as *HirNode && !QBE_IsTerminator(node.child3) {
+        if hasElse && !QBE_IsTerminator(node.child3) {
             needEnd = true;
         }
         if needEnd {
             QBE_EmitLine(qbe, lEnd);
+        } else {
+            // lEnd is unreferenced, but was used in jnz when !hasElse — need to emit it
+            if !hasElse {
+                QBE_EmitLine(qbe, lEnd);
+            }
         }
         return;
     }
