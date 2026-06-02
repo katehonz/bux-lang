@@ -167,7 +167,9 @@ func QBE_EnsureLocal(val: String) -> String {
     if c == 37 as char8 || c == 36 as char8 || c == 64 as char8 { return val; } // %, $, @
     if c == 45 as char8 { return val; } // negative number
     if c >= 48 as char8 && c <= 57 as char8 { return val; } // digit
-    // Bare identifier: add % prefix
+    // Uppercase: assume unresolved global/type, use 0
+    if c >= 65 as char8 && c <= 90 as char8 { return "0"; }
+    // Lowercase: assume local, add %
     var prefix: String = "%";
     return String_Concat(prefix, val);
 }
@@ -308,6 +310,13 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             }
             ci = ci + 1;
         }
+        // Uppercase names are unresolved types/modules — return 0
+        if node.strValue != null as String && !String_Eq(node.strValue, "") {
+            let fc: char8 = node.strValue[0];
+            if fc >= 65 as char8 && fc <= 90 as char8 {
+                return "0";
+            }
+        }
         let tmp: String = QBE_FreshTemp(qbe);
         let ty: String = QbeBackend_TypeWord(node.typeKind);
         QBE_EmitIndent(qbe);
@@ -370,9 +379,9 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             QBE_Emit(qbe, cmpOp);
             QBE_Emit(qbe, ty);
             QBE_Emit(qbe, " ");
-            QBE_Emit(qbe, left);
+            QBE_Emit(qbe, QBE_EnsureLocal(left));
             QBE_Emit(qbe, ", ");
-            QBE_Emit(qbe, right);
+            QBE_Emit(qbe, QBE_EnsureLocal(right));
             QBE_EmitLine(qbe, "");
             // QBE comparisons produce word results; extend if needed
             if !String_Eq(ty, "w") && !String_Eq(ty, "b") && !String_Eq(ty, "h") {
@@ -411,9 +420,9 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             QBE_Emit(qbe, " ");
             QBE_Emit(qbe, opName);
             QBE_Emit(qbe, " ");
-            QBE_Emit(qbe, left);
+            QBE_Emit(qbe, QBE_EnsureLocal(left));
             QBE_Emit(qbe, ", ");
-            QBE_Emit(qbe, right);
+            QBE_Emit(qbe, QBE_EnsureLocal(right));
             QBE_EmitLine(qbe, "");
             return tmp;
         }
@@ -426,7 +435,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             let lEnd: String = QBE_FreshLabel(qbe);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jnz ");
-            QBE_Emit(qbe, left);
+            QBE_Emit(qbe, QBE_EnsureLocal(left));
             QBE_Emit(qbe, ", ");
             QBE_Emit(qbe, lTrue);
             QBE_Emit(qbe, ", ");
@@ -454,7 +463,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             let lEnd: String = QBE_FreshLabel(qbe);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jnz ");
-            QBE_Emit(qbe, left);
+            QBE_Emit(qbe, QBE_EnsureLocal(left));
             QBE_Emit(qbe, ", ");
             QBE_Emit(qbe, lTrue);
             QBE_Emit(qbe, ", ");
@@ -494,11 +503,11 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             if op == tkBang {
                 // xor with 1 to invert boolean
                 QBE_Emit(qbe, " xor ");
-                QBE_Emit(qbe, operand);
+                QBE_Emit(qbe, QBE_EnsureLocal(operand));
                 QBE_Emit(qbe, ", 1");
             } else {
                 QBE_Emit(qbe, " sub 0, ");
-                QBE_Emit(qbe, operand);
+                QBE_Emit(qbe, QBE_EnsureLocal(operand));
             }
             QBE_EmitLine(qbe, "");
             return tmp;
@@ -563,7 +572,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         QBE_Emit(qbe, " load");
         QBE_Emit(qbe, ty);
         QBE_Emit(qbe, " ");
-        QBE_Emit(qbe, ptr);
+        QBE_Emit(qbe, QBE_EnsureLocal(ptr));
         QBE_EmitLine(qbe, "");
         return tmp;
     }
@@ -671,7 +680,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
 
         QBE_EmitIndent(qbe);
         QBE_Emit(qbe, "jnz ");
-        QBE_Emit(qbe, condVal);
+        QBE_Emit(qbe, QBE_EnsureLocal(condVal));
         QBE_Emit(qbe, ", ");
         QBE_Emit(qbe, lThen);
         QBE_Emit(qbe, ", ");
@@ -711,7 +720,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         let condVal: String = QBE_EmitExpr(qbe, node.child1);
         QBE_EmitIndent(qbe);
         QBE_Emit(qbe, "jnz ");
-        QBE_Emit(qbe, condVal);
+        QBE_Emit(qbe, QBE_EnsureLocal(condVal));
         QBE_Emit(qbe, ", ");
         QBE_Emit(qbe, lBody);
         QBE_Emit(qbe, ", ");
