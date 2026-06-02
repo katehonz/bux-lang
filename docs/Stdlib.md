@@ -22,6 +22,33 @@ Basic I/O and file operations wrapping C stdio.
 | `WriteFile` | `func WriteFile(path: String, content: String) -> bool` | Write string to file |
 | `FileExists` | `func FileExists(path: String) -> bool` | Check if file exists |
 
+---
+
+## Std::Fs
+
+File system operations beyond basic I/O.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `DirExists` | `func DirExists(path: String) -> bool` | Check if directory exists |
+| `Mkdir` | `func Mkdir(path: String) -> bool` | Create directory (and parents if needed) |
+| `ListDir` | `func ListDir(dir: String, ext: String, count: *int) -> *String` | List files matching extension |
+
+### Example
+```bux
+import Std::Fs::{DirExists, Mkdir, ListDir};
+
+func Main() -> int {
+    if DirExists("/tmp") {
+        PrintLine("/tmp exists");
+    }
+    Mkdir("build/output");
+    var count: int = 0;
+    let files: *String = ListDir("src", ".bux", &count);
+    return 0;
+}
+```
+
 ### Example
 ```bux
 import Std::Io::{PrintLine, ReadFile, WriteFile};
@@ -114,6 +141,35 @@ String manipulation utilities.
 | `String_FromInt` | `func String_FromInt(n: int64) -> String` | Int to string |
 | `String_ToInt` | `func String_ToInt(s: String) -> int64` | String to int |
 
+### Find, Replace & Format
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `String_Find` | `func String_Find(haystack: String, needle: String) -> String` | Find substring (returns pointer; 0 = not found) |
+| `String_Replace` | `func String_Replace(s: String, old: String, new: String) -> String` | Replace first occurrence |
+| `String_Format1` | `func String_Format1(pattern: String, a0: String) -> String` | Format with 1 arg (`{0}`) |
+| `String_Format2` | `func String_Format2(pattern: String, a0: String, a1: String) -> String` | Format with 2 args |
+| `String_Format3` | `func String_Format3(pattern: String, a0: String, a1: String, a2: String) -> String` | Format with 3 args |
+
+### Example
+```bux
+import Std::String;
+
+func Main() -> int {
+    let s: String = String_Replace("hello world", "world", "Bux");
+    PrintLine(s);  // "hello Bux"
+
+    let fmt: String = String_Format2("{0} + {1} = magic", "Bux", "QBE");
+    PrintLine(fmt);  // "Bux + QBE = magic"
+
+    let found: String = String_Find("hello world", "world");
+    if found as uint != 0 {
+        PrintLine("found!");
+    }
+    return 0;
+}
+```
+
 ---
 
 ## Std::StringBuilder
@@ -151,6 +207,82 @@ func Main() -> int {
     StringBuilder_AppendInt(&sb, 42);
     PrintLine(StringBuilder_Build(&sb));  // "Hello, World! #42"
     StringBuilder_Free(&sb);
+    return 0;
+}
+```
+
+---
+
+## Std::Mem
+
+Memory management wrappers around C runtime functions.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Alloc` | `func Alloc(size: uint) -> *void` | Allocate memory |
+| `Realloc` | `func Realloc(ptr: *void, size: uint) -> *void` | Reallocate memory |
+| `Free` | `func Free(ptr: *void)` | Free memory |
+| `MemEq` | `func MemEq(a: *void, b: *void, size: uint) -> bool` | Byte-wise memory comparison |
+| `New` | `func New<T>() -> *T` | Typed allocation (`sizeof(T)` bytes) |
+
+### Example
+```bux
+import Std::Mem;
+
+func Main() -> int {
+    let p: *void = Alloc(64);
+    Free(p);
+
+    let n: *int = New<int>();
+    // use n...
+    Free(n as *void);
+    return 0;
+}
+```
+
+---
+
+## Std::Set
+
+Generic hash set for deduplication and membership testing.
+
+### Types
+```bux
+struct SetEntry<T> {
+    value: T,
+    occupied: bool,
+}
+
+struct Set<T> {
+    entries: *SetEntry<T>,
+    cap: uint,
+    len: uint,
+}
+```
+
+### Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Set_New<T>` | `func Set_New<T>(cap: uint) -> Set<T>` | Create set |
+| `Set_Add<T>` | `func Set_Add<T>(s: *Set<T>, value: T)` | Insert element (ignores duplicates) |
+| `Set_Has<T>` | `func Set_Has<T>(s: *Set<T>, value: T) -> bool` | Check membership |
+| `Set_Len<T>` | `func Set_Len<T>(s: *Set<T>) -> uint` | Element count |
+| `Set_Free<T>` | `func Set_Free<T>(s: *Set<T>)` | Free memory |
+
+### Example
+```bux
+import Std::Set;
+
+func Main() -> int {
+    var s: Set<int> = Set_New<int>(16);
+    Set_Add(&s, 10);
+    Set_Add(&s, 20);
+    Set_Add(&s, 10);  // duplicate, ignored
+    if Set_Has(&s, 10) {
+        PrintLine("has 10");
+    }
+    Set_Free(&s);
     return 0;
 }
 ```
@@ -317,8 +449,13 @@ func Main() -> int {
 
 - `Std::Result` — Shipped via algebraic enums ✅
 - `Std::Option` — Shipped via algebraic enums ✅
-- `Std::Math` — `Sqrt`, `Pow`, `Min`, `Max`, `Abs`
-- `Std::Os` — `Args`, `Env`, `Exit`, `Cwd`
-- `Std::Fmt` — String formatting with interpolation
-- `Std::Iter` — Iterator trait and combinators
-- `Std::Task` / `Std::Channel` — Lightweight concurrency (pthread-based threads)
+- `Std::Math` — `Sqrt`, `Pow`, `Min`, `Max`, `Abs` ✅
+- `Std::Fs` — Directory operations ✅
+- `Std::Mem` — Memory wrappers ✅
+- `Std::Set` — Hash set ✅
+- `Std::Path` — Path manipulation ✅
+- `Std::Os` — `Args`, `Env`, `Exit`, `Cwd` ⏳
+- `Std::Process` — Spawn subprocess ⏳
+- `Std::Fmt` — String formatting with interpolation ⏳
+- `Std::Iter` — Iterator trait and combinators ⏳
+- `Std::Task` / `Std::Channel` — Lightweight concurrency (pthread-based threads) ✅

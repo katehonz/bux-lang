@@ -1,0 +1,29 @@
+module Std::Mem {
+
+extern func bux_alloc(size: uint) -> *void;
+extern func bux_realloc(ptr: *void, size: uint) -> *void;
+extern func bux_free(ptr: *void);
+extern func bux_mem_eq(a: *void, b: *void, size: uint) -> int;
+
+func Alloc(size: uint) -> *void {
+    return bux_alloc(size);
+}
+
+func Realloc(ptr: *void, size: uint) -> *void {
+    return bux_realloc(ptr, size);
+}
+
+func Free(ptr: *void) {
+    bux_free(ptr);
+}
+
+func MemEq(a: *void, b: *void, size: uint) -> bool {
+    return bux_mem_eq(a, b, size) != 0;
+}
+
+func New<T>() -> *T {
+    let sz: uint = sizeof(T);
+    return bux_alloc(sz) as *T;
+}
+
+}

@@ -1,0 +1,19 @@
+module Std::Fs {
+
+extern func bux_dir_exists(path: String) -> int;
+extern func bux_mkdir_if_needed(path: String) -> int;
+extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
+
+func DirExists(path: String) -> bool {
+    return bux_dir_exists(path) != 0;
+}
+
+func Mkdir(path: String) -> bool {
+    return bux_mkdir_if_needed(path) != 0;
+}
+
+func ListDir(dir: String, ext: String, count: *int) -> *String {
+    return bux_list_dir(dir, ext, count);
+}
+
+}

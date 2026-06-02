@@ -24,6 +24,7 @@ extern func bux_sb_free(sb: *void);
 extern func bux_str_split_count(s: String, delim: String) -> uint;
 extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
 extern func bux_str_join2(a: String, b: String, sep: String) -> String;
+extern func bux_str_format(pattern: String, a0: String, a1: String, a2: String, a3: String, a4: String, a5: String, a6: String, a7: String) -> String;
 
 
 func String_Len(s: String) -> uint {
@@ -153,6 +154,40 @@ func String_SplitPart(s: String, delim: String, index: uint) -> String {
 
 func String_Join2(a: String, b: String, sep: String) -> String {
     return bux_str_join2(a, b, sep);
+}
+
+// ---------------------------------------------------------------------------
+// String find/replace/format
+// ---------------------------------------------------------------------------
+
+func String_Find(haystack: String, needle: String) -> String {
+    return bux_strstr(haystack, needle);
+}
+
+func String_Replace(s: String, old: String, new: String) -> String {
+    let pos: String = bux_strstr(s, old);
+    if pos as uint == 0 {
+        return s;
+    }
+    let oldLen: uint = bux_strlen(old);
+    let prefixLen: uint = pos as uint - s as uint;
+    let prefix: String = bux_str_slice(s, 0, prefixLen);
+    let suffix: String = bux_str_slice(s, prefixLen + oldLen, bux_strlen(s) - prefixLen - oldLen);
+    let temp: String = String_Concat(prefix, new);
+    let result: String = String_Concat(temp, suffix);
+    return result;
+}
+
+func String_Format1(pattern: String, a0: String) -> String {
+    return bux_str_format(pattern, a0, "", "", "", "", "", "", "");
+}
+
+func String_Format2(pattern: String, a0: String, a1: String) -> String {
+    return bux_str_format(pattern, a0, a1, "", "", "", "", "", "");
+}
+
+func String_Format3(pattern: String, a0: String, a1: String, a2: String) -> String {
+    return bux_str_format(pattern, a0, a1, a2, "", "", "", "", "");
 }
 
 }

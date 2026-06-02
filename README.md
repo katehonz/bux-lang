@@ -147,7 +147,7 @@ func Main() -> int {
 | **Methods** | `extend` blocks for struct methods |
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
-| **Standard Library** | `Io`, `Array`, `String`, `Map` |
+| **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel` |
 | **Backend** | QBE native codegen (self-hosting), C transpiler (bootstrap) |
 | **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
 | **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
@@ -168,6 +168,11 @@ bux/
 ├── src_bux/          # Self-hosting compiler source (Bux)
 ├── _selfhost/        # Self-hosting build artifacts
 ├── stdlib/           # Standard library (.bux + .c runtime)
+│   └── Std/
+│       ├── Io.bux, String.bux, Array.bux, Map.bux
+│       ├── Fs.bux, Mem.bux, Set.bux
+│       ├── Path.bux, Math.bux
+│       └── Task.bux, Channel.bux
 ├── examples/         # Example programs
 ├── tests/            # Unit tests (Nim)
 ├── docs/             # Documentation

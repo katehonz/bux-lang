@@ -1,0 +1,71 @@
+module Std::Set {
+
+extern func bux_hash_bytes(ptr: *void, size: uint) -> uint;
+extern func bux_mem_eq(a: *void, b: *void, size: uint) -> int;
+extern func bux_alloc(size: uint) -> *void;
+extern func bux_free(ptr: *void);
+
+struct SetEntry<T> {
+    value: T,
+    occupied: bool,
+}
+
+struct Set<T> {
+    entries: *SetEntry<T>,
+    cap: uint,
+    len: uint,
+}
+
+func Set_New<T>(cap: uint) -> Set<T> {
+    let total: uint = cap * sizeof(SetEntry<T>);
+    let data: *SetEntry<T> = bux_alloc(total) as *SetEntry<T>;
+    var i: uint = 0;
+    while i < cap {
+        data[i].occupied = false;
+        i = i + 1;
+    }
+    return Set<T> { entries: data, cap: cap, len: 0 };
+}
+
+func Set_Add<T>(s: *Set<T>, value: T) {
+    var valuePtr: *T = &value;
+    let hash: uint = bux_hash_bytes(valuePtr as *void, sizeof(T));
+    var idx: uint = hash % s.cap;
+    while s.entries[idx].occupied {
+        var entryPtr: *T = &s.entries[idx].value;
+        if bux_mem_eq(entryPtr as *void, valuePtr as *void, sizeof(T)) != 0 {
+            return;
+        }
+        idx = (idx + 1) % s.cap;
+    }
+    s.entries[idx].value = value;
+    s.entries[idx].occupied = true;
+    s.len = s.len + 1;
+}
+
+func Set_Has<T>(s: *Set<T>, value: T) -> bool {
+    var valuePtr: *T = &value;
+    let hash: uint = bux_hash_bytes(valuePtr as *void, sizeof(T));
+    var idx: uint = hash % s.cap;
+    while s.entries[idx].occupied {
+        var entryPtr: *T = &s.entries[idx].value;
+        if bux_mem_eq(entryPtr as *void, valuePtr as *void, sizeof(T)) != 0 {
+            return true;
+        }
+        idx = (idx + 1) % s.cap;
+    }
+    return false;
+}
+
+func Set_Len<T>(s: *Set<T>) -> uint {
+    return s.len;
+}
+
+func Set_Free<T>(s: *Set<T>) {
+    bux_free(s.entries as *void);
+    s.entries = null as *SetEntry<T>;
+    s.cap = 0;
+    s.len = 0;
+}
+
+}

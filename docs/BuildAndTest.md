@@ -71,12 +71,15 @@ Output = "Bin"
 ```bash
 # Type-check without building
 ./buxc check
+./buxc check ./myproject
 
 # Build
 ./buxc build
+./buxc build ./myproject
 
 # Build and run
 ./buxc run
+./buxc run ./myproject
 
 # Clean build artifacts
 ./buxc clean
@@ -136,7 +139,14 @@ bux/
 │   │   ├── Io.bux
 │   │   ├── Array.bux
 │   │   ├── String.bux
-│   │   └── Map.bux
+│   │   ├── Map.bux
+│   │   ├── Fs.bux
+│   │   ├── Mem.bux
+│   │   ├── Set.bux
+│   │   ├── Path.bux
+│   │   ├── Math.bux
+│   │   ├── Task.bux
+│   │   └── Channel.bux
 │   ├── runtime.c     # C runtime shim
 │   └── io.c          # C I/O functions
 ├── examples/         # Example programs

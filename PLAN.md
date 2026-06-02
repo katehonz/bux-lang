@@ -157,12 +157,15 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | Module | Status | Requirements |
 |--------|--------|-------------|
 | `Std::Io` | ✅ | `Print`, `PrintLine`, `PrintInt`, `ReadLine` (wrap C stdio) |
-| `Std::Memory` | ✅ | `bux_alloc`, `bux_realloc`, `bux_free` (wrap `malloc`/`free`) |
-| `Std::String` | ✅ | Full API: `String_Len`, `String_Eq`, `String_Concat`, `String_Copy`, `String_StartsWith`, `String_EndsWith`, `String_Contains`, `String_Slice`, `String_Trim`, `String_TrimLeft`, `String_TrimRight`, `String_FromInt`, `String_ToInt`, `StringBuilder`; C wrappers in `runtime.c` |
+| `Std::Mem` | ✅ | `Alloc`, `Realloc`, `Free`, `MemEq`, `New<T>` — wrappers around C runtime |
+| `Std::String` | ✅ | Full API: `String_Len`, `String_Eq`, `String_Concat`, `String_Copy`, `String_StartsWith`, `String_EndsWith`, `String_Contains`, `String_Slice`, `String_Trim`, `String_TrimLeft`, `String_TrimRight`, `String_FromInt`, `String_ToInt`, `StringBuilder`; plus `String_Find`, `String_Replace`, `String_Format1/2/3`; C wrappers in `runtime.c` |
 | `Std::Array` | ✅ | Fully generic `Array<T>` with `Array_New<T>`, `Array_Push<T>`, `Array_Get<T>`, `Array_Len<T>`, `Array_Free<T>`; generic struct methods with auto-addressing |
 | `Std::Map` | ✅ | Generic `Map<K,V>` with `Map_New`, `Map_Set`, `Map_Get`, `Map_Has`, `Map_Len`, `Map_Free`; value-type keys with strcmp |
+| `Std::StringMap` | ✅ | Specialized `StringMap<V>` for String keys using `strcmp` |
+| `Std::Set` | ✅ | Generic `Set<T>` with `Set_New`, `Set_Add`, `Set_Has`, `Set_Len`, `Set_Free` |
 | `Std::Math` | ✅ | `Sqrt`, `Pow`, `Min`, `Max`, `Abs`, `MinF`, `MaxF`, `AbsF` (float64 + int64 variants, C runtime wrappers) |
-| `Std::Path` | ✅ | File exists, basic path operations |
+| `Std::Path` | ✅ | `Path_Join`, `Path_Parent`, `Path_Ext` |
+| `Std::Fs` | ✅ | `DirExists`, `Mkdir`, `ListDir` |
 | `Std::Os` | ⏳ | `Args`, `Env`, `Exit`, `Cwd` |
 | `Std::Process` | ⏳ | Spawn subprocess, read stdout/stderr |
 | **`Std::Result`** | ✅ | Algebraic enums `Result<T,E>` and `Option<T>` with `NewOk`/`NewErr`/`NewSome`/`NewNone`; `?` try operator desugared in HIR |
@@ -173,9 +176,13 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 - ✅ Generic type inference: `Max(10, 20)` instead of `Max<int>(10, 20)` — compiler infers `T` from argument types
 - ✅ `extend Box<T>` syntax: parser support for generic impl blocks
 - ✅ String slicing, trimming, contains, StringBuilder (`strings2` example)
+- ✅ String find, replace, format (`String_Find`, `String_Replace`, `String_Format`)
 - ✅ Generic `Map<K,V>` with value-type keys
+- ✅ Generic `Set<T>` for deduplication
+- ✅ File system operations (`Std::Fs`)
+- ✅ Memory management wrappers (`Std::Mem`)
 
-**Deliverable:** Can write a non-trivial CLI tool entirely in Bux. ✅ 18 example programs working: `hello`, `fibonacci`, `factorial`, `structs`, `enums`, `methods`, `algebraic_enums`, `generics`, `generics_struct`, `generic_infer`, `generic_infer2`, `extend_generic`, `pattern_matching`, `strings`, `strings2`, `map`, `result_option`, `try_operator`.
+**Deliverable:** Can write a non-trivial CLI tool entirely in Bux. ✅ 20+ example programs working.
 
 ---
 
@@ -205,25 +212,29 @@ Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming lang
 | Nim Pattern | Used In | Bux Status |
 |-------------|---------|------------|
 | `Table[string, T]` | sema, hir_lower, c_backend (23 uses) | ❌ **Blocker** — need `StringMap<V>` |
-| `HashSet[string]` | hir_lower (1 use) | ❌ Can use `StringMap<bool>` workaround |
+| `HashSet[string]` | hir_lower (1 use) | ✅ `Set<T>` available |
 | `seq[T]` with push/len/iter | All files (200+ uses) | ⚠️ `Array<T>` exists, needs richer API |
-| `&"..."` / `fmt"..."` | sema, c_backend (119 uses) | ❌ **Blocker** — need string formatting |
-| `split()`, `join()` | lexer, parser, cli | ❌ **Blocker** — need String split/join |
+| `&"..."` / `fmt"..."` | sema, c_backend (119 uses) | ✅ `String_Format1/2/3` available |
+| `split()`, `join()` | lexer, parser, cli | ✅ `String_SplitCount`, `String_SplitPart`, `String_Join2` |
 | `case obj.kind of...` | All files (90+ uses) | ✅ `match` with algebraic enums |
 | `for x in collection` | All files (200+ uses) | ✅ Supported |
 | `var` parameters | Multiple | ✅ Use pointers (`*T`) |
-| File read/write | cli | ❌ Need `readFile`, `writeFile` |
-| OS path operations | cli, manifest | ❌ Need path join, exists |
+| File read/write | cli | ✅ `ReadFile`, `WriteFile` in `Std::Io` |
+| OS path operations | cli, manifest | ✅ `Path_Join`, `DirExists`, `Mkdir` in `Std::Path`/`Std::Fs` |
 
 ### Rewrite Order (Dependency-driven)
 
 ```
-Phase 7.0 — Stdlib blockers:
-  ├── StringMap<V> (blocker #1 — needed by all modules)
-  ├── String split/join (blocker #2 — needed by lexer, parser)
-  ├── String formatting (blocker #3 — needed by sema, c_backend)
-  ├── File I/O (readFile, writeFile, fileExists)
-  └── OS path (joinPath, parentDir)
+Phase 7.0 — Stdlib blockers (all resolved ✅):
+  ├── StringMap<V> ✅
+  ├── String split/join ✅
+  ├── String formatting ✅
+  ├── File I/O (readFile, writeFile, fileExists) ✅
+  └── OS path (joinPath, parentDir) ✅
+
+Remaining gaps for self-host polish:
+  ├── `Std::Os` — `Args`, `Env`, `Exit`, `Cwd`
+  └── `Std::Process` — spawn subprocess
 
 Phase 7.1 — Foundation (no internal deps):
   ├── token.bux (enum + helpers)
@@ -257,8 +268,8 @@ Phase 7.5 — Driver (depends on all):
 | StringMap not working for String keys | **High** | Already have working `StringMap<V>` in stdlib using strcmp |
 | `&key as *void` precedence bug | **Medium** | Workaround: use intermediate `*K` variable |
 | Cross-module generics not working | **Medium** | All compiler code will be in one package (merged via stdlib mechanism) |
-| `Map_Len` monomorphization bug | **Low** | Avoid calling `Map_Len` with explicit type args; inline the body |
-| String formatting complexity | **Medium** | Use StringBuilder pattern instead of printf-style formatting |
+| `Map_Len` / `Set_Len` monomorphization bug | **Low** | C backend issue — use explicit type args or avoid; QBE backend unaffected |
+| String formatting | **Medium** | `String_Format1/2/3` available via `bux_str_format` |
 | Array<T> API gaps | **Low** | Extend Array module as needed during porting |
 
 ### Estimated Effort

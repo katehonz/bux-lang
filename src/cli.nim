@@ -258,7 +258,7 @@ proc collectDepDecls(lock: Lockfile, root: string, opts: GlobalOptions): seq[Dec
 
 proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
-  let root = getCurrentDir()
+  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
   let manifestPath = root / "bux.toml"
   if not fileExists(manifestPath):
     printError("no bux.toml found", useColor)
@@ -415,7 +415,7 @@ proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl] =
 
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
-  let root = getCurrentDir()
+  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
   let manifestPath = root / "bux.toml"
   if not fileExists(manifestPath):
     printError("no bux.toml found", useColor)
@@ -554,7 +554,7 @@ proc cmdRun*(args: seq[string], opts: GlobalOptions): int =
   let buildRes = cmdBuild(args, opts)
   if buildRes != 0:
     return buildRes
-  let root = getCurrentDir()
+  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
   let man = loadManifest(root / "bux.toml")
   let outputName = if man.name != "": man.name else: "bux_out"
   let outputFile = root / "build" / outputName
