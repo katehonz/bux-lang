@@ -17,6 +17,48 @@ struct LowerCtx {
 }
 
 // ---------------------------------------------------------------------------
+// TypeExpr.kind → Type.kind resolver
+// TypeExpr.kind values (0-5) overlap with Type.kind values — this
+// resolves the correct Type.kind for codegen.
+// ---------------------------------------------------------------------------
+
+func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
+    if te == null as *TypeExpr { return tyUnknown; }
+    let name: String = te.typeName;
+
+    if te.kind == tekPointer { return tyPointer; }
+    if te.kind == tekSlice { return tySlice; }
+    if te.kind == tekTuple { return tyTuple; }
+
+    // Named types: resolve by name
+    if String_Eq(name, "void") { return tyVoid; }
+    if String_Eq(name, "bool") { return tyBool; }
+    if String_Eq(name, "bool8") { return tyBool8; }
+    if String_Eq(name, "bool16") { return tyBool16; }
+    if String_Eq(name, "bool32") { return tyBool32; }
+    if String_Eq(name, "char8") { return tyChar8; }
+    if String_Eq(name, "char16") { return tyChar16; }
+    if String_Eq(name, "char32") { return tyChar32; }
+    if String_Eq(name, "String") { return tyStr; }
+    if String_Eq(name, "str") { return tyStr; }
+    if String_Eq(name, "int8") { return tyInt8; }
+    if String_Eq(name, "int16") { return tyInt16; }
+    if String_Eq(name, "int32") { return tyInt32; }
+    if String_Eq(name, "int64") { return tyInt64; }
+    if String_Eq(name, "int") { return tyInt; }
+    if String_Eq(name, "uint8") { return tyUInt8; }
+    if String_Eq(name, "uint16") { return tyUInt16; }
+    if String_Eq(name, "uint32") { return tyUInt32; }
+    if String_Eq(name, "uint64") { return tyUInt64; }
+    if String_Eq(name, "uint") { return tyUInt; }
+    if String_Eq(name, "float32") { return tyFloat32; }
+    if String_Eq(name, "float64") { return tyFloat64; }
+    if String_Eq(name, "float") { return tyFloat64; }
+
+    return tyNamed;
+}
+
+// ---------------------------------------------------------------------------
 // Fresh name generation
 // ---------------------------------------------------------------------------
 
@@ -162,7 +204,8 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         n.kind = hCast;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         if expr.refType != null as *TypeExpr {
-            n.typeKind = expr.refType.kind;
+            let resolvedKind: int = Lcx_ResolveTypeKind(expr.refType);
+            n.typeKind = resolvedKind;
             // For pointer types, construct "PointeeType*"
             if expr.refType.kind == tekPointer && expr.refType.pointerPointee != null as *TypeExpr {
                 n.typeName = String_Concat(expr.refType.pointerPointee.typeName, "*");
@@ -233,6 +276,7 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         alloca.typeName = "";
         if stmt.refStmtType != null as *TypeExpr {
             alloca.intValue = stmt.refStmtType.kind;
+            alloca.typeKind = Lcx_ResolveTypeKind(stmt.refStmtType);
             // For pointer types, construct "PointeeType*"
             if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
                 alloca.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
@@ -345,7 +389,7 @@ func Lcx_LowerBlock(ctx: *LowerCtx, block: *Block, retTypeKind: int) -> *HirNode
 func Lcx_LowerParam(out: *HirParam, p: *Param) {
     out.name = p.name;
     if p.refParamType != null as *TypeExpr {
-        out.typeKind = p.refParamType.kind;
+        out.typeKind = Lcx_ResolveTypeKind(p.refParamType);
         // Use typeName directly if set (parser may have constructed "String*")
         if !String_Eq(p.refParamType.typeName, "") {
             out.typeName = p.refParamType.typeName;
@@ -378,7 +422,7 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
 
     if decl.retType != null as *TypeExpr {
         f.retTypeName = decl.retType.typeName;
-        f.retTypeKind = decl.retType.kind;
+        f.retTypeKind = Lcx_ResolveTypeKind(decl.retType);
     } else {
         f.retTypeName = "";
         f.retTypeKind = 0;

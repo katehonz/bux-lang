@@ -639,6 +639,10 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             target = QBE_LocalName(node.child1.strValue);
         } else {
             target = QBE_EmitExpr(qbe, node.child1);
+            if String_Eq(target, "") {
+                QBE_EmitLine(qbe, "# WARN: empty store target, skipping");
+                return;
+            }
         }
         let val: String = QBE_EmitExpr(qbe, node.child2);
         let ty: String = QbeBackend_TypeWord(node.typeKind);
