@@ -45,8 +45,8 @@ func QbeBackend_TypeWord(kind: int) -> String {
     if kind == tyFloat64 { return "d"; }
     if kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32 { return "w"; }
     if kind == tyInt32 || kind == tyUInt32 || kind == tyChar32 { return "w"; }
-    if kind == tyChar8 { return "b"; }
-    if kind == tyChar16 { return "h"; }
+    if kind == tyChar8 { return "w"; }
+    if kind == tyChar16 { return "w"; }
     return "l";
 }
 
@@ -576,7 +576,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         QBE_EmitIndent(qbe);
         QBE_Emit(qbe, tmp);
         QBE_Emit(qbe, " =l add ");
-        QBE_Emit(qbe, base);
+        QBE_Emit(qbe, QBE_EnsureLocal(base));
         QBE_Emit(qbe, ", 0");
         QBE_EmitLine(qbe, "");
         return tmp;
