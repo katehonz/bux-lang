@@ -66,12 +66,16 @@ struct QbeEmitter {
     // Const table for inline substitution
     constCount: int;
     consts: *HirConst;
+    // Current function for param type lookup
+    currentFunc: *HirFunc;
+    // Module reference for function return type lookup
+    mod: *HirModule;
 }
 
 func QBE_Init() -> QbeEmitter {
     var dsb: StringBuilder = StringBuilder_NewCap(4096);
     var csb: StringBuilder = StringBuilder_NewCap(16384);
-    return QbeEmitter { dataSb: dsb, codeSb: csb, tempId: 0, labelId: 0, strId: 0, indent: 0, inBlock: false, constCount: 0, consts: null as *HirConst };
+    return QbeEmitter { dataSb: dsb, codeSb: csb, tempId: 0, labelId: 0, strId: 0, indent: 0, inBlock: false, constCount: 0, consts: null as *HirConst, currentFunc: null as *HirFunc, mod: null as *HirModule };
 }
 
 func QBE_FreshTemp(qbe: *QbeEmitter) -> String {
@@ -262,8 +266,8 @@ func QBE_IsTerminator(node: *HirNode) -> bool {
     if node.kind == hBreak { return true; }
     if node.kind == hContinue { return true; }
     if node.kind == hIf {
-        if node.child3 != null as *HirNode {
-            return QBE_IsTerminator(node.child2) && QBE_IsTerminator(node.child3);
+        if node.extraData != null as *HirNode {
+            return QBE_IsTerminator(node.child2) && QBE_IsTerminator(node.extraData as *HirNode);
         }
         return false;
     }
@@ -278,6 +282,56 @@ func QBE_IsTerminator(node: *HirNode) -> bool {
         return false;
     }
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: find function by name in module
+// ---------------------------------------------------------------------------
+
+func QBE_FindFunc(qbe: *QbeEmitter, name: String) -> *HirFunc {
+    if qbe.mod == null as *HirModule { return null as *HirFunc; }
+    var i: int = 0;
+    while i < qbe.mod.funcCount {
+        if String_Eq(qbe.mod.funcs[i].name, name) {
+            return &qbe.mod.funcs[i];
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < qbe.mod.externCount {
+        if String_Eq(qbe.mod.externFuncs[i].name, name) {
+            return &qbe.mod.externFuncs[i];
+        }
+        i = i + 1;
+    }
+    return null as *HirFunc;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: determine QBE type for any HIR node
+// ---------------------------------------------------------------------------
+
+func QBE_NodeType(qbe: *QbeEmitter, node: *HirNode) -> String {
+    if node == null as *HirNode { return "l"; }
+    // For variables, check param type first
+    if node.kind == hVar && qbe.currentFunc != null as *HirFunc {
+        var pi2: int = 0;
+        var pnames2: *HirParam = &qbe.currentFunc.param0;
+        while pi2 < qbe.currentFunc.paramCount {
+            if String_Eq(pnames2[pi2].name, node.strValue) {
+                return QbeBackend_TypeWord(pnames2[pi2].typeKind);
+            }
+            pi2 = pi2 + 1;
+        }
+    }
+    // For calls, look up callee return type
+    if node.kind == hCall && qbe.mod != null as *HirModule {
+        let callee: *HirFunc = QBE_FindFunc(qbe, node.strValue);
+        if callee != null as *HirFunc {
+            return QbeBackend_TypeWord(callee.retTypeKind);
+        }
+    }
+    return QbeBackend_TypeWord(node.typeKind);
 }
 
 // ---------------------------------------------------------------------------
@@ -325,8 +379,21 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
                 return "0";
             }
         }
+        // Determine type: use param type if available, else node.typeKind
+        var varTy: int = node.typeKind;
+        if qbe.currentFunc != null as *HirFunc {
+            var pi2: int = 0;
+            var pnames2: *HirParam = &qbe.currentFunc.param0;
+            while pi2 < qbe.currentFunc.paramCount {
+                if String_Eq(pnames2[pi2].name, node.strValue) {
+                    varTy = pnames2[pi2].typeKind;
+                    break;
+                }
+                pi2 = pi2 + 1;
+            }
+        }
         let tmp: String = QBE_FreshTemp(qbe);
-        let ty: String = QbeBackend_TypeWord(node.typeKind);
+        let ty: String = QbeBackend_TypeWord(varTy);
         QBE_EmitIndent(qbe);
         QBE_Emit(qbe, tmp);
         QBE_Emit(qbe, " =");
@@ -350,7 +417,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         }
         let val: String = QBE_EmitExpr(qbe, node.child2);
         if String_Eq(val, "") { val = "0"; }
-        let ty: String = QbeBackend_TypeWord(node.typeKind);
+        let ty: String = QBE_NodeType(qbe, node.child2);
         QBE_EmitIndent(qbe);
         QBE_Emit(qbe, "store");
         QBE_Emit(qbe, ty);
@@ -366,12 +433,12 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         let op: int = node.intValue;
         let left: String = QBE_EmitExpr(qbe, node.child1);
         let right: String = QBE_EmitExpr(qbe, node.child2);
-        let ty: String = QbeBackend_TypeWord(node.typeKind);
+        let ty: String = QBE_NodeType(qbe, node.child1);
 
         // Comparison operators
         // QBE comparison ops: ceqw/ceql, cnew/cnel, csltw/csltl, cslew/cslel, csgtw/csgtl, csgew/csgel
         var cmpOp: String = "";
-        var cmpTy: String = ty;
+        let cmpTy: String = QBE_NodeType(qbe, node.child1);
         if op == tkEq { cmpOp = "ceq"; }
         else if op == tkNe { cmpOp = "cne"; }
         else if op == tkLt { cmpOp = "cslt"; }
@@ -385,7 +452,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             QBE_Emit(qbe, cmpTmp);
             QBE_Emit(qbe, " =w ");
             QBE_Emit(qbe, cmpOp);
-            QBE_Emit(qbe, ty);
+            QBE_Emit(qbe, cmpTy);
             QBE_Emit(qbe, " ");
             QBE_Emit(qbe, QBE_EnsureLocal(left));
             QBE_Emit(qbe, ", ");
@@ -452,7 +519,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             let rVal: String = QBE_EmitExpr(qbe, node.child2);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_Emit(qbe, " =l copy ");
+            QBE_Emit(qbe, " =w copy ");
             QBE_EmitLine(qbe, rVal);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jmp ");
@@ -460,7 +527,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             QBE_EmitLine(qbe, lFalse);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_EmitLine(qbe, " =l copy 0");
+            QBE_EmitLine(qbe, " =w copy 0");
             QBE_EmitLine(qbe, lEnd);
             return tmp;
         }
@@ -479,7 +546,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             QBE_EmitLine(qbe, lTrue);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_EmitLine(qbe, " =l copy 1");
+            QBE_EmitLine(qbe, " =w copy 1");
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jmp ");
             QBE_EmitLine(qbe, lEnd);
@@ -487,7 +554,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             let rVal: String = QBE_EmitExpr(qbe, node.child2);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_Emit(qbe, " =l copy ");
+            QBE_Emit(qbe, " =w copy ");
             QBE_EmitLine(qbe, rVal);
             QBE_EmitLine(qbe, lEnd);
             return tmp;
@@ -500,7 +567,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
     if kind == hUnary {
         let op: int = node.intValue;
         let operand: String = QBE_EmitExpr(qbe, node.child1);
-        let ty: String = QbeBackend_TypeWord(node.typeKind);
+        let ty: String = QBE_NodeType(qbe, node.child1);
 
         if op == tkBang || op == tkMinus {
             let tmp: String = QBE_FreshTemp(qbe);
@@ -535,7 +602,14 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
     if kind == hCall {
         // Pre-evaluate arguments to avoid emitting instructions inside the call
         let tmp: String = QBE_FreshTemp(qbe);
-        let retTy: String = QbeBackend_TypeWord(node.typeKind);
+        var retTy: String = QbeBackend_TypeWord(node.typeKind);
+        // Look up callee return type from module if typeKind is unknown
+        if String_Eq(retTy, "l") && qbe.mod != null as *HirModule {
+            let callee: *HirFunc = QBE_FindFunc(qbe, node.strValue);
+            if callee != null as *HirFunc {
+                retTy = QbeBackend_TypeWord(callee.retTypeKind);
+            }
+        }
         var arg1: String = "";
         var arg2: String = "";
         if node.child1 != null as *HirNode {
@@ -552,13 +626,13 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         QBE_Emit(qbe, QBE_EscapeIdent(node.strValue));
         QBE_Emit(qbe, "(");
         if node.child1 != null as *HirNode {
-            let a1ty: String = QbeBackend_TypeWord(node.child1.typeKind);
+            let a1ty: String = QBE_NodeType(qbe, node.child1);
             QBE_Emit(qbe, a1ty);
             QBE_Emit(qbe, " ");
             QBE_Emit(qbe, QBE_EnsureLocal(arg1));
         }
         if node.child2 != null as *HirNode {
-            let a2ty: String = QbeBackend_TypeWord(node.child2.typeKind);
+            let a2ty: String = QBE_NodeType(qbe, node.child2);
             QBE_Emit(qbe, ", ");
             QBE_Emit(qbe, a2ty);
             QBE_Emit(qbe, " ");
@@ -599,6 +673,20 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         return tmp;
     }
 
+    // Index pointer: &arr[idx]  (for pointer indexing)
+    if kind == hIndexPtr {
+        let base: String = QBE_EmitExpr(qbe, node.child1);
+        let idx: String = QBE_EmitExpr(qbe, node.child2);
+        let tmp: String = QBE_FreshTemp(qbe);
+        QBE_EmitIndent(qbe);
+        QBE_Emit(qbe, tmp);
+        QBE_Emit(qbe, " =l add ");
+        QBE_Emit(qbe, QBE_EnsureLocal(base));
+        QBE_Emit(qbe, ", ");
+        QBE_EmitLine(qbe, QBE_EnsureLocal(idx));
+        return tmp;
+    }
+
     // Cast — QBE doesn't need same-width casts; passthrough
     if kind == hCast {
         return QBE_EmitExpr(qbe, node.child1);
@@ -625,6 +713,12 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
 func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
     if node == null as *HirNode { return; }
     let kind: int = node.kind;
+
+    // Assign statement
+    if kind == hAssign {
+        discard QBE_EmitExpr(qbe, node);
+        return;
+    }
 
     // Store: declaration or assignment
     if kind == hStore {
@@ -653,7 +747,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         // Plain assignment
         let target: String = QBE_EmitExpr(qbe, node.child1);
         let val: String = QBE_EmitExpr(qbe, node.child2);
-        let ty: String = QbeBackend_TypeWord(node.typeKind);
+        let ty: String = QBE_NodeType(qbe, node.child2);
         if String_Eq(val, "") { val = "0"; }
         if String_Eq(target, "") { return; }
         QBE_EmitIndent(qbe);
@@ -692,7 +786,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         QBE_Emit(qbe, ", ");
         QBE_Emit(qbe, lThen);
         QBE_Emit(qbe, ", ");
-        var hasElse: bool = node.child3 != null as *HirNode;
+        var hasElse: bool = node.extraData != null as *HirNode;
         if hasElse {
             QBE_EmitLine(qbe, lElse);
         } else {
@@ -709,8 +803,8 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
 
         if hasElse {
             QBE_EmitLine(qbe, lElse);
-            QBE_EmitStmt(qbe, node.child3);
-            if !QBE_IsTerminator(node.child3) {
+            QBE_EmitStmt(qbe, node.extraData as *HirNode);
+            if !QBE_IsTerminator(node.extraData as *HirNode) {
                 QBE_EmitIndent(qbe);
                 QBE_Emit(qbe, "jmp ");
                 QBE_EmitLine(qbe, lEnd);
@@ -719,7 +813,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
 
         // Only emit @lEnd if at least one branch falls through
         var needEnd: bool = !QBE_IsTerminator(node.child2);
-        if hasElse && !QBE_IsTerminator(node.child3) {
+        if hasElse && !QBE_IsTerminator(node.extraData as *HirNode) {
             needEnd = true;
         }
         if needEnd {
@@ -828,6 +922,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
 
 func QBE_EmitFunc(qbe: *QbeEmitter, f: *HirFunc) {
     if f.body == null as *HirNode { return; }
+    qbe.currentFunc = f;
 
     QBE_Emit(qbe, "export function ");
     let retTy: String = QbeBackend_TypeWord(f.retTypeKind);
@@ -929,6 +1024,7 @@ func QbeBackend_Generate(mod: *HirModule) -> String {
     qbe.inBlock = false;
     qbe.constCount = mod.constCount;
     qbe.consts = mod.consts;
+    qbe.mod = mod;
 
     // Header
     QBE_EmitLine(qbe, "# Generated by Bux QBE Backend");

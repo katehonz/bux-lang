@@ -103,6 +103,8 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     if kind == ekIdent {
         n.kind = hVar;
         n.strValue = expr.strValue;
+        let sym: Symbol = Scope_Lookup(ctx.scope, expr.strValue);
+        n.typeKind = sym.typeKind;
         return n;
     }
 

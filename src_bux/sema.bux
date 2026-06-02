@@ -312,7 +312,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
     let s: *Sema = bux_alloc(sizeof(Sema)) as *Sema;
     s.module = mod;
     s.scope = bux_alloc(sizeof(Scope)) as *Scope;
-    s.scope.symbols = bux_alloc(256 as uint * sizeof(Symbol)) as *Symbol;
+    s.scope.symbols = bux_alloc(1024 as uint * sizeof(Symbol)) as *Symbol;
     s.scope.count = 0;
     s.scope.parent = null as *Scope;
     s.hasError = false;
