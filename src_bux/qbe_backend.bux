@@ -261,6 +261,10 @@ func QBE_IsTerminator(node: *HirNode) -> bool {
     if node.kind == hReturn { return true; }
     if node.kind == hBreak { return true; }
     if node.kind == hContinue { return true; }
+    if node.kind == hIf {
+        // Both branches must terminate for the if to be a terminator
+        return QBE_IsTerminator(node.child2) && QBE_IsTerminator(node.child3);
+    }
     if node.kind == hBlock {
         var last: *HirNode = node.child1;
         if last == null as *HirNode { return false; }
@@ -684,25 +688,35 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         QBE_Emit(qbe, ", ");
         QBE_Emit(qbe, lThen);
         QBE_Emit(qbe, ", ");
-        QBE_EmitLine(qbe, lElse);
+        var hasElse: bool = node.child3 != null as *HirNode;
+        if hasElse {
+            QBE_EmitLine(qbe, lElse);
+        } else {
+            QBE_EmitLine(qbe, lEnd);
+        }
 
         QBE_EmitLine(qbe, lThen);
         QBE_EmitStmt(qbe, node.child2);
-        if !QBE_IsTerminator(node.child2) {
+        let thenTerm: bool = QBE_IsTerminator(node.child2);
+        if !thenTerm {
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jmp ");
             QBE_EmitLine(qbe, lEnd);
         }
 
-        QBE_EmitLine(qbe, lElse);
-        QBE_EmitStmt(qbe, node.child3);
-        if !QBE_IsTerminator(node.child3) {
-            QBE_EmitIndent(qbe);
-            QBE_Emit(qbe, "jmp ");
-            QBE_EmitLine(qbe, lEnd);
+        if hasElse {
+            QBE_EmitLine(qbe, lElse);
+            QBE_EmitStmt(qbe, node.child3);
+            if !QBE_IsTerminator(node.child3) {
+                QBE_EmitIndent(qbe);
+                QBE_Emit(qbe, "jmp ");
+                QBE_EmitLine(qbe, lEnd);
+            }
         }
 
-        QBE_EmitLine(qbe, lEnd);
+        if (!thenTerm || hasElse) {
+            QBE_EmitLine(qbe, lEnd);
+        }
         return;
     }
 
