@@ -261,10 +261,6 @@ func QBE_IsTerminator(node: *HirNode) -> bool {
     if node.kind == hReturn { return true; }
     if node.kind == hBreak { return true; }
     if node.kind == hContinue { return true; }
-    if node.kind == hIf {
-        // Both branches must terminate for the if to be a terminator
-        return QBE_IsTerminator(node.child2) && QBE_IsTerminator(node.child3);
-    }
     if node.kind == hBlock {
         var last: *HirNode = node.child1;
         if last == null as *HirNode { return false; }
@@ -688,24 +684,18 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         QBE_Emit(qbe, ", ");
         QBE_Emit(qbe, lThen);
         QBE_Emit(qbe, ", ");
-        var hasElse: bool = node.child3 != null as *HirNode;
-        if hasElse {
-            QBE_EmitLine(qbe, lElse);
-        } else {
-            QBE_EmitLine(qbe, lEnd);
-        }
+        QBE_EmitLine(qbe, lElse);
 
         QBE_EmitLine(qbe, lThen);
         QBE_EmitStmt(qbe, node.child2);
-        let thenTerm: bool = QBE_IsTerminator(node.child2);
-        if !thenTerm {
+        if !QBE_IsTerminator(node.child2) {
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jmp ");
             QBE_EmitLine(qbe, lEnd);
         }
 
-        if hasElse {
-            QBE_EmitLine(qbe, lElse);
+        QBE_EmitLine(qbe, lElse);
+        if node.child3 != null as *HirNode {
             QBE_EmitStmt(qbe, node.child3);
             if !QBE_IsTerminator(node.child3) {
                 QBE_EmitIndent(qbe);
@@ -714,9 +704,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             }
         }
 
-        if (!thenTerm || hasElse) {
-            QBE_EmitLine(qbe, lEnd);
-        }
+        QBE_EmitLine(qbe, lEnd);
         return;
     }
 
@@ -861,7 +849,7 @@ func QBE_EmitFunc(qbe: *QbeEmitter, f: *HirFunc) {
     // Body
     QBE_EmitStmt(qbe, f.body);
 
-    // Implicit ret 0 for functions without explicit return
+    // Implicit ret 0 if body doesn't already terminate
     if !QBE_IsTerminator(f.body) {
         if !String_Eq(retTy, "") {
             QBE_EmitIndent(qbe);
