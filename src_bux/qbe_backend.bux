@@ -268,12 +268,14 @@ func QBE_IsTerminator(node: *HirNode) -> bool {
         return false;
     }
     if node.kind == hBlock {
-        var last: *HirNode = node.child1;
-        if last == null as *HirNode { return false; }
-        while last.child3 != null as *HirNode {
-            last = last.child3;
+        var child: *HirNode = node.child1;
+        while child != null as *HirNode {
+            if QBE_IsTerminator(child) {
+                return true;
+            }
+            child = child.child3;
         }
-        return QBE_IsTerminator(last);
+        return false;
     }
     return false;
 }

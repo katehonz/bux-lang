@@ -1,0 +1,7 @@
+// Hello World - Basic Bux program
+import Std::Io::{PrintLine, PrintInt};
+
+func Main() -> int {
+    PrintLine("Hello, Bux!");
+    return 0;
+}

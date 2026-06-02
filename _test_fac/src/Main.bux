@@ -1,0 +1,26 @@
+// Factorial - Recursive function
+import Std::Io::{PrintLine, PrintInt};
+
+
+func Factorial(n: int) -> int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * Factorial(n - 1);
+}
+
+func Main() -> int {
+    PrintLine("Factorials:");
+    
+    var i: int = 1;
+    while i <= 10 {
+        let fact: int = Factorial(i);
+        PrintInt(i);
+        PrintLine("! = ");
+        PrintInt(fact);
+        PrintLine("");
+        i = i + 1;
+    }
+    
+    return 0;
+}
