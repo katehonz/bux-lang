@@ -48,11 +48,20 @@ async, await, spawn
 
 ### String Literals
 ```bux
-"Hello"           // String (UTF-8)
+"Hello"           // String (UTF-8) — escape sequences: \n \t \r \\ \"
 c8"Hello"         // *char8 (C string)
 c16"Hello"        // *char16
 c32"Hello"        // *char32
+`raw literal`     // Raw multi-line string — no escape processing
+`line 1
+line 2
+line 3`           // Newlines preserved as-is
 ```
+
+**Backtick raw strings** (`` `...` ``) treat all characters literally:
+- `\n` is two characters, not a newline
+- Actual newlines in source are preserved in the string
+- No way to escape the backtick character itself (use regular strings if needed)
 
 ### Number Literals
 ```bux

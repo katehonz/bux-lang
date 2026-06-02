@@ -1,10 +1,8 @@
 # Bux Programming Language
 
-> **Status:** Self-hosting phase — `buxc2` (Bux compiler written in Bux) compiles `.bux` files to C. Bootstrap compiler (`buxc`, Nim) maintains backward compatibility.
+> **Status:** Self-hosting phase — `buxc2` compiles `.bux` → QBE SSA → native binary. Bootstrap (`buxc`, Nim) maintains backward compatibility via C transpiler.
 
-Bux is a fast, compiled, strongly-typed systems programming language. The long-term goal is a self-hosted compiler with a minimal runtime, native x86-64 backend, and modern tooling.
-
-Bux features a rich standard library (`Map`, `String`), modern error handling (`Result`, `Option`, and the `?` operator), and a portable C transpiler backend that runs on Linux, macOS, and Windows.
+Bux is a fast, compiled, strongly-typed systems programming language. Features a QBE backend for native code generation, raw multi-line strings, gradual ownership, async/await, generics, algebraic enums, and a package manager.
 
 ---
 
@@ -32,6 +30,18 @@ import Std::Io::PrintLine;
 
 func Main() -> int {
     PrintLine("Hello, Bux!");
+    return 0;
+}
+```
+
+### Raw Multi-line Strings
+```bux
+// Backtick strings: no escape processing, multi-line
+func Main() -> int {
+    PrintLine(`Hello \n World`);     // prints: Hello \n World (literal)
+    PrintLine(`Line 1
+Line 2
+Line 3`);                            // multi-line, newlines preserved
     return 0;
 }
 ```
@@ -138,7 +148,8 @@ func Main() -> int {
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
 | **Standard Library** | `Io`, `Array`, `String`, `Map` |
-| **Backend** | C transpiler (bootstrap) → self-hosting target |
+| **Backend** | QBE native codegen (self-hosting), C transpiler (bootstrap) |
+| **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
 | **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
 | **Async/Await** | `async func`, `spawn`, `.await` with stackful coroutines |
 | **Concurrency** | `Task`/`Channel` (pthread-based), `bux_async_yield`/`spawn` |
@@ -170,10 +181,10 @@ bux/
 ## Build & Test
 
 ```bash
-# Build bootstrap compiler (Nim)
+# Build bootstrap compiler (Nim → C)
 make build
 
-# Build self-hosted compiler (Bux → C → binary)
+# Build self-hosted compiler (Bux → QBE SSA → native)
 make selfhost
 
 # Run all tests
