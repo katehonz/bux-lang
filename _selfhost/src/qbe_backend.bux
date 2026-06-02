@@ -261,6 +261,12 @@ func QBE_IsTerminator(node: *HirNode) -> bool {
     if node.kind == hReturn { return true; }
     if node.kind == hBreak { return true; }
     if node.kind == hContinue { return true; }
+    if node.kind == hIf {
+        if node.child3 != null as *HirNode {
+            return QBE_IsTerminator(node.child2) && QBE_IsTerminator(node.child3);
+        }
+        return false;
+    }
     if node.kind == hBlock {
         var last: *HirNode = node.child1;
         if last == null as *HirNode { return false; }
@@ -704,7 +710,14 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             }
         }
 
-        QBE_EmitLine(qbe, lEnd);
+        // Only emit @lEnd if at least one branch falls through (doesn't return)
+        var needEnd: bool = !QBE_IsTerminator(node.child2);
+        if node.child3 != null as *HirNode && !QBE_IsTerminator(node.child3) {
+            needEnd = true;
+        }
+        if needEnd {
+            QBE_EmitLine(qbe, lEnd);
+        }
         return;
     }
 
@@ -773,6 +786,9 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         var child: *HirNode = node.child1;
         while child != null as *HirNode {
             QBE_EmitStmt(qbe, child);
+            if QBE_IsTerminator(child) {
+                break;
+            }
             child = child.child3;
         }
         return;
@@ -849,7 +865,6 @@ func QBE_EmitFunc(qbe: *QbeEmitter, f: *HirFunc) {
     // Body
     QBE_EmitStmt(qbe, f.body);
 
-    // Implicit ret 0 if body doesn't already terminate
     if !QBE_IsTerminator(f.body) {
         if !String_Eq(retTy, "") {
             QBE_EmitIndent(qbe);
