@@ -160,8 +160,11 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
       else: return "false"
     of tkStringLiteral:
       var text = node.litToken.text
+      # Backtick raw string: strip backticks, escape content for C
+      if text.len >= 2 and text[0] == '`' and text[text.len-1] == '`':
+        text = "\"" & cEscape(text[1 ..< text.len-1]) & "\""
       # If text has no surrounding quotes, it's from constFoldConstDecl (already unescaped)
-      if text.len >= 2 and text[0] == '"' and text[text.len-1] == '"':
+      elif text.len >= 2 and text[0] == '"' and text[text.len-1] == '"':
         # Strip c8" c16" c32" prefixes — in C they are just regular string literals
         if text.startsWith("c32\""):
           text = "\"" & cEscape(text[4 ..< text.len-1]) & "\""

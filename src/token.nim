@@ -5,7 +5,7 @@ type
     ##Literals
     tkIntLiteral      # 42  0xFF  0b1010  0o77
     tkFloatLiteral    # 3.14  1.0e-9
-    tkStringLiteral   # "hello"  c8"hello"  c16"hello"  c32"hello"
+    tkStringLiteral   # "hello"  c8"hello"  c16"hello"  c32"hello"  `raw multi-line`
     tkCharLiteral     # 'A'  c8'A'  c16'A'  c32'A'
     tkBoolLiteral     # true  false
 

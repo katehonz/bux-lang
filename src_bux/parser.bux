@@ -483,14 +483,33 @@ func parserIsBinaryOp(kind: int) -> bool {
     return false;
 }
 
-func parserParseBinary(p: *Parser) -> *Expr {
-    var left: *Expr = parserParsePostfix(p);
+func parserPrecedence(op: int) -> int {
+    if op == tkAssign || op == tkPlusAssign || op == tkMinusAssign || op == tkStarAssign || op == tkSlashAssign || op == tkPercentAssign || op == tkAmpAssign || op == tkPipeAssign || op == tkCaretAssign || op == tkShlAssign || op == tkShrAssign { return 1; }
+    if op == tkPipePipe { return 2; }
+    if op == tkAmpAmp { return 3; }
+    if op == tkPipe { return 4; }
+    if op == tkCaret { return 5; }
+    if op == tkAmp { return 6; }
+    if op == tkEq || op == tkNe { return 7; }
+    if op == tkLt || op == tkLe || op == tkGt || op == tkGe { return 8; }
+    if op == tkShl || op == tkShr { return 9; }
+    if op == tkPlus || op == tkMinus { return 10; }
+    if op == tkStar || op == tkSlash || op == tkPercent { return 11; }
+    if op == tkStarStar { return 12; }
+    return 0;
+}
 
-    while parserIsBinaryOp(parserPeek(p, 0)) {
+func parserParseBinaryPrec(p: *Parser, minPrec: int) -> *Expr {
+    var left: *Expr = parserParsePostfix(p);
+    while true {
+        let op: int = parserPeek(p, 0);
+        let prec: int = parserPrecedence(op);
+        if prec < minPrec { break; }
         let opTok: LexToken = parserAdvance(p);
         let line: uint32 = opTok.line;
         let col: uint32 = opTok.column;
-        let right: *Expr = parserParsePostfix(p);
+        let nextMinPrec: int = prec + 1;
+        let right: *Expr = parserParseBinaryPrec(p, nextMinPrec);
         let e: *Expr = parserMakeExpr(ekBinary, line, col);
         e.intValue = opTok.kind;
         e.child1 = left;
@@ -498,6 +517,10 @@ func parserParseBinary(p: *Parser) -> *Expr {
         left = e;
     }
     return left;
+}
+
+func parserParseBinary(p: *Parser) -> *Expr {
+    return parserParseBinaryPrec(p, 1);
 }
 
 // ---------------------------------------------------------------------------

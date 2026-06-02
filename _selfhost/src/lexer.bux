@@ -384,6 +384,20 @@ func lexScanNumber(lex: *Lexer) {
 // Strings and chars
 // ---------------------------------------------------------------------------
 
+func lexScanBacktickString(lex: *Lexer) {
+    lexMarkStart(lex);
+    if lexPeek(lex, 0) == 96 { discard lexAdvance(lex); } // opening backtick
+    while !lexIsAtEnd(lex) && lexPeek(lex, 0) != 96 {
+        discard lexAdvance(lex);
+    }
+    if lexIsAtEnd(lex) {
+        lexEmitDiag(lex, "unterminated backtick string literal");
+    } else {
+        discard lexAdvance(lex); // closing backtick
+    }
+    lexEmitToken(lex, tkStringLiteral);
+}
+
 func lexScanString(lex: *Lexer) {
     lexMarkStart(lex);
     if lexPeek(lex, 0) == 34 { discard lexAdvance(lex); } // opening "
@@ -616,6 +630,11 @@ func lexNextToken(lex: *Lexer) {
 
     if c == 34 { // "
         lexScanString(lex); return;
+    }
+
+    // Backtick raw string
+    if c == 96 { // backtick
+        lexScanBacktickString(lex); return;
     }
 
     // Char prefixes: c8' c16' c32'

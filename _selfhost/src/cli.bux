@@ -98,14 +98,14 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     PrintInt(hirMod.funcCount);
     PrintLine("");
 
-    // Phase 5: C code generation
-    let nimCode: String = NimBackend_Generate(hirMod);
+    // Phase 5: QBE SSA code generation
+    let qbeCode: String = QbeBackend_Generate(hirMod);
 
     // Cleanup
     Lexer_Free(lex);
     Sema_Free(sema);
 
-    return nimCode;
+    return qbeCode;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,17 +123,17 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
     Print("Compiling ");
     PrintLine(srcPath);
 
-    let cCode: String = Cli_Compile(source, srcPath);
+    let ssaCode: String = Cli_Compile(source, srcPath);
 
-    if String_Eq(cCode, "") {
+    if String_Eq(ssaCode, "") {
         PrintLine("Compilation failed");
         return 1;
     }
 
-    // Write C output
-    let ok: bool = WriteFile(outPath, cCode);
+    // Write SSA output
+    let ok: bool = WriteFile(outPath, ssaCode);
     if ok {
-        Print("  → Nim code written to ");
+        Print("  → SSA written to ");
         PrintLine(outPath);
         return 0;
     } else {
@@ -233,6 +233,11 @@ func Cli_CompileSource(source: String, sourceName: String) -> *HirModule {
 }
 
 func Cli_BuildProject(projectDir: String) -> int {
+    let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
+    var outName: String = man.name;
+    if String_Eq(outName, "") {
+        outName = "bux_out";
+    }
     let srcDir: String = bux_path_join(projectDir, "src");
     if !DirExists(srcDir) {
         Print("Error: no src/ directory in ");
@@ -327,30 +332,79 @@ func Cli_BuildProject(projectDir: String) -> int {
     PrintLine("Lowering to HIR...");
     let hirMod: *HirModule = HirLower_LowerModule(merged, sema);
 
-    // Nim code generation
-    PrintLine("Generating Nim code...");
-    let nimCode: String = NimBackend_Generate(hirMod);
+    // QBE SSA code generation
+    PrintLine("Generating QBE SSA...");
+    let qbeCode: String = QbeBackend_Generate(hirMod);
 
     // Create build directory
     let buildDir: String = bux_path_join(projectDir, "build");
     discard bux_mkdir_if_needed(buildDir);
 
-    // Write Nim output
-    let nimFile: String = bux_path_join(buildDir, "main.nim");
-    if !WriteFile(nimFile, nimCode) {
-        PrintLine("Error: cannot write main.nim");
+    // Write SSA output
+    let ssaFile: String = bux_path_join(buildDir, "main.ssa");
+    if !WriteFile(ssaFile, qbeCode) {
+        PrintLine("Error: cannot write main.ssa");
         return 1;
     }
 
-    Print("Nim code written to ");
-    PrintLine(nimFile);
+    Print("SSA written to ");
+    PrintLine(ssaFile);
 
-    // Invoke Nim compiler
-    PrintLine("Invoking Nim compiler...");
-    let outBin: String = bux_path_join(buildDir, "buxc3");
-    let rc: int = bux_run_nim(nimFile, outBin);
-    if rc != 0 {
-        PrintLine("Error: Nim compilation failed");
+    // Invoke QBE to generate assembly
+    PrintLine("Invoking QBE...");
+    let asmFile: String = bux_path_join(buildDir, "main.s");
+    var qbeCmd: String = bux_path_join(projectDir, "vendor/qbe/qbe");
+    // Try relative to project first, then absolute
+    if !FileExists(qbeCmd) {
+        // Try from compiler location
+        qbeCmd = "../vendor/qbe/qbe";
+    }
+    if !FileExists(qbeCmd) {
+        qbeCmd = "vendor/qbe/qbe";
+    }
+    // Actually let's use bux_system with a constructed command
+    var cmdBuf: StringBuilder = StringBuilder_NewCap(256);
+    StringBuilder_Append(&cmdBuf, qbeCmd);
+    StringBuilder_Append(&cmdBuf, " -o ");
+    StringBuilder_Append(&cmdBuf, asmFile);
+    StringBuilder_Append(&cmdBuf, " ");
+    StringBuilder_Append(&cmdBuf, ssaFile);
+    let qbeRc: int = bux_system(StringBuilder_Build(&cmdBuf));
+    if qbeRc != 0 {
+        PrintLine("Error: QBE compilation failed");
+        return 1;
+    }
+
+    // Link with cc
+    PrintLine("Linking...");
+    var linkBuf: StringBuilder = StringBuilder_NewCap(512);
+    StringBuilder_Append(&linkBuf, "cc -o ");
+    let outBin: String = bux_path_join(buildDir, outName);
+    StringBuilder_Append(&linkBuf, outBin);
+    StringBuilder_Append(&linkBuf, " ");
+    StringBuilder_Append(&linkBuf, asmFile);
+    StringBuilder_Append(&linkBuf, " ");
+    // Find runtime.c and io.c
+    var rtPath: String = bux_path_join(projectDir, "stdlib/runtime.c");
+    var ioPath: String = bux_path_join(projectDir, "stdlib/io.c");
+    if !FileExists(rtPath) {
+        rtPath = bux_path_join(projectDir, "../stdlib/runtime.c");
+    }
+    if !FileExists(ioPath) {
+        ioPath = bux_path_join(projectDir, "../stdlib/io.c");
+    }
+    if FileExists(rtPath) {
+        StringBuilder_Append(&linkBuf, rtPath);
+        StringBuilder_Append(&linkBuf, " ");
+    }
+    if FileExists(ioPath) {
+        StringBuilder_Append(&linkBuf, ioPath);
+        StringBuilder_Append(&linkBuf, " ");
+    }
+    StringBuilder_Append(&linkBuf, "-lm");
+    let linkRc: int = bux_system(StringBuilder_Build(&linkBuf));
+    if linkRc != 0 {
+        PrintLine("Error: Linking failed");
         return 1;
     }
 

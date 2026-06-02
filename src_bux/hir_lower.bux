@@ -412,6 +412,8 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     hm.funcs = ctx.funcs;
     hm.structCount = 0;
     hm.structs = bux_alloc(64 as uint * sizeof(HirStruct)) as *HirStruct;
+    hm.constCount = 0;
+    hm.consts = bux_alloc(512 as uint * sizeof(HirConst)) as *HirConst;
 
     // First pass: count structs (to allocate field arrays later)
     // Second pass: actually collect them
@@ -467,6 +469,18 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
                 fi = fi + 1;
             }
             hm.structCount = hm.structCount + 1;
+        }
+        if decl.kind == dkConst && hm.constCount < 512 {
+            let ci: int = hm.constCount;
+            hm.consts[ci].name = decl.strValue;
+            var val: int = 0;
+            if decl.constValue != null as *Expr {
+                if decl.constValue.kind == ekLiteral {
+                    val = decl.constValue.intValue;
+                }
+            }
+            hm.consts[ci].value = val;
+            hm.constCount = hm.constCount + 1;
         }
         if decl.kind == dkEnum {
             hm.enumCount = hm.enumCount + 1;

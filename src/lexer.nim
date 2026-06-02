@@ -277,6 +277,18 @@ proc scanString(lex: var Lexer, startLoc: SourceLocation, prefixLen: int): Token
     discard lex.advance()  # closing "
   result = lex.makeToken(tkStringLiteral, startLoc, startPos)
 
+proc scanBacktickString(lex: var Lexer, startLoc: SourceLocation): Token =
+  ## Scan a backtick-delimited raw string literal: content is literal,
+  ## no escape processing, newlines are preserved.
+  let startPos = lex.pos - 1  # include the opening backtick
+  while not lex.isAtEnd() and lex.peek() != '`':
+    discard lex.advance()
+  if lex.isAtEnd():
+    lex.emitError(startLoc, "unterminated backtick string literal")
+  else:
+    discard lex.advance()  # closing backtick
+  result = lex.makeToken(tkStringLiteral, startLoc, startPos)
+
 proc scanChar(lex: var Lexer, startLoc: SourceLocation, prefixLen: int): Token =
   let startPos = lex.pos - prefixLen
   if lex.peek() == '\'':
@@ -522,6 +534,11 @@ proc nextToken(lex: var Lexer): Token =
 
   if c == '"':
     return lex.scanString(startLoc, 0)
+
+  # Backtick-delimited raw string: `...`
+  if c == '`':
+    discard lex.advance()
+    return lex.scanBacktickString(startLoc)
 
   # Char prefixes: c8' c16' c32' — must come before ident check
   if c == 'c' and lex.peek(1) in {'8', '1', '3'}:

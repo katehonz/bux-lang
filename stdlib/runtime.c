@@ -479,6 +479,7 @@ char* bux_read_file(const char* path) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     char* buf = (char*)bux_alloc((size_t)size + 1);
+    if (!buf) { fclose(f); return NULL; }
     size_t read = fread(buf, 1, (size_t)size, f);
     fclose(f);
     buf[read] = '\0';
