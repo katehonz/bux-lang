@@ -160,6 +160,18 @@ func QBE_LocalName(name: String) -> String {
     return String_Concat(prefix, name);
 }
 
+// Ensure a value used as variable/argument has % prefix for bare identifiers
+func QBE_EnsureLocal(val: String) -> String {
+    if String_Eq(val, "") { return "0"; }
+    let c: char8 = val[0];
+    if c == 37 as char8 || c == 36 as char8 || c == 64 as char8 { return val; } // %, $, @
+    if c == 45 as char8 { return val; } // negative number
+    if c >= 48 as char8 && c <= 57 as char8 { return val; } // digit
+    // Bare identifier: add % prefix
+    var prefix: String = "%";
+    return String_Concat(prefix, val);
+}
+
 // ---------------------------------------------------------------------------
 // String literal → data section
 // ---------------------------------------------------------------------------
@@ -326,9 +338,9 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         QBE_Emit(qbe, "store");
         QBE_Emit(qbe, ty);
         QBE_Emit(qbe, " ");
-        QBE_Emit(qbe, val);
+        QBE_Emit(qbe, QBE_EnsureLocal(val));
         QBE_Emit(qbe, ", ");
-        QBE_EmitLine(qbe, target);
+        QBE_EmitLine(qbe, QBE_EnsureLocal(target));
         return val;
     }
 
@@ -526,14 +538,14 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             let a1ty: String = QbeBackend_TypeWord(node.child1.typeKind);
             QBE_Emit(qbe, a1ty);
             QBE_Emit(qbe, " ");
-            QBE_Emit(qbe, arg1);
+            QBE_Emit(qbe, QBE_EnsureLocal(arg1));
         }
         if node.child2 != null as *HirNode {
             let a2ty: String = QbeBackend_TypeWord(node.child2.typeKind);
             QBE_Emit(qbe, ", ");
             QBE_Emit(qbe, a2ty);
             QBE_Emit(qbe, " ");
-            QBE_Emit(qbe, arg2);
+            QBE_Emit(qbe, QBE_EnsureLocal(arg2));
         }
         QBE_EmitLine(qbe, ")");
         return tmp;
@@ -615,9 +627,9 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
                 QBE_Emit(qbe, "store");
                 QBE_Emit(qbe, varTy);
                 QBE_Emit(qbe, " ");
-                QBE_Emit(qbe, val);
+                QBE_Emit(qbe, QBE_EnsureLocal(val));
                 QBE_Emit(qbe, ", ");
-                QBE_EmitLine(qbe, varName);
+                QBE_EmitLine(qbe, QBE_EnsureLocal(varName));
             }
             return;
         }
@@ -631,9 +643,9 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         QBE_Emit(qbe, "store");
         QBE_Emit(qbe, ty);
         QBE_Emit(qbe, " ");
-        QBE_Emit(qbe, val);
+        QBE_Emit(qbe, QBE_EnsureLocal(val));
         QBE_Emit(qbe, ", ");
-        QBE_EmitLine(qbe, target);
+        QBE_EmitLine(qbe, QBE_EnsureLocal(target));
         return;
     }
 
@@ -642,7 +654,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             let val: String = QBE_EmitExpr(qbe, node.child1);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "ret ");
-            QBE_EmitLine(qbe, val);
+            QBE_EmitLine(qbe, QBE_EnsureLocal(val));
         } else {
             QBE_EmitIndent(qbe);
             QBE_EmitLine(qbe, "ret");
