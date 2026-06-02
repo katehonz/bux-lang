@@ -421,14 +421,15 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             let rVal: String = QBE_EmitExpr(qbe, node.child2);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_EmitLine(qbe, " =w copy rVal");
+            QBE_Emit(qbe, " =l copy ");
+            QBE_EmitLine(qbe, rVal);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jmp ");
             QBE_EmitLine(qbe, lEnd);
             QBE_EmitLine(qbe, lFalse);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_EmitLine(qbe, " =w copy 0");
+            QBE_EmitLine(qbe, " =l copy 0");
             QBE_EmitLine(qbe, lEnd);
             return tmp;
         }
@@ -447,7 +448,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             QBE_EmitLine(qbe, lTrue);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_EmitLine(qbe, " =w copy 1");
+            QBE_EmitLine(qbe, " =l copy 1");
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, "jmp ");
             QBE_EmitLine(qbe, lEnd);
@@ -455,7 +456,7 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
             let rVal: String = QBE_EmitExpr(qbe, node.child2);
             QBE_EmitIndent(qbe);
             QBE_Emit(qbe, tmp);
-            QBE_Emit(qbe, " =w copy ");
+            QBE_Emit(qbe, " =l copy ");
             QBE_EmitLine(qbe, rVal);
             QBE_EmitLine(qbe, lEnd);
             return tmp;
@@ -567,25 +568,9 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         return tmp;
     }
 
-    // Cast
+    // Cast — QBE doesn't need same-width casts; passthrough
     if kind == hCast {
-        let src: String = QBE_EmitExpr(qbe, node.child1);
-        let dstTy: String = QbeBackend_TypeWord(node.typeKind);
-        let srcTy: String = QbeBackend_TypeWord(node.child1.typeKind);
-        if String_Eq(dstTy, srcTy) {
-            return src;
-        }
-        let tmp: String = QBE_FreshTemp(qbe);
-        QBE_EmitIndent(qbe);
-        QBE_Emit(qbe, tmp);
-        QBE_Emit(qbe, " =");
-        QBE_Emit(qbe, dstTy);
-        // QBE cast instructions: extsw, extuw, extsl, extul, truncl, stosi, etc.
-        // For simplicity, use copy for now and let QBE handle it
-        QBE_Emit(qbe, " copy ");
-        QBE_Emit(qbe, src);
-        QBE_EmitLine(qbe, "");
-        return tmp;
+        return QBE_EmitExpr(qbe, node.child1);
     }
 
     // SizeOf
@@ -856,6 +841,18 @@ func QBE_EmitFunc(qbe: *QbeEmitter, f: *HirFunc) {
 
     // Body
     QBE_EmitStmt(qbe, f.body);
+
+    // Implicit ret 0 for functions without explicit return
+    if !QBE_IsTerminator(f.body) {
+        if !String_Eq(retTy, "") {
+            QBE_EmitIndent(qbe);
+            QBE_Emit(qbe, "ret 0");
+            QBE_EmitLine(qbe, "");
+        } else {
+            QBE_EmitIndent(qbe);
+            QBE_EmitLine(qbe, "ret");
+        }
+    }
 
     QBE_EmitLine(qbe, "}");
     QBE_EmitLine(qbe, "");
