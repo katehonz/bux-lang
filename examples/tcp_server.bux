@@ -1,0 +1,60 @@
+// TCP Echo Server — binds to 127.0.0.1:9000 and echoes back received data
+import Std::Io::{PrintLine, PrintInt};
+import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close};
+import Std::String::{String_Eq};
+
+func Main() -> int {
+    let fd: int = Net_Create();
+    if fd < 0 {
+        PrintLine("Failed to create socket");
+        return 1;
+    }
+
+    if !Net_SetReuse(fd) {
+        PrintLine("Warning: failed to set SO_REUSEADDR");
+    }
+
+    if Net_Bind(fd, "127.0.0.1", 9000) == false {
+        PrintLine("Failed to bind");
+        Net_Close(fd);
+        return 1;
+    }
+
+    if Net_Listen(fd, 5) == false {
+        PrintLine("Failed to listen");
+        Net_Close(fd);
+        return 1;
+    }
+
+    PrintLine("Echo server listening on 127.0.0.1:9000");
+
+    let client: int = Net_Accept(fd);
+    if client < 0 {
+        PrintLine("Failed to accept");
+        Net_Close(fd);
+        return 1;
+    }
+
+    PrintLine("Client connected");
+
+    var running: bool = true;
+    while running {
+        let msg: String = Net_Recv(client, 1024);
+        if String_Eq(msg, "") {
+            running = false;
+        } else {
+            PrintLine("Received:");
+            PrintLine(msg);
+            let sent: int = Net_Send(client, msg);
+            if sent < 0 {
+                PrintLine("Send failed");
+                running = false;
+            }
+        }
+    }
+
+    Net_Close(client);
+    Net_Close(fd);
+    PrintLine("Server shut down");
+    return 0;
+}

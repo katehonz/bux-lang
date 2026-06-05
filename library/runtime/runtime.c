@@ -9,6 +9,10 @@
 #include <pthread.h>
 #include <ucontext.h>
 #include <time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
 
 /* Command-line argument storage */
 int g_argc = 0;
@@ -1154,4 +1158,87 @@ char* bux_process_output(const char* cmd) {
     buf[len] = '\0';
     pclose(pipe);
     return buf;
+}
+
+/* ============================================================================
+ * Network / Socket primitives
+ * ============================================================================ */
+
+int bux_socket_create(void) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    return fd;
+}
+
+int bux_socket_reuse(int fd) {
+    int opt = 1;
+    return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+}
+
+int bux_socket_bind(int fd, const char* addr, int port) {
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
+    if (addr == NULL || addr[0] == '\0') {
+        sa.sin_addr.s_addr = INADDR_ANY;
+    } else {
+        if (inet_pton(AF_INET, addr, &sa.sin_addr) <= 0) {
+            return -1;
+        }
+    }
+    return bind(fd, (struct sockaddr*)&sa, sizeof(sa));
+}
+
+int bux_socket_listen(int fd, int backlog) {
+    return listen(fd, backlog);
+}
+
+int bux_socket_accept(int fd) {
+    struct sockaddr_in sa;
+    socklen_t len = sizeof(sa);
+    return accept(fd, (struct sockaddr*)&sa, &len);
+}
+
+int bux_socket_connect(int fd, const char* addr, int port) {
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
+    if (inet_pton(AF_INET, addr, &sa.sin_addr) <= 0) {
+        return -1;
+    }
+    return connect(fd, (struct sockaddr*)&sa, sizeof(sa));
+}
+
+int bux_socket_send(int fd, const char* data, int len) {
+    if (!data || len <= 0) return 0;
+    return (int)send(fd, data, (size_t)len, 0);
+}
+
+BuxString bux_socket_recv(int fd, int max_len) {
+    BuxString result;
+    if (max_len <= 0) {
+        result.data = "";
+        result.len = 0;
+        return result;
+    }
+    char* buf = (char*)bux_alloc((size_t)max_len + 1);
+    ssize_t n = recv(fd, buf, (size_t)max_len, 0);
+    if (n <= 0) {
+        result.data = "";
+        result.len = 0;
+        return result;
+    }
+    buf[n] = '\0';
+    result.data = buf;
+    result.len = (size_t)n;
+    return result;
+}
+
+int bux_socket_close(int fd) {
+    return close(fd);
+}
+
+const char* bux_socket_error(void) {
+    return strerror(errno);
 }

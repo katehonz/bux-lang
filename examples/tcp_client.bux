@@ -1,0 +1,36 @@
+// TCP Client — connects to 127.0.0.1:9000, sends a message, prints the reply
+import Std::Io::{PrintLine, PrintInt};
+import Std::Net::{Net_Create, Net_Connect, Net_Send, Net_Recv, Net_Close};
+
+func Main() -> int {
+    let fd: int = Net_Create();
+    if fd < 0 {
+        PrintLine("Failed to create socket");
+        return 1;
+    }
+
+    if Net_Connect(fd, "127.0.0.1", 9000) == false {
+        PrintLine("Failed to connect");
+        Net_Close(fd);
+        return 1;
+    }
+
+    PrintLine("Connected to 127.0.0.1:9000");
+
+    let msg: String = "Hello from Bux!";
+    let sent: int = Net_Send(fd, msg);
+    if sent < 0 {
+        PrintLine("Send failed");
+        Net_Close(fd);
+        return 1;
+    }
+    PrintLine("Message sent");
+
+    let reply: String = Net_Recv(fd, 1024);
+    PrintLine("Server reply:");
+    PrintLine(reply);
+
+    Net_Close(fd);
+    PrintLine("Disconnected");
+    return 0;
+}

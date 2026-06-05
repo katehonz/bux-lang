@@ -1,0 +1,62 @@
+module Std::Net {
+extern func bux_socket_create() -> int;
+extern func bux_socket_reuse(fd: int) -> int;
+extern func bux_socket_bind(fd: int, addr: String, port: int) -> int;
+extern func bux_socket_listen(fd: int, backlog: int) -> int;
+extern func bux_socket_accept(fd: int) -> int;
+extern func bux_socket_connect(fd: int, addr: String, port: int) -> int;
+extern func bux_socket_send(fd: int, data: String, len: int) -> int;
+extern func bux_socket_recv(fd: int, maxLen: int) -> String;
+extern func bux_socket_close(fd: int) -> int;
+extern func bux_socket_error() -> String;
+
+/* Create a TCP socket. Returns -1 on error. */
+func Net_Create() -> int {
+    return bux_socket_create();
+}
+
+/* Enable SO_REUSEADDR on a socket. */
+func Net_SetReuse(fd: int) -> bool {
+    return bux_socket_reuse(fd) == 0;
+}
+
+/* Bind a socket to an address and port. */
+func Net_Bind(fd: int, addr: String, port: int) -> bool {
+    return bux_socket_bind(fd, addr, port) == 0;
+}
+
+/* Start listening for connections. */
+func Net_Listen(fd: int, backlog: int) -> bool {
+    return bux_socket_listen(fd, backlog) == 0;
+}
+
+/* Accept a connection. Returns new fd or -1 on error. */
+func Net_Accept(fd: int) -> int {
+    return bux_socket_accept(fd);
+}
+
+/* Connect to a remote address and port. */
+func Net_Connect(fd: int, addr: String, port: int) -> bool {
+    return bux_socket_connect(fd, addr, port) == 0;
+}
+
+/* Send data. Returns bytes sent or -1 on error. */
+func Net_Send(fd: int, data: String) -> int {
+    return bux_socket_send(fd, data, String_Len(data) as int);
+}
+
+/* Receive up to maxLen bytes. Returns empty string on error/EOF. */
+func Net_Recv(fd: int, maxLen: int) -> String {
+    return bux_socket_recv(fd, maxLen);
+}
+
+/* Close a socket. */
+func Net_Close(fd: int) -> bool {
+    return bux_socket_close(fd) == 0;
+}
+
+/* Get last socket error as a string. */
+func Net_LastError() -> String {
+    return bux_socket_error();
+}
+}
