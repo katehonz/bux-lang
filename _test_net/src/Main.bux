@@ -1,5 +1,0 @@
-import Std::Net;
-func Main() -> int {
-    let fd: int = Net::Create();
-    return 0;
-}
