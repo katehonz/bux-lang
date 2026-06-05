@@ -1,8 +1,0 @@
-import Std::Io::{PrintLine};
-import Std::String::{String_Format1, String_FromInt};
-
-func Main() -> int {
-    let s: String = String_Format1("Hello, {0}!", "World");
-    PrintLine(s);
-    return 0;
-}

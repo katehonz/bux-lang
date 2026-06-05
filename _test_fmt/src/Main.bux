@@ -1,4 +1,0 @@
-module Test {
-func Fmt(a: String) -> String { return a; }
-func Fmt(a: int) -> String { return "int"; }
-}
