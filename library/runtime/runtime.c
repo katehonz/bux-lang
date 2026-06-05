@@ -221,6 +221,11 @@ char* bux_strncpy(char* dest, const char* src, unsigned int n) {
     return strncpy(dest, src, (size_t)n);
 }
 
+double bux_str_to_float(const char* s) {
+    if (!s) return 0.0;
+    return strtod(s, NULL);
+}
+
 /* String find: returns pointer to first occurrence of needle in haystack, or NULL */
 const char* bux_strstr(const char* haystack, const char* needle) {
     if (!haystack || !needle) return NULL;

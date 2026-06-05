@@ -236,7 +236,7 @@ func JsonParser_ParseString(p: *JsonParser) -> String {
         return "";
     }
     JsonParser_Advance(p);
-    let start: uint = p.pos;
+    let sb: StringBuilder = StringBuilder_New();
     while true {
         let c: int = JsonParser_Peek(p);
         if c == 0 || c == 34 {
@@ -244,22 +244,40 @@ func JsonParser_ParseString(p: *JsonParser) -> String {
         }
         if c == 92 {
             JsonParser_Advance(p);
-            if JsonParser_Peek(p) == 0 {
+            let esc: int = JsonParser_Peek(p);
+            if esc == 0 {
                 p.error = "Unterminated string escape";
+                StringBuilder_Free(&sb);
                 return "";
+            }
+            if esc == 110 { StringBuilder_AppendChar(&sb, 10 as char8); }      // \n
+            else if esc == 116 { StringBuilder_AppendChar(&sb, 9 as char8); }  // \t
+            else if esc == 114 { StringBuilder_AppendChar(&sb, 13 as char8); } // \r
+            else if esc == 98 { StringBuilder_AppendChar(&sb, 8 as char8); }   // \b
+            else if esc == 102 { StringBuilder_AppendChar(&sb, 12 as char8); } // \f
+            else if esc == 34 { StringBuilder_AppendChar(&sb, 34 as char8); }  // \"
+            else if esc == 92 { StringBuilder_AppendChar(&sb, 92 as char8); }  // \\
+            else {
+                // Unknown escape — keep literal
+                StringBuilder_AppendChar(&sb, 92 as char8);
+                StringBuilder_AppendChar(&sb, esc as char8);
             }
             JsonParser_Advance(p);
         } else {
+            StringBuilder_AppendChar(&sb, c as char8);
             JsonParser_Advance(p);
         }
     }
-    let endPos: uint = p.pos;
     if JsonParser_Peek(p) != 34 {
         p.error = "Unterminated string";
+        StringBuilder_Free(&sb);
         return "";
     }
     JsonParser_Advance(p);
-    return String_Slice(p.src, start, endPos - start);
+    let raw: String = StringBuilder_Build(&sb);
+    let result: String = String_Copy(raw);
+    StringBuilder_Free(&sb);
+    return result;
 }
 
 func JsonParser_ParseNumber(p: *JsonParser) -> JsonValue {
@@ -288,8 +306,8 @@ func JsonParser_ParseNumber(p: *JsonParser) -> JsonValue {
         }
     }
     let numStr: String = String_Slice(p.src, start, p.pos - start);
-    let n: int64 = String_ToInt(numStr);
-    return Json_Number(n as float64);
+    let n: float64 = String_ToFloat(numStr);
+    return Json_Number(n);
 }
 
 func JsonParser_ParseArray(p: *JsonParser) -> JsonValue {

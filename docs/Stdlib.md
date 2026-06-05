@@ -141,6 +141,7 @@ String manipulation utilities.
 | `String_FromInt` | `func String_FromInt(n: int64) -> String` | Int to string |
 | `String_FromFloat` | `func String_FromFloat(f: float64) -> String` | Float to string |
 | `String_ToInt` | `func String_ToInt(s: String) -> int64` | String to int |
+| `String_ToFloat` | `func String_ToFloat(s: String) -> float64` | String to float |
 
 ### Find, Replace & Format
 

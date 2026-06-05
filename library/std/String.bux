@@ -179,6 +179,12 @@ func String_Replace(s: String, old: String, new: String) -> String {
     return result;
 }
 
+extern func bux_str_to_float(s: String) -> float64;
+
+func String_ToFloat(s: String) -> float64 {
+    return bux_str_to_float(s);
+}
+
 func String_FromFloat(f: float64) -> String {
     return bux_float_to_string(f);
 }
