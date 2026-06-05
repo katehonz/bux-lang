@@ -400,8 +400,13 @@ func Cli_CollectStdlibImports(mod: *Module, outPaths: *String, maxCount: int, st
 func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCount: int) -> int {
     Print("DEBUG: MergeFileInto ");
     PrintLine(path);
+    if !FileExists(path) {
+        Print("Error: stdlib file not found: ");
+        PrintLine(path);
+        return 0;
+    }
     let source: String = ReadFile(path);
-    if String_Eq(source, "") { return 0; }
+    if source == null as String || String_Eq(source, "") { return 0; }
     let lex: *Lexer = Lexer_Tokenize(source);
     if Lexer_DiagCount(lex) > 0 { return 0; }
     let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);

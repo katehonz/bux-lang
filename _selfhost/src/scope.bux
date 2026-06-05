@@ -72,7 +72,7 @@ func Scope_Lookup(scope: *Scope, name: String) -> Symbol {
         }
         cur = cur.parent;
     }
-    var empty: Symbol;
+    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", isMutable: false, isPublic: false, decl: null as *Decl };
     return empty;
 }
 
@@ -84,7 +84,7 @@ func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
         }
         i = i + 1;
     }
-    var empty: Symbol;
+    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", isMutable: false, isPublic: false, decl: null as *Decl };
     return empty;
 }
 

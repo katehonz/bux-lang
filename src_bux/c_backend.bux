@@ -134,12 +134,29 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     if kind == hCall {
         StringBuilder_Append(&cbe.sb, node.strValue);
         StringBuilder_Append(&cbe.sb, "(");
+        var needsComma: bool = false;
         if node.child1 != null as *HirNode {
             CBE_EmitExpr(cbe, node.child1);
+            needsComma = true;
         }
         if node.child2 != null as *HirNode {
-            StringBuilder_Append(&cbe.sb, ", ");
+            if needsComma {
+                StringBuilder_Append(&cbe.sb, ", ");
+            }
             CBE_EmitExpr(cbe, node.child2);
+            needsComma = true;
+        }
+        // Emit extra args from linked list
+        var ai: int = 0;
+        var curExtra: *HirArgList = node.extraData as *HirArgList;
+        while ai < node.extraCount {
+            if needsComma {
+                StringBuilder_Append(&cbe.sb, ", ");
+            }
+            CBE_EmitExpr(cbe, curExtra.node);
+            needsComma = true;
+            curExtra = curExtra.next;
+            ai = ai + 1;
         }
         StringBuilder_Append(&cbe.sb, ")");
         return;
@@ -414,6 +431,9 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
         if i == 3 { pname = f.param3.name; ptype = f.param3.typeName; }
         if i == 4 { pname = f.param4.name; ptype = f.param4.typeName; }
         if i == 5 { pname = f.param5.name; ptype = f.param5.typeName; }
+        if i == 6 { pname = f.param6.name; ptype = f.param6.typeName; }
+        if i == 7 { pname = f.param7.name; ptype = f.param7.typeName; }
+        if i == 8 { pname = f.param8.name; ptype = f.param8.typeName; }
         // Emit type
         if String_Eq(ptype, "String") || String_Eq(ptype, "str") {
             StringBuilder_Append(&cbe.sb, "String ");
@@ -474,6 +494,9 @@ func CBE_FuncHasGeneric(f: *HirFunc) -> bool {
         if pi == 3 { ptype = f.param3.typeName; }
         if pi == 4 { ptype = f.param4.typeName; }
         if pi == 5 { ptype = f.param5.typeName; }
+        if pi == 6 { ptype = f.param6.typeName; }
+        if pi == 7 { ptype = f.param7.typeName; }
+        if pi == 8 { ptype = f.param8.typeName; }
         if CBE_IsGenericTypeName(ptype) { return true; }
         pi = pi + 1;
     }

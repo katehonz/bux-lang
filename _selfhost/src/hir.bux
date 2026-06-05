@@ -35,6 +35,15 @@ const hSpawn: int = 29;
 const hAwait: int = 30;
 
 // ---------------------------------------------------------------------------
+// HirArgList — linked list for call arguments beyond 2
+// ---------------------------------------------------------------------------
+
+struct HirArgList {
+    node: *HirNode,
+    next: *HirArgList,
+}
+
+// ---------------------------------------------------------------------------
 // HirNode — unified struct with tagged union pattern
 // ---------------------------------------------------------------------------
 
@@ -76,6 +85,9 @@ struct HirFunc {
     param3: HirParam;
     param4: HirParam;
     param5: HirParam;
+    param6: HirParam;
+    param7: HirParam;
+    param8: HirParam;
     retTypeKind: int;
     retTypeName: String;
     body: *HirNode;

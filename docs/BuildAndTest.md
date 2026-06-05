@@ -32,7 +32,13 @@ make build
 make dev
 ```
 
-The output is a single binary: `buxc`.
+The output is a single binary: `buxc` (bootstrap compiler in Nim).
+
+The self-hosted compiler `buxc2` is built from `src_bux/*.bux` sources via:
+```bash
+make selfhost
+```
+This compiles `buxc2` using the bootstrap compiler. The self-hosted compiler generates C code and invokes `cc` to produce native binaries.
 
 ---
 
@@ -164,9 +170,15 @@ bux/
 ./buxc build -v
 ```
 
-### Inspecting Generated C
+### Inspecting Generated C (bootstrap)
 ```bash
 ./buxc build
+cat build/main.c
+```
+
+### Inspecting Generated C (self-hosted)
+```bash
+cd _selfhost && ../buxc build
 cat build/main.c
 ```
 

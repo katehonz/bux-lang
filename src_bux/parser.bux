@@ -214,6 +214,8 @@ func parserMakeExpr(kind: int, line: uint32, col: uint32) -> *Expr {
     e.genericTypeArgCount = 0;
     e.structName = "";
     e.structFieldCount = 0;
+    e.callArgs = null as *ExprList;
+    e.callArgCount = 0;
     return e;
 }
 
@@ -337,18 +339,27 @@ func parserParsePostfix(p: *Parser) -> *Expr {
             let col: uint32 = parserCurToken(p).column;
             let e: *Expr = parserMakeExpr(ekCall, line, col);
             e.child1 = left;
-            // Parse arguments (up to 8)
-            // child2 = first arg, child3 = second arg, extra = rest
-            if !parserCheck(p, tkRParen) {
-                e.child2 = parserParseExpr(p);
-                if parserMatch(p, tkComma) {
-                    e.child3 = parserParseExpr(p);
-                    // Consume any remaining arguments (we only store 2)
-                    while parserMatch(p, tkComma) {
-                        discard parserParseExpr(p);
-                    }
+            // Parse all arguments into linked list
+            var argCount: int = 0;
+            var firstArg: *ExprList = null as *ExprList;
+            var lastArg: *ExprList = null as *ExprList;
+            while !parserCheck(p, tkRParen) {
+                let argExpr: *Expr = parserParseExpr(p);
+                let argNode: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                argNode.expr = argExpr;
+                argNode.next = null as *ExprList;
+                if firstArg == null as *ExprList {
+                    firstArg = argNode;
+                    lastArg = argNode;
+                } else {
+                    lastArg.next = argNode;
+                    lastArg = argNode;
                 }
+                argCount = argCount + 1;
+                if !parserMatch(p, tkComma) { break; }
             }
+            e.callArgs = firstArg;
+            e.callArgCount = argCount;
             discard parserExpect(p, tkRParen, "expected ')'");
             left = e;
             continue;
@@ -842,7 +853,7 @@ func parserParseParamList(p: *Parser) -> *Decl {
 
     discard parserExpect(p, tkLParen, "expected '('");
     while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
-        if d.paramCount >= 6 { break; }
+        if d.paramCount >= 9 { break; }
         let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected parameter name");
         discard parserExpect(p, tkColon, "expected ':' in parameter");
         let ptype: *TypeExpr = parserParseType(p);
@@ -865,6 +876,15 @@ func parserParseParamList(p: *Parser) -> *Decl {
         } else if d.paramCount == 5 {
             d.param5.name = nameTok.text;
             d.param5.refParamType = ptype;
+        } else if d.paramCount == 6 {
+            d.param6.name = nameTok.text;
+            d.param6.refParamType = ptype;
+        } else if d.paramCount == 7 {
+            d.param7.name = nameTok.text;
+            d.param7.refParamType = ptype;
+        } else if d.paramCount == 8 {
+            d.param8.name = nameTok.text;
+            d.param8.refParamType = ptype;
         }
         d.paramCount = d.paramCount + 1;
 
@@ -916,6 +936,9 @@ func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool, isAsync: bo
     d.param3 = params.param3;
     d.param4 = params.param4;
     d.param5 = params.param5;
+    d.param6 = params.param6;
+    d.param7 = params.param7;
+    d.param8 = params.param8;
 
     // Return type
     if parserMatch(p, tkArrow) {

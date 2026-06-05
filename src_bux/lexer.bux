@@ -711,7 +711,7 @@ func Lexer_GetToken(lex: *Lexer, index: int) -> LexToken {
     if index >= 0 && index < lex.tokenCount {
         return lex.tokens[index];
     }
-    var empty: LexToken;
+    var empty: LexToken = LexToken { kind: tkEndOfFile, text: "", line: 0, column: 0 };
     return empty;
 }
 

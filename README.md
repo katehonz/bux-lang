@@ -1,8 +1,10 @@
 # Bux Programming Language
 
-> **Status:** Self-hosting phase — `buxc2` compiles `.bux` → QBE SSA → native binary. Bootstrap (`buxc`, Nim) maintains backward compatibility via C transpiler.
+![Bux Language](bux-lang-01.jpeg)
 
-Bux is a fast, compiled, strongly-typed systems programming language. Features a QBE backend for native code generation, raw multi-line strings, gradual ownership, async/await, generics, algebraic enums, and a package manager.
+> **Status:** Self-hosting phase — `buxc2` compiles `.bux` → C → native binary. Bootstrap (`buxc`, Nim) builds the self-hosted compiler.
+
+Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership, async/await, generics, algebraic enums, and a package manager.
 
 ---
 
@@ -148,7 +150,7 @@ func Main() -> int {
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
 | **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel` |
-| **Backend** | QBE native codegen (self-hosting), C transpiler (bootstrap) |
+| **Backend** | C transpiler (self-hosting + bootstrap) |
 | **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
 | **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
 | **Async/Await** | `async func`, `spawn`, `.await` with stackful coroutines |
@@ -189,7 +191,7 @@ bux/
 # Build bootstrap compiler (Nim → C)
 make build
 
-# Build self-hosted compiler (Bux → QBE SSA → native)
+# Build self-hosted compiler (Bux → C → native)
 make selfhost
 
 # Run all tests

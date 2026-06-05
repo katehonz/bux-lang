@@ -231,11 +231,10 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     // Call
     if kind == ekCall {
         discard Sema_CheckExpr(sema, expr.child1);
-        if expr.child2 != null as *Expr {
-            discard Sema_CheckExpr(sema, expr.child2);
-        }
-        if expr.child3 != null as *Expr {
-            discard Sema_CheckExpr(sema, expr.child3);
+        var arg: *ExprList = expr.callArgs;
+        while arg != null as *ExprList {
+            discard Sema_CheckExpr(sema, arg.expr);
+            arg = arg.next;
         }
         // Try to resolve return type from function declaration
         if expr.child1.kind == ekIdent {
@@ -635,6 +634,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
             // Add type params to scope
             if decl.typeParamCount >= 1 {
                 var tpSym: Symbol;
+                Sema_ZeroInitSymbol(&tpSym);
                 tpSym.kind = skType;
                 tpSym.name = decl.typeParam0;
                 tpSym.typeKind = tyTypeParam;
@@ -643,6 +643,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
             }
             if decl.typeParamCount >= 2 {
                 var tpSym2: Symbol;
+                Sema_ZeroInitSymbol(&tpSym2);
                 tpSym2.kind = skType;
                 tpSym2.name = decl.typeParam1;
                 tpSym2.typeKind = tyTypeParam;
@@ -660,6 +661,9 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 else if i == 3 { p = &decl.param3; }
                 else if i == 4 { p = &decl.param4; }
                 else if i == 5 { p = &decl.param5; }
+                else if i == 6 { p = &decl.param6; }
+                else if i == 7 { p = &decl.param7; }
+                else if i == 8 { p = &decl.param8; }
                 var pSym: Symbol;
                 Sema_ZeroInitSymbol(&pSym);
                 pSym.kind = skVar;
@@ -679,6 +683,9 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 else if i == 3 { pSym.name = decl.param3.name; }
                 else if i == 4 { pSym.name = decl.param4.name; }
                 else if i == 5 { pSym.name = decl.param5.name; }
+                else if i == 6 { pSym.name = decl.param6.name; }
+                else if i == 7 { pSym.name = decl.param7.name; }
+                else if i == 8 { pSym.name = decl.param8.name; }
                 discard Scope_Define(&funcScope, pSym);
                 i = i + 1;
             }

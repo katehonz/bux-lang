@@ -180,11 +180,34 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             // Lower receiver as first argument
             let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1.child1);
             n.child1 = recv;
-            // Lower remaining arguments
-            if expr.child2 != null as *Expr {
-                let extra: *HirNode = Lcx_LowerExpr(ctx, expr.child2);
-                // Chain extra args after receiver via child2/child3
-                n.child2 = extra;
+            // Lower remaining arguments from linked list
+            var arg: *ExprList = expr.callArgs;
+            var argIdx: int = 0;
+            while arg != null as *ExprList {
+                let lowered: *HirNode = Lcx_LowerExpr(ctx, arg.expr);
+                if argIdx == 0 {
+                    n.child2 = lowered;
+                } else if argIdx == 1 {
+                    // Third argument — start linked list
+                    let firstExtra: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                    firstExtra.node = lowered;
+                    firstExtra.next = null as *HirArgList;
+                    n.extraData = firstExtra as *void;
+                    n.extraCount = 1;
+                } else {
+                    // Additional args — append to linked list
+                    var cur: *HirArgList = n.extraData as *HirArgList;
+                    while cur.next != null as *HirArgList {
+                        cur = cur.next;
+                    }
+                    let newNode: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                    newNode.node = lowered;
+                    newNode.next = null as *HirArgList;
+                    cur.next = newNode;
+                    n.extraCount = n.extraCount + 1;
+                }
+                arg = arg.next;
+                argIdx = argIdx + 1;
             }
             return n;
         }
@@ -192,12 +215,36 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
             n.strValue = expr.child1.strValue;
         }
-        // Lower arguments
-        if expr.child2 != null as *Expr {
-            n.child1 = Lcx_LowerExpr(ctx, expr.child2);
-        }
-        if expr.child3 != null as *Expr {
-            n.child2 = Lcx_LowerExpr(ctx, expr.child3);
+        // Lower arguments from linked list
+        var arg: *ExprList = expr.callArgs;
+        var argIdx: int = 0;
+        while arg != null as *ExprList {
+            let lowered: *HirNode = Lcx_LowerExpr(ctx, arg.expr);
+            if argIdx == 0 {
+                n.child1 = lowered;
+            } else if argIdx == 1 {
+                n.child2 = lowered;
+            } else if argIdx == 2 {
+                // Third argument — start linked list
+                let firstExtra: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                firstExtra.node = lowered;
+                firstExtra.next = null as *HirArgList;
+                n.extraData = firstExtra as *void;
+                n.extraCount = 1;
+            } else {
+                // Additional args — append to linked list
+                var cur: *HirArgList = n.extraData as *HirArgList;
+                while cur.next != null as *HirArgList {
+                    cur = cur.next;
+                }
+                let newNode: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                newNode.node = lowered;
+                newNode.next = null as *HirArgList;
+                cur.next = newNode;
+                n.extraCount = n.extraCount + 1;
+            }
+            arg = arg.next;
+            argIdx = argIdx + 1;
         }
         return n;
     }
@@ -359,6 +406,9 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         sym.name = stmt.strValue;
         sym.typeKind = alloca.typeKind;
         sym.typeName = alloca.typeName;
+        sym.isMutable = false;
+        sym.isPublic = false;
+        sym.decl = null as *Decl;
         discard Scope_Define(ctx.scope, sym);
         // store the init value
         n.kind = hStore;
@@ -495,6 +545,9 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
     Lcx_LowerParam(&f.param3, &decl.param3);
     Lcx_LowerParam(&f.param4, &decl.param4);
     Lcx_LowerParam(&f.param5, &decl.param5);
+    Lcx_LowerParam(&f.param6, &decl.param6);
+    Lcx_LowerParam(&f.param7, &decl.param7);
+    Lcx_LowerParam(&f.param8, &decl.param8);
 
     if decl.retType != null as *TypeExpr {
         f.retTypeName = decl.retType.typeName;
@@ -514,12 +567,18 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
         else if pi == 3 { p = &decl.param3; }
         else if pi == 4 { p = &decl.param4; }
         else if pi == 5 { p = &decl.param5; }
+        else if pi == 6 { p = &decl.param6; }
+        else if pi == 7 { p = &decl.param7; }
+        else if pi == 8 { p = &decl.param8; }
         if p != null as *Param && p.refParamType != null as *TypeExpr {
             var sym: Symbol;
             sym.kind = skVar;
             sym.name = p.name;
             sym.typeKind = Lcx_ResolveTypeKind(p.refParamType);
             sym.typeName = p.refParamType.typeName;
+            sym.isMutable = false;
+            sym.isPublic = false;
+            sym.decl = null as *Decl;
             discard Scope_Define(ctx.scope, sym);
         }
         pi = pi + 1;

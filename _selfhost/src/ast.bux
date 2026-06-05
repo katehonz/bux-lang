@@ -96,6 +96,11 @@ const ekMatch: int = 22;
 const ekSpawn: int = 24;
 const ekAwait: int = 25;
 
+struct ExprList {
+    expr: *Expr,
+    next: *ExprList,
+}
+
 struct Expr {
     kind: int,
     line: uint32,
@@ -121,6 +126,9 @@ struct Expr {
     // Struct init fields
     structName: String,
     structFieldCount: int,
+    // Call arguments (linked list for multi-arg support)
+    callArgs: *ExprList,
+    callArgCount: int,
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +249,9 @@ struct Decl {
     param3: Param,
     param4: Param,
     param5: Param,
+    param6: Param,
+    param7: Param,
+    param8: Param,
     retType: *TypeExpr,
     // Body
     refBody: *Block,
@@ -361,7 +372,8 @@ func Ast_MakeExpr(kind: int, line: uint32, col: uint32) -> Expr {
         child1: null as *Expr, child2: null as *Expr, child3: null as *Expr,
         refType: null as *TypeExpr, refBlock: null as *Block,
         genericCallee: "", genericTypeArg0: "", genericTypeArg1: "", genericTypeArgCount: 0,
-        structName: "", structFieldCount: 0 };
+        structName: "", structFieldCount: 0,
+        callArgs: null as *ExprList, callArgCount: 0 };
 }
 
 func Ast_MakeIdent(name: String, line: uint32, col: uint32) -> Expr {
