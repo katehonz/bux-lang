@@ -96,7 +96,6 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     }
     Print("HIR funcCount=");
     PrintInt(hirMod.funcCount);
-    PrintLine("");
 
     // Phase 5: QBE SSA code generation
     let qbeCode: String = QbeBackend_Generate(hirMod);
@@ -344,15 +343,11 @@ func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCo
     }
     Print("DEBUG: MergeFileInto done, added=");
     PrintInt(added);
-    PrintLine("");
     return added;
 }
 
 func Cli_CopyModuleDecls(target: *Module, source: *Module) {
     if source == null as *Module || source.firstItem == null as *Decl { return; }
-    Print("DEBUG: copy start, source.itemCount=");
-    PrintInt(source.itemCount);
-    PrintLine("");
     var decl: *Decl = source.firstItem;
     var limit: int = 0;
     while decl != null as *Decl && limit < 10000 {
@@ -365,7 +360,6 @@ func Cli_CopyModuleDecls(target: *Module, source: *Module) {
     }
     source.firstItem = null as *Decl;
     source.itemCount = 0;
-    PrintLine("DEBUG: copy end");
 }
 
 func Cli_BuildProject(projectDir: String) -> int {
@@ -457,7 +451,6 @@ func Cli_BuildProject(projectDir: String) -> int {
 
     Print("DEBUG: userMerged.itemCount=");
     PrintInt(userMerged.itemCount);
-    PrintLine("");
 
     // Collect user declaration names for shadow detection
     let maxNames: int = 2048;
@@ -482,7 +475,6 @@ func Cli_BuildProject(projectDir: String) -> int {
             let stdFiles: *String = bux_list_dir(stdSubdir, ".bux", &stdFileCount);
             Print("DEBUG: stdFileCount=");
             PrintInt(stdFileCount);
-            PrintLine("");
             if stdFileCount > 0 {
                 Print("Merging ");
                 PrintInt(stdFileCount);
@@ -492,7 +484,6 @@ func Cli_BuildProject(projectDir: String) -> int {
                 while si < stdFileCount {
                     Print("DEBUG: merging stdlib file ");
                     PrintInt(si);
-                    PrintLine("");
                     // Skip Channel.bux for debugging
                     if String_Eq(stdFiles[si], "./../stdlib/Std/Channel.bux") {
                         PrintLine("DEBUG: skipping Channel.bux");
@@ -505,7 +496,6 @@ func Cli_BuildProject(projectDir: String) -> int {
                 }
                 Print("Stdlib declarations added: ");
                 PrintInt(stdAdded);
-                PrintLine("");
             }
         }
     }
@@ -520,14 +510,21 @@ func Cli_BuildProject(projectDir: String) -> int {
     }
     Print("userMerged actual count=");
     PrintInt(countTest);
-    PrintLine("");
     Print("userMerged.itemCount=");
     PrintInt(userMerged.itemCount);
-    PrintLine("");
     var du: *Decl = userMerged.firstItem;
     while du != null as *Decl {
         if du.kind == dkFunc {
             Print("user func ");
+            PrintLine(du.strValue);
+        }
+        if du.kind == dkStruct {
+            Print("user struct ");
+            Print(du.strValue);
+            PrintInt(du.fieldCount);
+        }
+        if du.kind == dkImpl {
+            Print("user impl ");
             PrintLine(du.strValue);
         }
         du = du.childDecl2;
@@ -536,7 +533,6 @@ func Cli_BuildProject(projectDir: String) -> int {
     PrintLine("DEBUG: copy done");
     Print("merged.itemCount=");
     PrintInt(merged.itemCount);
-    PrintLine("");
     PrintLine("DEBUG: copy done");
 
     Print("Merged ");
@@ -679,12 +675,10 @@ func Cli_RunProject(projectDir: String) -> int {
 func Cli_Run(args: *String, argCount: int) -> int {
     Print("Cli_Run argCount=");
     PrintInt(argCount);
-    PrintLine("");
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
         PrintLine("Commands: build, check, run, version");
-        PrintLine("");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅  695 lines");
         PrintLine("  Parser     ✅ 1004 lines");

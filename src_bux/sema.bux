@@ -2,6 +2,8 @@
 // Validates types, resolves identifiers, checks function calls.
 module Sema {
 
+
+
 // ---------------------------------------------------------------------------
 // Sema context
 // ---------------------------------------------------------------------------
@@ -130,6 +132,12 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             Sema_EmitError(sema, expr.line, expr.column, "undeclared identifier");
             return tyUnknown;
         }
+        if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            te.typeName = sym.typeName;
+            expr.refType = te;
+        }
         return sym.typeKind;
     }
 
@@ -212,6 +220,10 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         sym.kind = skVar;
         sym.name = stmt.strValue;
         sym.typeKind = initType;
+        sym.typeName = "";
+        if stmt.refStmtType != null as *TypeExpr {
+            sym.typeName = stmt.refStmtType.typeName;
+        }
         sym.isMutable = stmt.boolValue;
         sym.isPublic = false;
         discard Scope_Define(sema.scope, sym);
@@ -350,9 +362,22 @@ func Sema_Analyze(mod: *Module) -> *Sema {
             // Add parameters to scope
             var i: int = 0;
             while i < decl.paramCount {
+                var p: *Param = null as *Param;
+                if i == 0 { p = &decl.param0; }
+                else if i == 1 { p = &decl.param1; }
+                else if i == 2 { p = &decl.param2; }
+                else if i == 3 { p = &decl.param3; }
+                else if i == 4 { p = &decl.param4; }
+                else if i == 5 { p = &decl.param5; }
                 var pSym: Symbol;
                 pSym.kind = skVar;
-                pSym.typeKind = tyInt; // simplified
+                if p != null as *Param && p.refParamType != null as *TypeExpr {
+                    pSym.typeKind = Sema_ResolveType(s, p.refParamType);
+                    pSym.typeName = p.refParamType.typeName;
+                } else {
+                    pSym.typeKind = tyInt;
+                    pSym.typeName = "";
+                }
                 pSym.isMutable = false;
                 if i == 0 { pSym.name = decl.param0.name; }
                 else if i == 1 { pSym.name = decl.param1.name; }

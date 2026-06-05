@@ -105,6 +105,24 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         n.strValue = expr.strValue;
         let sym: Symbol = Scope_Lookup(ctx.scope, expr.strValue);
         n.typeKind = sym.typeKind;
+        if expr.refType != null as *TypeExpr {
+            n.typeName = expr.refType.typeName;
+        }
+        if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
+            n.typeName = sym.typeName;
+        }
+        return n;
+    }
+
+    // self → variable reference named "self"
+    if kind == ekSelf {
+        n.kind = hVar;
+        n.strValue = "self";
+        let sym: Symbol = Scope_Lookup(ctx.scope, "self");
+        n.typeKind = sym.typeKind;
+        if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
+            n.typeName = sym.typeName;
+        }
         return n;
     }
 
@@ -135,6 +153,41 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     // Call
     if kind == ekCall {
         n.kind = hCall;
+        // Method call desugaring: obj.method(args) → Type_method(obj, args)
+        if expr.child1 != null as *Expr && expr.child1.kind == ekField {
+            let methodName: String = expr.child1.strValue;
+            var receiverTypeName: String = "";
+            if expr.child1.child1 != null as *Expr && expr.child1.child1.kind == ekIdent {
+                let sym: Symbol = Scope_Lookup(ctx.scope, expr.child1.child1.strValue);
+                receiverTypeName = sym.typeName;
+            }
+            if String_Eq(receiverTypeName, "") && expr.child1.child1 != null as *Expr && expr.child1.child1.refType != null as *TypeExpr {
+                receiverTypeName = expr.child1.child1.refType.typeName;
+            }
+            if !String_Eq(receiverTypeName, "") {
+                // Strip trailing '*' from pointer type names (e.g. "Box*" → "Box")
+                var baseName: String = receiverTypeName;
+                let len: int = bux_strlen(baseName) as int;
+                if len > 0 {
+                    let lastChar: String = bux_str_slice(baseName, (len - 1) as uint, 1);
+                    if String_Eq(lastChar, "*") {
+                        baseName = bux_str_slice(baseName, 0, (len - 1) as uint);
+                    }
+                }
+                n.strValue = String_Concat(baseName, "_");
+                n.strValue = String_Concat(n.strValue, methodName);
+            }
+            // Lower receiver as first argument
+            let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1.child1);
+            n.child1 = recv;
+            // Lower remaining arguments
+            if expr.child2 != null as *Expr {
+                let extra: *HirNode = Lcx_LowerExpr(ctx, expr.child2);
+                // Chain extra args after receiver via child2/child3
+                n.child2 = extra;
+            }
+            return n;
+        }
         // Get callee name
         if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
             n.strValue = expr.child1.strValue;
@@ -163,6 +216,10 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         n.kind = hFieldPtr;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         n.strValue = expr.strValue;
+        // Get struct type from base expr refType
+        if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+            n.typeName = expr.child1.refType.typeName;
+        }
         return n;
     }
 
@@ -286,6 +343,13 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                 alloca.typeName = stmt.refStmtType.typeName;
             }
         }
+        // Add to scope for field offset lookups
+        var sym: Symbol;
+        sym.kind = skVar;
+        sym.name = stmt.strValue;
+        sym.typeKind = alloca.typeKind;
+        sym.typeName = alloca.typeName;
+        discard Scope_Define(ctx.scope, sym);
         // store the init value
         n.kind = hStore;
         n.child1 = alloca;
@@ -430,6 +494,27 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
         f.retTypeKind = 0;
     }
 
+    // Add parameters to hir_lower scope for field offset lookups
+    var pi: int = 0;
+    while pi < decl.paramCount {
+        var p: *Param = null as *Param;
+        if pi == 0 { p = &decl.param0; }
+        else if pi == 1 { p = &decl.param1; }
+        else if pi == 2 { p = &decl.param2; }
+        else if pi == 3 { p = &decl.param3; }
+        else if pi == 4 { p = &decl.param4; }
+        else if pi == 5 { p = &decl.param5; }
+        if p != null as *Param && p.refParamType != null as *TypeExpr {
+            var sym: Symbol;
+            sym.kind = skVar;
+            sym.name = p.name;
+            sym.typeKind = Lcx_ResolveTypeKind(p.refParamType);
+            sym.typeName = p.refParamType.typeName;
+            discard Scope_Define(ctx.scope, sym);
+        }
+        pi = pi + 1;
+    }
+
     if decl.refBody != null as *Block {
         f.body = Lcx_LowerBlock(ctx, decl.refBody, -1);
     } else {
@@ -449,7 +534,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     ctx.scope = sema.scope;
     ctx.funcs = bux_alloc(256 as uint * sizeof(HirFunc)) as *HirFunc;
     ctx.funcCount = 0;
-    ctx.externFuncs = bux_alloc(64 as uint * sizeof(HirFunc)) as *HirFunc;
+    ctx.externFuncs = bux_alloc(256 as uint * sizeof(HirFunc)) as *HirFunc;
     ctx.externCount = 0;
     ctx.varCounter = 0;
 
@@ -472,6 +557,20 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
             ctx.funcs[ctx.funcCount] = *f;
             ctx.funcCount = ctx.funcCount + 1;
+        }
+        if decl.kind == dkImpl {
+            let implTypeName: String = decl.strValue;
+            var implDecl: *Decl = decl.childDecl1;
+            while implDecl != null as *Decl {
+                if implDecl.kind == dkFunc {
+                    let mangled: String = String_Concat(implTypeName, "_");
+                    implDecl.strValue = String_Concat(mangled, implDecl.strValue);
+                    let f: *HirFunc = Lcx_LowerFunc(ctx, implDecl);
+                    ctx.funcs[ctx.funcCount] = *f;
+                    ctx.funcCount = ctx.funcCount + 1;
+                }
+                implDecl = implDecl.childDecl2;
+            }
         }
         if decl.kind == dkExternFunc {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
@@ -534,10 +633,12 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
         decl = decl.childDecl2;
     }
 
+
     hm.funcCount = ctx.funcCount;
     hm.funcs = ctx.funcs;
     hm.externCount = ctx.externCount;
     hm.externFuncs = ctx.externFuncs;
+
 
     return hm;
 }

@@ -266,7 +266,7 @@ func QBE_IsTerminator(node: *HirNode) -> bool {
     if node.kind == hBreak { return true; }
     if node.kind == hContinue { return true; }
     if node.kind == hIf {
-        if node.extraData != null as *HirNode {
+        if node.extraData != null as *void {
             return QBE_IsTerminator(node.child2) && QBE_IsTerminator(node.extraData as *HirNode);
         }
         return false;
@@ -305,6 +305,74 @@ func QBE_FindFunc(qbe: *QbeEmitter, name: String) -> *HirFunc {
         i = i + 1;
     }
     return null as *HirFunc;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: find struct by name in module
+// ---------------------------------------------------------------------------
+
+func QBE_FindStruct(qbe: *QbeEmitter, name: String) -> *HirStruct {
+    if qbe.mod == null as *HirModule || name == null as String { return null as *HirStruct; }
+    var i: int = 0;
+    while i < qbe.mod.structCount {
+        if String_Eq(qbe.mod.structs[i].name, name) {
+            return &qbe.mod.structs[i];
+        }
+        i = i + 1;
+    }
+    return null as *HirStruct;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: compute field offset in a struct
+// ---------------------------------------------------------------------------
+
+func QBE_FieldOffset(qbe: *QbeEmitter, structName: String, fieldName: String) -> int {
+    let st: *HirStruct = QBE_FindStruct(qbe, structName);
+    if st == null as *HirStruct { return 0; }
+    var off: int = 0;
+    var fi: int = 0;
+    while fi < st.fieldCount {
+        if String_Eq(st.fields[fi].name, fieldName) {
+            return off;
+        }
+        let ftype: String = st.fields[fi].typeName;
+        var fsz: int = 8;
+        if String_Eq(ftype, "int8") || String_Eq(ftype, "uint8") || String_Eq(ftype, "bool8") || String_Eq(ftype, "char8") { fsz = 1; }
+        else if String_Eq(ftype, "int16") || String_Eq(ftype, "uint16") || String_Eq(ftype, "bool16") || String_Eq(ftype, "char16") { fsz = 2; }
+        else if String_Eq(ftype, "int32") || String_Eq(ftype, "uint32") || String_Eq(ftype, "bool32") || String_Eq(ftype, "char32") || String_Eq(ftype, "float32") { fsz = 4; }
+        off = off + fsz;
+        fi = fi + 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: type size in bytes
+// ---------------------------------------------------------------------------
+
+func QBE_TypeSize(qbe: *QbeEmitter, kind: int, typeName: String) -> int {
+    if kind == tyNamed && typeName != null as String && !String_Eq(typeName, "") {
+        let st: *HirStruct = QBE_FindStruct(qbe, typeName);
+        if st != null as *HirStruct && st.fields != null as *HirStructField {
+            var sz: int = 0;
+            var fi: int = 0;
+            while fi < st.fieldCount {
+                let ftype: String = st.fields[fi].typeName;
+                var fsz: int = 8;
+                if String_Eq(ftype, "int8") || String_Eq(ftype, "uint8") || String_Eq(ftype, "bool8") || String_Eq(ftype, "char8") { fsz = 1; }
+                else if String_Eq(ftype, "int16") || String_Eq(ftype, "uint16") || String_Eq(ftype, "bool16") || String_Eq(ftype, "char16") { fsz = 2; }
+                else if String_Eq(ftype, "int32") || String_Eq(ftype, "uint32") || String_Eq(ftype, "bool32") || String_Eq(ftype, "char32") || String_Eq(ftype, "float32") { fsz = 4; }
+                sz = sz + fsz;
+                fi = fi + 1;
+            }
+            return sz;
+        }
+    }
+    if kind == tyBool8 || kind == tyChar8 || kind == tyInt8 || kind == tyUInt8 { return 1; }
+    if kind == tyBool16 || kind == tyChar16 || kind == tyInt16 || kind == tyUInt16 { return 2; }
+    if kind == tyBool32 || kind == tyChar32 || kind == tyInt32 || kind == tyUInt32 || kind == tyFloat32 { return 4; }
+    return 8;
 }
 
 // ---------------------------------------------------------------------------
@@ -411,6 +479,23 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         var target: String = "";
         if node.child1 != null as *HirNode && node.child1.kind == hVar {
             target = QBE_LocalName(node.child1.strValue);
+        } else if node.child1 != null as *HirNode && node.child1.kind == hFieldPtr {
+            // Field assignment: generate pointer, not auto-load value
+            let base: String = QBE_EmitExpr(qbe, node.child1.child1);
+            let ptrTmp: String = QBE_FreshTemp(qbe);
+            var structName: String = node.child1.typeName;
+            if structName == null as String || String_Eq(structName, "") {
+                structName = node.child1.child1.typeName;
+            }
+            let offset: int = QBE_FieldOffset(qbe, structName, node.child1.strValue);
+            QBE_EmitIndent(qbe);
+            QBE_Emit(qbe, ptrTmp);
+            QBE_Emit(qbe, " =l add ");
+            QBE_Emit(qbe, QBE_EnsureLocal(base));
+            QBE_Emit(qbe, ", ");
+            QBE_Emit(qbe, String_FromInt(offset as int64));
+            QBE_EmitLine(qbe, "");
+            target = ptrTmp;
         } else {
             target = QBE_EmitExpr(qbe, node.child1);
             if String_Eq(target, "") { return "0"; }
@@ -659,18 +744,84 @@ func QBE_EmitExpr(qbe: *QbeEmitter, node: *HirNode) -> String {
         return tmp;
     }
 
-    // Field pointer: &obj.field
+    // Field pointer: &obj.field  (with auto-load for rvalue contexts)
     if kind == hFieldPtr {
         let base: String = QBE_EmitExpr(qbe, node.child1);
-        let tmp: String = QBE_FreshTemp(qbe);
-        // add base, offset — need to know offset; for now assume 0 for first field
+        let ptrTmp: String = QBE_FreshTemp(qbe);
+        var structName: String = node.typeName;
+        if structName == null as String || String_Eq(structName, "") {
+            structName = node.child1.typeName;
+        }
+        let offset: int = QBE_FieldOffset(qbe, structName, node.strValue);
         QBE_EmitIndent(qbe);
-        QBE_Emit(qbe, tmp);
+        QBE_Emit(qbe, ptrTmp);
         QBE_Emit(qbe, " =l add ");
         QBE_Emit(qbe, QBE_EnsureLocal(base));
-        QBE_Emit(qbe, ", 0");
+        QBE_Emit(qbe, ", ");
+        QBE_Emit(qbe, String_FromInt(offset as int64));
         QBE_EmitLine(qbe, "");
-        return tmp;
+        // Auto-load value from field address (rvalue context)
+        let valTmp: String = QBE_FreshTemp(qbe);
+        let fty: String = QbeBackend_TypeWord(node.typeKind);
+        QBE_EmitIndent(qbe);
+        QBE_Emit(qbe, valTmp);
+        QBE_Emit(qbe, " =");
+        QBE_Emit(qbe, fty);
+        QBE_Emit(qbe, " load");
+        QBE_Emit(qbe, fty);
+        QBE_Emit(qbe, " ");
+        QBE_Emit(qbe, QBE_EnsureLocal(ptrTmp));
+        QBE_EmitLine(qbe, "");
+        return valTmp;
+    }
+
+    // Struct init: allocate and fill fields
+    if kind == hStructInit {
+        let st: *HirStruct = QBE_FindStruct(qbe, node.strValue);
+        var structSize: int = 0;
+        if st != null as *HirStruct {
+            var si: int = 0;
+            while si < st.fieldCount {
+                let ftype: String = st.fields[si].typeName;
+                var fsz: int = 8;
+                if String_Eq(ftype, "int8") || String_Eq(ftype, "uint8") || String_Eq(ftype, "bool8") || String_Eq(ftype, "char8") { fsz = 1; }
+                else if String_Eq(ftype, "int16") || String_Eq(ftype, "uint16") || String_Eq(ftype, "bool16") || String_Eq(ftype, "char16") { fsz = 2; }
+                else if String_Eq(ftype, "int32") || String_Eq(ftype, "uint32") || String_Eq(ftype, "bool32") || String_Eq(ftype, "char32") || String_Eq(ftype, "float32") { fsz = 4; }
+                structSize = structSize + fsz;
+                si = si + 1;
+            }
+        }
+        let ptr: String = QBE_FreshTemp(qbe);
+        QBE_EmitIndent(qbe);
+        QBE_Emit(qbe, ptr);
+        QBE_Emit(qbe, " =l alloc4 ");
+        let szStr: String = String_FromInt(structSize as int64);
+        QBE_Emit(qbe, szStr);
+        QBE_EmitLine(qbe, "");
+        // Store each field
+        var field: *HirNode = node.child1;
+        while field != null as *HirNode {
+            let fval: String = QBE_EmitExpr(qbe, field.child1);
+            let foff: int = QBE_FieldOffset(qbe, node.strValue, field.strValue);
+            let fptr: String = QBE_FreshTemp(qbe);
+            QBE_EmitIndent(qbe);
+            QBE_Emit(qbe, fptr);
+            QBE_Emit(qbe, " =l add ");
+            QBE_Emit(qbe, QBE_EnsureLocal(ptr));
+            QBE_Emit(qbe, ", ");
+            QBE_Emit(qbe, String_FromInt(foff as int64));
+            QBE_EmitLine(qbe, "");
+            let fty: String = QbeBackend_TypeWord(field.child1.typeKind);
+            QBE_EmitIndent(qbe);
+            QBE_Emit(qbe, "store");
+            QBE_Emit(qbe, fty);
+            QBE_Emit(qbe, " ");
+            QBE_Emit(qbe, QBE_EnsureLocal(fval));
+            QBE_Emit(qbe, ", ");
+            QBE_EmitLine(qbe, QBE_EnsureLocal(fptr));
+            field = field.child3;
+        }
+        return ptr;
     }
 
     // Index pointer: &arr[idx]  (for pointer indexing)
@@ -744,6 +895,34 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
             }
             return;
         }
+        // Field assignment: target is hFieldPtr, need pointer not value
+        if node.child1 != null as *HirNode && node.child1.kind == hFieldPtr {
+            let base: String = QBE_EmitExpr(qbe, node.child1.child1);
+            let ptrTmp: String = QBE_FreshTemp(qbe);
+            var structName: String = node.child1.typeName;
+            if structName == null as String || String_Eq(structName, "") {
+                structName = node.child1.child1.typeName;
+            }
+            let offset: int = QBE_FieldOffset(qbe, structName, node.child1.strValue);
+            QBE_EmitIndent(qbe);
+            QBE_Emit(qbe, ptrTmp);
+            QBE_Emit(qbe, " =l add ");
+            QBE_Emit(qbe, QBE_EnsureLocal(base));
+            QBE_Emit(qbe, ", ");
+            QBE_Emit(qbe, String_FromInt(offset as int64));
+            QBE_EmitLine(qbe, "");
+            let val: String = QBE_EmitExpr(qbe, node.child2);
+            let ty: String = QBE_NodeType(qbe, node.child2);
+            if String_Eq(val, "") { val = "0"; }
+            QBE_EmitIndent(qbe);
+            QBE_Emit(qbe, "store");
+            QBE_Emit(qbe, ty);
+            QBE_Emit(qbe, " ");
+            QBE_Emit(qbe, QBE_EnsureLocal(val));
+            QBE_Emit(qbe, ", ");
+            QBE_EmitLine(qbe, QBE_EnsureLocal(ptrTmp));
+            return;
+        }
         // Plain assignment
         let target: String = QBE_EmitExpr(qbe, node.child1);
         let val: String = QBE_EmitExpr(qbe, node.child2);
@@ -786,7 +965,7 @@ func QBE_EmitStmt(qbe: *QbeEmitter, node: *HirNode) {
         QBE_Emit(qbe, ", ");
         QBE_Emit(qbe, lThen);
         QBE_Emit(qbe, ", ");
-        var hasElse: bool = node.extraData != null as *HirNode;
+        var hasElse: bool = node.extraData != null as *void;
         if hasElse {
             QBE_EmitLine(qbe, lElse);
         } else {

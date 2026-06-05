@@ -44,6 +44,29 @@ func parserPeek(p: *Parser, ahead: int) -> int {
     return tkEndOfFile;
 }
 
+// Lookahead to determine if '<' starts a type argument list.
+func parserIsTypeArgListAhead(p: *Parser) -> bool {
+    if !parserCheck(p, tkLt) { return false; }
+    var depth: int = 0;
+    var ahead: int = 0;
+    while true {
+        let kind: int = parserPeek(p, ahead);
+        if kind == tkEndOfFile || kind == tkLBrace || kind == tkSemicolon {
+            return false;
+        }
+        if kind == tkLt {
+            depth = depth + 1;
+        } else if kind == tkGt {
+            depth = depth - 1;
+            if depth == 0 {
+                return true;
+            }
+        }
+        ahead = ahead + 1;
+    }
+    return false;
+}
+
 func parserAdvance(p: *Parser) -> LexToken {
     let tok: LexToken = parserCurToken(p);
     if p.pos < p.tokenCount {
@@ -329,6 +352,25 @@ func parserParsePostfix(p: *Parser) -> *Expr {
             discard parserExpect(p, tkRParen, "expected ')'");
             left = e;
             continue;
+        }
+
+        // Generic call: Func<Type>(args)  or  Type<T> { ... }
+        if kind == tkLt {
+            if left.kind == ekIdent && parserIsTypeArgListAhead(p) {
+                discard parserAdvance(p); // <
+                let ta0: LexToken = parserExpect(p, tkIdent, "expected type argument");
+                left.genericCallee = left.strValue;
+                left.genericTypeArg0 = ta0.text;
+                left.genericTypeArgCount = 1;
+                if parserMatch(p, tkComma) {
+                    let ta1: LexToken = parserExpect(p, tkIdent, "expected type argument");
+                    left.genericTypeArg1 = ta1.text;
+                    left.genericTypeArgCount = 2;
+                }
+                discard parserExpect(p, tkGt, "expected '>' to close type arguments");
+                // After generic args, continue loop to handle call or struct init
+                continue;
+            }
         }
 
         // Index: expr[expr]
@@ -1285,7 +1327,7 @@ func parserParseDecl(p: *Parser) -> *Decl {
                 if d.methodCount == 0 {
                     d.childDecl1 = m;
                 } else if d.methodCount == 1 {
-                    d.childDecl2 = m;
+                    d.childDecl1.childDecl2 = m;
                 }
                 d.methodCount = d.methodCount + 1;
             } else {
