@@ -1,0 +1,14 @@
+module Std::Process {
+
+extern func bux_process_run(cmd: String) -> int;
+extern func bux_process_output(cmd: String) -> String;
+
+func Process_Run(cmd: String) -> int {
+    return bux_process_run(cmd);
+}
+
+func Process_Output(cmd: String) -> String {
+    return bux_process_output(cmd);
+}
+
+}

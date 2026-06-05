@@ -438,6 +438,7 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
 
 func Sema_CollectGlobals(sema: *Sema) {
     var decl: *Decl = sema.module.firstItem;
+    var funcCount: int = 0;
     while decl != null as *Decl {
         let dk: int = decl.kind;
 
@@ -501,6 +502,24 @@ func Sema_CollectGlobals(sema: *Sema) {
                 discard Scope_Define(sema.scope, vSym);
                 vi = vi + 1;
             }
+        }
+
+        // Const
+        if dk == dkConst {
+            var sym: Symbol;
+            Sema_ZeroInitSymbol(&sym);
+            sym.kind = skConst;
+            sym.name = decl.strValue;
+            if decl.constType != null as *TypeExpr {
+                sym.typeKind = Sema_ResolveType(sema, decl.constType);
+                sym.typeName = decl.constType.typeName;
+            } else {
+                sym.typeKind = tyInt;
+            }
+            sym.isMutable = false;
+            sym.isPublic = decl.isPublic;
+            sym.decl = decl;
+            discard Scope_Define(sema.scope, sym);
         }
 
         // Use (import)

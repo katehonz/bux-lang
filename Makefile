@@ -1,5 +1,5 @@
 NIM := nim
-SRC := src/main.nim
+SRC := compiler/bootstrap/main.nim
 OUT := buxc
 BUILD_DIR := build
 
@@ -17,13 +17,15 @@ dev:
 
 test: build test-examples
 	@echo "Running lexer tests..."
-	$(NIM) c -r tests/lexer_test.nim
+	$(NIM) c -r compiler/tests/lexer_test.nim
 	@echo "Running parser tests..."
-	$(NIM) c -r tests/parser_test.nim
+	$(NIM) c -r compiler/tests/parser_test.nim
 	@echo "Running sema tests..."
-	$(NIM) c -r tests/sema_test.nim
+	$(NIM) c -r compiler/tests/sema_test.nim
 	@echo "Running HIR tests..."
-	$(NIM) c -r tests/hir_test.nim
+	$(NIM) c -r compiler/tests/hir_test.nim
+	@echo "Running borrow checker tests..."
+	$(NIM) c -r compiler/tests/borrow_test.nim
 	@echo "Running integration tests..."
 	rm -rf _test_tmp_pkg
 	./$(OUT) new _test_tmp_pkg
@@ -58,7 +60,7 @@ selfhost: build
 	@echo "=== Phase 7.9: Building self-hosted compiler ==="
 	@rm -rf _selfhost/src
 	@mkdir -p _selfhost/src
-	@cp src_bux/*.bux _selfhost/src/
+	@cp compiler/selfhost/*.bux _selfhost/src/
 	@mv _selfhost/src/main.bux _selfhost/src/Main.bux 2>/dev/null || true
 	@cd _selfhost && ../$(OUT) build
 	@echo "=== Self-hosted compiler built successfully ==="

@@ -9,7 +9,7 @@ const skConst: int = 3;
 const skModule: int = 4;
 
 // Maximum symbols per scope
-const maxSymbols: int = 1024;
+const maxSymbols: int = 8192;
 
 struct Symbol {
     kind: int;

@@ -1,5 +1,5 @@
 import std/[unittest, os, strutils]
-import ../src/[lexer, parser, ast, token]
+import ../bootstrap/[lexer, parser, ast, token]
 
 proc parseSource(source: string): ParseResult =
   let lexRes = tokenize(source, "<test>")

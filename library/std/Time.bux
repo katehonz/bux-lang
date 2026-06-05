@@ -1,0 +1,19 @@
+module Std::Time {
+
+extern func bux_time_ms() -> int64;
+extern func bux_time_us() -> int64;
+extern func bux_sleep_ms(ms: int64);
+
+func Time_NowMs() -> int64 {
+    return bux_time_ms();
+}
+
+func Time_NowUs() -> int64 {
+    return bux_time_us();
+}
+
+func Time_SleepMs(ms: int64) {
+    bux_sleep_ms(ms);
+}
+
+}

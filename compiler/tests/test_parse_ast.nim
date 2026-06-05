@@ -1,4 +1,4 @@
-import "../src/lexer", "../src/parser", "../src/ast", "../src/token"
+import "../bootstrap/lexer", "../bootstrap/parser", "../bootstrap/ast", "../bootstrap/token"
 import std/os
 
 let source = readFile("../_selfhost/src/ast.bux")

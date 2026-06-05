@@ -306,10 +306,10 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   # Phase 2: Merge with stdlib and check
   var stdlibDir = ""
   let stdlibSearchPaths = @[
-    getAppDir() / ".." / "stdlib",
-    getAppDir() / "stdlib",
-    getCurrentDir() / "stdlib",
-    "/home/ziko/z-git/bux/bux/stdlib",
+    getAppDir() / ".." / "library",
+    getAppDir() / "library",
+    getCurrentDir() / "library",
+    "/home/ziko/z-git/bux/bux/library",
   ]
   for path in stdlibSearchPaths:
     if dirExists(path):
@@ -434,10 +434,10 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   # Find stdlib directory
   var stdlibDir = ""
   let stdlibSearchPaths = @[
-    getAppDir() / ".." / "stdlib",
-    getAppDir() / "stdlib",
-    root / "stdlib",
-    "/home/ziko/z-git/bux/bux/stdlib",
+    getAppDir() / ".." / "library",
+    getAppDir() / "library",
+    root / "library",
+    "/home/ziko/z-git/bux/bux/library",
   ]
   for path in stdlibSearchPaths:
     if dirExists(path):
@@ -518,19 +518,19 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     return 1
   
   # Copy runtime.c
-  let runtimeSrc = stdlibDir / "runtime.c"
+  let runtimeSrc = stdlibDir / "runtime" / "runtime.c"
   if fileExists(runtimeSrc):
     copyFile(runtimeSrc, runtimeDst)
   else:
-    printError("runtime.c not found in stdlib", useColor)
+    printError("runtime.c not found in library/runtime/", useColor)
     return 1
   
   # Copy io.c
-  let ioSrc = stdlibDir / "io.c"
+  let ioSrc = stdlibDir / "runtime" / "io.c"
   if fileExists(ioSrc):
     copyFile(ioSrc, ioDst)
   else:
-    printError("io.c not found in stdlib", useColor)
+    printError("io.c not found in library/runtime/", useColor)
     return 1
 
   # Compile with cc

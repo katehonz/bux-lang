@@ -31,7 +31,7 @@ func DirExists(path: String) -> bool {
 }
 
 // Import the compiler pipeline
-// In self-hosting mode, these are compiled together from src_bux/
+// In self-hosting mode, these are compiled together from compiler/selfhost/
 
 // ---------------------------------------------------------------------------
 // Compile a single .bux source file
@@ -140,19 +140,19 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
     PrintLine(cFile);
 
     // Find runtime.c and io.c for linking
-    var rtPath: String = "stdlib/runtime.c";
-    var ioPath: String = "stdlib/io.c";
+    var rtPath: String = "library/runtime/runtime.c";
+    var ioPath: String = "library/runtime/io.c";
     if !FileExists(rtPath) {
-        rtPath = "../stdlib/runtime.c";
+        rtPath = "../library/runtime/runtime.c";
     }
     if !FileExists(ioPath) {
-        ioPath = "../stdlib/io.c";
+        ioPath = "../library/runtime/io.c";
     }
     if !FileExists(rtPath) {
-        rtPath = "/home/ziko/z-git/bux/bux/stdlib/runtime.c";
+        rtPath = "/home/ziko/z-git/bux/bux/library/runtime/runtime.c";
     }
     if !FileExists(ioPath) {
-        ioPath = "/home/ziko/z-git/bux/bux/stdlib/io.c";
+        ioPath = "/home/ziko/z-git/bux/bux/library/runtime/io.c";
     }
 
     // Compile with cc
@@ -633,16 +633,16 @@ func Cli_BuildProject(projectDir: String) -> int {
     var rtPath: String = bux_path_join(stdlibDir, "runtime.c");
     var ioPath: String = bux_path_join(stdlibDir, "io.c");
     if !FileExists(rtPath) {
-        rtPath = bux_path_join(projectDir, "stdlib/runtime.c");
+        rtPath = bux_path_join(projectDir, "library/runtime/runtime.c");
     }
     if !FileExists(ioPath) {
-        ioPath = bux_path_join(projectDir, "stdlib/io.c");
+        ioPath = bux_path_join(projectDir, "library/runtime/io.c");
     }
     if !FileExists(rtPath) {
-        rtPath = bux_path_join(projectDir, "../stdlib/runtime.c");
+        rtPath = bux_path_join(projectDir, "../library/runtime/runtime.c");
     }
     if !FileExists(ioPath) {
-        ioPath = bux_path_join(projectDir, "../stdlib/io.c");
+        ioPath = bux_path_join(projectDir, "../library/runtime/io.c");
     }
 
     // Compile with cc

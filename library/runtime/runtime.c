@@ -1061,3 +1061,97 @@ void* bux_async_result(void* handle) {
     bux_async_task_t* task = (bux_async_task_t*)handle;
     return task->result;
 }
+
+/* ============================================================================
+ * OS primitives
+ * ============================================================================ */
+
+#include <unistd.h>
+
+const char* bux_getenv(const char* name) {
+    if (!name) return "";
+    const char* val = getenv(name);
+    return val ? val : "";
+}
+
+int bux_setenv(const char* name, const char* value) {
+    if (!name || !value) return -1;
+    return setenv(name, value, 1);
+}
+
+const char* bux_getcwd(void) {
+    static char buf[4096];
+    if (getcwd(buf, sizeof(buf))) {
+        return buf;
+    }
+    return "";
+}
+
+int bux_chdir(const char* path) {
+    if (!path) return -1;
+    return chdir(path);
+}
+
+/* ============================================================================
+ * Time primitives
+ * ============================================================================ */
+
+int64_t bux_time_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    }
+    return 0;
+}
+
+int64_t bux_time_us(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+    }
+    return 0;
+}
+
+void bux_sleep_ms(int64_t ms) {
+    if (ms <= 0) return;
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (ms % 1000) * 1000000;
+    nanosleep(&ts, NULL);
+}
+
+/* ============================================================================
+ * Process primitives
+ * ============================================================================ */
+
+#include <stdio.h>
+
+int bux_process_run(const char* cmd) {
+    if (!cmd) return -1;
+    return system(cmd);
+}
+
+char* bux_process_output(const char* cmd) {
+    if (!cmd) return NULL;
+    FILE* pipe = popen(cmd, "r");
+    if (!pipe) return NULL;
+    
+    size_t cap = 1024;
+    size_t len = 0;
+    char* buf = (char*)malloc(cap);
+    if (!buf) { pclose(pipe); return NULL; }
+    
+    int c;
+    while ((c = fgetc(pipe)) != EOF) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char* new_buf = (char*)realloc(buf, cap);
+            if (!new_buf) { free(buf); pclose(pipe); return NULL; }
+            buf = new_buf;
+        }
+        buf[len++] = (char)c;
+    }
+    buf[len] = '\0';
+    pclose(pipe);
+    return buf;
+}

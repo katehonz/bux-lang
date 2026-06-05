@@ -1,0 +1,37 @@
+// Os & Time - System and time utilities
+import Std::Io::{PrintLine, PrintInt, PrintInt64};
+import Std::Os::{Os_ArgsCount, Os_Args, Os_GetEnv, Os_GetCwd};
+import Std::Time::{Time_NowMs, Time_SleepMs};
+
+func Main() -> int {
+    PrintLine("=== OS Demo ===");
+    Print("Current directory: ");
+    PrintLine(Os_GetCwd());
+    
+    Print("Command-line args: ");
+    PrintInt(Os_ArgsCount());
+    PrintLine("");
+    
+    Print("HOME env: ");
+    PrintLine(Os_GetEnv("HOME"));
+    
+    PrintLine("\n=== Time Demo ===");
+    let start: int64 = Time_NowMs();
+    Print("Start: ");
+    PrintInt64(start);
+    PrintLine(" ms");
+    
+    PrintLine("Sleeping 150ms...");
+    Time_SleepMs(150);
+    
+    let end: int64 = Time_NowMs();
+    Print("End: ");
+    PrintInt64(end);
+    PrintLine(" ms");
+    
+    Print("Elapsed: ");
+    PrintInt64(end - start);
+    PrintLine(" ms");
+    
+    return 0;
+}

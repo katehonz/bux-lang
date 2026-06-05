@@ -454,8 +454,59 @@ func Main() -> int {
 - `Std::Mem` — Memory wrappers ✅
 - `Std::Set` — Hash set ✅
 - `Std::Path` — Path manipulation ✅
-- `Std::Os` — `Args`, `Env`, `Exit`, `Cwd` ⏳
-- `Std::Process` — Spawn subprocess ⏳
+- `Std::Os` — `Args`, `Env`, `Cwd`, `Chdir` ✅
+- `Std::Time` — `NowMs`, `NowUs`, `SleepMs` ✅
+- `Std::Process` — `Run`, `Output` ✅
 - `Std::Fmt` — String formatting with interpolation ⏳
 - `Std::Iter` — Iterator trait and combinators ⏳
 - `Std::Task` / `Std::Channel` — Lightweight concurrency (pthread-based threads) ✅
+---
+
+## Std::Os
+
+Operating system interface.
+
+```bux
+import Std::Os::{Os_ArgsCount, Os_Args, Os_GetEnv, Os_SetEnv, Os_GetCwd, Os_Chdir};
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Os_ArgsCount` | `func Os_ArgsCount() -> int` | Number of command-line arguments |
+| `Os_Args` | `func Os_Args(index: int) -> String` | Get argument at index |
+| `Os_GetEnv` | `func Os_GetEnv(name: String) -> String` | Get environment variable |
+| `Os_SetEnv` | `func Os_SetEnv(name: String, value: String) -> bool` | Set environment variable |
+| `Os_GetCwd` | `func Os_GetCwd() -> String` | Get current working directory |
+| `Os_Chdir` | `func Os_Chdir(path: String) -> bool` | Change directory |
+
+---
+
+## Std::Time
+
+Time utilities.
+
+```bux
+import Std::Time::{Time_NowMs, Time_NowUs, Time_SleepMs};
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Time_NowMs` | `func Time_NowMs() -> int64` | Current time in milliseconds |
+| `Time_NowUs` | `func Time_NowUs() -> int64` | Current time in microseconds |
+| `Time_SleepMs` | `func Time_SleepMs(ms: int64)` | Sleep for N milliseconds |
+
+---
+
+## Std::Process
+
+Process spawning.
+
+```bux
+import Std::Process::{Process_Run, Process_Output};
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Process_Run` | `func Process_Run(cmd: String) -> int` | Run command, return exit code |
+| `Process_Output` | `func Process_Output(cmd: String) -> String` | Run command, capture stdout |
+

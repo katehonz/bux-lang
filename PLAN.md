@@ -290,7 +290,7 @@ Phase 7.5 — Driver (depends on all):
 
 **Goal:** Bux compiler compiles itself. This is the **main milestone**.
 
-**All 14 modules ported** in `src_bux/` (4094 LOC total). Self-hosted project structure in `_selfhost/`.
+**All 14 modules ported** in `compiler/selfhost/` (4094 LOC total). Self-hosted project structure in `_selfhost/`.
 
 | Task | Status | Details | LOC |
 |------|--------|---------|-----|
@@ -355,8 +355,8 @@ Pipeline modules:
 
 **Bootstrap loop goal:**
 ```
-buxc (Nim) → compile src_bux/*.bux → buxc2 (Bux binary)
-buxc2 (Bux) → compile src_bux/*.bux → buxc3 (Bux binary)
+buxc (Nim) → compile compiler/selfhost/*.bux → buxc2 (Bux binary)
+buxc2 (Bux) → compile compiler/selfhost/*.bux → buxc3 (Bux binary)
 compare buxc2 == buxc3 → SELF-HOSTED ✅
 ```
 
@@ -556,7 +556,7 @@ bux/
 │   ├── Linker.bux            # Custom linker / build driver
 │   ├── Manifest.bux          # bux.toml parser
 │   └── Package.bux           # Package resolution
-├── stdlib/
+├── library/
 │   ├── Std/
 │   │   ├── Io.bux
 │   │   ├── Memory.bux

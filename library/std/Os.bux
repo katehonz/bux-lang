@@ -1,0 +1,34 @@
+module Std::Os {
+
+extern func bux_argc() -> int;
+extern func bux_argv(index: int) -> String;
+extern func bux_getenv(name: String) -> String;
+extern func bux_setenv(name: String, value: String) -> int;
+extern func bux_getcwd() -> String;
+extern func bux_chdir(path: String) -> int;
+
+func Os_ArgsCount() -> int {
+    return bux_argc();
+}
+
+func Os_Args(index: int) -> String {
+    return bux_argv(index);
+}
+
+func Os_GetEnv(name: String) -> String {
+    return bux_getenv(name);
+}
+
+func Os_SetEnv(name: String, value: String) -> bool {
+    return bux_setenv(name, value) == 0;
+}
+
+func Os_GetCwd() -> String {
+    return bux_getcwd();
+}
+
+func Os_Chdir(path: String) -> bool {
+    return bux_chdir(path) == 0;
+}
+
+}

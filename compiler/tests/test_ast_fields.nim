@@ -1,4 +1,4 @@
-import "../src/lexer", "../src/parser", "../src/ast"
+import "../bootstrap/lexer", "../bootstrap/parser", "../bootstrap/ast"
 
 let source = readFile("../_selfhost/src/ast.bux")
 let lexRes = tokenize(source, "ast.bux")

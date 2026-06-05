@@ -43,6 +43,7 @@ type
     # Borrow checker state
     checkedFunc*: bool  ## true inside @[Checked] function
     currentFuncIsAsync*: bool  ## true inside async func
+    movedVars*: seq[string]  ## variables moved in current checked function
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -727,6 +728,9 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     of tkNull: return makePointer(makeUnknown())
     else: return makeUnknown()
   of ekIdent:
+    if sema.checkedFunc and expr.exprIdent in sema.movedVars:
+      sema.emitError(expr.loc, &"use of moved value '{expr.exprIdent}'")
+      return makeUnknown()
     let sym = scope.lookup(expr.exprIdent)
     if sym == nil:
       sema.emitError(expr.loc, &"undeclared identifier '{expr.exprIdent}'")
@@ -931,6 +935,19 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     # Regular function call
     let calleeType = sema.checkExpr(expr.exprCallCallee, scope)
     var argTypes = sema.checkExprList(expr.exprCallArgs, scope)
+    # Look up callee declaration early (needed for borrow checking)
+    var calleeDecl: Decl = nil
+    case expr.exprCallCallee.kind
+    of ekIdent:
+      let sym = scope.lookup(expr.exprCallCallee.exprIdent)
+      if sym != nil: calleeDecl = sym.decl
+    of ekPath:
+      let fullName = expr.exprCallCallee.exprPath.join("::")
+      let sym = scope.lookup(fullName)
+      if sym != nil: calleeDecl = sym.decl
+    else: discard
+    if calleeDecl != nil and calleeDecl.kind == dkFunc and calleeDecl.declFuncTypeParams.len > 0:
+      discard  # will be handled later
     if calleeType.kind == tkFunc:
       let expectedParams = calleeType.inner[0..^2]
       if argTypes.len != expectedParams.len:
@@ -940,17 +957,29 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
           if not argTypes[i].isAssignableTo(expectedParams[i]) and not (argTypes[i].kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
             sema.emitError(expr.loc, &"argument {i+1}: expected {expectedParams[i].toString}, got {argTypes[i].toString}")
 
+        # Borrow check: reject double mutable borrow (alias analysis)
+        if sema.checkedFunc:
+          var mutRefArgs: seq[tuple[idx: int, name: string]] = @[]
+          for i in 0 ..< argTypes.len:
+            if expectedParams[i].isMutRef and i < expr.exprCallArgs.len:
+              let arg = expr.exprCallArgs[i]
+              if arg.kind == ekUnary and arg.exprUnaryOp == tkAmp and arg.exprUnaryOperand.kind == ekIdent:
+                mutRefArgs.add((idx: i, name: arg.exprUnaryOperand.exprIdent))
+          for i in 0 ..< mutRefArgs.len:
+            for j in i+1 ..< mutRefArgs.len:
+              if mutRefArgs[i].name == mutRefArgs[j].name:
+                sema.emitError(expr.loc, &"mutable borrow conflict: arguments {mutRefArgs[i].idx+1} and {mutRefArgs[j].idx+1} both borrow '&mut {mutRefArgs[i].name}'")
+
+          # Borrow check: track moved variables (own T)
+          if calleeDecl != nil and calleeDecl.kind == dkFunc:
+            for i in 0 ..< argTypes.len:
+              if i < calleeDecl.declFuncParams.len and i < expr.exprCallArgs.len:
+                if calleeDecl.declFuncParams[i].ptype.kind == tekOwn:
+                  let arg = expr.exprCallArgs[i]
+                  if arg.kind == ekIdent:
+                    sema.movedVars.add(arg.exprIdent)
+
       # Check for inferred generic function call (no explicit type args)
-      var calleeDecl: Decl = nil
-      case expr.exprCallCallee.kind
-      of ekIdent:
-        let sym = scope.lookup(expr.exprCallCallee.exprIdent)
-        if sym != nil: calleeDecl = sym.decl
-      of ekPath:
-        let fullName = expr.exprCallCallee.exprPath.join("::")
-        let sym = scope.lookup(fullName)
-        if sym != nil: calleeDecl = sym.decl
-      else: discard
 
       if calleeDecl != nil and calleeDecl.kind == dkFunc and
          calleeDecl.declFuncTypeParams.len > 0 and
@@ -1281,6 +1310,8 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   let wasAsync = sema.currentFuncIsAsync
   sema.checkedFunc = "Checked" in decl.declAttrs
   sema.currentFuncIsAsync = decl.declFuncIsAsync
+  if sema.checkedFunc:
+    sema.movedVars = @[]
   var funcScope = newScope(sema.globalScope)
   # Add type parameters to type table for resolution
   var addedTypeParams: seq[string] = @[]

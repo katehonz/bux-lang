@@ -149,7 +149,7 @@ func Main() -> int {
 | **Methods** | `extend` blocks for struct methods |
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
-| **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel` |
+| **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel`, `Os`, `Time`, `Process` |
 | **Backend** | C transpiler (self-hosting + bootstrap) |
 | **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
 | **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
@@ -166,18 +166,22 @@ func Main() -> int {
 
 ```
 bux/
-├── src/              # Bootstrap compiler (Nim)
-├── src_bux/          # Self-hosting compiler source (Bux)
-├── _selfhost/        # Self-hosting build artifacts
-├── stdlib/           # Standard library (.bux + .c runtime)
-│   └── Std/
-│       ├── Io.bux, String.bux, Array.bux, Map.bux
-│       ├── Fs.bux, Mem.bux, Set.bux
-│       ├── Path.bux, Math.bux
-│       └── Task.bux, Channel.bux
+├── compiler/         # Compiler source code
+│   ├── bootstrap/    # Bootstrap compiler (Nim)
+│   ├── selfhost/     # Self-hosting compiler source (Bux)
+│   └── tests/        # Compiler unit tests (Nim)
+├── library/          # Standard library
+│   ├── std/          # Standard library modules (.bux)
+│   │   ├── Io.bux, String.bux, Array.bux, Map.bux
+│   │   ├── Fs.bux, Mem.bux, Set.bux
+│   │   ├── Path.bux, Math.bux
+│   │   └── Task.bux, Channel.bux
+│   └── runtime/      # C runtime files (runtime.c, io.c)
+├── tests/            # Language integration tests
 ├── examples/         # Example programs
-├── tests/            # Unit tests (Nim)
+├── tools/            # Additional tooling
 ├── docs/             # Documentation
+├── buxs/             # Windows-compatible project root
 ├── README.md
 ├── PLAN.md           # Roadmap to self-hosting
 └── Makefile
@@ -203,6 +207,8 @@ make test-examples
 # Clean build artifacts
 make clean
 ```
+
+> **Windows users:** Use the `buxs/` directory as your project root to avoid path conflicts.
 
 ---
 

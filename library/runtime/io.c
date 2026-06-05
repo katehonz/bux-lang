@@ -25,6 +25,11 @@ void PrintInt(int n) {
     printf("%d", n);
 }
 
+/* PrintInt64 - print 64-bit integer */
+void PrintInt64(int64_t n) {
+    printf("%lld", (long long)n);
+}
+
 /* PrintFloat - print float */
 void PrintFloat(double f) {
     printf("%g", f);

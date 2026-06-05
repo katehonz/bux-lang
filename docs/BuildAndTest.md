@@ -34,7 +34,7 @@ make dev
 
 The output is a single binary: `buxc` (bootstrap compiler in Nim).
 
-The self-hosted compiler `buxc2` is built from `src_bux/*.bux` sources via:
+The self-hosted compiler `buxc2` is built from `compiler/selfhost/*.bux` sources via:
 ```bash
 make selfhost
 ```
@@ -140,7 +140,7 @@ bux/
 │   ├── hir_lower.nim # AST → HIR lowering
 │   ├── c_backend.nim # HIR → C code generation
 │   └── ...
-├── stdlib/           # Standard library
+├── library/           # Standard library
 │   ├── Std/
 │   │   ├── Io.bux
 │   │   ├── Array.bux
@@ -186,7 +186,7 @@ cat build/main.c
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `stdlib directory not found` | `buxc` can't find `stdlib/` | Run from project root or set correct path |
+| `stdlib directory not found` | `buxc` can't find `library/` | Run from project root or set correct path |
 | `duplicate symbol 'bux_alloc'` | Multiple stdlib modules declare same extern | Only declare in one module |
 | `C compilation failed` | Generated C has errors | Check `build/main.c` for issues |
 

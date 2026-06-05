@@ -1,0 +1,18 @@
+// Process - Run external commands and capture output
+import Std::Io::{PrintLine, PrintInt};
+import Std::Process::{Process_Run, Process_Output};
+
+func Main() -> int {
+    PrintLine("Process demo:");
+    
+    let output: String = Process_Output("echo Hello from subprocess");
+    Print("Captured: ");
+    PrintLine(output);
+    
+    let rc: int = Process_Run("true");
+    Print("Exit code: ");
+    PrintInt(rc);
+    PrintLine("");
+    
+    return 0;
+}

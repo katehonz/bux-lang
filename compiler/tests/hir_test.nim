@@ -1,5 +1,5 @@
 import std/[unittest, strformat]
-import ../src/[lexer, parser, sema, hir, hir_lower, types, scope]
+import ../bootstrap/[lexer, parser, sema, hir, hir_lower, types, scope]
 
 proc lowerSource(source: string): HirModule =
   let lexRes = tokenize(source, "<test>")
