@@ -1,0 +1,9 @@
+// Testing with Std::Test
+// Place test files in tests/ directory and run: bux test
+import Std::Test::*;
+import Std::Io::PrintLine;
+
+func Main() -> int {
+    PrintLine("Run 'bux test' to execute tests in tests/ directory");
+    return 0;
+}
