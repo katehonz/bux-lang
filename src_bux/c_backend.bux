@@ -441,6 +441,47 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers for detecting generic declarations (not yet monomorphized)
+// ---------------------------------------------------------------------------
+
+func CBE_IsGenericTypeName(name: String) -> bool {
+    if String_Eq(name, "T") || String_Eq(name, "K") || String_Eq(name, "V") { return true; }
+    if String_Eq(name, "T*") || String_Eq(name, "K*") || String_Eq(name, "V*") { return true; }
+    // Generic container structs and their pointer variants
+    if String_Eq(name, "Array") || String_Eq(name, "Array*") { return true; }
+    if String_Eq(name, "SetEntry") || String_Eq(name, "SetEntry*") { return true; }
+    if String_Eq(name, "StringMapEntry") || String_Eq(name, "StringMapEntry*") { return true; }
+    if String_Eq(name, "MapEntry") || String_Eq(name, "MapEntry*") { return true; }
+    return false;
+}
+
+func CBE_StructHasGeneric(st: *HirStruct) -> bool {
+    var fi: int = 0;
+    while fi < st.fieldCount {
+        if CBE_IsGenericTypeName(st.fields[fi].typeName) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+func CBE_FuncHasGeneric(f: *HirFunc) -> bool {
+    var pi: int = 0;
+    while pi < f.paramCount {
+        var ptype: String = "";
+        if pi == 0 { ptype = f.param0.typeName; }
+        if pi == 1 { ptype = f.param1.typeName; }
+        if pi == 2 { ptype = f.param2.typeName; }
+        if pi == 3 { ptype = f.param3.typeName; }
+        if pi == 4 { ptype = f.param4.typeName; }
+        if pi == 5 { ptype = f.param5.typeName; }
+        if CBE_IsGenericTypeName(ptype) { return true; }
+        pi = pi + 1;
+    }
+    if CBE_IsGenericTypeName(f.retTypeName) { return true; }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // Generate complete C module
 // ---------------------------------------------------------------------------
 
@@ -466,27 +507,62 @@ func CBackend_Generate(mod: *HirModule) -> String {
     StringBuilder_Append(&cbe.sb, "typedef short int16;\n");
     StringBuilder_Append(&cbe.sb, "typedef long long int64;\n");
     StringBuilder_Append(&cbe.sb, "typedef float float32;\n");
-    StringBuilder_Append(&cbe.sb, "typedef double float64;\n\n");
+    StringBuilder_Append(&cbe.sb, "typedef double float64;\n");
+    StringBuilder_Append(&cbe.sb, "typedef char char8;\n\n");
     // Runtime declarations
     StringBuilder_Append(&cbe.sb, "void* bux_alloc(unsigned int size);\n");
     StringBuilder_Append(&cbe.sb, "void bux_free(void* ptr);\n\n");
 
-    // Forward declare all struct types
+    // Forward declare all struct types (skip generics)
     var si: int = 0;
     while si < mod.structCount {
-        StringBuilder_Append(&cbe.sb, "typedef struct ");
-        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-        StringBuilder_Append(&cbe.sb, " ");
-        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-        StringBuilder_Append(&cbe.sb, ";\n");
+        if !CBE_StructHasGeneric(&mod.structs[si]) {
+            StringBuilder_Append(&cbe.sb, "typedef struct ");
+            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+            StringBuilder_Append(&cbe.sb, ";\n");
+        }
         si = si + 1;
     }
     StringBuilder_Append(&cbe.sb, "\n");
 
-    // Struct definitions
+    // Enum definitions (typedef to int)
+    var ei: int = 0;
+    while ei < mod.enumCount {
+        StringBuilder_Append(&cbe.sb, "typedef int ");
+        StringBuilder_Append(&cbe.sb, mod.enums[ei].name);
+        StringBuilder_Append(&cbe.sb, ";\n");
+        ei = ei + 1;
+    }
+    if mod.enumCount > 0 {
+        StringBuilder_Append(&cbe.sb, "\n");
+    }
+
+    // Constant definitions
+    var ci: int = 0;
+    while ci < mod.constCount {
+        StringBuilder_Append(&cbe.sb, "#define ");
+        StringBuilder_Append(&cbe.sb, mod.consts[ci].name);
+        StringBuilder_Append(&cbe.sb, " ");
+        StringBuilder_Append(&cbe.sb, String_FromInt(mod.consts[ci].value as int64));
+        StringBuilder_Append(&cbe.sb, "\n");
+        ci = ci + 1;
+    }
+    if mod.constCount > 0 {
+        StringBuilder_Append(&cbe.sb, "\n");
+    }
+
+    // Struct definitions (skip generics)
     si = 0;
     while si < mod.structCount {
-        StringBuilder_Append(&cbe.sb, "typedef struct {\n");
+        if CBE_StructHasGeneric(&mod.structs[si]) {
+            si = si + 1;
+            continue;
+        }
+        StringBuilder_Append(&cbe.sb, "struct ");
+        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+        StringBuilder_Append(&cbe.sb, " {\n");
         var fi: int = 0;
         while fi < mod.structs[si].fieldCount {
             StringBuilder_Append(&cbe.sb, "    ");
@@ -508,17 +584,17 @@ func CBackend_Generate(mod: *HirModule) -> String {
             StringBuilder_Append(&cbe.sb, ";\n");
             fi = fi + 1;
         }
-        StringBuilder_Append(&cbe.sb, "} ");
-        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-        StringBuilder_Append(&cbe.sb, ";\n\n");
+        StringBuilder_Append(&cbe.sb, "};\n\n");
         si = si + 1;
     }
 
-    // Forward declarations for all functions
+    // Forward declarations for all functions (skip generics)
     var i: int = 0;
     while i < mod.funcCount {
-        CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
-        StringBuilder_Append(&cbe.sb, ";\n");
+        if !CBE_FuncHasGeneric(&mod.funcs[i]) {
+            CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
+            StringBuilder_Append(&cbe.sb, ";\n");
+        }
         i = i + 1;
     }
     StringBuilder_Append(&cbe.sb, "\n");
@@ -532,11 +608,16 @@ func CBackend_Generate(mod: *HirModule) -> String {
     }
     StringBuilder_Append(&cbe.sb, "\n");
 
-    // Function definitions
+    // Function definitions (skip generics)
     var hasMain: bool = false;
     i = 0;
     while i < mod.funcCount {
         if String_Eq(mod.funcs[i].name, "Main") { hasMain = true; }
+        // Skip generic functions
+        if CBE_FuncHasGeneric(&mod.funcs[i]) {
+            i = i + 1;
+            continue;
+        }
         // Skip forward declarations (functions without body)
         let body: *HirNode = mod.funcs[i].body;
         if body == null as *HirNode {

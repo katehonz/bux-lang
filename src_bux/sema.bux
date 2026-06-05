@@ -96,7 +96,10 @@ func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
 
 func Sema_IsNumeric(kind: int) -> bool {
     if kind == tyUnknown || kind == tyNamed || kind == tyTypeParam { return true; }
-    return kind >= tyInt8 && kind <= tyUInt64;
+    if kind == tyInt8 || kind == tyInt16 || kind == tyInt32 || kind == tyInt64 || kind == tyInt { return true; }
+    if kind == tyUInt8 || kind == tyUInt16 || kind == tyUInt32 || kind == tyUInt64 || kind == tyUInt { return true; }
+    if kind == tyFloat32 || kind == tyFloat64 { return true; }
+    return false;
 }
 
 func Sema_IsBool(kind: int) -> bool {
@@ -328,9 +331,12 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
             let retType: int = Sema_CheckExpr(sema, stmt.child1);
             if sema.currentRetType != tyUnknown && retType != tyUnknown {
                 if retType != sema.currentRetType {
-                    // Be permissive: allow numeric widening, pointer/named mismatch
+                    // Be permissive: allow numeric widening, pointer compatibility
                     if !Sema_IsNumeric(retType) || !Sema_IsNumeric(sema.currentRetType) {
-                        if retType != sema.currentRetType {
+                        // Allow pointer-type compatibility (String <-> *T, *T <-> *U)
+                        let retIsPtr: bool = retType == tyPointer || retType == tyStr;
+                        let expectedIsPtr: bool = sema.currentRetType == tyPointer || sema.currentRetType == tyStr;
+                        if !retIsPtr || !expectedIsPtr {
                             Sema_EmitError(sema, stmt.line, stmt.column, "return type mismatch");
                         }
                     }

@@ -1,5 +1,5 @@
 // cli.bux — CLI driver for the Bux self-hosting compiler
-// Wires together: Lexer → Parser → Sema → HirLower → NimBackend
+// Wires together: Lexer → Parser → Sema → HirLower → CBackend
 module Cli {
 
 extern func PrintLine(s: String);
@@ -97,14 +97,14 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     Print("HIR funcCount=");
     PrintInt(hirMod.funcCount);
 
-    // Phase 5: QBE SSA code generation
-    let qbeCode: String = QbeBackend_Generate(hirMod);
+    // Phase 5: C code generation
+    let cCode: String = CBackend_Generate(hirMod);
 
     // Cleanup
     Lexer_Free(lex);
     Sema_Free(sema);
 
-    return qbeCode;
+    return cCode;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,23 +122,64 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
     Print("Compiling ");
     PrintLine(srcPath);
 
-    let ssaCode: String = Cli_Compile(source, srcPath);
+    let cCode: String = Cli_Compile(source, srcPath);
 
-    if String_Eq(ssaCode, "") {
+    if String_Eq(cCode, "") {
         PrintLine("Compilation failed");
         return 1;
     }
 
-    // Write SSA output
-    let ok: bool = WriteFile(outPath, ssaCode);
-    if ok {
-        Print("  → SSA written to ");
-        PrintLine(outPath);
-        return 0;
-    } else {
+    // Write C output
+    let cFile: String = String_Concat(outPath, ".c");
+    let ok: bool = WriteFile(cFile, cCode);
+    if !ok {
         PrintLine("Error: cannot write output file");
         return 1;
     }
+    Print("  → C written to ");
+    PrintLine(cFile);
+
+    // Find runtime.c and io.c for linking
+    var rtPath: String = "stdlib/runtime.c";
+    var ioPath: String = "stdlib/io.c";
+    if !FileExists(rtPath) {
+        rtPath = "../stdlib/runtime.c";
+    }
+    if !FileExists(ioPath) {
+        ioPath = "../stdlib/io.c";
+    }
+    if !FileExists(rtPath) {
+        rtPath = "/home/ziko/z-git/bux/bux/stdlib/runtime.c";
+    }
+    if !FileExists(ioPath) {
+        ioPath = "/home/ziko/z-git/bux/bux/stdlib/io.c";
+    }
+
+    // Compile with cc
+    PrintLine("Compiling C...");
+    var cmdBuf: StringBuilder = StringBuilder_NewCap(512);
+    StringBuilder_Append(&cmdBuf, "cc -O2 -pthread -o ");
+    StringBuilder_Append(&cmdBuf, outPath);
+    StringBuilder_Append(&cmdBuf, " ");
+    StringBuilder_Append(&cmdBuf, cFile);
+    StringBuilder_Append(&cmdBuf, " ");
+    if FileExists(rtPath) {
+        StringBuilder_Append(&cmdBuf, rtPath);
+        StringBuilder_Append(&cmdBuf, " ");
+    }
+    if FileExists(ioPath) {
+        StringBuilder_Append(&cmdBuf, ioPath);
+        StringBuilder_Append(&cmdBuf, " ");
+    }
+    StringBuilder_Append(&cmdBuf, "-lm");
+    let ccRc: int = bux_system(StringBuilder_Build(&cmdBuf));
+    if ccRc != 0 {
+        PrintLine("Error: C compilation failed");
+        return 1;
+    }
+    Print("  → Binary: ");
+    PrintLine(outPath);
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +344,55 @@ func Cli_CollectNames(mod: *Module, names: *String, maxCount: int) -> int {
             }
         }
         decl = next;
+    }
+    return count;
+}
+
+// Helper: convert single char int to String
+func String_FromChar(c: int) -> String {
+    var buf: *char8 = bux_alloc(2) as *char8;
+    buf[0] = c as char8;
+    buf[1] = 0 as char8;
+    return buf as String;
+}
+
+// Collect stdlib module paths imported by user code.
+// Returns number of unique stdlib files to merge (paths written into outPaths).
+func Cli_CollectStdlibImports(mod: *Module, outPaths: *String, maxCount: int, stdlibDir: String) -> int {
+    if mod == null as *Module { return 0; }
+    var count: int = 0;
+    var decl: *Decl = mod.firstItem;
+    while decl != null as *Decl && count < maxCount {
+        if decl.kind == dkUse {
+            let path: String = decl.usePath;
+            // Only handle Std::* imports
+            if String_StartsWith(path, "Std::") {
+                // Extract module name after Std:: (e.g., "Std::Io" -> "Io")
+                var j: int = 5; // skip "Std::"
+                var modName: String = "";
+                while j < 100 {
+                    let c: int = path[j] as int;
+                    if c == 0 || c == 58 { break; } // null or ':'
+                    modName = String_Concat(modName, String_FromChar(c));
+                    j = j + 1;
+                }
+                if !String_Eq(modName, "") {
+                    let filePath: String = bux_path_join(bux_path_join(stdlibDir, "Std"), String_Concat(modName, ".bux"));
+                    // Check for duplicates
+                    var dup: bool = false;
+                    var di: int = 0;
+                    while di < count {
+                        if String_Eq(outPaths[di], filePath) { dup = true; }
+                        di = di + 1;
+                    }
+                    if !dup {
+                        outPaths[count] = filePath;
+                        count = count + 1;
+                    }
+                }
+            }
+        }
+        decl = decl.childDecl2;
     }
     return count;
 }
@@ -473,39 +563,30 @@ func Cli_BuildProject(projectDir: String) -> int {
     merged.itemCount = 0;
     merged.firstItem = null as *Decl;
 
-    // Find and merge stdlib declarations
+    // Find and merge stdlib declarations (only imported modules)
     let stdlibDir: String = Cli_FindStdlibDir(projectDir);
     if !String_Eq(stdlibDir, "") {
         Print("Stdlib found: ");
         PrintLine(stdlibDir);
-        let stdSubdir: String = bux_path_join(stdlibDir, "Std");
-        if DirExists(stdSubdir) {
-            var stdFileCount: int = 0;
-            let stdFiles: *String = bux_list_dir(stdSubdir, ".bux", &stdFileCount);
-            Print("DEBUG: stdFileCount=");
-            PrintInt(stdFileCount);
-            if stdFileCount > 0 {
-                Print("Merging ");
-                PrintInt(stdFileCount);
-                PrintLine(" stdlib files");
-                var si: int = 0;
-                var stdAdded: int = 0;
-                while si < stdFileCount {
-                    Print("DEBUG: merging stdlib file ");
-                    PrintInt(si);
-                    // Skip Channel.bux for debugging
-                    if String_Eq(stdFiles[si], "./../stdlib/Std/Channel.bux") {
-                        PrintLine("DEBUG: skipping Channel.bux");
-                        si = si + 1;
-                        continue;
-                    }
-                    let added: int = Cli_MergeFileInto(merged, stdFiles[si], userNames, userNameCount);
-                    stdAdded = stdAdded + added;
-                    si = si + 1;
-                }
-                Print("Stdlib declarations added: ");
-                PrintInt(stdAdded);
+        // Collect imported stdlib modules from user code
+        let maxImports: int = 64;
+        let importPaths: *String = bux_alloc(maxImports * 8) as *String;
+        let importCount: int = Cli_CollectStdlibImports(userMerged, importPaths, maxImports, stdlibDir);
+        Print("Imported stdlib modules: ");
+        PrintInt(importCount);
+        PrintLine("");
+        if importCount > 0 {
+            var si: int = 0;
+            var stdAdded: int = 0;
+            while si < importCount {
+                Print("  Merging ");
+                PrintLine(importPaths[si]);
+                let added: int = Cli_MergeFileInto(merged, importPaths[si], userNames, userNameCount);
+                stdAdded = stdAdded + added;
+                si = si + 1;
             }
+            Print("Stdlib declarations added: ");
+            PrintInt(stdAdded);
         }
     }
 
@@ -554,6 +635,14 @@ func Cli_BuildProject(projectDir: String) -> int {
     let sema: *Sema = Sema_Analyze(merged);
     if Sema_HasError(sema) {
         PrintLine("Sema errors found");
+        var i: int = 0;
+        while i < Sema_DiagCount(sema) {
+            Print("  line ");
+            PrintInt(sema.diags[i].line as int64);
+            Print(": ");
+            PrintLine(sema.diags[i].message);
+            i = i + 1;
+        }
         return 1;
     }
 
@@ -569,85 +658,60 @@ func Cli_BuildProject(projectDir: String) -> int {
     }
     let hirMod: *HirModule = HirLower_LowerModule(merged, sema);
 
-    // QBE SSA code generation
-    PrintLine("Generating QBE SSA...");
-    var fi: int = 0;
-    while fi < hirMod.funcCount {
-        Print("func ");
-        PrintLine(hirMod.funcs[fi].name);
-        fi = fi + 1;
-    }
-    let qbeCode: String = QbeBackend_Generate(hirMod);
+    // C code generation
+    PrintLine("Generating C code...");
+    let cCode: String = CBackend_Generate(hirMod);
 
     // Create build directory
     let buildDir: String = bux_path_join(projectDir, "build");
     discard bux_mkdir_if_needed(buildDir);
 
-    // Write SSA output
-    let ssaFile: String = bux_path_join(buildDir, "main.ssa");
-    if !WriteFile(ssaFile, qbeCode) {
-        PrintLine("Error: cannot write main.ssa");
+    // Write C output
+    let cFile: String = bux_path_join(buildDir, "main.c");
+    if !WriteFile(cFile, cCode) {
+        PrintLine("Error: cannot write main.c");
         return 1;
     }
+    Print("C code written to ");
+    PrintLine(cFile);
 
-    Print("SSA written to ");
-    PrintLine(ssaFile);
-
-    // Invoke QBE to generate assembly
-    PrintLine("Invoking QBE...");
-    let asmFile: String = bux_path_join(buildDir, "main.s");
-    var qbeCmd: String = bux_path_join(projectDir, "vendor/qbe/qbe");
-    // Try relative to project first, then absolute
-    if !FileExists(qbeCmd) {
-        // Try from compiler location
-        qbeCmd = "../vendor/qbe/qbe";
+    // Find runtime.c and io.c (use stdlibDir if available)
+    var rtPath: String = bux_path_join(stdlibDir, "runtime.c");
+    var ioPath: String = bux_path_join(stdlibDir, "io.c");
+    if !FileExists(rtPath) {
+        rtPath = bux_path_join(projectDir, "stdlib/runtime.c");
     }
-    if !FileExists(qbeCmd) {
-        qbeCmd = "vendor/qbe/qbe";
+    if !FileExists(ioPath) {
+        ioPath = bux_path_join(projectDir, "stdlib/io.c");
     }
-    // Actually let's use bux_system with a constructed command
-    var cmdBuf: StringBuilder = StringBuilder_NewCap(256);
-    StringBuilder_Append(&cmdBuf, qbeCmd);
-    StringBuilder_Append(&cmdBuf, " -o ");
-    StringBuilder_Append(&cmdBuf, asmFile);
-    StringBuilder_Append(&cmdBuf, " ");
-    StringBuilder_Append(&cmdBuf, ssaFile);
-    let qbeRc: int = bux_system(StringBuilder_Build(&cmdBuf));
-    if qbeRc != 0 {
-        PrintLine("Error: QBE compilation failed");
-        return 1;
-    }
-
-    // Link with cc
-    PrintLine("Linking...");
-    var linkBuf: StringBuilder = StringBuilder_NewCap(512);
-    StringBuilder_Append(&linkBuf, "cc -o ");
-    let outBin: String = bux_path_join(buildDir, outName);
-    StringBuilder_Append(&linkBuf, outBin);
-    StringBuilder_Append(&linkBuf, " ");
-    StringBuilder_Append(&linkBuf, asmFile);
-    StringBuilder_Append(&linkBuf, " ");
-    // Find runtime.c and io.c
-    var rtPath: String = bux_path_join(projectDir, "stdlib/runtime.c");
-    var ioPath: String = bux_path_join(projectDir, "stdlib/io.c");
     if !FileExists(rtPath) {
         rtPath = bux_path_join(projectDir, "../stdlib/runtime.c");
     }
     if !FileExists(ioPath) {
         ioPath = bux_path_join(projectDir, "../stdlib/io.c");
     }
+
+    // Compile with cc
+    PrintLine("Compiling C...");
+    let outBin: String = bux_path_join(buildDir, outName);
+    var ccBuf: StringBuilder = StringBuilder_NewCap(512);
+    StringBuilder_Append(&ccBuf, "cc -O2 -pthread -o ");
+    StringBuilder_Append(&ccBuf, outBin);
+    StringBuilder_Append(&ccBuf, " ");
+    StringBuilder_Append(&ccBuf, cFile);
+    StringBuilder_Append(&ccBuf, " ");
     if FileExists(rtPath) {
-        StringBuilder_Append(&linkBuf, rtPath);
-        StringBuilder_Append(&linkBuf, " ");
+        StringBuilder_Append(&ccBuf, rtPath);
+        StringBuilder_Append(&ccBuf, " ");
     }
     if FileExists(ioPath) {
-        StringBuilder_Append(&linkBuf, ioPath);
-        StringBuilder_Append(&linkBuf, " ");
+        StringBuilder_Append(&ccBuf, ioPath);
+        StringBuilder_Append(&ccBuf, " ");
     }
-    StringBuilder_Append(&linkBuf, "-lm");
-    let linkRc: int = bux_system(StringBuilder_Build(&linkBuf));
-    if linkRc != 0 {
-        PrintLine("Error: Linking failed");
+    StringBuilder_Append(&ccBuf, "-lm");
+    let ccRc: int = bux_system(StringBuilder_Build(&ccBuf));
+    if ccRc != 0 {
+        PrintLine("Error: C compilation failed");
         return 1;
     }
 
@@ -693,7 +757,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
         PrintLine("  Parser     ✅ 1004 lines");
         PrintLine("  Sema       ✅  393 lines");
         PrintLine("  HirLower   ✅  307 lines");
-        PrintLine("  CBackend   ✅  264 lines");
+        PrintLine("  CBackend   ✅  585 lines");
         PrintLine("  Total: 3830 lines of Bux");
         return 0;
     }
@@ -716,7 +780,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
 
     if String_Eq(cmd, "build") {
         let src: String = "src/Main.bux";
-        let out: String = "build/main.nim";
+        let out: String = "build/main";
         if argCount >= 3 { src = args[2]; }
         if argCount >= 4 { out = args[3]; }
         return Cli_Build(src, out);

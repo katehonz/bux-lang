@@ -213,6 +213,16 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Field access
     if kind == ekField {
+        // Check if this is enum variant access: Color::Green
+        if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+            let sym: Symbol = Scope_Lookup(ctx.scope, expr.child1.strValue);
+            if sym.decl != null as *Decl && sym.decl.kind == dkEnum {
+                // Emit as variable reference: Color_Green
+                n.kind = hVar;
+                n.strValue = String_Concat(String_Concat(expr.child1.strValue, "_"), expr.strValue);
+                return n;
+            }
+        }
         n.kind = hFieldPtr;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         n.strValue = expr.strValue;
@@ -543,6 +553,8 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     hm.funcs = ctx.funcs;
     hm.structCount = 0;
     hm.structs = bux_alloc(64 as uint * sizeof(HirStruct)) as *HirStruct;
+    hm.enumCount = 0;
+    hm.enums = bux_alloc(64 as uint * sizeof(HirEnum)) as *HirEnum;
     hm.constCount = 0;
     hm.consts = bux_alloc(512 as uint * sizeof(HirConst)) as *HirConst;
 
@@ -628,7 +640,25 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             hm.constCount = hm.constCount + 1;
         }
         if decl.kind == dkEnum {
+            let ei: int = hm.enumCount;
+            hm.enums[ei].name = decl.strValue;
             hm.enumCount = hm.enumCount + 1;
+            // Emit enum variants as constants: EnumName_VariantName = value
+            var vi: int = 0;
+            while vi < decl.variantCount && hm.constCount < 512 {
+                var vname: String = "";
+                if vi == 0 { vname = decl.variant0.name; }
+                if vi == 1 { vname = decl.variant1.name; }
+                if vi == 2 { vname = decl.variant2.name; }
+                if vi == 3 { vname = decl.variant3.name; }
+                if !String_Eq(vname, "") {
+                    let ci: int = hm.constCount;
+                    hm.consts[ci].name = String_Concat(String_Concat(decl.strValue, "_"), vname);
+                    hm.consts[ci].value = vi;
+                    hm.constCount = hm.constCount + 1;
+                }
+                vi = vi + 1;
+            }
         }
         decl = decl.childDecl2;
     }

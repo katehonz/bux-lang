@@ -115,6 +115,10 @@ struct HirConst {
     value: int;
 }
 
+struct HirEnum {
+    name: String;
+}
+
 struct HirModule {
     funcCount: int;
     funcs: *HirFunc;
@@ -123,6 +127,7 @@ struct HirModule {
     structCount: int;
     structs: *HirStruct;
     enumCount: int;
+    enums: *HirEnum;
     constCount: int;
     consts: *HirConst;
 }
