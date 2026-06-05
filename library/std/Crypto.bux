@@ -1,0 +1,64 @@
+module Std::Crypto {
+extern func bux_sha256(data: String, len: int, out: *void);
+extern func bux_hmac_sha256(key: String, keylen: int, msg: String, msglen: int, out: *void);
+extern func bux_random_bytes(buf: *void, len: int) -> int;
+extern func bux_base64_encode(data: String, len: int) -> String;
+extern func bux_base64_decode(data: String, len: int, outlen: *int) -> String;
+extern func bux_bytes_to_hex(data: *void, len: int) -> String;
+
+/* SHA-256: returns lowercase hex string of the hash */
+func Crypto_Sha256(data: String) -> String {
+    let len: int = String_Len(data) as int;
+    let hashBuf: *void = Alloc(32);
+    bux_sha256(data, len, hashBuf);
+    let result: String = bux_bytes_to_hex(hashBuf as *void, 32);
+    Free(hashBuf);
+    return result;
+}
+
+/* HMAC-SHA256: returns lowercase hex string */
+func Crypto_HmacSha256(key: String, message: String) -> String {
+    let keylen: int = String_Len(key) as int;
+    let msglen: int = String_Len(message) as int;
+    let hmacBuf: *void = Alloc(32);
+    bux_hmac_sha256(key, keylen, message, msglen, hmacBuf);
+    let result: String = bux_bytes_to_hex(hmacBuf as *void, 32);
+    Free(hmacBuf);
+    return result;
+}
+
+/* Random bytes: returns a string of n random bytes */
+func Crypto_RandomBytes(n: int) -> String {
+    if n <= 0 { return ""; }
+    let buf: *void = Alloc(n as uint);
+    if bux_random_bytes(buf, n) != 1 {
+        Free(buf);
+        return "";
+    }
+    let result: String = bux_base64_encode(buf as String, n);
+    Free(buf);
+    return result;
+}
+
+/* Base64 encode */
+func Crypto_Base64Encode(s: String) -> String {
+    return bux_base64_encode(s, String_Len(s) as int);
+}
+
+/* HMAC-SHA256 raw: returns base64 of raw binary hmac */
+func Crypto_HmacSha256Raw(key: String, message: String) -> String {
+    let keylen: int = String_Len(key) as int;
+    let msglen: int = String_Len(message) as int;
+    let hmacBuf: *void = Alloc(32);
+    bux_hmac_sha256(key, keylen, message, msglen, hmacBuf);
+    let result: String = bux_base64_encode(hmacBuf as String, 32);
+    Free(hmacBuf);
+    return result;
+}
+
+/* Base64 decode */
+func Crypto_Base64Decode(s: String) -> String {
+    let outlen: int = 0;
+    return bux_base64_decode(s, String_Len(s) as int, &outlen);
+}
+}

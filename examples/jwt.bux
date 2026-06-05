@@ -1,0 +1,58 @@
+// JWT - Create a JSON Web Token
+import Std::Io::{PrintLine};
+import Std::Json;
+import Std::Crypto;
+import Std::String::{String_Replace, String_Concat, String_EndsWith, String_Slice, String_Len};
+
+func Base64UrlEncode(s: String) -> String {
+    let b64: String = Crypto_Base64Encode(s);
+    let r1: String = String_Replace(b64, "+", "-");
+    let r2: String = String_Replace(r1, "/", "_");
+    var result: String = r2;
+    while String_EndsWith(result, "=") {
+        result = String_Slice(result, 0, String_Len(result) - 1);
+    }
+    return result;
+}
+
+func Base64UrlEncodeSig(b64: String) -> String {
+    let r1: String = String_Replace(b64, "+", "-");
+    let r2: String = String_Replace(r1, "/", "_");
+    var result: String = r2;
+    while String_EndsWith(result, "=") {
+        result = String_Slice(result, 0, String_Len(result) - 1);
+    }
+    return result;
+}
+
+func Jwt_Create(payload: JsonValue, secret: String) -> String {
+    let header: JsonValue = Json_Object();
+    Json_ObjectSet(&header, "alg", Json_String("HS256"));
+    Json_ObjectSet(&header, "typ", Json_String("JWT"));
+    
+    let headerB64: String = Base64UrlEncode(Json_Stringify(header));
+    let payloadB64: String = Base64UrlEncode(Json_Stringify(payload));
+    
+    let signingInput: String = String_Concat(headerB64, ".");
+    signingInput = String_Concat(signingInput, payloadB64);
+    
+    let sigRaw: String = Crypto_HmacSha256Raw(secret, signingInput);
+    let sigB64: String = Base64UrlEncodeSig(sigRaw);
+    
+    return String_Concat(String_Concat(signingInput, "."), sigB64);
+}
+
+func Main() -> int {
+    PrintLine("=== JWT Demo ===");
+    
+    let payload: JsonValue = Json_Object();
+    Json_ObjectSet(&payload, "sub", Json_String("user123"));
+    Json_ObjectSet(&payload, "name", Json_String("Bux Developer"));
+    Json_ObjectSet(&payload, "admin", Json_Bool(true));
+    
+    let token: String = Jwt_Create(payload, "my-secret-key");
+    PrintLine("Token:");
+    PrintLine(token);
+    
+    return 0;
+}

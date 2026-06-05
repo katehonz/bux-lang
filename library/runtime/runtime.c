@@ -1248,3 +1248,59 @@ int bux_socket_close(int fd) {
 const char* bux_socket_error(void) {
     return strerror(errno);
 }
+
+
+/* ============================================================================
+ * Cryptography primitives (OpenSSL)
+ * ============================================================================ */
+
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
+
+void bux_sha256(const char* data, int len, unsigned char* out) {
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
+    EVP_DigestUpdate(ctx, data, (size_t)len);
+    EVP_DigestFinal_ex(ctx, out, NULL);
+    EVP_MD_CTX_free(ctx);
+}
+
+void bux_hmac_sha256(const char* key, int keylen, const char* msg, int msglen, unsigned char* out) {
+    unsigned int outlen = 32;
+    HMAC(EVP_sha256(), key, keylen, (const unsigned char*)msg, (size_t)msglen, out, &outlen);
+}
+
+int bux_random_bytes(unsigned char* buf, int len) {
+    return RAND_bytes(buf, len);
+}
+
+char* bux_base64_encode(const unsigned char* in, int inlen) {
+    int outlen = 4 * ((inlen + 2) / 3);
+    char* out = (char*)bux_alloc(outlen + 1);
+    int elen = EVP_EncodeBlock((unsigned char*)out, in, inlen);
+    out[elen] = '\0';
+    return out;
+}
+
+char* bux_base64_decode(const char* in, int inlen, int* outlen) {
+    int maxlen = 3 * inlen / 4;
+    char* out = (char*)bux_alloc(maxlen + 1);
+    *outlen = EVP_DecodeBlock((unsigned char*)out, (const unsigned char*)in, inlen);
+    if (*outlen < 0) {
+        *outlen = 0;
+        out[0] = '\0';
+    }
+    return out;
+}
+
+char* bux_bytes_to_hex(const unsigned char* data, int len) {
+    char* out = (char*)bux_alloc((size_t)len * 2 + 1);
+    const char* hex = "0123456789abcdef";
+    for (int i = 0; i < len; i++) {
+        out[i * 2] = hex[(data[i] >> 4) & 0x0F];
+        out[i * 2 + 1] = hex[data[i] & 0x0F];
+    }
+    out[len * 2] = '\0';
+    return out;
+}

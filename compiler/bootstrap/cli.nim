@@ -536,7 +536,7 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   # Compile with cc
   let outputName = if man.name != "": man.name else: "bux_out"
   let outputFile = buildDir / outputName
-  let ccCmd = &"cc -O2 -pthread -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm 2>&1"
+  let ccCmd = &"cc -O2 -pthread -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm -lcrypto 2>&1"
   if opts.verbose:
     printInfo(&"running: {ccCmd}", useColor)
   let (output, exitCode) = execCmdEx(ccCmd)

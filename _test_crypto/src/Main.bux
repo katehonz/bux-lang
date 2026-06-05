@@ -1,0 +1,18 @@
+import Std::Io::{PrintLine};
+import Std::Crypto;
+
+func Main() -> int {
+    PrintLine("SHA256:");
+    PrintLine(Crypto_Sha256("hello"));
+    
+    PrintLine("HMAC-SHA256:");
+    PrintLine(Crypto_HmacSha256("secret", "message"));
+    
+    PrintLine("Base64 encode:");
+    PrintLine(Crypto_Base64Encode("hello"));
+    
+    PrintLine("Random bytes (base64):");
+    PrintLine(Crypto_RandomBytes(16));
+    
+    return 0;
+}
