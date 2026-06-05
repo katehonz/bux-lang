@@ -260,6 +260,8 @@ proc scanString(lex: var Lexer, startLoc: SourceLocation, prefixLen: int): Token
   let startPos = lex.pos - prefixLen
   # prefixLen characters before the opening quote were already consumed by caller
   # but we need to handle the quote itself
+  # Collect resolved string content to properly handle escape sequences
+  var resolved = ""
   if lex.peek() == '"':
     discard lex.advance()
   while not lex.isAtEnd() and lex.peek() != '"':
@@ -268,14 +270,19 @@ proc scanString(lex: var Lexer, startLoc: SourceLocation, prefixLen: int): Token
       break
     if lex.peek() == '\\':
       discard lex.advance()
-      discard lex.scanEscapeSequence()
+      resolved.add(lex.scanEscapeSequence())
     else:
-      discard lex.advance()
+      resolved.add(lex.advance())
   if lex.isAtEnd():
     lex.emitError(startLoc, "unterminated string literal")
   else:
     discard lex.advance()  # closing "
-  result = lex.makeToken(tkStringLiteral, startLoc, startPos)
+  # Rebuild text with resolved escapes: prefix + " + resolved + "
+  var text = lex.source[startPos ..< startPos + prefixLen]
+  text.add('"')
+  text.add(resolved)
+  text.add('"')
+  result = Token(kind: tkStringLiteral, text: text, loc: startLoc)
 
 proc scanBacktickString(lex: var Lexer, startLoc: SourceLocation): Token =
   ## Scan a backtick-delimited raw string literal: content is literal,
@@ -291,23 +298,29 @@ proc scanBacktickString(lex: var Lexer, startLoc: SourceLocation): Token =
 
 proc scanChar(lex: var Lexer, startLoc: SourceLocation, prefixLen: int): Token =
   let startPos = lex.pos - prefixLen
+  # Collect resolved char content to properly handle escape sequences
+  var resolved = ""
   if lex.peek() == '\'':
     discard lex.advance()
   if lex.isAtEnd():
     lex.emitError(startLoc, "unterminated char literal")
-    return lex.makeToken(tkCharLiteral, startLoc, startPos)
-  if lex.peek() == '\n':
+  elif lex.peek() == '\n':
     lex.emitError(lex.currentLocation(), "newline in char literal")
   elif lex.peek() == '\\':
     discard lex.advance()
-    discard lex.scanEscapeSequence()
+    resolved.add(lex.scanEscapeSequence())
   else:
-    discard lex.advance()
+    resolved.add(lex.advance())
   if lex.isAtEnd() or lex.peek() != '\'':
     lex.emitError(lex.currentLocation(), "expected closing ' for char literal")
   else:
     discard lex.advance()
-  result = lex.makeToken(tkCharLiteral, startLoc, startPos)
+  # Rebuild text with resolved escape: prefix + ' + resolved + '
+  var text = lex.source[startPos ..< startPos + prefixLen]
+  text.add('\'')
+  text.add(resolved)
+  text.add('\'')
+  result = Token(kind: tkCharLiteral, text: text, loc: startLoc)
 
 # ---------------------------------------------------------------------------
 # Symbols / operators

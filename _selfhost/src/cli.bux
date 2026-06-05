@@ -398,8 +398,6 @@ func Cli_CollectStdlibImports(mod: *Module, outPaths: *String, maxCount: int, st
 }
 
 func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCount: int) -> int {
-    Print("DEBUG: MergeFileInto ");
-    PrintLine(path);
     if !FileExists(path) {
         Print("Error: stdlib file not found: ");
         PrintLine(path);
@@ -445,8 +443,6 @@ func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCo
         }
         decl = next;
     }
-    Print("DEBUG: MergeFileInto done, added=");
-    PrintInt(added);
     return added;
 }
 
@@ -467,15 +463,12 @@ func Cli_CopyModuleDecls(target: *Module, source: *Module) {
 }
 
 func Cli_BuildProject(projectDir: String) -> int {
-    PrintLine("DEBUG: Cli_BuildProject start");
     let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
-    PrintLine("DEBUG: manifest loaded");
     var outName: String = man.name;
     if String_Eq(outName, "") {
         outName = "bux_out";
     }
     let srcDir: String = bux_path_join(projectDir, "src");
-    PrintLine("DEBUG: srcDir built");
     if !DirExists(srcDir) {
         Print("Error: no src/ directory in ");
         PrintLine(projectDir);
@@ -553,9 +546,6 @@ func Cli_BuildProject(projectDir: String) -> int {
         i = i + 1;
     }
 
-    Print("DEBUG: userMerged.itemCount=");
-    PrintInt(userMerged.itemCount);
-
     // Collect user declaration names for shadow detection
     let maxNames: int = 2048;
     let userNames: *String = bux_alloc(maxNames * 8) as *String;
@@ -596,46 +586,13 @@ func Cli_BuildProject(projectDir: String) -> int {
     }
 
     // Copy user declarations into merged (user shadows stdlib)
-    PrintLine("DEBUG: before copy");
-    var countTest: int = 0;
-    var dtest: *Decl = userMerged.firstItem;
-    while dtest != null as *Decl && countTest < 10000 {
-        dtest = dtest.childDecl2;
-        countTest = countTest + 1;
-    }
-    Print("userMerged actual count=");
-    PrintInt(countTest);
-    Print("userMerged.itemCount=");
-    PrintInt(userMerged.itemCount);
-    var du: *Decl = userMerged.firstItem;
-    while du != null as *Decl {
-        if du.kind == dkFunc {
-            Print("user func ");
-            PrintLine(du.strValue);
-        }
-        if du.kind == dkStruct {
-            Print("user struct ");
-            Print(du.strValue);
-            PrintInt(du.fieldCount);
-        }
-        if du.kind == dkImpl {
-            Print("user impl ");
-            PrintLine(du.strValue);
-        }
-        du = du.childDecl2;
-    }
     Cli_CopyModuleDecls(merged, userMerged);
-    PrintLine("DEBUG: copy done");
-    Print("merged.itemCount=");
-    PrintInt(merged.itemCount);
-    PrintLine("DEBUG: copy done");
 
     Print("Merged ");
     PrintInt(merged.itemCount);
     PrintLine(" declarations");
 
     // Semantic analysis
-    PrintLine("DEBUG: about to run sema");
     PrintLine("Running sema...");
     let sema: *Sema = Sema_Analyze(merged);
     if Sema_HasError(sema) {
@@ -653,14 +610,6 @@ func Cli_BuildProject(projectDir: String) -> int {
 
     // HIR lowering
     PrintLine("Lowering to HIR...");
-    var di: *Decl = merged.firstItem;
-    while di != null as *Decl {
-        if di.kind == dkFunc {
-            Print("decl func ");
-            PrintLine(di.strValue);
-        }
-        di = di.childDecl2;
-    }
     let hirMod: *HirModule = HirLower_LowerModule(merged, sema);
 
     // C code generation
@@ -730,7 +679,6 @@ func Cli_BuildProject(projectDir: String) -> int {
 // ---------------------------------------------------------------------------
 
 func Cli_RunProject(projectDir: String) -> int {
-    PrintLine("DEBUG: Cli_RunProject start");
     let rc: int = Cli_BuildProject(projectDir);
     if rc != 0 {
         return rc;
@@ -751,12 +699,23 @@ func Cli_RunProject(projectDir: String) -> int {
 // ---------------------------------------------------------------------------
 
 func Cli_Run(args: *String, argCount: int) -> int {
-    Print("Cli_Run argCount=");
-    PrintInt(argCount);
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, run, version");
+        PrintLine("Commands: build, check, run, project, help, version");
+        return 0;
+    }
+
+    let cmd: String = args[1];
+    if String_Eq(cmd, "version") || String_Eq(cmd, "--version") || String_Eq(cmd, "-v") {
+        PrintLine("Bux 0.2.0 (self-hosting bootstrap)");
+        return 0;
+    }
+
+    if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
+        PrintLine("Bux Self-Hosting Compiler v0.2.0");
+        PrintLine("Usage: buxc <command> [args]");
+        PrintLine("Commands: build, check, run, project, help, version");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅  695 lines");
         PrintLine("  Parser     ✅ 1004 lines");
@@ -764,14 +723,6 @@ func Cli_Run(args: *String, argCount: int) -> int {
         PrintLine("  HirLower   ✅  307 lines");
         PrintLine("  CBackend   ✅  585 lines");
         PrintLine("  Total: 3830 lines of Bux");
-        return 0;
-    }
-
-    let cmd: String = args[1];
-    Print("cmd=");
-    PrintLine(cmd);
-    if String_Eq(cmd, "version") {
-        PrintLine("Bux 0.2.0 (self-hosting bootstrap)");
         return 0;
     }
 
@@ -798,7 +749,6 @@ func Cli_Run(args: *String, argCount: int) -> int {
     }
 
     if String_Eq(cmd, "run") {
-        PrintLine("DEBUG: run command");
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
         return Cli_RunProject(dir);

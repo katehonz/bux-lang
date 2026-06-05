@@ -185,6 +185,12 @@ func lexEmitToken(lex: *Lexer, kind: int) {
     }
 }
 
+func lexSetLastTokenText(lex: *Lexer, text: String) {
+    if lex.tokenCount > 0 {
+        lex.tokens[lex.tokenCount - 1].text = text;
+    }
+}
+
 func lexEmitDiag(lex: *Lexer, msg: String) {
     if lex.diagCount < maxDiags {
         lex.diags[lex.diagCount] = LexerDiag {
@@ -400,6 +406,25 @@ func lexScanBacktickString(lex: *Lexer) {
 
 func lexScanString(lex: *Lexer) {
     lexMarkStart(lex);
+    // Collect the prefix (before opening quote) for the token text
+    var prefix: String = "";
+    var prefixLen: int = 0;
+    if lex.pos > lex.startPos {
+        let plen: int = lex.pos - lex.startPos;
+        let pbuf: *char8 = bux_alloc((plen + 1) as uint) as *char8;
+        var pi: int = 0;
+        while pi < plen {
+            pbuf[pi] = lex.source[lex.startPos + pi] as char8;
+            pi = pi + 1;
+        }
+        pbuf[plen] = 0 as char8;
+        prefix = pbuf;
+        prefixLen = plen;
+    }
+    // Allocate buffer for resolved content (max = remaining source length)
+    let maxLen: int = 4096;
+    let resolved: *char8 = bux_alloc(maxLen as uint) as *char8;
+    var rpos: int = 0;
     if lexPeek(lex, 0) == 34 { discard lexAdvance(lex); } // opening "
     while !lexIsAtEnd(lex) && lexPeek(lex, 0) != 34 { // closing "
         if lexPeek(lex, 0) == 10 { // \n
@@ -408,21 +433,64 @@ func lexScanString(lex: *Lexer) {
         }
         if lexPeek(lex, 0) == 92 { // backslash
             discard lexAdvance(lex);
-            if !lexIsAtEnd(lex) { discard lexAdvance(lex); } // skip escape char
+            if !lexIsAtEnd(lex) {
+                let ec: uint32 = lexAdvance(lex);
+                var rc: char8 = ec as char8;
+                if ec == 110 { rc = 10 as char8; }       // \n
+                else if ec == 114 { rc = 13 as char8; }  // \r
+                else if ec == 116 { rc = 9 as char8; }   // \t
+                else if ec == 48 { rc = 0 as char8; }    // \0
+                else if ec == 92 { rc = 92 as char8; }   // \\
+                else if ec == 34 { rc = 34 as char8; }   // \"
+                else if ec == 39 { rc = 39 as char8; }   // \'
+                resolved[rpos] = rc;
+                rpos = rpos + 1;
+            }
         } else {
-            discard lexAdvance(lex);
+            let c: uint32 = lexAdvance(lex);
+            resolved[rpos] = c as char8;
+            rpos = rpos + 1;
         }
     }
+    resolved[rpos] = 0 as char8;
     if lexIsAtEnd(lex) {
         lexEmitDiag(lex, "unterminated string literal");
     } else {
         discard lexAdvance(lex); // closing "
     }
     lexEmitToken(lex, tkStringLiteral);
+    // Replace token text with resolved version: prefix + " + resolved + "
+    let totalLen: int = prefixLen + 1 + rpos + 1;
+    let finalBuf: *char8 = bux_alloc((totalLen + 1) as uint) as *char8;
+    var fi: int = 0;
+    var pi2: int = 0;
+    while pi2 < prefixLen { finalBuf[fi] = prefix[pi2] as char8; fi = fi + 1; pi2 = pi2 + 1; }
+    finalBuf[fi] = 34 as char8; fi = fi + 1; // opening "
+    var ri: int = 0;
+    while ri < rpos { finalBuf[fi] = resolved[ri]; fi = fi + 1; ri = ri + 1; }
+    finalBuf[fi] = 34 as char8; fi = fi + 1; // closing "
+    finalBuf[fi] = 0 as char8;
+    lexSetLastTokenText(lex, finalBuf);
 }
 
 func lexScanChar(lex: *Lexer) {
     lexMarkStart(lex);
+    // Collect the prefix for the token text
+    var prefix: String = "";
+    var prefixLen: int = 0;
+    if lex.pos > lex.startPos {
+        let plen: int = lex.pos - lex.startPos;
+        let pbuf: *char8 = bux_alloc((plen + 1) as uint) as *char8;
+        var pi: int = 0;
+        while pi < plen {
+            pbuf[pi] = lex.source[lex.startPos + pi] as char8;
+            pi = pi + 1;
+        }
+        pbuf[plen] = 0 as char8;
+        prefix = pbuf;
+        prefixLen = plen;
+    }
+    var resolved: char8 = 0 as char8;
     if lexPeek(lex, 0) == 39 { discard lexAdvance(lex); } // opening '
     if lexIsAtEnd(lex) {
         lexEmitDiag(lex, "unterminated char literal");
@@ -433,9 +501,19 @@ func lexScanChar(lex: *Lexer) {
         lexEmitDiag(lex, "newline in char literal");
     } else if lexPeek(lex, 0) == 92 { // backslash
         discard lexAdvance(lex);
-        if !lexIsAtEnd(lex) { discard lexAdvance(lex); }
+        if !lexIsAtEnd(lex) {
+            let ec: uint32 = lexAdvance(lex);
+            if ec == 110 { resolved = 10 as char8; }      // \n
+            else if ec == 114 { resolved = 13 as char8; } // \r
+            else if ec == 116 { resolved = 9 as char8; }  // \t
+            else if ec == 48 { resolved = 0 as char8; }   // \0
+            else if ec == 92 { resolved = 92 as char8; }  // \\
+            else if ec == 34 { resolved = 34 as char8; }  // \"
+            else if ec == 39 { resolved = 39 as char8; }  // \'
+            else { resolved = ec as char8; }
+        }
     } else {
-        discard lexAdvance(lex);
+        resolved = lexAdvance(lex) as char8;
     }
     if lexIsAtEnd(lex) || lexPeek(lex, 0) != 39 {
         lexEmitDiag(lex, "expected closing ' for char literal");
@@ -443,6 +521,17 @@ func lexScanChar(lex: *Lexer) {
         discard lexAdvance(lex); // closing '
     }
     lexEmitToken(lex, tkCharLiteral);
+    // Replace token text with resolved version
+    let totalLen: int = prefixLen + 1 + 1 + 1;
+    let finalBuf: *char8 = bux_alloc((totalLen + 1) as uint) as *char8;
+    var fi: int = 0;
+    var pi2: int = 0;
+    while pi2 < prefixLen { finalBuf[fi] = prefix[pi2] as char8; fi = fi + 1; pi2 = pi2 + 1; }
+    finalBuf[fi] = 39 as char8; fi = fi + 1; // opening '
+    finalBuf[fi] = resolved; fi = fi + 1;     // resolved char
+    finalBuf[fi] = 39 as char8; fi = fi + 1;  // closing '
+    finalBuf[fi] = 0 as char8;
+    lexSetLastTokenText(lex, finalBuf);
 }
 
 // ---------------------------------------------------------------------------

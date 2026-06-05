@@ -4,15 +4,13 @@ module Main {
 // C runtime for command-line args
 extern func bux_argc() -> int;
 extern func bux_argv(index: int) -> String;
+extern func bux_alloc(size: uint) -> *void;
 
 // Forward declaration from Cli module
 func Cli_Run(args: *String, argCount: int) -> int;
 
 func Main() -> int {
     let count: int = bux_argc();
-    Print("Main count=");
-    PrintInt(count);
-    PrintLine("");
     // Allocate array of String pointers
     let args: *String = bux_alloc(count as uint * 8) as *String;
     var i: int = 0;

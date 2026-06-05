@@ -2,6 +2,8 @@
 // Parses package metadata: name, version, type, build output.
 module Manifest {
 
+extern func bux_strlen(s: String) -> uint;
+
 // ---------------------------------------------------------------------------
 // Manifest struct
 // ---------------------------------------------------------------------------
@@ -56,9 +58,10 @@ func Manifest_Parse(content: String) -> Manifest {
             // Strip quotes from value
             var val: String = rawVal;
             if String_StartsWith(val, "\"") && String_EndsWith(val, "\"") {
-                let len: uint = String_SplitCount(val, ""); // dummy to get length indirectly
-                // Simple strip: just use the string between quotes
-                val = String_Slice(rawVal, 1, String_SplitCount(rawVal, "") as uint - 2);
+                let vlen: uint = bux_strlen(val);
+                if vlen >= 2 {
+                    val = String_Slice(val, 1, vlen - 2);
+                }
             }
 
             if String_Eq(currentSection, "Package") {
