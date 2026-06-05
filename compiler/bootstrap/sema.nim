@@ -1086,11 +1086,11 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
           elif sym.decl.kind == dkEnum:
             # Algebraic enum fields
             if expr.exprFieldName == "tag":
-              return makeNamed(obj.name & "_Tag")
+              return makeNamed(objType.name & "_Tag")
             elif expr.exprFieldName == "data":
-              return makeNamed(obj.name & "_Data")
+              return makeNamed(objType.name & "_Data")
             else:
-              sema.emitError(expr.loc, &"enum '{obj.name}' has no field '{expr.exprFieldName}'")
+              sema.emitError(expr.loc, &"enum '{objType.name}' has no field '{expr.exprFieldName}'")
           elif sym.decl.kind == dkUnion:
             # Union fields
             for f in sym.decl.declUnionFields:

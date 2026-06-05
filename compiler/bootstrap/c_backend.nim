@@ -616,13 +616,21 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
         be.emitLine(&"/* const {c.name} (complex expression) */")
     be.emitLine("")
 
+  # Forward declarations for all structs
+  for s in module.structs:
+    be.emitLine(&"typedef struct {s.name} {s.name};")
+  if module.structs.len > 0:
+    be.emitLine("")
+
+  # Enum definitions (must come before structs that reference them)
+  for e in module.enums:
+    be.emitEnum(e.name, e.variants)
+  if module.enums.len > 0:
+    be.emitLine("")
+
   # Struct definitions
   for s in module.structs:
     be.emitStruct(s.name, s.fields)
-
-  # Enum definitions
-  for e in module.enums:
-    be.emitEnum(e.name, e.variants)
 
   # Slice fat-pointer typedefs
   if sliceTypes.len > 0:
