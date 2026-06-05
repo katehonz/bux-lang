@@ -1,37 +1,24 @@
 // Os & Time - System and time utilities
-import Std::Io::{PrintLine, PrintInt, PrintInt64};
+import Std::Io::{PrintLine};
 import Std::Os::{Os_ArgsCount, Os_Args, Os_GetEnv, Os_GetCwd};
 import Std::Time::{Time_NowMs, Time_SleepMs};
+import Std::Fmt::{Fmt_Fmt1, Fmt_FmtInt};
 
 func Main() -> int {
     PrintLine("=== OS Demo ===");
-    Print("Current directory: ");
-    PrintLine(Os_GetCwd());
-    
-    Print("Command-line args: ");
-    PrintInt(Os_ArgsCount());
-    PrintLine("");
-    
-    Print("HOME env: ");
-    PrintLine(Os_GetEnv("HOME"));
+    PrintLine(Fmt_Fmt1("Current directory: {0}", Os_GetCwd()));
+    PrintLine(Fmt_FmtInt("Command-line args: {0}", Os_ArgsCount() as int64));
+    PrintLine(Fmt_Fmt1("HOME env: {0}", Os_GetEnv("HOME")));
     
     PrintLine("\n=== Time Demo ===");
     let start: int64 = Time_NowMs();
-    Print("Start: ");
-    PrintInt64(start);
-    PrintLine(" ms");
-    
+    PrintLine(Fmt_FmtInt("Start: {0} ms", start));
     PrintLine("Sleeping 150ms...");
     Time_SleepMs(150);
     
     let end: int64 = Time_NowMs();
-    Print("End: ");
-    PrintInt64(end);
-    PrintLine(" ms");
-    
-    Print("Elapsed: ");
-    PrintInt64(end - start);
-    PrintLine(" ms");
+    PrintLine(Fmt_FmtInt("End: {0} ms", end));
+    PrintLine(Fmt_FmtInt("Elapsed: {0} ms", end - start));
     
     return 0;
 }

@@ -1,6 +1,6 @@
 // Fibonacci - Recursive function with while loop
-import Std::Io::{PrintLine, PrintInt};
-
+import Std::Io::{PrintLine};
+import Std::Fmt::{Fmt_Fmt1};
 
 func Fibonacci(n: int) -> int {
     if n <= 1 {
@@ -15,8 +15,7 @@ func Main() -> int {
     var i: int = 0;
     while i < 10 {
         let fib: int = Fibonacci(i);
-        PrintInt(fib);
-        PrintLine("");
+        PrintLine(Fmt_Fmt1("{0}", String_FromInt(fib)));
         i = i + 1;
     }
     

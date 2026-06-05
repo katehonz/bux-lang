@@ -430,6 +430,12 @@ char* bux_str_join2(const char* a, const char* b, const char* sep) {
 
 /* Simple string format: replace {0}, {1}, ... with string arguments.
    Returns formatted string. Supports up to 8 arguments. */
+char* bux_float_to_string(double f) {
+    char* buf = (char*)bux_alloc(64);
+    snprintf(buf, 64, "%g", f);
+    return buf;
+}
+
 char* bux_str_format(const char* pattern,
     const char* a0, const char* a1, const char* a2, const char* a3,
     const char* a4, const char* a5, const char* a6, const char* a7) {

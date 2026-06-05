@@ -1,0 +1,42 @@
+module Std::Fmt {
+/* String formatting with positional placeholders {0}, {1}, {2}...
+ *
+ * Usage:
+ *   Fmt_Fmt1("Hello, {0}!", "World")
+ *   Fmt_FmtInt("Count: {0}", 42)
+ *   Fmt_FmtFloat("Pi: {0}", 3.14159)
+ *   Fmt_FmtBool("Active: {0}", true)
+ *   Fmt_Fmt2("Name: {0}, Age: {1}", name, String_FromInt(age))
+ */
+
+func Fmt_Fmt1(pattern: String, a: String) -> String {
+    return String_Format1(pattern, a);
+}
+
+func Fmt_Fmt2(pattern: String, a: String, b: String) -> String {
+    return String_Format2(pattern, a, b);
+}
+
+func Fmt_Fmt3(pattern: String, a: String, b: String, c: String) -> String {
+    return String_Format3(pattern, a, b, c);
+}
+
+func Fmt_FmtInt(pattern: String, n: int64) -> String {
+    return String_Format1(pattern, String_FromInt(n));
+}
+
+func Fmt_FmtInt2(pattern: String, n1: int64, n2: int64) -> String {
+    return String_Format2(pattern, String_FromInt(n1), String_FromInt(n2));
+}
+
+func Fmt_FmtFloat(pattern: String, f: float64) -> String {
+    return String_Format1(pattern, String_FromFloat(f));
+}
+
+func Fmt_FmtBool(pattern: String, b: bool) -> String {
+    if b {
+        return String_Format1(pattern, "true");
+    }
+    return String_Format1(pattern, "false");
+}
+}
