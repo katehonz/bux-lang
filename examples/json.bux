@@ -1,0 +1,33 @@
+// Json - Parse and stringify JSON
+import Std::Io::{PrintLine};
+import Std::Json;
+import Std::Fmt::{Fmt_Fmt1, Fmt_FmtInt};
+
+func Main() -> int {
+    PrintLine("=== Json Demo ===");
+    
+    let s: String = "{\"name\":\"Bux\",\"count\":42,\"items\":[\"a\",\"b\",\"c\"]}";
+    let j: JsonValue = Json_Parse(s);
+    PrintLine("Parsed and stringified:");
+    PrintLine(Json_Stringify(j));
+    
+    PrintLine("\nAccess fields:");
+    PrintLine(Fmt_Fmt1("name = {0}", Json_AsString(Json_ObjectGet(j, "name"))));
+    PrintLine(Fmt_FmtInt("count = {0}", Json_AsNumber(Json_ObjectGet(j, "count")) as int64));
+    
+    let items: JsonValue = Json_ObjectGet(j, "items");
+    PrintLine(Fmt_Fmt1("items[0] = {0}", Json_AsString(Json_ArrayGet(items, 0))));
+    PrintLine(Fmt_Fmt1("items[1] = {0}", Json_AsString(Json_ArrayGet(items, 1))));
+    
+    PrintLine("\nBuild JSON programmatically:");
+    var obj: JsonValue = Json_Object();
+    Json_ObjectSet(&obj, "lang", Json_String("Bux"));
+    Json_ObjectSet(&obj, "year", Json_Number(2024.0));
+    var arr: JsonValue = Json_Array();
+    Json_ArrayPush(&arr, Json_String("fast"));
+    Json_ArrayPush(&arr, Json_String("safe"));
+    Json_ObjectSet(&obj, "tags", arr);
+    PrintLine(Json_Stringify(obj));
+    
+    return 0;
+}

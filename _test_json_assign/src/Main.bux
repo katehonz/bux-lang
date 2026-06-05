@@ -1,0 +1,16 @@
+import Std::Io::{PrintLine};
+
+struct JsonValue {
+    tag: int,
+    strVal: String,
+    numVal: float64
+}
+
+func Main() -> int {
+    var a: JsonValue = JsonValue { tag: 1, strVal: "hello", numVal: 3.14 };
+    var b: JsonValue = a;
+    b.strVal = "world";
+    PrintLine(a.strVal);
+    PrintLine(b.strVal);
+    return 0;
+}

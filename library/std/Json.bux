@@ -1,0 +1,478 @@
+module Std::Json {
+import Std::Mem::{Alloc, Realloc, Free};
+import Std::String;
+
+/* === Tags === */
+const JsonTagNull: int = 0;
+const JsonTagBool: int = 1;
+const JsonTagNumber: int = 2;
+const JsonTagString: int = 3;
+const JsonTagArray: int = 4;
+const JsonTagObject: int = 5;
+
+/* === Core type === */
+struct JsonValue {
+    tag: int,
+    boolVal: bool,
+    numVal: float64,
+    strVal: String,
+    arrData: *JsonValue,
+    arrLen: uint,
+    arrCap: uint,
+    objKeys: *String,
+    objValues: *JsonValue,
+    objLen: uint,
+    objCap: uint
+}
+
+/* === Constructors === */
+func Json_Null() -> JsonValue {
+    return JsonValue {
+        tag: JsonTagNull, boolVal: false, numVal: 0.0, strVal: "",
+        arrData: null, arrLen: 0, arrCap: 0,
+        objKeys: null, objValues: null, objLen: 0, objCap: 0
+    };
+}
+
+func Json_Bool(b: bool) -> JsonValue {
+    return JsonValue {
+        tag: JsonTagBool, boolVal: b, numVal: 0.0, strVal: "",
+        arrData: null, arrLen: 0, arrCap: 0,
+        objKeys: null, objValues: null, objLen: 0, objCap: 0
+    };
+}
+
+func Json_Number(n: float64) -> JsonValue {
+    return JsonValue {
+        tag: JsonTagNumber, boolVal: false, numVal: n, strVal: "",
+        arrData: null, arrLen: 0, arrCap: 0,
+        objKeys: null, objValues: null, objLen: 0, objCap: 0
+    };
+}
+
+func Json_String(s: String) -> JsonValue {
+    return JsonValue {
+        tag: JsonTagString, boolVal: false, numVal: 0.0, strVal: s,
+        arrData: null, arrLen: 0, arrCap: 0,
+        objKeys: null, objValues: null, objLen: 0, objCap: 0
+    };
+}
+
+func Json_Array() -> JsonValue {
+    return JsonValue {
+        tag: JsonTagArray, boolVal: false, numVal: 0.0, strVal: "",
+        arrData: null, arrLen: 0, arrCap: 0,
+        objKeys: null, objValues: null, objLen: 0, objCap: 0
+    };
+}
+
+func Json_Object() -> JsonValue {
+    return JsonValue {
+        tag: JsonTagObject, boolVal: false, numVal: 0.0, strVal: "",
+        arrData: null, arrLen: 0, arrCap: 0,
+        objKeys: null, objValues: null, objLen: 0, objCap: 0
+    };
+}
+
+/* === Array helpers === */
+func Json_ArrayLen(v: JsonValue) -> uint {
+    if v.tag != JsonTagArray { return 0; }
+    return v.arrLen;
+}
+
+func Json_ArrayGet(v: JsonValue, index: uint) -> JsonValue {
+    if v.tag != JsonTagArray { return Json_Null(); }
+    if index >= v.arrLen { return Json_Null(); }
+    return v.arrData[index];
+}
+
+func Json_ArrayPush(self: *JsonValue, val: JsonValue) {
+    if self.tag != JsonTagArray { return; }
+    if self.arrLen >= self.arrCap {
+        var newCap: uint = self.arrCap;
+        if newCap == 0 { newCap = 4; }
+        else { newCap = newCap * 2; }
+        let newSize: uint = newCap * sizeof(JsonValue);
+        if self.arrCap == 0 {
+            self.arrData = Alloc(newSize) as *JsonValue;
+        } else {
+            self.arrData = Realloc(self.arrData as *void, newSize) as *JsonValue;
+        }
+        self.arrCap = newCap;
+    }
+    self.arrData[self.arrLen] = val;
+    self.arrLen = self.arrLen + 1;
+}
+
+/* === Object helpers === */
+func Json_ObjectLen(v: JsonValue) -> uint {
+    if v.tag != JsonTagObject { return 0; }
+    return v.objLen;
+}
+
+func Json_ObjectGet(v: JsonValue, key: String) -> JsonValue {
+    if v.tag != JsonTagObject { return Json_Null(); }
+    var i: uint = 0;
+    while i < v.objLen {
+        if String_Eq(v.objKeys[i], key) {
+            return v.objValues[i];
+        }
+        i = i + 1;
+    }
+    return Json_Null();
+}
+
+func Json_ObjectHas(v: JsonValue, key: String) -> bool {
+    if v.tag != JsonTagObject { return false; }
+    var i: uint = 0;
+    while i < v.objLen {
+        if String_Eq(v.objKeys[i], key) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func Json_ObjectSet(self: *JsonValue, key: String, val: JsonValue) {
+    if self.tag != JsonTagObject { return; }
+    var i: uint = 0;
+    while i < self.objLen {
+        if String_Eq(self.objKeys[i], key) {
+            self.objValues[i] = val;
+            return;
+        }
+        i = i + 1;
+    }
+    if self.objLen >= self.objCap {
+        var newCap: uint = self.objCap;
+        if newCap == 0 { newCap = 4; }
+        else { newCap = newCap * 2; }
+        let keySize: uint = newCap * sizeof(String);
+        let valSize: uint = newCap * sizeof(JsonValue);
+        if self.objCap == 0 {
+            self.objKeys = Alloc(keySize) as *String;
+            self.objValues = Alloc(valSize) as *JsonValue;
+        } else {
+            self.objKeys = Realloc(self.objKeys as *void, keySize) as *String;
+            self.objValues = Realloc(self.objValues as *void, valSize) as *JsonValue;
+        }
+        self.objCap = newCap;
+    }
+    self.objKeys[self.objLen] = key;
+    self.objValues[self.objLen] = val;
+    self.objLen = self.objLen + 1;
+}
+
+/* === Accessors === */
+func Json_IsNull(v: JsonValue) -> bool {
+    return v.tag == JsonTagNull;
+}
+
+func Json_AsBool(v: JsonValue) -> bool {
+    if v.tag == JsonTagBool { return v.boolVal; }
+    return false;
+}
+
+func Json_AsNumber(v: JsonValue) -> float64 {
+    if v.tag == JsonTagNumber { return v.numVal; }
+    return 0.0;
+}
+
+func Json_AsString(v: JsonValue) -> String {
+    if v.tag == JsonTagString { return v.strVal; }
+    return "";
+}
+
+/* === Parser === */
+struct JsonParser {
+    src: String,
+    pos: uint,
+    len: uint,
+    error: String
+}
+
+func JsonParser_Peek(p: *JsonParser) -> int {
+    if p.pos >= p.len { return 0; }
+    return p.src[p.pos] as int;
+}
+
+func JsonParser_Advance(p: *JsonParser) {
+    if p.pos < p.len {
+        p.pos = p.pos + 1;
+    }
+}
+
+func JsonParser_SkipWhitespace(p: *JsonParser) {
+    while true {
+        let c: int = JsonParser_Peek(p);
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            JsonParser_Advance(p);
+        } else {
+            return;
+        }
+    }
+}
+
+func JsonParser_Match(p: *JsonParser, expected: String) -> bool {
+    let elen: uint = String_Len(expected);
+    if p.pos + elen > p.len { return false; }
+    var i: uint = 0;
+    while i < elen {
+        if p.src[p.pos + i] != expected[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    p.pos = p.pos + elen;
+    return true;
+}
+
+func JsonParser_ParseValue(p: *JsonParser) -> JsonValue;
+
+func JsonParser_ParseString(p: *JsonParser) -> String {
+    if JsonParser_Peek(p) != 34 {
+        p.error = "Expected string";
+        return "";
+    }
+    JsonParser_Advance(p);
+    let start: uint = p.pos;
+    while true {
+        let c: int = JsonParser_Peek(p);
+        if c == 0 || c == 34 {
+            break;
+        }
+        if c == 92 {
+            JsonParser_Advance(p);
+            if JsonParser_Peek(p) == 0 {
+                p.error = "Unterminated string escape";
+                return "";
+            }
+            JsonParser_Advance(p);
+        } else {
+            JsonParser_Advance(p);
+        }
+    }
+    let endPos: uint = p.pos;
+    if JsonParser_Peek(p) != 34 {
+        p.error = "Unterminated string";
+        return "";
+    }
+    JsonParser_Advance(p);
+    return String_Slice(p.src, start, endPos - start);
+}
+
+func JsonParser_ParseNumber(p: *JsonParser) -> JsonValue {
+    let start: uint = p.pos;
+    let c0: int = JsonParser_Peek(p);
+    if c0 == 45 {
+        JsonParser_Advance(p);
+    }
+    while true {
+        let c: int = JsonParser_Peek(p);
+        if c >= 48 && c <= 57 {
+            JsonParser_Advance(p);
+        } else {
+            break;
+        }
+    }
+    if JsonParser_Peek(p) == 46 {
+        JsonParser_Advance(p);
+        while true {
+            let c: int = JsonParser_Peek(p);
+            if c >= 48 && c <= 57 {
+                JsonParser_Advance(p);
+            } else {
+                break;
+            }
+        }
+    }
+    let numStr: String = String_Slice(p.src, start, p.pos - start);
+    let n: int64 = String_ToInt(numStr);
+    return Json_Number(n as float64);
+}
+
+func JsonParser_ParseArray(p: *JsonParser) -> JsonValue {
+    JsonParser_Advance(p);
+    var arr: JsonValue = Json_Array();
+    JsonParser_SkipWhitespace(p);
+    if JsonParser_Peek(p) == 93 {
+        JsonParser_Advance(p);
+        return arr;
+    }
+    while true {
+        JsonParser_SkipWhitespace(p);
+        let val: JsonValue = JsonParser_ParseValue(p);
+        if p.error != "" { return Json_Null(); }
+        Json_ArrayPush(&arr, val);
+        JsonParser_SkipWhitespace(p);
+        let c: int = JsonParser_Peek(p);
+        if c == 93 {
+            JsonParser_Advance(p);
+            return arr;
+        }
+        if c == 44 {
+            JsonParser_Advance(p);
+        } else {
+            p.error = "Expected ',' or ']' in array";
+            return Json_Null();
+        }
+    }
+}
+
+func JsonParser_ParseObject(p: *JsonParser) -> JsonValue {
+    JsonParser_Advance(p);
+    var obj: JsonValue = Json_Object();
+    JsonParser_SkipWhitespace(p);
+    if JsonParser_Peek(p) == 125 {
+        JsonParser_Advance(p);
+        return obj;
+    }
+    while true {
+        JsonParser_SkipWhitespace(p);
+        let key: String = JsonParser_ParseString(p);
+        if p.error != "" { return Json_Null(); }
+        JsonParser_SkipWhitespace(p);
+        if JsonParser_Peek(p) != 58 {
+            p.error = "Expected ':' after object key";
+            return Json_Null();
+        }
+        JsonParser_Advance(p);
+        JsonParser_SkipWhitespace(p);
+        let val: JsonValue = JsonParser_ParseValue(p);
+        if p.error != "" { return Json_Null(); }
+        Json_ObjectSet(&obj, key, val);
+        JsonParser_SkipWhitespace(p);
+        let c: int = JsonParser_Peek(p);
+        if c == 125 {
+            JsonParser_Advance(p);
+            return obj;
+        }
+        if c == 44 {
+            JsonParser_Advance(p);
+        } else {
+            p.error = "Expected ',' or '}' in object";
+            return Json_Null();
+        }
+    }
+}
+
+func JsonParser_ParseValue(p: *JsonParser) -> JsonValue {
+    JsonParser_SkipWhitespace(p);
+    let c: int = JsonParser_Peek(p);
+    if c == 0 {
+        p.error = "Unexpected end of input";
+        return Json_Null();
+    }
+    if c == 34 {
+        return Json_String(JsonParser_ParseString(p));
+    }
+    if c == 123 {
+        return JsonParser_ParseObject(p);
+    }
+    if c == 91 {
+        return JsonParser_ParseArray(p);
+    }
+    if c == 116 {
+        if JsonParser_Match(p, "true") {
+            return Json_Bool(true);
+        }
+        p.error = "Expected 'true'";
+        return Json_Null();
+    }
+    if c == 102 {
+        if JsonParser_Match(p, "false") {
+            return Json_Bool(false);
+        }
+        p.error = "Expected 'false'";
+        return Json_Null();
+    }
+    if c == 110 {
+        if JsonParser_Match(p, "null") {
+            return Json_Null();
+        }
+        p.error = "Expected 'null'";
+        return Json_Null();
+    }
+    if (c >= 48 && c <= 57) || c == 45 {
+        return JsonParser_ParseNumber(p);
+    }
+    p.error = "Unexpected character";
+    return Json_Null();
+}
+
+/* === Public parser === */
+func Json_Parse(s: String) -> JsonValue {
+    var p: JsonParser = JsonParser { src: s, pos: 0, len: String_Len(s), error: "" };
+    let result: JsonValue = JsonParser_ParseValue(&p);
+    JsonParser_SkipWhitespace(&p);
+    if p.error == "" && p.pos != p.len {
+        p.error = "Trailing data after JSON value";
+        return Json_Null();
+    }
+    return result;
+}
+
+/* === Serializer === */
+func Json_StringifyImpl(sb: *StringBuilder, v: JsonValue) {
+    if v.tag == JsonTagNull {
+        StringBuilder_Append(sb, "null");
+        return;
+    }
+    if v.tag == JsonTagBool {
+        if v.boolVal {
+            StringBuilder_Append(sb, "true");
+        } else {
+            StringBuilder_Append(sb, "false");
+        }
+        return;
+    }
+    if v.tag == JsonTagNumber {
+        StringBuilder_AppendFloat(sb, v.numVal);
+        return;
+    }
+    if v.tag == JsonTagString {
+        StringBuilder_AppendChar(sb, 34 as char8);
+        StringBuilder_Append(sb, v.strVal);
+        StringBuilder_AppendChar(sb, 34 as char8);
+        return;
+    }
+    if v.tag == JsonTagArray {
+        StringBuilder_AppendChar(sb, 91 as char8);
+        var i: uint = 0;
+        while i < v.arrLen {
+            if i > 0 {
+                StringBuilder_AppendChar(sb, 44 as char8);
+            }
+            Json_StringifyImpl(sb, v.arrData[i]);
+            i = i + 1;
+        }
+        StringBuilder_AppendChar(sb, 93 as char8);
+        return;
+    }
+    if v.tag == JsonTagObject {
+        StringBuilder_AppendChar(sb, 123 as char8);
+        var i: uint = 0;
+        while i < v.objLen {
+            if i > 0 {
+                StringBuilder_AppendChar(sb, 44 as char8);
+            }
+            StringBuilder_AppendChar(sb, 34 as char8);
+            StringBuilder_Append(sb, v.objKeys[i]);
+            StringBuilder_AppendChar(sb, 34 as char8);
+            StringBuilder_AppendChar(sb, 58 as char8);
+            Json_StringifyImpl(sb, v.objValues[i]);
+            i = i + 1;
+        }
+        StringBuilder_AppendChar(sb, 125 as char8);
+        return;
+    }
+}
+
+func Json_Stringify(v: JsonValue) -> String {
+    let sb: StringBuilder = StringBuilder_New();
+    Json_StringifyImpl(&sb, v);
+    return StringBuilder_Build(&sb);
+}
+
+}

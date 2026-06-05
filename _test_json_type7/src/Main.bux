@@ -1,0 +1,13 @@
+import Std::Io::{PrintLine};
+
+struct JsonValue {
+    tag: int,
+    strVal: String,
+    next: *JsonValue
+}
+
+func Main() -> int {
+    let v: JsonValue = JsonValue { tag: 0, strVal: "hello", next: null };
+    PrintLine(v.strVal);
+    return 0;
+}

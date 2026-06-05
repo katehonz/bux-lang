@@ -1,0 +1,14 @@
+import Std::Io::{PrintLine};
+
+enum JsonValue {
+    JsonNull,
+    JsonBool(bool),
+    JsonNumber(float64),
+    JsonString(String)
+}
+
+func Main() -> int {
+    let v: JsonValue = JsonValue { tag: JsonValue_JsonNull };
+    PrintLine("ok");
+    return 0;
+}

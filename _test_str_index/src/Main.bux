@@ -1,0 +1,9 @@
+import Std::Io::{PrintLine, PrintInt};
+
+func Main() -> int {
+    let s: String = "hello";
+    let c: char8 = s[0];
+    PrintInt(c as int);
+    PrintLine("");
+    return 0;
+}

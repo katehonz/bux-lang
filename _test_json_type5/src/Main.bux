@@ -1,0 +1,18 @@
+import Std::Io::{PrintLine};
+import Std::Array::{Array};
+import Std::Map::{Map};
+
+enum JsonValue {
+    JsonNull,
+    JsonBool(bool),
+    JsonNumber(float64),
+    JsonString(String),
+    JsonArray(Array<JsonValue>),
+    JsonObject(Map<String, JsonValue>)
+}
+
+func Main() -> int {
+    let v: JsonValue = JsonValue { tag: JsonValue_JsonNull };
+    PrintLine("ok");
+    return 0;
+}
