@@ -812,6 +812,11 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     else:
       return makeUnknown()
   of ekAssign:
+    # Borrow check: reinitialization after move — must happen before checkExpr on target
+    if sema.checkedFunc and expr.exprAssignTarget.kind == ekIdent:
+      let movedIdx = sema.movedVars.find(expr.exprAssignTarget.exprIdent)
+      if movedIdx >= 0:
+        sema.movedVars.delete(movedIdx)
     let target = sema.checkExpr(expr.exprAssignTarget, scope)
     let value = sema.checkExpr(expr.exprAssignValue, scope)
     if not value.isAssignableTo(target):
@@ -821,6 +826,12 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       let ptrType = sema.checkExpr(expr.exprAssignTarget.exprUnaryOperand, scope)
       if ptrType.isRef:
         sema.emitError(expr.loc, "cannot assign through shared reference '&T' in checked function — use '&mut T' instead")
+    # Borrow check: move tracking in assignment
+    if sema.checkedFunc:
+      if expr.exprAssignValue.kind == ekIdent:
+        let valSym = scope.lookup(expr.exprAssignValue.exprIdent)
+        if valSym != nil and valSym.isOwn:
+          sema.movedVars.add(expr.exprAssignValue.exprIdent)
     return target
   of ekTernary:
     let cond = sema.checkExpr(expr.exprTernaryCond, scope)
@@ -1211,10 +1222,16 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
       sema.emitError(stmt.loc, &"cannot assign {initType.toString} to {declaredType.toString}")
     if stmt.stmtLetInit == nil and stmt.stmtLetType == nil:
       sema.emitError(stmt.loc, "variable must have either type annotation or initializer")
+    let isOwnVar = stmt.stmtLetType != nil and stmt.stmtLetType.kind == tekOwn
     let sym = Symbol(kind: skVar, name: stmt.stmtLetName, typ: declaredType,
-                     isMutable: stmt.stmtLetMut)
+                     isMutable: stmt.stmtLetMut, isOwn: isOwnVar)
     if not scope.define(sym):
       sema.emitError(stmt.loc, &"duplicate variable '{stmt.stmtLetName}'")
+    # Borrow check: move tracking in let/var initialization
+    if sema.checkedFunc and stmt.stmtLetInit != nil and stmt.stmtLetInit.kind == ekIdent:
+      let initSym = scope.lookup(stmt.stmtLetInit.exprIdent)
+      if initSym != nil and initSym.isOwn:
+        sema.movedVars.add(stmt.stmtLetInit.exprIdent)
     return makeVoid()
   of skIf:
     let condType = sema.checkExpr(stmt.stmtIfCond, scope)
@@ -1259,6 +1276,10 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
   of skReturn:
     if stmt.stmtReturnValue != nil:
       discard sema.checkExpr(stmt.stmtReturnValue, scope)
+      if sema.checkedFunc and stmt.stmtReturnValue.kind == ekIdent:
+        let retSym = scope.lookup(stmt.stmtReturnValue.exprIdent)
+        if retSym != nil and retSym.isOwn:
+          sema.movedVars.add(stmt.stmtReturnValue.exprIdent)
     return makeVoid()
   of skBreak, skContinue:
     return makeVoid()

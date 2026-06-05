@@ -16,6 +16,7 @@ type
     decl*: Decl        ## optional back-reference to AST decl
     isMutable*: bool
     isPublic*: bool
+    isOwn*: bool       ## true if declared as own T
 
   Scope* = ref object
     parent*: Scope

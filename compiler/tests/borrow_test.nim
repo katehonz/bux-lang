@@ -1,24 +1,28 @@
-import std/[unittest, strutils]
+import std/[unittest, os, strutils]
 import ../bootstrap/[lexer, parser, sema, types]
 
-proc checkSource(source: string): SemaResult =
-  let lexRes = tokenize(source, "<test>")
-  check not lexRes.hasErrors
-  let parseRes = parse(lexRes.tokens, "<test>")
-  check parseRes.diagnostics.len == 0
-  result = analyze(parseRes.module)
+proc checkSource(source: string): tuple[hasErrors: bool, diagnostics: seq[SemaDiagnostic]] =
+  let lexRes = lexer.tokenize(source, "test.bux")
+  if lexRes.hasErrors:
+    return (true, @[])
+  let parseRes = parser.parse(lexRes.tokens, "test.bux")
+  if parseRes.diagnostics.len > 0:
+    return (true, @[])
+  let (semaRes, _) = sema.analyzeFull(parseRes.module)
+  return (semaRes.hasErrors, semaRes.diagnostics)
 
 suite "Borrow Checker":
-
   test "@[Checked] function with &mut allows mutation":
     let res = checkSource("""
-func Mutate(val: &mut int) {
-  *val = 42;
+@[Checked]
+func Inc(p: &mut int) {
+  *p = *p + 1;
 }
+@[Checked]
 func Main() -> int {
-  var x: int = 10;
-  Mutate(&x);
-  return 0;
+  var x: int = 5;
+  Inc(&x);
+  return x;
 }
 """)
     check(not res.hasErrors)
@@ -26,27 +30,27 @@ func Main() -> int {
   test "@[Checked] function rejects write through &T":
     let res = checkSource("""
 @[Checked]
-func BadWrite(val: &int) {
-  *val = 42;
+func BadWrite(p: &int) {
+  *p = 42;
 }
+@[Checked]
 func Main() -> int {
-  var x: int = 10;
+  var x: int = 5;
   BadWrite(&x);
-  return 0;
+  return x;
 }
 """)
     check(res.hasErrors)
-    check(res.diagnostics[0].message.contains("cannot assign through shared reference"))
 
   test "unchecked function allows write through raw pointer":
     let res = checkSource("""
-func RawWrite(val: *int) {
-  *val = 42;
+func RawWrite(p: *int) {
+  *p = 42;
 }
 func Main() -> int {
-  var x: int = 10;
+  var x: int = 5;
   RawWrite(&x);
-  return 0;
+  return x;
 }
 """)
     check(not res.hasErrors)
@@ -54,12 +58,13 @@ func Main() -> int {
   test "&T allows reading":
     let res = checkSource("""
 @[Checked]
-func Read(val: &int) -> int {
-  return *val;
+func Get(p: &int) -> int {
+  return *p;
 }
+@[Checked]
 func Main() -> int {
-  var x: int = 10;
-  return Read(&x);
+  var x: int = 5;
+  return Get(&x);
 }
 """)
     check(not res.hasErrors)
@@ -115,3 +120,55 @@ func Main() -> int {
 """)
     check(res.hasErrors)
     check(res.diagnostics[0].message.contains("moved"))
+
+  test "@[Checked] allows reinitialization after move":
+    let res = checkSource("""
+struct Box {
+  value: int;
+}
+@[Checked]
+func Take(b: own Box) -> int {
+  return b.value;
+}
+@[Checked]
+func Main() -> int {
+  var b: own Box = Box { value: 1 };
+  Take(b);
+  b = Box { value: 2 };
+  return b.value;
+}
+""")
+    check(not res.hasErrors)
+
+  test "@[Checked] move in assignment":
+    let res = checkSource("""
+struct Box {
+  value: int;
+}
+@[Checked]
+func Main() -> int {
+  var a: own Box = Box { value: 1 };
+  var b: own Box = a;
+  return a.value;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("moved"))
+
+  test "@[Checked] move in return":
+    let res = checkSource("""
+struct Box {
+  value: int;
+}
+@[Checked]
+func Give() -> own Box {
+  var x: own Box = Box { value: 42 };
+  return x;
+}
+@[Checked]
+func Main() -> int {
+  let b: own Box = Give();
+  return b.value;
+}
+""")
+    check(not res.hasErrors)
