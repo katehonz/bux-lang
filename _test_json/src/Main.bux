@@ -1,8 +1,0 @@
-import Std::Io::{PrintLine};
-import Std::Json;
-
-func Main() -> int {
-    let j: JsonValue = Json_Parse("{\"name\":\"Bux\",\"count\":42}");
-    PrintLine(Json_Stringify(j));
-    return 0;
-}

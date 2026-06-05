@@ -1,7 +1,0 @@
-[Package]
-Name = "hello"
-Version = "0.1.0"
-Type = "bin"
-
-[Build]
-Output = "Bin"
