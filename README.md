@@ -2,7 +2,8 @@
 
 ![Bux Language](bux-lang-01.jpeg)
 
-> **Status:** Self-hosting phase — `buxc2` compiles `.bux` → C → native binary. Bootstrap (`buxc`, Nim) builds the self-hosted compiler.
+> **Status:** Bootstrap compiler (`buxc`, Nim) compiles `.bux` → C → native binary.  
+> Self-hosted compiler (`buxc2`) exists as a proof-of-concept but is **deprioritized** in favor of language features and stdlib maturity.
 
 Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership, async/await, generics, algebraic enums, and a package manager.
 
