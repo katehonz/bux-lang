@@ -2,8 +2,6 @@
 // Validates types, resolves identifiers, checks function calls.
 module Sema {
 
-
-
 // ---------------------------------------------------------------------------
 // Sema context
 // ---------------------------------------------------------------------------
@@ -15,6 +13,7 @@ struct Sema {
     diagCount: int;
     diags: *SemaDiag;
     hasError: bool;
+    currentRetType: int;    // return type of the function being checked
 }
 
 struct SemaDiag {
@@ -33,6 +32,20 @@ func Sema_EmitError(sema: *Sema, line: uint32, col: uint32, msg: String) {
         sema.diagCount = sema.diagCount + 1;
     }
     sema.hasError = true;
+}
+
+// ---------------------------------------------------------------------------
+// Symbol zero-init helper (bootstrap C backend does not zero-init structs)
+// ---------------------------------------------------------------------------
+
+func Sema_ZeroInitSymbol(sym: *Symbol) {
+    sym.kind = 0;
+    sym.name = "";
+    sym.typeKind = 0;
+    sym.typeName = "";
+    sym.isMutable = false;
+    sym.isPublic = false;
+    sym.decl = null as *Decl;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,12 +119,33 @@ func Sema_TypeName(kind: int) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Block checking helper
+// ---------------------------------------------------------------------------
+
+func Sema_CheckBlock(sema: *Sema, block: *Block) {
+    if block == null as *Block { return; }
+    var blockScope: Scope = Scope_NewChild(sema.scope);
+    let prevScope: *Scope = sema.scope;
+    sema.scope = &blockScope;
+    var stmt: *Stmt = block.firstStmt;
+    while stmt != null as *Stmt {
+        Sema_CheckStmt(sema, stmt);
+        stmt = stmt.nextStmt;
+    }
+    sema.scope = prevScope;
+}
+
+// ---------------------------------------------------------------------------
 // Expression type checking
 // ---------------------------------------------------------------------------
 
 func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if expr == null as *Expr { return tyUnknown; }
     let kind: int = expr.kind;
+    // Debug: print expr kind
+    // Print("Sema_CheckExpr kind=");
+    // PrintInt(kind as int64);
+    // PrintLine("");
 
     // Literal
     if kind == ekLiteral {
@@ -141,12 +175,26 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         return sym.typeKind;
     }
 
+    // self
+    if kind == ekSelf {
+        let sym: Symbol = Scope_Lookup(sema.scope, "self");
+        if sym.kind == 0 && !String_Eq(sym.name, "self") {
+            Sema_EmitError(sema, expr.line, expr.column, "self outside method");
+            return tyUnknown;
+        }
+        return sym.typeKind;
+    }
+
     // Binary
     if kind == ekBinary {
         let left: int = Sema_CheckExpr(sema, expr.child1);
         let right: int = Sema_CheckExpr(sema, expr.child2);
         let op: int = expr.intValue;
 
+        // Assignment operators return target type
+        if op == tkAssign || (op >= tkPlusAssign && op <= tkShrAssign) {
+            return left;
+        }
         // Comparison operators return bool
         if op >= tkEq && op <= tkGe { return tyBool; }
         // Logical operators return bool
@@ -169,12 +217,31 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         return operand;
     }
 
+    // Assign
+    if kind == ekAssign {
+        let target: int = Sema_CheckExpr(sema, expr.child1);
+        let value: int = Sema_CheckExpr(sema, expr.child2);
+        // Basic type compatibility (permissive for now)
+        return target;
+    }
+
     // Call
     if kind == ekCall {
-        let callee: int = Sema_CheckExpr(sema, expr.child1);
-        if callee == tyUnknown { return tyUnknown; }
-        // Assume callee returns same type (simplified)
-        return callee;
+        discard Sema_CheckExpr(sema, expr.child1);
+        if expr.child2 != null as *Expr {
+            discard Sema_CheckExpr(sema, expr.child2);
+        }
+        if expr.child3 != null as *Expr {
+            discard Sema_CheckExpr(sema, expr.child3);
+        }
+        // Try to resolve return type from function declaration
+        if expr.child1.kind == ekIdent {
+            let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
+            if sym.kind == skFunc && sym.decl != null as *Decl && sym.decl.retType != null as *TypeExpr {
+                return Sema_ResolveType(sema, sym.decl.retType);
+            }
+        }
+        return tyUnknown;
     }
 
     // Ternary
@@ -199,6 +266,30 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     // Struct init: TypeName { field: value, ... }
     if kind == ekStructInit {
         return tyNamed;
+    }
+
+    // Field access
+    if kind == ekField {
+        discard Sema_CheckExpr(sema, expr.child1);
+        return tyUnknown;
+    }
+
+    // Index
+    if kind == ekIndex {
+        let obj: int = Sema_CheckExpr(sema, expr.child1);
+        let idx: int = Sema_CheckExpr(sema, expr.child2);
+        if !Sema_IsNumeric(idx) && idx != tyUnknown {
+            Sema_EmitError(sema, expr.line, expr.column, "index must be integer");
+        }
+        return tyUnknown;
+    }
+
+    // Block expression
+    if kind == ekBlock {
+        if expr.refBlock != null as *Block {
+            Sema_CheckBlock(sema, expr.refBlock);
+        }
+        return tyVoid;
     }
 
     return tyUnknown;
@@ -226,6 +317,7 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         }
         sym.isMutable = stmt.boolValue;
         sym.isPublic = false;
+        sym.decl = null as *Decl;
         discard Scope_Define(sema.scope, sym);
         return;
     }
@@ -233,7 +325,21 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
     // Return
     if kind == skReturn {
         if stmt.child1 != null as *Expr {
-            discard Sema_CheckExpr(sema, stmt.child1);
+            let retType: int = Sema_CheckExpr(sema, stmt.child1);
+            if sema.currentRetType != tyUnknown && retType != tyUnknown {
+                if retType != sema.currentRetType {
+                    // Be permissive: allow numeric widening, pointer/named mismatch
+                    if !Sema_IsNumeric(retType) || !Sema_IsNumeric(sema.currentRetType) {
+                        if retType != sema.currentRetType {
+                            Sema_EmitError(sema, stmt.line, stmt.column, "return type mismatch");
+                        }
+                    }
+                }
+            }
+        } else {
+            if sema.currentRetType != tyVoid && sema.currentRetType != tyUnknown {
+                Sema_EmitError(sema, stmt.line, stmt.column, "missing return value");
+            }
         }
         return;
     }
@@ -244,6 +350,8 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         if !Sema_IsBool(condType) && condType != tyUnknown {
             Sema_EmitError(sema, stmt.line, stmt.column, "if condition must be bool");
         }
+        Sema_CheckBlock(sema, stmt.refStmtBlock);
+        Sema_CheckBlock(sema, stmt.refStmtElse);
         return;
     }
 
@@ -253,12 +361,68 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         if !Sema_IsBool(condType) && condType != tyUnknown {
             Sema_EmitError(sema, stmt.line, stmt.column, "while condition must be bool");
         }
+        Sema_CheckBlock(sema, stmt.refStmtBlock);
+        return;
+    }
+
+    // Do-while
+    if kind == skDoWhile {
+        Sema_CheckBlock(sema, stmt.refStmtBlock);
+        let condType: int = Sema_CheckExpr(sema, stmt.child1);
+        if !Sema_IsBool(condType) && condType != tyUnknown {
+            Sema_EmitError(sema, stmt.line, stmt.column, "do-while condition must be bool");
+        }
+        return;
+    }
+
+    // Loop
+    if kind == skLoop {
+        Sema_CheckBlock(sema, stmt.refStmtBlock);
+        return;
+    }
+
+    // For
+    if kind == skFor {
+        discard Sema_CheckExpr(sema, stmt.child1);
+        var forScope: Scope = Scope_NewChild(sema.scope);
+        var loopSym: Symbol;
+        loopSym.kind = skVar;
+        loopSym.name = stmt.strValue;
+        loopSym.typeKind = tyUnknown;
+        loopSym.typeName = "";
+        loopSym.isMutable = true;
+        loopSym.isPublic = false;
+        loopSym.decl = null as *Decl;
+        discard Scope_Define(&forScope, loopSym);
+        let prevScope: *Scope = sema.scope;
+        sema.scope = &forScope;
+        Sema_CheckBlock(sema, stmt.refStmtBlock);
+        sema.scope = prevScope;
+        return;
+    }
+
+    // Match
+    if kind == skMatch {
+        discard Sema_CheckExpr(sema, stmt.child1);
+        return;
+    }
+
+    // Break / Continue
+    if kind == skBreak || kind == skContinue {
         return;
     }
 
     // Expression statement
     if kind == skExpr && stmt.child1 != null as *Expr {
         discard Sema_CheckExpr(sema, stmt.child1);
+        return;
+    }
+
+    // Decl (nested)
+    if kind == skDecl {
+        if stmt.refStmtDecl != null as *Decl && stmt.refStmtDecl.kind == dkFunc {
+            Sema_EmitError(sema, stmt.line, stmt.column, "nested functions not yet supported");
+        }
         return;
     }
 }
@@ -275,40 +439,158 @@ func Sema_CollectGlobals(sema: *Sema) {
         // Function
         if dk == dkFunc {
             var sym: Symbol;
+            Sema_ZeroInitSymbol(&sym);
             sym.kind = skFunc;
             sym.name = decl.strValue;
             sym.typeKind = tyFunc;
             sym.isPublic = decl.isPublic;
+            sym.decl = decl;
             discard Scope_Define(sema.scope, sym);
         }
 
         // Struct
         if dk == dkStruct {
             var sym: Symbol;
+            Sema_ZeroInitSymbol(&sym);
             sym.kind = skType;
             sym.name = decl.strValue;
             sym.typeKind = tyNamed;
             sym.isPublic = decl.isPublic;
+            sym.decl = decl;
             discard Scope_Define(sema.scope, sym);
         }
 
         // Enum
         if dk == dkEnum {
             var sym: Symbol;
+            Sema_ZeroInitSymbol(&sym);
             sym.kind = skType;
             sym.name = decl.strValue;
             sym.typeKind = tyNamed;
             sym.isPublic = decl.isPublic;
+            sym.decl = decl;
+            discard Scope_Define(sema.scope, sym);
+
+            // Register enum variants as constants
+            var vi: int = 0;
+            while vi < decl.variantCount && vi < 8 {
+                var v: EnumVariant;
+                if vi == 0 { v = decl.variant0; }
+                else if vi == 1 { v = decl.variant1; }
+                else if vi == 2 { v = decl.variant2; }
+                else if vi == 3 { v = decl.variant3; }
+                else if vi == 4 { v = decl.variant4; }
+                else if vi == 5 { v = decl.variant5; }
+                else if vi == 6 { v = decl.variant6; }
+                else if vi == 7 { v = decl.variant7; }
+                let variantName: String = String_Concat(decl.strValue, "_");
+                let variantName2: String = String_Concat(variantName, v.name);
+                var vSym: Symbol;
+                vSym.kind = skConst;
+                vSym.name = variantName2;
+                vSym.typeKind = tyNamed;
+                vSym.typeName = String_Concat(decl.strValue, "_Tag");
+                vSym.isMutable = false;
+                vSym.isPublic = decl.isPublic;
+                vSym.decl = decl;
+                discard Scope_Define(sema.scope, vSym);
+                vi = vi + 1;
+            }
+        }
+
+        // Use (import)
+        if dk == dkUse {
+            if decl.useKind == 2 {
+                // Multi-import: names are comma-separated in useNames
+                // For now, register the whole useNames string as a single func name
+                // (permissive fallback — real fix needs string split)
+                let namesStr: String = decl.useNames;
+                if !String_Eq(namesStr, "") {
+                    // Simple split by comma using available string functions
+                    var start: uint = 0;
+                    var pos: uint = 0;
+                    let totalLen: uint = String_Len(namesStr);
+                    while pos <= totalLen {
+                        let atEnd: bool = pos == totalLen;
+                        let isComma: bool = false;
+                        if pos < totalLen {
+                            // Check if character at pos is comma
+                            let chStr: String = bux_str_slice(namesStr, pos, 1);
+                            isComma = String_Eq(chStr, ",");
+                        }
+                        if atEnd || isComma {
+                            let nameLen: uint = pos - start;
+                            if nameLen > 0 {
+                                let name: String = bux_str_slice(namesStr, start, nameLen);
+                                var sym: Symbol;
+                                sym.kind = skFunc;
+                                sym.name = name;
+                                sym.typeKind = tyUnknown;
+                                sym.typeName = "";
+                                sym.isMutable = false;
+                                sym.isPublic = true;
+                                sym.decl = null as *Decl;
+                                discard Scope_Define(sema.scope, sym);
+                            }
+                            start = pos + 1;
+                        }
+                        pos = pos + 1;
+                    }
+                }
+            } else {
+                // Single import or glob — add last path segment
+                let path: String = decl.usePath;
+                if !String_Eq(path, "") {
+                    // Find last :: segment
+                    var lastSeg: String = path;
+                    let containsColons: int = bux_str_contains(path, "::");
+                    if containsColons != 0 {
+                        // Try to get last segment by finding last ::
+                        // Use a simple heuristic: slice from various positions
+                        let pathLen: uint = String_Len(path);
+                        var tryPos: uint = 0;
+                        while tryPos < pathLen {
+                            let slice: String = bux_str_slice(path, tryPos, pathLen - tryPos);
+                            if String_StartsWith(slice, "::") {
+                                lastSeg = bux_str_slice(slice, 2, String_Len(slice) - 2);
+                            }
+                            tryPos = tryPos + 1;
+                        }
+                    }
+                    var sym: Symbol;
+                    sym.kind = skFunc;
+                    sym.name = lastSeg;
+                    sym.typeKind = tyUnknown;
+                    sym.typeName = "";
+                    sym.isMutable = false;
+                    sym.isPublic = true;
+                    sym.decl = null as *Decl;
+                    discard Scope_Define(sema.scope, sym);
+                }
+            }
+        }
+
+        // Const
+        if dk == dkConst {
+            var sym: Symbol;
+            Sema_ZeroInitSymbol(&sym);
+            sym.kind = skConst;
+            sym.name = decl.strValue;
+            sym.typeKind = tyUnknown;
+            sym.isPublic = decl.isPublic;
+            sym.decl = decl;
             discard Scope_Define(sema.scope, sym);
         }
 
         // Extern function
         if dk == dkExternFunc {
             var sym: Symbol;
+            Sema_ZeroInitSymbol(&sym);
             sym.kind = skFunc;
             sym.name = decl.strValue;
             sym.typeKind = tyFunc;
             sym.isPublic = true;
+            sym.decl = decl;
             discard Scope_Define(sema.scope, sym);
         }
 
@@ -332,6 +614,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
     s.diags = bux_alloc(256 as uint * sizeof(SemaDiag)) as *SemaDiag;
     s.typeTable = null as *void;
     s.methodTable = null as *void;
+    s.currentRetType = tyVoid;
 
     // First pass: collect globals
     Sema_CollectGlobals(s);
@@ -349,6 +632,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 tpSym.kind = skType;
                 tpSym.name = decl.typeParam0;
                 tpSym.typeKind = tyTypeParam;
+                tpSym.decl = null as *Decl;
                 discard Scope_Define(&funcScope, tpSym);
             }
             if decl.typeParamCount >= 2 {
@@ -356,6 +640,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 tpSym2.kind = skType;
                 tpSym2.name = decl.typeParam1;
                 tpSym2.typeKind = tyTypeParam;
+                tpSym2.decl = null as *Decl;
                 discard Scope_Define(&funcScope, tpSym2);
             }
 
@@ -370,6 +655,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 else if i == 4 { p = &decl.param4; }
                 else if i == 5 { p = &decl.param5; }
                 var pSym: Symbol;
+                Sema_ZeroInitSymbol(&pSym);
                 pSym.kind = skVar;
                 if p != null as *Param && p.refParamType != null as *TypeExpr {
                     pSym.typeKind = Sema_ResolveType(s, p.refParamType);
@@ -379,6 +665,8 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                     pSym.typeName = "";
                 }
                 pSym.isMutable = false;
+                pSym.isPublic = false;
+                pSym.decl = null as *Decl;
                 if i == 0 { pSym.name = decl.param0.name; }
                 else if i == 1 { pSym.name = decl.param1.name; }
                 else if i == 2 { pSym.name = decl.param2.name; }
@@ -393,9 +681,19 @@ func Sema_Analyze(mod: *Module) -> *Sema {
             let prevScope: *Scope = s.scope;
             s.scope = &funcScope;
 
-            // Check body (simplified — just count statements)
-            var stmtCount: int = decl.refBody.stmtCount;
-            // In a full implementation, iterate statements and check each
+            // Set current function return type
+            if decl.retType != null as *TypeExpr {
+                s.currentRetType = Sema_ResolveType(s, decl.retType);
+            } else {
+                s.currentRetType = tyVoid;
+            }
+
+            // Check body statements
+            var stmt: *Stmt = decl.refBody.firstStmt;
+            while stmt != null as *Stmt {
+                Sema_CheckStmt(s, stmt);
+                stmt = stmt.nextStmt;
+            }
 
             s.scope = prevScope;
         }
@@ -419,4 +717,5 @@ func Sema_Free(sema: *Sema) {
     bux_free(sema.diags as *void);
     bux_free(sema as *void);
 }
+
 }

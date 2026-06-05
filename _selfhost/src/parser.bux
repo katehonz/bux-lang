@@ -413,6 +413,19 @@ func parserParsePostfix(p: *Parser) -> *Expr {
             continue;
         }
 
+        // Path: expr::name
+        if kind == tkColonColon {
+            discard parserAdvance(p);
+            let line: uint32 = parserCurToken(p).line;
+            let col: uint32 = parserCurToken(p).column;
+            let name: LexToken = parserExpect(p, tkIdent, "expected path segment");
+            let e: *Expr = parserMakeExpr(ekField, line, col);
+            e.child1 = left;
+            e.strValue = name.text;
+            left = e;
+            continue;
+        }
+
         // as, is
         if kind == tkAs || kind == tkIs {
             discard parserAdvance(p);

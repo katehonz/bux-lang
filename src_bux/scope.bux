@@ -18,6 +18,7 @@ struct Symbol {
     typeName: String;
     isMutable: bool;
     isPublic: bool;
+    decl: *Decl;            // associated declaration (for funcs, structs, enums)
 }
 
 struct Scope {
@@ -90,4 +91,5 @@ func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
 func Scope_Free(scope: *Scope) {
     bux_free(scope.symbols as *void);
 }
+
 }

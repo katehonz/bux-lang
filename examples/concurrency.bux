@@ -1,5 +1,6 @@
 import Std::Io::{PrintLine, PrintInt};
 import Std::Task::TaskHandle;
+import Std::Task::Task_Join;
 import Std::Channel::Channel;
 
 func Worker(arg: *void) -> *void {

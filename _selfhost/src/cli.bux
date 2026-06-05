@@ -170,6 +170,7 @@ func Cli_Check(srcPath: String) -> int {
         PrintLine("Parse failed");
         return 1;
     }
+    PrintLine("  Parse done");
 
     // Flatten module wrappers
     var decl2: *Decl = mod.firstItem;
@@ -185,6 +186,14 @@ func Cli_Check(srcPath: String) -> int {
     let sema: *Sema = Sema_Analyze(mod);
     if Sema_HasError(sema) {
         PrintLine("Sema errors found");
+        var i: int = 0;
+        while i < Sema_DiagCount(sema) {
+            Print("  line ");
+            PrintInt(sema.diags[i].line as int64);
+            Print(": ");
+            PrintLine(sema.diags[i].message);
+            i = i + 1;
+        }
         return 1;
     }
 
