@@ -15,12 +15,12 @@ func Channel_New<T>(capacity: int64) -> Channel<T> {
 }
 
 func Channel_Send<T>(ch: *Channel<T>, value: T) {
-    bux_channel_send(ch.handle, &value);
+    bux_channel_send(ch.handle, (&value) as *void);
 }
 
 func Channel_Recv<T>(ch: *Channel<T>) -> T {
     var result: T;
-    bux_channel_recv(ch.handle, &result);
+    bux_channel_recv(ch.handle, (&result) as *void);
     return result;
 }
 
@@ -30,6 +30,27 @@ func Channel_Close<T>(ch: *Channel<T>) {
 
 func Channel_Free<T>(ch: *Channel<T>) {
     bux_channel_free(ch.handle);
+}
+
+/* Non-generic wrappers for common types (avoid monomorphization issues) */
+func Channel_SendInt(ch: *Channel<int>, value: int) {
+    bux_channel_send(ch.handle, (&value) as *void);
+}
+
+func Channel_RecvInt(ch: *Channel<int>) -> int {
+    var result: int = 0;
+    bux_channel_recv(ch.handle, (&result) as *void);
+    return result;
+}
+
+func Channel_SendFloat64(ch: *Channel<float64>, value: float64) {
+    bux_channel_send(ch.handle, (&value) as *void);
+}
+
+func Channel_RecvFloat64(ch: *Channel<float64>) -> float64 {
+    var result: float64 = 0.0;
+    bux_channel_recv(ch.handle, (&result) as *void);
+    return result;
 }
 
 }

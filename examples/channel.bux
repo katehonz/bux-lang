@@ -1,0 +1,37 @@
+import Std::Io::{PrintLine, PrintInt};
+import Std::Task::{Task_Join, TaskHandle};
+import Std::Channel::{Channel, Channel_New, Channel_SendInt, Channel_RecvInt, Channel_Close};
+
+func Producer(chPtr: *Channel<int>) {
+    var i: int = 1;
+    while i <= 5 {
+        Channel_SendInt(chPtr, i * 10);
+        i = i + 1;
+    }
+    Channel_Close<int>(chPtr);
+}
+
+func Consumer(chPtr: *Channel<int>) {
+    var total: int = 0;
+    while true {
+        let val: int = Channel_RecvInt(chPtr);
+        if val == 0 {
+            break;
+        }
+        total = total + val;
+        PrintInt(val);
+        PrintLine("");
+    }
+    PrintLine("Total:");
+    PrintInt(total);
+    PrintLine("");
+}
+
+func Main() -> int {
+    let ch: Channel<int> = Channel_New<int>(3);
+    let p: *void = spawn Producer(&ch);
+    let c: *void = spawn Consumer(&ch);
+    Task_Join(TaskHandle { handle: p });
+    Task_Join(TaskHandle { handle: c });
+    return 0;
+}
