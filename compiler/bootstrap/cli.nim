@@ -24,6 +24,7 @@ Commands:
   install             Resolve and install dependencies
   build               Build the current package
   run                 Build and run the current package
+  test                Run tests in tests/ directory
   check               Type-check the current package
   clean               Remove build artifacts
   help                Show this help message
@@ -574,6 +575,46 @@ proc cmdClean*(args: seq[string], opts: GlobalOptions): int =
     printInfo("clean: build directory removed", useColor)
   return 0
 
+proc cmdTest*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let root = getCurrentDir()
+  let testsDir = root / "tests"
+  var testFiles: seq[string] = @[]
+  if dirExists(testsDir):
+    for kind, path in walkDir(testsDir):
+      if kind == pcFile and path.endsWith(".bux"):
+        testFiles.add(path)
+  if testFiles.len == 0:
+    printError("no tests found in tests/ directory", useColor)
+    return 1
+  var passed = 0
+  var failed = 0
+  for testFile in testFiles:
+    let testName = splitFile(testFile).name
+    let tmpDir = getTempDir() / "bux_test_" & testName
+    removeDir(tmpDir)
+    createDir(tmpDir / "src")
+    copyFile(testFile, tmpDir / "src" / "Main.bux")
+    writeFile(tmpDir / "bux.toml", "[package]\nname = \"" & testName & "\"\nversion = \"0.1.0\"\n")
+    let buildRes = cmdBuild(@[tmpDir], opts)
+    if buildRes != 0:
+      printError(&"  FAIL {testName} (build)", useColor)
+      failed += 1
+      continue
+    var execFile = tmpDir / "build" / testName
+    if not fileExists(execFile):
+      execFile = tmpDir / "build" / "bux_out"
+    let exitCode = execCmd(execFile)
+    if exitCode == 0:
+      printInfo(&"  PASS {testName}", useColor)
+      passed += 1
+    else:
+      printError(&"  FAIL {testName} (exit {exitCode})", useColor)
+      failed += 1
+    removeDir(tmpDir)
+  echo &"\nResults: {passed} passed, {failed} failed"
+  return if failed > 0: 1 else: 0
+
 proc cmdVersion*(args: seq[string], opts: GlobalOptions): int =
   echo "bux 0.1.0 (bootstrap)"
   return 0
@@ -597,6 +638,7 @@ proc runCli*(args: seq[string]): int =
   of "build": return cmdBuild(cmdArgs, opts)
   of "run": return cmdRun(cmdArgs, opts)
   of "check": return cmdCheck(cmdArgs, opts)
+  of "test": return cmdTest(cmdArgs, opts)
   of "clean": return cmdClean(cmdArgs, opts)
   of "version", "--version", "-v": return cmdVersion(cmdArgs, opts)
   of "help", "--help", "-h":

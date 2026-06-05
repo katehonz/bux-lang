@@ -1324,6 +1324,20 @@ const char* bux_socket_error(void) {
     return strerror(errno);
 }
 
+/* ============================================================================
+ * Test / Assert primitives
+ * ============================================================================ */
+
+void bux_exit(int code) {
+    exit(code);
+}
+
+void bux_assert(int cond, const char* file, int line, const char* expr) {
+    if (!cond) {
+        fprintf(stderr, "ASSERT FAILED: %s at %s:%d\n", expr, file, line);
+        exit(1);
+    }
+}
 
 /* ============================================================================
  * Cryptography primitives (OpenSSL)

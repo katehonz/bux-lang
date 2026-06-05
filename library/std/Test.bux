@@ -1,0 +1,44 @@
+module Std::Test {
+
+extern func bux_exit(code: int);
+extern func bux_assert(cond: int, file: String, line: int, expr: String);
+
+func Test_Exit(code: int) {
+    bux_exit(code);
+}
+
+func Test_Assert(cond: bool) {
+    bux_assert(cond as int, "", 0, "");
+}
+
+func Test_AssertEqInt(a: int, b: int) {
+    if a != b {
+        PrintLine("ASSERT_EQ FAILED:");
+        PrintInt(a);
+        PrintLine(" != ");
+        PrintInt(b);
+        bux_exit(1);
+    }
+}
+
+func Test_AssertTrue(cond: bool) {
+    if !cond {
+        PrintLine("ASSERT_TRUE FAILED");
+        bux_exit(1);
+    }
+}
+
+func Test_AssertFalse(cond: bool) {
+    if cond {
+        PrintLine("ASSERT_FALSE FAILED");
+        bux_exit(1);
+    }
+}
+
+func Test_Fail(msg: String) {
+    PrintLine("FAIL:");
+    PrintLine(msg);
+    bux_exit(1);
+}
+
+}

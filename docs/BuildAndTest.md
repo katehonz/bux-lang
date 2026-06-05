@@ -89,6 +89,9 @@ Output = "Bin"
 ./buxc run
 ./buxc run ./myproject
 
+# Run tests
+./buxc test
+
 # Clean build artifacts
 ./buxc clean
 ```
