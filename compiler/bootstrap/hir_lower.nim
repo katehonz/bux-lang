@@ -152,16 +152,26 @@ proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type])
       let mangledName = te.typeName & "_" & suffix
       if not ctx.generatedStructInsts.hasKey(mangledName):
         let genericDecl = ctx.genericStructs[te.typeName]
-        var fields: seq[tuple[name: string, typ: Type]] = @[]
-        var concreteArgs: seq[Type] = @[]
-        for f in genericDecl.declStructFields:
-          let resolvedType = substituteType(ctx, f.ftype, subst)
-          fields.add((f.name, resolvedType))
+        # Skip if any type arg is still an unresolved type parameter
+        var hasUnresolved = false
         for arg in te.typeArgs:
-          concreteArgs.add(substituteType(ctx, arg, subst))
-        ctx.extraStructs.add((mangledName, fields))
-        ctx.generatedStructInsts[mangledName] = true
-        ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
+          let argType = substituteType(ctx, arg, subst)
+          for tp in genericDecl.declStructTypeParams:
+            if argType.kind == tkNamed and argType.name == tp.name:
+              hasUnresolved = true
+              break
+          if hasUnresolved: break
+        if not hasUnresolved:
+          var fields: seq[tuple[name: string, typ: Type]] = @[]
+          var concreteArgs: seq[Type] = @[]
+          for f in genericDecl.declStructFields:
+            let resolvedType = substituteType(ctx, f.ftype, subst)
+            fields.add((f.name, resolvedType))
+          for arg in te.typeArgs:
+            concreteArgs.add(substituteType(ctx, arg, subst))
+          ctx.extraStructs.add((mangledName, fields))
+          ctx.generatedStructInsts[mangledName] = true
+          ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
       return makeNamed(mangledName)
     return ctx.resolveTypeExpr(te)
   of tekOwn:
@@ -197,20 +207,30 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
       let mangledName = te.typeName & "_" & suffix
       if not ctx.generatedStructInsts.hasKey(mangledName):
         let genericDecl = ctx.genericStructs[te.typeName]
-        var fields: seq[tuple[name: string, typ: Type]] = @[]
-        var subst = initTable[string, Type]()
-        var concreteArgs: seq[Type] = @[]
-        for j, tp in genericDecl.declStructTypeParams:
-          if j < te.typeArgs.len:
-            subst[tp.name] = ctx.resolveTypeExpr(te.typeArgs[j])
+        # Skip if any type arg is still an unresolved type parameter
+        var hasUnresolved = false
         for arg in te.typeArgs:
-          concreteArgs.add(ctx.resolveTypeExpr(arg))
-        for f in genericDecl.declStructFields:
-          let resolvedType = substituteType(ctx, f.ftype, subst)
-          fields.add((f.name, resolvedType))
-        ctx.extraStructs.add((mangledName, fields))
-        ctx.generatedStructInsts[mangledName] = true
-        ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
+          let argType = ctx.resolveTypeExpr(arg)
+          for tp in genericDecl.declStructTypeParams:
+            if argType.kind == tkNamed and argType.name == tp.name:
+              hasUnresolved = true
+              break
+          if hasUnresolved: break
+        if not hasUnresolved:
+          var fields: seq[tuple[name: string, typ: Type]] = @[]
+          var subst = initTable[string, Type]()
+          var concreteArgs: seq[Type] = @[]
+          for j, tp in genericDecl.declStructTypeParams:
+            if j < te.typeArgs.len:
+              subst[tp.name] = ctx.resolveTypeExpr(te.typeArgs[j])
+          for arg in te.typeArgs:
+            concreteArgs.add(ctx.resolveTypeExpr(arg))
+          for f in genericDecl.declStructFields:
+            let resolvedType = substituteType(ctx, f.ftype, subst)
+            fields.add((f.name, resolvedType))
+          ctx.extraStructs.add((mangledName, fields))
+          ctx.generatedStructInsts[mangledName] = true
+          ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
       return makeNamed(mangledName)
     case te.typeName
     of "void": return makeVoid()
@@ -539,15 +559,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     # Generic function call: Max<int>(10, 20) → Max_int(10, 20)
     if expr.exprCallCallee.kind == ekGenericCall:
       let baseName = expr.exprCallCallee.exprGenericCallee
-      var typeSuffix = ""
-      for i, targ in expr.exprCallCallee.exprGenericTypeArgs:
-        if i > 0:
-          typeSuffix.add("_")
-        if targ.kind == tekNamed:
-          typeSuffix.add(targ.typeName)
-        else:
-          typeSuffix.add("unknown")
-      let mangledName = baseName & "_" & typeSuffix
+      let mangledName = ctx.generateMethodInstance(baseName, expr.exprCallCallee.exprGenericTypeArgs)
       let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
       return hirCall(mangledName, args, typ, loc)
 
@@ -563,32 +575,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         calleeName = expr.exprCallCallee.exprPath.join("_")
       else: discard
       if calleeName != "":
-        var typeSuffix = ""
-        var typeArgIdx = 0
-        if ctx.genericFuncs.hasKey(calleeName):
-          let genericDecl = ctx.genericFuncs[calleeName]
-          for j, tp in genericDecl.declFuncTypeParams:
-            if tp.isLifetime: continue
-            if typeArgIdx > 0:
-              typeSuffix.add("_")
-            if j < expr.exprCallInferredTypeArgs.len:
-              let targ = expr.exprCallInferredTypeArgs[j]
-              if targ.kind == tekNamed:
-                typeSuffix.add(targ.typeName)
-              else:
-                typeSuffix.add("unknown")
-            else:
-              typeSuffix.add("unknown")
-            inc(typeArgIdx)
-        else:
-          for i, targ in expr.exprCallInferredTypeArgs:
-            if i > 0:
-              typeSuffix.add("_")
-            if targ.kind == tekNamed:
-              typeSuffix.add(targ.typeName)
-            else:
-              typeSuffix.add("unknown")
-        let mangledName = calleeName & "_" & typeSuffix
+        let mangledName = ctx.generateMethodInstance(calleeName, expr.exprCallInferredTypeArgs)
         let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
         return hirCall(mangledName, args, typ, loc)
 
@@ -1184,131 +1171,7 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
           let mangledName = typeName & "_" & methodDecl.declFuncName
           ctx.genericFuncs[mangledName] = methodDecl
 
-  # Second pass: find all generic calls and monomorphize
-  proc findGenericCalls(expr: Expr): seq[tuple[name: string, typeArgs: seq[TypeExpr]]] =
-    if expr == nil: return @[]
-    result = @[]
-    case expr.kind
-    of ekCall:
-      if expr.exprCallCallee.kind == ekGenericCall:
-        result.add((expr.exprCallCallee.exprGenericCallee, expr.exprCallCallee.exprGenericTypeArgs))
-      elif expr.exprCallInferredTypeArgs.len > 0:
-        var calleeName = ""
-        case expr.exprCallCallee.kind
-        of ekIdent: calleeName = expr.exprCallCallee.exprIdent
-        of ekPath: calleeName = expr.exprCallCallee.exprPath.join("::")
-        else: discard
-        if calleeName != "":
-          result.add((calleeName, expr.exprCallInferredTypeArgs))
-      result.add(findGenericCalls(expr.exprCallCallee))
-      for arg in expr.exprCallArgs:
-        result.add(findGenericCalls(arg))
-    of ekGenericCall:
-      result.add((expr.exprGenericCallee, expr.exprGenericTypeArgs))
-    of ekBinary:
-      result.add(findGenericCalls(expr.exprBinaryLeft))
-      result.add(findGenericCalls(expr.exprBinaryRight))
-    of ekUnary:
-      result.add(findGenericCalls(expr.exprUnaryOperand))
-    of ekTry:
-      result.add(findGenericCalls(expr.exprTryOperand))
-    of ekUnwrap:
-      result.add(findGenericCalls(expr.exprUnwrapOperand))
-    of ekAssign:
-      result.add(findGenericCalls(expr.exprAssignTarget))
-      result.add(findGenericCalls(expr.exprAssignValue))
-    of ekBlock:
-      if expr.exprBlock != nil:
-        for stmt in expr.exprBlock.stmts:
-          case stmt.kind
-          of skLet: result.add(findGenericCalls(stmt.stmtLetInit))
-          of skReturn: result.add(findGenericCalls(stmt.stmtReturnValue))
-          of skExpr: result.add(findGenericCalls(stmt.stmtExpr))
-          of skIf:
-            result.add(findGenericCalls(stmt.stmtIfCond))
-          of skWhile:
-            result.add(findGenericCalls(stmt.stmtWhileCond))
-          else: discard
-    else: discard
-
-  # Collect all generic instantiations
-  var instantiations: seq[tuple[name: string, typeArgs: seq[TypeExpr]]] = @[]
-  for decl in module.items:
-    if decl.kind == dkFunc and decl.declFuncBody != nil:
-      for stmt in decl.declFuncBody.stmts:
-        case stmt.kind
-        of skLet:
-          instantiations.add(findGenericCalls(stmt.stmtLetInit))
-        of skReturn:
-          instantiations.add(findGenericCalls(stmt.stmtReturnValue))
-        of skExpr:
-          instantiations.add(findGenericCalls(stmt.stmtExpr))
-        of skIf:
-          instantiations.add(findGenericCalls(stmt.stmtIfCond))
-        of skWhile:
-          instantiations.add(findGenericCalls(stmt.stmtWhileCond))
-        else: discard
-
-  # Generate monomorphized functions
-  var generated = initTable[string, bool]()
-  for inst in instantiations:
-    let baseName = inst.name
-    if ctx.genericFuncs.hasKey(baseName):
-      let genericDecl = ctx.genericFuncs[baseName]
-      var typeSuffix = ""
-      var nonLifetimeIdx = 0
-      for j, tp in genericDecl.declFuncTypeParams:
-        if tp.isLifetime: continue
-        if nonLifetimeIdx > 0: typeSuffix.add("_")
-        if j < inst.typeArgs.len:
-          let targ = inst.typeArgs[j]
-          if targ.kind == tekNamed:
-            typeSuffix.add(targ.typeName)
-          else:
-            typeSuffix.add("unknown")
-        else:
-          typeSuffix.add("unknown")
-        inc(nonLifetimeIdx)
-      let mangledName = baseName & "_" & typeSuffix
-      if not generated.hasKey(mangledName):
-        # Generate specialized version
-        
-        # Build type substitution table
-        var subst = initTable[string, Type]()
-        for j, tp in genericDecl.declFuncTypeParams:
-          if tp.isLifetime: continue
-          if j < inst.typeArgs.len:
-            let targ = inst.typeArgs[j]
-            if targ.kind == tekNamed:
-              case targ.typeName
-              of "int", "int32": subst[tp.name] = makeInt()
-              of "int64": subst[tp.name] = makeInt64()
-              of "float64": subst[tp.name] = makeFloat64()
-              of "float32": subst[tp.name] = makeFloat32()
-              of "bool": subst[tp.name] = makeBool()
-              else: subst[tp.name] = makeNamed(targ.typeName)
-        
-        # Create specialized declaration
-        var specDecl = Decl(
-          kind: dkFunc,
-          loc: genericDecl.loc,
-          isPublic: genericDecl.isPublic,
-          declFuncAsm: genericDecl.declFuncAsm,
-          declFuncCallConv: genericDecl.declFuncCallConv,
-          declFuncName: mangledName,
-          declFuncTypeParams: @[],
-          declFuncParams: genericDecl.declFuncParams,
-          declFuncReturnType: genericDecl.declFuncReturnType,
-          declFuncBody: genericDecl.declFuncBody
-        )
-        
-        # Set substitution and lower
-        ctx.typeSubst = subst
-        funcs.add(ctx.lowerFunc(specDecl))
-        ctx.typeSubst = initTable[string, Type]()  # Clear substitution
-        generated[mangledName] = true
-
-  # Third pass: lower all non-generic functions
+  # Second pass: lower all non-generic functions
   for decl in module.items:
     case decl.kind
     of dkFunc:

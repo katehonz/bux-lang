@@ -1,0 +1,19 @@
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::*;
+import Std::Iter::*;
+
+func Main() -> int {
+    let arr: Array<int> = Array_New<int>(8);
+    Array_Push<int>(&arr, 10);
+    Array_Push<int>(&arr, 20);
+    Array_Push<int>(&arr, 30);
+
+    let it: Iter<int> = Array_Iter<int>(&arr);
+    while Iter_HasNext<int>(&it) {
+        PrintInt(Iter_Next<int>(&it));
+        PrintLine("");
+    }
+
+    Array_Free<int>(&arr);
+    return 0;
+}

@@ -101,6 +101,59 @@ func Main() -> int {
 
 ---
 
+## Std::Iter
+
+Lightweight iterator over `Array<T>` (index-based, no allocation).
+
+### Types
+```bux
+struct Iter<T> {
+    data: *T,
+    len: uint,
+    pos: uint,
+}
+```
+
+### Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Array_Iter<T>` | `func Array_Iter<T>(arr: *Array<T>) -> Iter<T>` | Create iterator from array |
+| `Iter_HasNext<T>` | `func Iter_HasNext<T>(it: *Iter<T>) -> bool` | Check if more elements remain |
+| `Iter_Next<T>` | `func Iter_Next<T>(it: *Iter<T>) -> T` | Get next element and advance |
+| `Iter_Peek<T>` | `func Iter_Peek<T>(it: *Iter<T>) -> T` | Peek current element without advancing |
+| `Iter_Reset<T>` | `func Iter_Reset<T>(it: *Iter<T>)` | Reset to start |
+| `Iter_Pos<T>` | `func Iter_Pos<T>(it: *Iter<T>) -> uint` | Current position |
+| `Iter_Len<T>` | `func Iter_Len<T>(it: *Iter<T>) -> uint` | Total length |
+| `Iter_Count<T>` | `func Iter_Count<T>(it: *Iter<T>) -> uint` | Count remaining elements |
+| `Iter_Skip<T>` | `func Iter_Skip<T>(it: *Iter<T>, n: uint)` | Skip N elements |
+| `Iter_Take<T>` | `func Iter_Take<T>(it: *Iter<T>, n: uint) -> Iter<T>` | Take first N elements as new iterator |
+
+### Example
+```bux
+import Std::Array::*;
+import Std::Iter::*;
+import Std::Io::{PrintInt, PrintLine};
+
+func Main() -> int {
+    let arr: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&arr, 10);
+    Array_Push<int>(&arr, 20);
+    Array_Push<int>(&arr, 30);
+
+    let it: Iter<int> = Array_Iter<int>(&arr);
+    while Iter_HasNext<int>(&it) {
+        PrintInt(Iter_Next<int>(&it));
+        PrintLine("");
+    }
+
+    Array_Free<int>(&arr);
+    return 0;
+}
+```
+
+---
+
 ## Std::String
 
 String manipulation utilities.
@@ -848,7 +901,7 @@ func Main() -> int {
 - `Std::Time` — `NowMs`, `NowUs`, `SleepMs` ✅
 - `Std::Process` — `Run`, `Output` ✅
 - `Std::Fmt` — String formatting with interpolation ✅
-- `Std::Iter` — Iterator trait and combinators ⏳
+- `Std::Iter` — Iterator over `Array<T>` ✅
 - `Std::Task` / `Std::Channel` — Lightweight concurrency (pthread-based threads) ✅
 - `Std::Net` — TCP sockets ✅
 - `Std::Json` — JSON parser/serializer ✅

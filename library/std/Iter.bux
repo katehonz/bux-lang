@@ -1,0 +1,70 @@
+module Std::Iter {
+
+import Std::Array::*;
+
+struct Iter<T> {
+    data: *T,
+    len: uint,
+    pos: uint,
+}
+
+/* Create an iterator from an Array */
+func Array_Iter<T>(arr: *Array<T>) -> Iter<T> {
+    return Iter<T> { data: arr.data, len: arr.len, pos: 0 };
+}
+
+/* Check if there are more elements */
+func Iter_HasNext<T>(it: *Iter<T>) -> bool {
+    return it.pos < it.len;
+}
+
+/* Get the next element and advance (undefined if HasNext is false) */
+func Iter_Next<T>(it: *Iter<T>) -> T {
+    let val: T = it.data[it.pos];
+    it.pos = it.pos + 1;
+    return val;
+}
+
+/* Peek current element without advancing (undefined if HasNext is false) */
+func Iter_Peek<T>(it: *Iter<T>) -> T {
+    return it.data[it.pos];
+}
+
+/* Reset iterator to the beginning */
+func Iter_Reset<T>(it: *Iter<T>) {
+    it.pos = 0;
+}
+
+/* Current position */
+func Iter_Pos<T>(it: *Iter<T>) -> uint {
+    return it.pos;
+}
+
+/* Remaining length */
+func Iter_Len<T>(it: *Iter<T>) -> uint {
+    return it.len;
+}
+
+/* Count remaining elements */
+func Iter_Count<T>(it: *Iter<T>) -> uint {
+    return it.len - it.pos;
+}
+
+/* Skip N elements */
+func Iter_Skip<T>(it: *Iter<T>, n: uint) {
+    it.pos = it.pos + n;
+    if it.pos > it.len {
+        it.pos = it.len;
+    }
+}
+
+/* Take first N elements (by limiting len) */
+func Iter_Take<T>(it: *Iter<T>, n: uint) -> Iter<T> {
+    var endPos: uint = it.pos + n;
+    if endPos > it.len {
+        endPos = it.len;
+    }
+    return Iter<T> { data: it.data, len: endPos, pos: it.pos };
+}
+
+}
