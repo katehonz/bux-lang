@@ -1,5 +1,5 @@
 import std/[os, strutils, terminal, strformat, osproc, sets]
-import lexer, parser, ast, sema, manifest, hir, hir_lower, c_backend, types, scope
+import lexer, parser, ast, sema, manifest, hir_lower, c_backend
 
 type
   ColorMode* = enum
@@ -257,22 +257,47 @@ proc getDeclName(d: Decl): string
 proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl]
 proc collectDepDecls(lock: Lockfile, root: string, opts: GlobalOptions): seq[Decl]
 
-proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
-  let useColor = shouldUseColor(opts)
-  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
+proc findStdlibDir(root: string): string =
+  let searchPaths = @[
+    getAppDir() / ".." / "library",
+    getAppDir() / "library",
+    root / "library",
+  ]
+  for path in searchPaths:
+    if dirExists(path):
+      return path
+  return ""
+
+type
+  ProjectContext = object
+    root: string
+    man: Manifest
+    stdlibDir: string
+    stdlibDecls: seq[Decl]
+    depDecls: seq[Decl]
+    allModuleItems: seq[Decl]
+    hasMain: bool
+
+proc prepareProject(root: string, useColor: bool, opts: GlobalOptions): (ProjectContext, int) =
+  var pctx: ProjectContext
+  pctx.root = root
   let manifestPath = root / "bux.toml"
   if not fileExists(manifestPath):
     printError("no bux.toml found", useColor)
-    return 1
-  let man = loadManifest(manifestPath)
+    return (pctx, 1)
+  pctx.man = loadManifest(manifestPath)
   let srcDir = root / "src"
   if not dirExists(srcDir):
     printError("no src/ directory found", useColor)
-    return 1
+    return (pctx, 1)
 
-  # Phase 1: Parse all .bux files and collect declarations
-  var allModuleItems: seq[Decl] = @[]
-  var foundMain = false
+  pctx.stdlibDir = findStdlibDir(root)
+  pctx.stdlibDecls = collectStdlibDecls(pctx.stdlibDir)
+  let lock = loadLockfile(root / "bux.lock")
+  pctx.depDecls = collectDepDecls(lock, root, opts)
+
+  pctx.allModuleItems = @[]
+  pctx.hasMain = false
   for kind, path in walkDir(srcDir):
     if kind == pcFile and path.endsWith(".bux"):
       let source = readFile(path)
@@ -281,50 +306,42 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
         printError(&"lex errors in {path}", useColor)
         for d in lexRes.diagnostics:
           echo $d
-        return 1
+        return (pctx, 1)
       let parseRes = parse(lexRes.tokens, path)
       if parseRes.diagnostics.len > 0:
         printError(&"parse errors in {path}", useColor)
         for d in parseRes.diagnostics:
           echo &"error: {d.message} at {d.loc}"
-        return 1
-      
-      # Flatten declarations from module wrappers
+        return (pctx, 1)
       for decl in parseRes.module.items:
         if decl.kind == dkModule:
           for sub in decl.declModuleItems:
-            allModuleItems.add(sub)
+            pctx.allModuleItems.add(sub)
         else:
-          allModuleItems.add(decl)
-      
+          pctx.allModuleItems.add(decl)
       if splitFile(path).name == "Main":
-        foundMain = true
+        pctx.hasMain = true
 
-  if not foundMain:
+  if not pctx.hasMain:
     printError("no Main.bux found in src/", useColor)
-    return 1
+    return (pctx, 1)
 
-  # Phase 2: Merge with stdlib and check
-  var stdlibDir = ""
-  let stdlibSearchPaths = @[
-    getAppDir() / ".." / "library",
-    getAppDir() / "library",
-    getCurrentDir() / "library",
-    "/home/ziko/z-git/bux/bux/library",
-  ]
-  for path in stdlibSearchPaths:
-    if dirExists(path):
-      stdlibDir = path
-      break
-  let stdlibDecls = collectStdlibDecls(stdlibDir)
-  let lock = loadLockfile(root / "bux.lock")
-  let depDecls = collectDepDecls(lock, root, opts)
-  let stdlibAndDeps = mergeDecls(stdlibDecls, depDecls)
-  let mergedItems = mergeDecls(stdlibAndDeps, allModuleItems)
+  return (pctx, 0)
 
+proc mergeProject(pctx: ProjectContext): Module =
+  let stdlibAndDeps = mergeDecls(pctx.stdlibDecls, pctx.depDecls)
+  let mergedItems = mergeDecls(stdlibAndDeps, pctx.allModuleItems)
   var unifiedModule = newModule("main")
   unifiedModule.items = mergedItems
+  return unifiedModule
 
+proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
+  let (pctx, status) = prepareProject(root, useColor, opts)
+  if status != 0:
+    return status
+  let unifiedModule = mergeProject(pctx)
   let semaRes = analyze(unifiedModule)
   if semaRes.hasErrors:
     printError("type errors in project", useColor)
@@ -332,7 +349,6 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
       let sev = if d.severity == sdsError: "error" else: "warning"
       echo &"{sev}: {d.message} at {d.loc}"
     return 1
-
   if not opts.quiet:
     printInfo("check passed", useColor)
   return 0
@@ -417,82 +433,16 @@ proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl] =
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
   let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
-  let manifestPath = root / "bux.toml"
-  if not fileExists(manifestPath):
-    printError("no bux.toml found", useColor)
-    return 1
-  let man = loadManifest(manifestPath)
-  let srcDir = root / "src"
-  if not dirExists(srcDir):
-    printError("no src/ directory found", useColor)
-    return 1
+  let (pctx, status) = prepareProject(root, useColor, opts)
+  if status != 0:
+    return status
 
   # Create build directory
   let buildDir = root / "build"
   if not dirExists(buildDir):
     createDir(buildDir)
 
-  # Find stdlib directory
-  var stdlibDir = ""
-  let stdlibSearchPaths = @[
-    getAppDir() / ".." / "library",
-    getAppDir() / "library",
-    root / "library",
-    "/home/ziko/z-git/bux/bux/library",
-  ]
-  for path in stdlibSearchPaths:
-    if dirExists(path):
-      stdlibDir = path
-      break
-  
-  # Collect stdlib declarations once
-  let stdlibDecls = collectStdlibDecls(stdlibDir)
-
-  # Collect dependency declarations from lockfile
-  let lock = loadLockfile(root / "bux.lock")
-  let depDecls = collectDepDecls(lock, root, opts)
-
-  # Phase 1: Parse all .bux files and collect declarations
-  var allModuleItems: seq[Decl] = @[]
-  var foundMain = false
-  for kind, path in walkDir(srcDir):
-    if kind == pcFile and path.endsWith(".bux"):
-      let source = readFile(path)
-      let lexRes = tokenize(source, path)
-      if lexRes.hasErrors:
-        printError(&"lex errors in {path}", useColor)
-        for d in lexRes.diagnostics:
-          echo $d
-        return 1
-      let parseRes = parse(lexRes.tokens, path)
-      if parseRes.diagnostics.len > 0:
-        printError(&"parse errors in {path}", useColor)
-        for d in parseRes.diagnostics:
-          echo &"error: {d.message} at {d.loc}"
-        return 1
-      
-      # Flatten: extract declarations from module wrappers
-      for decl in parseRes.module.items:
-        if decl.kind == dkModule:
-          for sub in decl.declModuleItems:
-            allModuleItems.add(sub)
-        else:
-          allModuleItems.add(decl)
-      
-      if splitFile(path).name == "Main":
-        foundMain = true
-  
-  if not foundMain:
-    printError("no Main.bux found in src/", useColor)
-    return 1
-
-  # Phase 2: Merge stdlib + deps + project (later shadow earlier)
-  let stdlibAndDeps = mergeDecls(stdlibDecls, depDecls)
-  let mergedItems = mergeDecls(stdlibAndDeps, allModuleItems)
-
-  # Create unified module
-  var unifiedModule = newModule("main")
-  unifiedModule.items = mergedItems
+  let unifiedModule = mergeProject(pctx)
 
   # Phase 3: Sema + HIR + C codegen on unified module
   let (semaRes, semaCtx) = analyzeFull(unifiedModule)
@@ -512,13 +462,13 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   writeFile(cFile, allCCode)
 
   # Copy runtime and stdlib files
+  let stdlibDir = pctx.stdlibDir
   let runtimeDst = buildDir / "runtime.c"
   let ioDst = buildDir / "io.c"
   if stdlibDir == "":
     printError("stdlib directory not found", useColor)
     return 1
   
-  # Copy runtime.c
   let runtimeSrc = stdlibDir / "runtime" / "runtime.c"
   if fileExists(runtimeSrc):
     copyFile(runtimeSrc, runtimeDst)
@@ -526,7 +476,6 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     printError("runtime.c not found in library/runtime/", useColor)
     return 1
   
-  # Copy io.c
   let ioSrc = stdlibDir / "runtime" / "io.c"
   if fileExists(ioSrc):
     copyFile(ioSrc, ioDst)
@@ -535,7 +484,7 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     return 1
 
   # Compile with cc
-  let outputName = if man.name != "": man.name else: "bux_out"
+  let outputName = if pctx.man.name != "": pctx.man.name else: "bux_out"
   let outputFile = buildDir / outputName
   let ccCmd = &"cc -O2 -pthread -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm -lcrypto 2>&1"
   if opts.verbose:
@@ -552,10 +501,10 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
 
 proc cmdRun*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
+  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
   let buildRes = cmdBuild(args, opts)
   if buildRes != 0:
     return buildRes
-  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
   let man = loadManifest(root / "bux.toml")
   let outputName = if man.name != "": man.name else: "bux_out"
   let outputFile = root / "build" / outputName

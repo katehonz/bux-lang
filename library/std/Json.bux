@@ -274,8 +274,7 @@ func JsonParser_ParseString(p: *JsonParser) -> String {
         return "";
     }
     JsonParser_Advance(p);
-    let raw: String = StringBuilder_Build(&sb);
-    let result: String = String_Copy(raw);
+    let result: String = StringBuilder_Build(&sb);
     StringBuilder_Free(&sb);
     return result;
 }

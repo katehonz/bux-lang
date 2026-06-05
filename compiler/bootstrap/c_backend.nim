@@ -1,5 +1,5 @@
-import std/[strformat, strutils, tables]
-import hir, types, token, source_location
+import std/[strformat, strutils]
+import hir, types, token
 
 type
   CBackend* = object
@@ -107,7 +107,12 @@ proc typeToC*(be: var CBackend, typ: Type): string =
     else: return typ.name
   of tkTuple: return "void*"  # TODO: proper tuple struct
   of tkFunc: return "void*"  # TODO: function pointer
-  else: return "int"
+  else:
+    when defined(release):
+      return "void*"
+    else:
+      stderr.writeLine("warning: C backend: unknown type kind " & $typ.kind & ", using void*")
+      return "void*"
 
 proc operatorToC(op: TokenKind): string =
   case op

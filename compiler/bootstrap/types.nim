@@ -1,4 +1,5 @@
-import std/[sequtils, strformat, strutils]
+import std/[sequtils, strutils]
+import token
 
 type
   TypeKind* = enum

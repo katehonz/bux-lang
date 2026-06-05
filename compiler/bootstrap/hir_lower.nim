@@ -1,4 +1,4 @@
-import std/[tables, sets, strformat, strutils]
+import std/[tables, sets, strutils]
 import ast, types, token, source_location, hir, sema, scope
 
 type

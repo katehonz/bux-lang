@@ -1,4 +1,4 @@
-import std/[strformat, tables, sequtils, strutils]
+import std/[strformat, tables, strutils]
 import ast, types, scope, source_location, token
 
 type

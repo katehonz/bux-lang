@@ -1,0 +1,44 @@
+module Std::Result {
+import Std::Io::{PrintLine};
+
+enum Result {
+    Ok(int),
+    Err(String),
+}
+
+func Result_NewOk(value: int) -> Result {
+    let r: Result = Result { tag: Result_Ok };
+    r.data.Ok_0 = value;
+    return r;
+}
+
+func Result_NewErr(msg: String) -> Result {
+    let r: Result = Result { tag: Result_Err };
+    r.data.Err_0 = msg;
+    return r;
+}
+
+func Result_IsOk(r: Result) -> bool {
+    return r.tag == Result_Ok;
+}
+
+func Result_IsErr(r: Result) -> bool {
+    return r.tag == Result_Err;
+}
+
+func Result_Unwrap(r: Result) -> int {
+    if r.tag != Result_Ok {
+        PrintLine("panic: unwrap on Err");
+        return 0;
+    }
+    return r.data.Ok_0;
+}
+
+func Result_UnwrapOr(r: Result, fallback: int) -> int {
+    if r.tag == Result_Ok {
+        return r.data.Ok_0;
+    }
+    return fallback;
+}
+
+}

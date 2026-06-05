@@ -1,5 +1,5 @@
-import std/[strformat, sequtils, strutils]
-import token, source_location, lexer, ast
+import std/strutils
+import token, source_location, ast
 
 type
   ParserDiagnosticSeverity* = enum

@@ -1,0 +1,42 @@
+module Std::Option {
+import Std::Io::{PrintLine};
+
+enum Option {
+    Some(int),
+    None,
+}
+
+func Option_NewSome(value: int) -> Option {
+    let o: Option = Option { tag: Option_Some };
+    o.data.Some_0 = value;
+    return o;
+}
+
+func Option_NewNone() -> Option {
+    return Option { tag: Option_None };
+}
+
+func Option_IsSome(o: Option) -> bool {
+    return o.tag == Option_Some;
+}
+
+func Option_IsNone(o: Option) -> bool {
+    return o.tag == Option_None;
+}
+
+func Option_Unwrap(o: Option) -> int {
+    if o.tag != Option_Some {
+        PrintLine("panic: unwrap on None");
+        return 0;
+    }
+    return o.data.Some_0;
+}
+
+func Option_UnwrapOr(o: Option, fallback: int) -> int {
+    if o.tag == Option_Some {
+        return o.data.Some_0;
+    }
+    return fallback;
+}
+
+}

@@ -1,5 +1,5 @@
 import std/tables
-import types, ast, source_location
+import types, ast
 
 type
   SymbolKind* = enum

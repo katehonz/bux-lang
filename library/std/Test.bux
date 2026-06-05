@@ -1,4 +1,5 @@
 module Std::Test {
+import Std::Io::{PrintLine, PrintInt};
 
 extern func bux_exit(code: int);
 extern func bux_assert(cond: int, file: String, line: int, expr: String);

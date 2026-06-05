@@ -32,7 +32,7 @@ func Channel_Free<T>(ch: *Channel<T>) {
     bux_channel_free(ch.handle);
 }
 
-/* Non-generic wrappers for common types (avoid monomorphization issues) */
+/* Convenience wrappers for common types */
 func Channel_SendInt(ch: *Channel<int>, value: int) {
     bux_channel_send(ch.handle, (&value) as *void);
 }

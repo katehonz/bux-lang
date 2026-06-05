@@ -1,4 +1,4 @@
-import std/[strutils, os, tables, sequtils, strformat]
+import std/[strutils, os, tables, strformat]
 
 type
   PackageType* = enum
