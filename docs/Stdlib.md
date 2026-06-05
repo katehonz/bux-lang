@@ -447,6 +447,72 @@ func Main() -> int {
 
 ---
 
+## Std::Sync
+
+Synchronization primitives: `Mutex` and `RwLock`.
+
+### Types
+```bux
+struct Mutex {
+    handle: *void;
+}
+
+struct RwLock {
+    handle: *void;
+}
+```
+
+### Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Mutex_New` | `func Mutex_New() -> Mutex` | Create a new mutex |
+| `Mutex_Lock` | `func Mutex_Lock(m: *Mutex)` | Acquire lock (blocks) |
+| `Mutex_Unlock` | `func Mutex_Unlock(m: *Mutex)` | Release lock |
+| `Mutex_Free` | `func Mutex_Free(m: *Mutex)` | Destroy mutex |
+| `RwLock_New` | `func RwLock_New() -> RwLock` | Create a new read-write lock |
+| `RwLock_ReadLock` | `func RwLock_ReadLock(rw: *RwLock)` | Acquire read lock (shared) |
+| `RwLock_WriteLock` | `func RwLock_WriteLock(rw: *RwLock)` | Acquire write lock (exclusive) |
+| `RwLock_Unlock` | `func RwLock_Unlock(rw: *RwLock)` | Release read or write lock |
+| `RwLock_Free` | `func RwLock_Free(rw: *RwLock)` | Destroy rwlock |
+
+### Example
+```bux
+import Std::Io::{PrintLine, PrintInt};
+import Std::Task::{Task_Join, TaskHandle};
+import Std::Sync::{Mutex, Mutex_New, Mutex_Lock, Mutex_Unlock};
+
+struct Counter {
+    value: int;
+    mtx: Mutex;
+}
+
+func Incrementer(arg: *void) -> *void {
+    let c: *Counter = arg as *Counter;
+    var i: int = 0;
+    while i < 100000 {
+        Mutex_Lock(&c.mtx);
+        c.value = c.value + 1;
+        Mutex_Unlock(&c.mtx);
+        i = i + 1;
+    }
+    return null;
+}
+
+func Main() -> int {
+    var counter: Counter = Counter { value: 0, mtx: Mutex_New() };
+    let a: *void = spawn Incrementer(&counter);
+    let b: *void = spawn Incrementer(&counter);
+    Task_Join(TaskHandle { handle: a });
+    Task_Join(TaskHandle { handle: b });
+    PrintLine("Counter:");
+    PrintInt(counter.value);
+    return 0;
+}
+```
+
+---
+
 ## Std::Channel
 
 Generic channel for thread communication over pthread mutex/cond.

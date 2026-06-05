@@ -1,0 +1,35 @@
+import Std::Io::{PrintLine, PrintInt};
+import Std::Task::{Task_Join, TaskHandle};
+import Std::Sync::{Mutex, Mutex_New, Mutex_Lock, Mutex_Unlock};
+
+struct Counter {
+    value: int;
+    mtx: Mutex;
+}
+
+func Incrementer(arg: *void) -> *void {
+    let c: *Counter = arg as *Counter;
+    var i: int = 0;
+    while i < 100000 {
+        Mutex_Lock(&c.mtx);
+        c.value = c.value + 1;
+        Mutex_Unlock(&c.mtx);
+        i = i + 1;
+    }
+    return null;
+}
+
+func Main() -> int {
+    var counter: Counter = Counter { value: 0, mtx: Mutex_New() };
+
+    let a: *void = spawn Incrementer(&counter);
+    let b: *void = spawn Incrementer(&counter);
+
+    Task_Join(TaskHandle { handle: a });
+    Task_Join(TaskHandle { handle: b });
+
+    PrintLine("Counter:");
+    PrintInt(counter.value);
+    PrintLine("");
+    return 0;
+}

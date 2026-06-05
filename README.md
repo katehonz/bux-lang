@@ -188,12 +188,12 @@ func Main() -> int {
 | **Methods** | `extend` blocks for struct methods |
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
-| **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel`, `Os`, `Time`, `Process` |
+| **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel`, `Sync`, `Os`, `Time`, `Process` |
 | **Backend** | C transpiler (self-hosting + bootstrap) |
 | **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
 | **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
 | **Async/Await** | `async func`, `spawn`, `.await` with stackful coroutines |
-| **Concurrency** | `Task`/`Channel` (pthread-based), `bux_async_yield`/`spawn` |
+| **Concurrency** | `Task`/`Channel`/`Sync` (pthread-based), `bux_async_yield`/`spawn` |
 | **CTFE** | `const func` — compile-time function execution |
 | **Trait Bounds** | `func Max<T: Comparable>(a: T, b: T) -> T` |
 | **Package Manager** | `bux add`, `bux install`, `bux.lock`, path + git deps |

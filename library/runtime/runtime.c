@@ -877,6 +877,76 @@ void bux_channel_free(void* handle) {
 }
 
 /* ============================================================================
+ * Synchronization primitives (Mutex, RwLock)
+ * ============================================================================ */
+
+typedef struct bux_mutex {
+    pthread_mutex_t mtx;
+} bux_mutex_t;
+
+typedef struct bux_rwlock {
+    pthread_rwlock_t rwl;
+} bux_rwlock_t;
+
+void* bux_mutex_new(void) {
+    bux_mutex_t* m = (bux_mutex_t*)malloc(sizeof(bux_mutex_t));
+    if (!m) return NULL;
+    pthread_mutex_init(&m->mtx, NULL);
+    return m;
+}
+
+void bux_mutex_lock(void* handle) {
+    if (!handle) return;
+    bux_mutex_t* m = (bux_mutex_t*)handle;
+    pthread_mutex_lock(&m->mtx);
+}
+
+void bux_mutex_unlock(void* handle) {
+    if (!handle) return;
+    bux_mutex_t* m = (bux_mutex_t*)handle;
+    pthread_mutex_unlock(&m->mtx);
+}
+
+void bux_mutex_free(void* handle) {
+    if (!handle) return;
+    bux_mutex_t* m = (bux_mutex_t*)handle;
+    pthread_mutex_destroy(&m->mtx);
+    free(m);
+}
+
+void* bux_rwlock_new(void) {
+    bux_rwlock_t* rw = (bux_rwlock_t*)malloc(sizeof(bux_rwlock_t));
+    if (!rw) return NULL;
+    pthread_rwlock_init(&rw->rwl, NULL);
+    return rw;
+}
+
+void bux_rwlock_rdlock(void* handle) {
+    if (!handle) return;
+    bux_rwlock_t* rw = (bux_rwlock_t*)handle;
+    pthread_rwlock_rdlock(&rw->rwl);
+}
+
+void bux_rwlock_wrlock(void* handle) {
+    if (!handle) return;
+    bux_rwlock_t* rw = (bux_rwlock_t*)handle;
+    pthread_rwlock_wrlock(&rw->rwl);
+}
+
+void bux_rwlock_unlock(void* handle) {
+    if (!handle) return;
+    bux_rwlock_t* rw = (bux_rwlock_t*)handle;
+    pthread_rwlock_unlock(&rw->rwl);
+}
+
+void bux_rwlock_free(void* handle) {
+    if (!handle) return;
+    bux_rwlock_t* rw = (bux_rwlock_t*)handle;
+    pthread_rwlock_destroy(&rw->rwl);
+    free(rw);
+}
+
+/* ============================================================================
  * Stackful Coroutines + Async Scheduler (Phase 8.3 true async)
  * ============================================================================ */
 

@@ -1,0 +1,58 @@
+module Std::Sync {
+
+extern func bux_mutex_new() -> *void;
+extern func bux_mutex_lock(handle: *void);
+extern func bux_mutex_unlock(handle: *void);
+extern func bux_mutex_free(handle: *void);
+
+extern func bux_rwlock_new() -> *void;
+extern func bux_rwlock_rdlock(handle: *void);
+extern func bux_rwlock_wrlock(handle: *void);
+extern func bux_rwlock_unlock(handle: *void);
+extern func bux_rwlock_free(handle: *void);
+
+struct Mutex {
+    handle: *void;
+}
+
+struct RwLock {
+    handle: *void;
+}
+
+func Mutex_New() -> Mutex {
+    return Mutex { handle: bux_mutex_new() };
+}
+
+func Mutex_Lock(m: *Mutex) {
+    bux_mutex_lock(m.handle);
+}
+
+func Mutex_Unlock(m: *Mutex) {
+    bux_mutex_unlock(m.handle);
+}
+
+func Mutex_Free(m: *Mutex) {
+    bux_mutex_free(m.handle);
+}
+
+func RwLock_New() -> RwLock {
+    return RwLock { handle: bux_rwlock_new() };
+}
+
+func RwLock_ReadLock(rw: *RwLock) {
+    bux_rwlock_rdlock(rw.handle);
+}
+
+func RwLock_WriteLock(rw: *RwLock) {
+    bux_rwlock_wrlock(rw.handle);
+}
+
+func RwLock_Unlock(rw: *RwLock) {
+    bux_rwlock_unlock(rw.handle);
+}
+
+func RwLock_Free(rw: *RwLock) {
+    bux_rwlock_free(rw.handle);
+}
+
+}
