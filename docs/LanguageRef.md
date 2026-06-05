@@ -402,7 +402,33 @@ func BadWrite(val: &int) {
 | Raw pointer | `*T` | C-style pointer, no checks |
 | Shared ref | `&T` | Borrowed reference (read-only in checked functions) |
 | Mutable ref | `&mut T` | Exclusive mutable borrow (allows mutation) |
-| Owned | `own T` | Ownership transfer (syntax parsed, not yet enforced) |
+| Owned | `own T` | Ownership type — values can be moved |
+
+### Move Semantics
+
+`own T` values can be **moved**. After a move, the original variable is uninitialized and cannot be used until reassigned.
+
+```bux
+@[Checked]
+func Process(data: own String) {
+    PrintLine(data);
+    // data is consumed here
+}
+
+@[Checked]
+func Main() {
+    let msg: own String = "hello";
+    Process(msg);          // move: msg is now uninitialized
+    // PrintLine(msg);     // ERROR: use after move
+    msg = "reassigned";    // OK: reinitialization
+    PrintLine(msg);
+}
+```
+
+Moves happen in three contexts:
+- **Function call argument**: `Process(msg)` moves `msg` into the parameter
+- **Assignment**: `b = a` moves `a` into `b`
+- **Return**: `return x` moves `x` out of the function
 
 ### Rules in @[Checked] functions
 
@@ -507,6 +533,42 @@ func PrivateFunc() -> int {
     return 0;
 }
 ```
+
+---
+
+## Concurrency
+
+Bux supports both **async/await** (stackful coroutines) and **pthread-based threads** with channels.
+
+### Threads and Channels
+
+```bux
+import Std::Task::{Task_Spawn, Task_Join, TaskHandle};
+import Std::Channel::{Channel, Channel_New, Channel_SendInt, Channel_RecvInt, Channel_Close};
+
+func Producer(ch: *Channel<int>) {
+    Channel_SendInt(ch, 42);
+    Channel_Close<int>(ch);
+}
+
+func Consumer(ch: *Channel<int>) -> int {
+    let val: int = Channel_RecvInt(ch);
+    return val;
+}
+
+func Main() -> int {
+    let ch: Channel<int> = Channel_New<int>(1);
+    let p: *void = spawn Producer(&ch);
+    let c: *void = spawn Consumer(&ch);
+    Task_Join(TaskHandle { handle: p });
+    Task_Join(TaskHandle { handle: c });
+    return 0;
+}
+```
+
+- `spawn Func()` creates a new pthread running `Func`
+- `Channel<T>` is a buffered channel with mutex/condvar
+- `Channel_RecvInt` returns `0` when the channel is closed and empty
 
 ---
 

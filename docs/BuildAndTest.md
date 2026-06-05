@@ -12,13 +12,15 @@ This guide covers building the Bux bootstrap compiler, creating projects, and ru
 
 On Debian/Ubuntu:
 ```bash
-sudo apt-get install nim gcc make
+sudo apt-get install nim gcc make libssl-dev
 ```
 
 On macOS:
 ```bash
-brew install nim gcc make
+brew install nim gcc make openssl
 ```
+
+> **Note:** The `Std::Crypto` module requires OpenSSL (`-lcrypto`). The build system links it automatically.
 
 ---
 
