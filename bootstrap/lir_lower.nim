@@ -5,6 +5,20 @@
 import std/[strutils, strformat, tables, sequtils]
 import ast, types, token, hir, lir
 
+## Convert LirValue to C expression string (no % prefix)
+proc lirValToC(v: LirValue): string =
+  case v.kind
+  of lvkTemp: v.strVal
+  of lvkVar: v.strVal
+  of lvkInt: $v.intVal
+  of lvkFloat: $v.floatVal
+  of lvkString: v.strVal
+  of lvkLabel: v.strVal
+  of lvkGlobal: v.strVal
+  of lvkField: v.strVal
+  of lvkVoid: ""
+  of lvkType: v.strVal
+
 type
   LowerToLirCtx* = object
     builder*: LirBuilder
@@ -172,6 +186,16 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       return ctx.varLirValues[name]
     return lirVar(name)
 
+  # ── Alloca (address of local) ──
+  of hAlloca:
+    let cType = typeToCStr(node.allocaType)
+    let name = node.allocaName
+    if not ctx.varLirValues.hasKey(name):
+      ctx.varTypes[name] = cType
+      ctx.varLirValues[name] = lirVar(name)
+      b.emitAlloca(name, cType)
+    return lirVar("&" & name)
+
   # ── Self ──
   of hSelf:
     return lirVar("self")
@@ -198,7 +222,37 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       b.emitLoad(t, operand)
       return t
     of tkAmp:
-      # Address of: &var
+      # Address of: &expr
+      # Optimize: &struct.field → fieldPtr (no temp copy)
+      #           &array[i]     → indexPtr (no temp copy)
+      if node.unaryOperand.kind == hLoad and node.unaryOperand.loadPtr != nil:
+        let ptrNode = node.unaryOperand.loadPtr
+        case ptrNode.kind
+        of hFieldPtr:
+          let base = lowerExpr(ctx, ptrNode.fieldPtrBase)
+          let baseTyp = ptrNode.fieldPtrBase.typ
+          let isPtr = baseTyp != nil and baseTyp.kind in {tkPointer, tkRef, tkMutRef}
+          let t = b.freshTemp()
+          b.emitAlloca(t.strVal, "void*")
+          if isPtr:
+            b.emitRawC(&"{t.strVal} = &({lirValToC(base)}->{ptrNode.fieldName});")
+          else:
+            b.emitRawC(&"{t.strVal} = &({lirValToC(base)}.{ptrNode.fieldName});")
+          return t
+        of hArrowField:
+          let base = lowerExpr(ctx, ptrNode.arrowFieldBase)
+          let t = b.freshTemp()
+          b.emitAlloca(t.strVal, "void*")
+          b.emitRawC(&"{t.strVal} = &({lirValToC(base)}->{ptrNode.arrowFieldName});")
+          return t
+        of hIndexPtr:
+          let base = lowerExpr(ctx, ptrNode.indexPtrBase)
+          let idx = lowerExpr(ctx, ptrNode.indexPtrIndex)
+          let t = b.freshTemp()
+          b.emitAlloca(t.strVal, "void*")
+          b.emitRawC(&"{t.strVal} = &({lirValToC(base)}[{lirValToC(idx)}]);")
+          return t
+        else: discard
       let t = b.freshTemp()
       b.emitAddrOf(t, operand)
       return t
@@ -215,18 +269,30 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       b.emitCmp(cmpOpToLir(node.binaryOp), t, left, right)
       return t
     of tkAmpAmp, tkPipePipe:
-      # Logical and/or: lowered to select
+      # Logical and/or: lowered to branches for short-circuit evaluation
       let t = b.freshTemp()
+      b.emitAlloca(t.strVal, "int")
+      let falseLbl = b.freshLabel("and_false")
+      let trueLbl = b.freshLabel("and_true")
+      let endLbl = b.freshLabel("and_end")
       if node.binaryOp == tkAmpAmp:
-        # left && right  →  left ? (right != 0) : 0
-        let rhsBool = b.freshTemp()
-        b.emitCmp(lirCmpNe, rhsBool, right, lirInt(0))
-        b.emitSelect(t, left, rhsBool, lirInt(0))
+        # left && right: if !left goto false; if !right goto false; t=1; goto end; false: t=0; end:
+        b.emitJz(falseLbl, left)
+        b.emitJz(falseLbl, right)
+        b.emitMov(t, lirInt(1))
+        b.emitJmp(endLbl)
+        b.emitLabel(falseLbl)
+        b.emitMov(t, lirInt(0))
+        b.emitLabel(endLbl)
       else:
-        # left || right  →  left ? 1 : (right != 0)
-        let rhsBool = b.freshTemp()
-        b.emitCmp(lirCmpNe, rhsBool, right, lirInt(0))
-        b.emitSelect(t, left, lirInt(1), rhsBool)
+        # left || right: if left goto true; if right goto true; t=0; goto end; true: t=1; end:
+        b.emitJnz(trueLbl, left)
+        b.emitJnz(trueLbl, right)
+        b.emitMov(t, lirInt(0))
+        b.emitJmp(endLbl)
+        b.emitLabel(trueLbl)
+        b.emitMov(t, lirInt(1))
+        b.emitLabel(endLbl)
       return t
     else:
       let t = b.freshTemp()
@@ -269,16 +335,16 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
     let t = b.freshTemp()
     b.emitAlloca(t.strVal, "void*")
     if isPtr:
-      b.emitRawC(&"{t.strVal} = (void*)&({base.strVal}->{node.fieldName});")
+      b.emitRawC(&"{t.strVal} = (void*)&({lirValToC(base)}->{node.fieldName});")
     else:
-      b.emitRawC(&"{t.strVal} = (void*)&({base.strVal}.{node.fieldName});")
+      b.emitRawC(&"{t.strVal} = (void*)&({lirValToC(base)}.{node.fieldName});")
     return t
 
   of hArrowField:
     let base = lowerExpr(ctx, node.arrowFieldBase)
     let t = b.freshTemp()
     b.emitAlloca(t.strVal, "void*")
-    b.emitRawC(&"{t.strVal} = (void*)&({base.strVal}->{node.arrowFieldName});")
+    b.emitRawC(&"{t.strVal} = (void*)&({lirValToC(base)}->{node.arrowFieldName});")
     return t
 
   of hIndexPtr:
@@ -286,7 +352,7 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
     let idx = lowerExpr(ctx, node.indexPtrIndex)
     let t = b.freshTemp()
     b.emitAlloca(t.strVal, "void*")
-    b.emitRawC(&"{t.strVal} = (void*)&({base.strVal}[{idx.strVal}]);")
+    b.emitRawC(&"{t.strVal} = (void*)&({lirValToC(base)}[{lirValToC(idx)}]);")
     return t
 
   # ── Load ──
@@ -298,7 +364,7 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       let cType = hirTypeToC(ctx, node)
       let t = b.freshTemp()
       b.emitAlloca(t.strVal, cType)
-      b.emitRawC(&"{t.strVal} = {base.strVal}->{node.loadPtr.arrowFieldName};")
+      b.emitRawC(&"{t.strVal} = {lirValToC(base)}->{node.loadPtr.arrowFieldName};")
       return t
     if node.loadPtr != nil and node.loadPtr.kind == hFieldPtr:
       let base = lowerExpr(ctx, node.loadPtr.fieldPtrBase)
@@ -308,9 +374,9 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       let t = b.freshTemp()
       b.emitAlloca(t.strVal, cType)
       if isPtr:
-        b.emitRawC(&"{t.strVal} = {base.strVal}->{node.loadPtr.fieldName};")
+        b.emitRawC(&"{t.strVal} = {lirValToC(base)}->{node.loadPtr.fieldName};")
       else:
-        b.emitRawC(&"{t.strVal} = {base.strVal}.{node.loadPtr.fieldName};")
+        b.emitRawC(&"{t.strVal} = {lirValToC(base)}.{node.loadPtr.fieldName};")
       return t
     if node.loadPtr != nil and node.loadPtr.kind == hIndexPtr:
       let base = lowerExpr(ctx, node.loadPtr.indexPtrBase)
@@ -318,14 +384,14 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       let cType = hirTypeToC(ctx, node)
       let t = b.freshTemp()
       b.emitAlloca(t.strVal, cType)
-      b.emitRawC(&"{t.strVal} = {base.strVal}[{idx.strVal}];")
+      b.emitRawC(&"{t.strVal} = {lirValToC(base)}[{lirValToC(idx)}];")
       return t
     # Generic: dereference pointer
     let ptrVal = lowerExpr(ctx, node.loadPtr)
     let cType = hirTypeToC(ctx, node)
     let t = b.freshTemp()
     b.emitAlloca(t.strVal, cType)
-    b.emitRawC(&"{t.strVal} = *({cType}*){ptrVal.strVal};")
+    b.emitRawC(&"{t.strVal} = *({cType}*){lirValToC(ptrVal)};")
     return t
 
   # ── Slice Index ──
@@ -335,7 +401,7 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
     let t = b.freshTemp()
     # Emit: base.data[idx]  (with optional bounds check)
     if node.sliceIndexBoundsCheck:
-      b.emitRawC(&"bux_bounds_check((size_t)({idx.strVal}), ({base.strVal}).len)")
+      b.emitRawC(&"bux_bounds_check((size_t)({lirValToC(idx)}), ({lirValToC(base)}).len)")
     b.emit(LirInstr(kind: lirLoad, dst: t, src: base, src2: idx))
     return t
 
@@ -389,7 +455,7 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
     for i in 1 ..< node.dynCallArgs.len:
       args.add(lowerExpr(ctx, node.dynCallArgs[i]))
     let t = b.freshTemp()
-    b.emitRawC(&"{t.strVal} = {receiver.strVal}.vtable->{node.dynCallMethod}({args.mapIt($it).join(\", \")});")
+    b.emitRawC(&"{t.strVal} = {lirValToC(receiver)}.vtable->{node.dynCallMethod}({args.mapIt($it).join(\", \")});")
     return t
 
   # ── StructInit ──
@@ -453,8 +519,38 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
 
   else:
     # Fallback for unhandled expression kinds
-    b.emitComment(&"/* unhandled expr kind: {node.kind} */")
+    b.emitComment(&"unhandled expr kind: {node.kind}")
     return lirInt(0)
+
+# ── Build C lvalue string for direct field/index assignment ──
+proc buildLval(ctx: var LowerToLirCtx, n: HirNode): string =
+  case n.kind
+  of hLoad:
+    if n.loadPtr != nil:
+      return buildLval(ctx, n.loadPtr)
+    else:
+      let v = lowerExpr(ctx, n)
+      return lirValToC(v)
+  of hVar:
+    return n.varName
+  of hSelf:
+    return "self"
+  of hFieldPtr:
+    let baseStr = buildLval(ctx, n.fieldPtrBase)
+    let baseTyp = n.fieldPtrBase.typ
+    let isPtr = baseTyp != nil and baseTyp.kind in {tkPointer, tkRef, tkMutRef}
+    let sep = if isPtr: "->" else: "."
+    return baseStr & sep & n.fieldName
+  of hArrowField:
+    let baseStr = buildLval(ctx, n.arrowFieldBase)
+    return baseStr & "->" & n.arrowFieldName
+  of hIndexPtr:
+    let baseStr = buildLval(ctx, n.indexPtrBase)
+    let idx = lowerExpr(ctx, n.indexPtrIndex)
+    return baseStr & "[" & lirValToC(idx) & "]"
+  else:
+    let v = lowerExpr(ctx, n)
+    return lirValToC(v)
 
 # ── Lowering: Statements → void ──
 
@@ -557,24 +653,60 @@ proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode) =
       let val = lowerExpr(ctx, node.storeValue)
       # ptrVal is a void* address; cast and store
       let valCType = hirTypeToC(ctx, node.storeValue)
-      b.emitRawC(&"*({valCType}*){ptrVal.strVal} = {val.strVal};")
+      b.emitRawC(&"*({valCType}*){lirValToC(ptrVal)} = {lirValToC(val)};")
 
   # ── Assign ──
   of hAssign:
-    let target = lowerExpr(ctx, node.assignTarget)
     let value = lowerExpr(ctx, node.assignValue)
     case node.assignOp
     of tkAssign:
-      b.emitMov(target, value)
+      case node.assignTarget.kind
+      of hFieldPtr:
+        let lval = buildLval(ctx, node.assignTarget)
+        b.emitRawC(&"{lval} = {lirValToC(value)};")
+      of hArrowField:
+        let lval = buildLval(ctx, node.assignTarget)
+        b.emitRawC(&"{lval} = {lirValToC(value)};")
+      of hIndexPtr:
+        let base = lowerExpr(ctx, node.assignTarget.indexPtrBase)
+        let idx = lowerExpr(ctx, node.assignTarget.indexPtrIndex)
+        b.emit(LirInstr(kind: lirStore, src: value, src2: base, dst: idx))
+      of hLoad:
+        if node.assignTarget.loadPtr != nil:
+          let ptrNode = node.assignTarget.loadPtr
+          case ptrNode.kind
+          of hIndexPtr:
+            let base = lowerExpr(ctx, ptrNode.indexPtrBase)
+            let idx = lowerExpr(ctx, ptrNode.indexPtrIndex)
+            b.emit(LirInstr(kind: lirStore, src: value, src2: base, dst: idx))
+          of hFieldPtr:
+            let lval = buildLval(ctx, ptrNode)
+            b.emitRawC(&"{lval} = {lirValToC(value)};")
+          of hArrowField:
+            let lval = buildLval(ctx, ptrNode)
+            b.emitRawC(&"{lval} = {lirValToC(value)};")
+          else:
+            let ptrVal = lowerExpr(ctx, ptrNode)
+            let valCType = hirTypeToC(ctx, node.assignValue)
+            b.emitRawC(&"*({valCType}*){lirValToC(ptrVal)} = {lirValToC(value)};")
+        else:
+          let target = lowerExpr(ctx, node.assignTarget)
+          b.emitMov(target, value)
+      else:
+        let target = lowerExpr(ctx, node.assignTarget)
+        b.emitMov(target, value)
     of tkPlusAssign:
+      let target = lowerExpr(ctx, node.assignTarget)
       let t = b.freshTemp()
       b.emitBinOp(lirAdd, t, target, value)
       b.emit(LirInstr(kind: lirStore, src: t, src2: target))
     of tkMinusAssign:
+      let target = lowerExpr(ctx, node.assignTarget)
       let t = b.freshTemp()
       b.emitBinOp(lirSub, t, target, value)
       b.emit(LirInstr(kind: lirStore, src: t, src2: target))
     else:
+      let target = lowerExpr(ctx, node.assignTarget)
       b.emitMov(target, value)
 
   # ── Call statement (void return) ──

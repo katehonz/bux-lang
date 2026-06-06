@@ -11,7 +11,7 @@ all: build
 
 build:
 	$(NIM) c -o:$(OUT) -d:release --opt:size $(SRC)
-	strip $(OUT)
+	# strip $(OUT)
 
 dev:
 	$(NIM) c -o:buxc_debug -d:debug --stackTrace:on --lineTrace:on $(SRC)
@@ -72,5 +72,5 @@ selfhost: build
 	@cp src/bux.toml build/selfhost/
 	@mv build/selfhost/src/main.bux build/selfhost/src/Main.bux 2>/dev/null || true
 	@cd build/selfhost && ../../$(OUT) build
-	@strip build/selfhost/build/buxc2 2>/dev/null || true
+	# strip removed for debug
 	@echo "=== Self-hosted compiler built successfully ==="

@@ -539,9 +539,31 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return hirUnary(expr.exprUnaryOp, operand, typ, loc)
 
   of ekBinary:
-    let left = ctx.lowerExpr(expr.exprBinaryLeft)
-    let right = ctx.lowerExpr(expr.exprBinaryRight)
-    return hirBinary(expr.exprBinaryOp, left, right, typ, loc)
+    case expr.exprBinaryOp
+    of tkAmpAmp:
+      # Short-circuit &&: use if-then-else to avoid evaluating right when left is false
+      let tmp = hirAlloca("__and_tmp_" & $ctx.varCounter, makeBool(), loc)
+      inc ctx.varCounter
+      let left = ctx.lowerExpr(expr.exprBinaryLeft)
+      let thenBlock = hirBlock(@[hirStore(tmp, ctx.lowerExpr(expr.exprBinaryRight), loc)], nil, makeVoid(), loc)
+      let falseTok = Token(kind: tkBoolLiteral, text: "false", loc: loc)
+      let elseBlock = hirBlock(@[hirStore(tmp, hirLit(falseTok, makeBool(), loc), loc)], nil, makeVoid(), loc)
+      let ifNode = hirIf(left, thenBlock, elseBlock, loc)
+      return hirBlock(@[tmp, ifNode], hirLoad(tmp, makeBool(), loc), makeBool(), loc)
+    of tkPipePipe:
+      # Short-circuit ||: use if-then-else to avoid evaluating right when left is true
+      let tmp = hirAlloca("__or_tmp_" & $ctx.varCounter, makeBool(), loc)
+      inc ctx.varCounter
+      let left = ctx.lowerExpr(expr.exprBinaryLeft)
+      let trueTok = Token(kind: tkBoolLiteral, text: "true", loc: loc)
+      let thenBlock = hirBlock(@[hirStore(tmp, hirLit(trueTok, makeBool(), loc), loc)], nil, makeVoid(), loc)
+      let elseBlock = hirBlock(@[hirStore(tmp, ctx.lowerExpr(expr.exprBinaryRight), loc)], nil, makeVoid(), loc)
+      let ifNode = hirIf(left, thenBlock, elseBlock, loc)
+      return hirBlock(@[tmp, ifNode], hirLoad(tmp, makeBool(), loc), makeBool(), loc)
+    else:
+      let left = ctx.lowerExpr(expr.exprBinaryLeft)
+      let right = ctx.lowerExpr(expr.exprBinaryRight)
+      return hirBinary(expr.exprBinaryOp, left, right, typ, loc)
 
   of ekCall:
     # Method call desugaring: obj.method(args) → Type_method(obj, args)

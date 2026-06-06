@@ -203,6 +203,10 @@ proc hirReturn*(value: HirNode, loc: SourceLocation): HirNode =
 proc hirBlock*(stmts: seq[HirNode], expr: HirNode, typ: Type, loc: SourceLocation, isScope: bool = false): HirNode =
   HirNode(kind: hBlock, blockStmts: stmts, blockExpr: expr, typ: typ, loc: loc, isScope: isScope)
 
+proc hirIf*(cond, thenBranch, elseBranch: HirNode, loc: SourceLocation): HirNode =
+  HirNode(kind: hIf, ifCond: cond, ifThen: thenBranch, ifElse: elseBranch, typ: makeVoid(), loc: loc)
+
+
 proc hirAlloca*(name: string, typ: Type, loc: SourceLocation): HirNode =
   HirNode(kind: hAlloca, allocaType: typ, allocaName: name, typ: makePointer(typ), loc: loc)
 

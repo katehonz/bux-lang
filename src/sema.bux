@@ -239,8 +239,12 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         // Try to resolve return type from function declaration
         if expr.child1.kind == ekIdent {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
-            if sym.kind == skFunc && sym.decl != null as *Decl && sym.decl.retType != null as *TypeExpr {
+            if sym.kind == skFunc {
+            if sym.decl != null as *Decl {
+            if sym.decl.retType != null as *TypeExpr {
                 return Sema_ResolveType(sema, sym.decl.retType);
+            }
+            }
             }
         }
         return tyUnknown;
