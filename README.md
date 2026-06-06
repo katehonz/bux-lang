@@ -4,7 +4,7 @@
 
 > **Status:** Bootstrap compiler (`buxc`, Nim) compiles `.bux` → HIR → **LIR** → C → native binary.
 > New **LIR backend** (v0.3.0) replaces direct HIR→C emission — cleaner codegen, all 22 examples passing.
-> Self-hosted compiler (`buxc2`) exists as a proof-of-concept but is **deprioritized** in favor of language features and stdlib maturity.
+> Self-hosted compiler (`buxc2`, written in Bux) compiles `.bux` → C → native binary and can build real projects.
 
 Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership, async/await, generics, algebraic enums, and a package manager.
 
