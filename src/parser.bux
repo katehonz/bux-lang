@@ -4,6 +4,14 @@ module Parser {
 
 extern func bux_strlen(s: String) -> uint;
 
+// Forward declarations for mutual recursion
+func parserParseExpr(p: *Parser) -> *Expr;
+func parserParseStmt(p: *Parser) -> *Stmt;
+func parserParseBlock(p: *Parser) -> *Block;
+func parserParsePrimary(p: *Parser) -> *Expr;
+func parserParsePostfixExpr(p: *Parser) -> *Expr;
+func parserParseBinaryPrec(p: *Parser, minPrec: int) -> *Expr;
+
 // ---------------------------------------------------------------------------
 // Parser state
 // ---------------------------------------------------------------------------
@@ -326,7 +334,7 @@ func parserParsePrimary(p: *Parser) -> *Expr {
 // Postfix: call, index, field access, as, is, ?
 // ---------------------------------------------------------------------------
 
-func parserParsePostfix(p: *Parser) -> *Expr {
+func parserParsePostfixExpr(p: *Parser) -> *Expr {
     var left: *Expr = parserParsePrimary(p);
 
     while true {
@@ -566,7 +574,7 @@ func parserPrecedence(op: int) -> int {
 }
 
 func parserParseBinaryPrec(p: *Parser, minPrec: int) -> *Expr {
-    var left: *Expr = parserParsePostfix(p);
+    var left: *Expr = parserParsePostfixExpr(p);
     while true {
         let op: int = parserPeek(p, 0);
         let prec: int = parserPrecedence(op);

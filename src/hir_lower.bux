@@ -601,9 +601,9 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     let ctx: *LowerCtx = bux_alloc(sizeof(LowerCtx)) as *LowerCtx;
     ctx.module = mod;
     ctx.scope = sema.scope;
-    ctx.funcs = bux_alloc(256 as uint * sizeof(HirFunc)) as *HirFunc;
+    ctx.funcs = bux_alloc(512 as uint * sizeof(HirFunc)) as *HirFunc;
     ctx.funcCount = 0;
-    ctx.externFuncs = bux_alloc(256 as uint * sizeof(HirFunc)) as *HirFunc;
+    ctx.externFuncs = bux_alloc(512 as uint * sizeof(HirFunc)) as *HirFunc;
     ctx.externCount = 0;
     ctx.varCounter = 0;
 
@@ -624,7 +624,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     // Iterate declarations
     var decl: *Decl = mod.firstItem;
     while decl != null as *Decl {
-        if decl.kind == dkFunc {
+        if decl.kind == dkFunc && decl.refBody != null as *Block {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
             ctx.funcs[ctx.funcCount] = *f;
             ctx.funcCount = ctx.funcCount + 1;
@@ -633,7 +633,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             let implTypeName: String = decl.strValue;
             var implDecl: *Decl = decl.childDecl1;
             while implDecl != null as *Decl {
-                if implDecl.kind == dkFunc {
+                if implDecl.kind == dkFunc && implDecl.refBody != null as *Block {
                     let mangled: String = String_Concat(implTypeName, "_");
                     implDecl.strValue = String_Concat(mangled, implDecl.strValue);
                     let f: *HirFunc = Lcx_LowerFunc(ctx, implDecl);
