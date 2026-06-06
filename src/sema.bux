@@ -146,7 +146,6 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if expr == null as *Expr { return tyUnknown; }
     let kind: int = expr.kind;
     // Debug: print expr kind
-    // Print("Sema_CheckExpr kind=");
     // PrintInt(kind as int64);
     // PrintLine("");
 
@@ -493,6 +492,10 @@ func Sema_CollectGlobals(sema: *Sema) {
                 else if vi == 5 { v = decl.variant5; }
                 else if vi == 6 { v = decl.variant6; }
                 else if vi == 7 { v = decl.variant7; }
+                if v.name == null as String || String_Eq(v.name, "") {
+                    vi = vi + 1;
+                    continue;
+                }
                 let variantName: String = String_Concat(decl.strValue, "_");
                 let variantName2: String = String_Concat(variantName, v.name);
                 var vSym: Symbol;

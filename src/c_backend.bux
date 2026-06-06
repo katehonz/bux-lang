@@ -2,6 +2,7 @@
 // Generates C code from the HIR.
 module CBackend {
 
+
 // ---------------------------------------------------------------------------
 // Type → C type name
 // ---------------------------------------------------------------------------
@@ -102,13 +103,49 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         if node.intValue == tkNull {
             StringBuilder_Append(&cbe.sb, "0");
         } else {
-            StringBuilder_Append(&cbe.sb, node.strValue);
+            let s: String = node.strValue;
+            let slen: int = String_Len(s) as int;
+            var start: int = 0;
+            var end: int = slen;
+            // If the literal is wrapped in quotes (from lexer), preserve outer quotes
+            // and only escape the inner content.
+            if slen >= 2 && s[0] == 34 as char8 && s[slen - 1] == 34 as char8 {
+                StringBuilder_Append(&cbe.sb, "\"");
+                start = 1;
+                end = slen - 1;
+            }
+            var i: int = start;
+            while i < end {
+                let c: int = s[i] as int;
+                if c == 34 {
+                    StringBuilder_Append(&cbe.sb, "\\\"");
+                } else if c == 92 {
+                    StringBuilder_Append(&cbe.sb, "\\\\");
+                } else if c == 10 {
+                    StringBuilder_Append(&cbe.sb, "\\n");
+                } else if c == 9 {
+                    StringBuilder_Append(&cbe.sb, "\\t");
+                } else if c == 13 {
+                    StringBuilder_Append(&cbe.sb, "\\r");
+                } else {
+                    StringBuilder_AppendChar(&cbe.sb, c as char8);
+                }
+                i = i + 1;
+            }
+            if slen >= 2 && s[0] == 34 as char8 && s[slen - 1] == 34 as char8 {
+                StringBuilder_Append(&cbe.sb, "\"");
+            }
         }
         return;
     }
 
     // Variable
     if kind == hVar {
+        if node.intValue != 0 {
+            StringBuilder_Append(&cbe.sb, "/* hVar tk=");
+            StringBuilder_AppendInt(&cbe.sb, node.intValue);
+            StringBuilder_Append(&cbe.sb, " */");
+        }
         StringBuilder_Append(&cbe.sb, node.strValue);
         return;
     }
@@ -228,6 +265,7 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
 
     // If
     if kind == hIf {
+
         StringBuilder_Append(&cbe.sb, "if (");
         CBE_EmitExpr(cbe, node.child1);
         StringBuilder_Append(&cbe.sb, ") {\n");
@@ -296,10 +334,32 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
-    // Field access: obj.field — emit as obj->field (since most are pointers)
+    // Break / Continue
+    if kind == hBreak {
+        StringBuilder_Append(&cbe.sb, "break");
+        return;
+    }
+    if kind == hContinue {
+        StringBuilder_Append(&cbe.sb, "continue");
+        return;
+    }
+
+    // Field access: obj.field — use -> if base is pointer, else .
     if kind == hFieldPtr {
         CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, "->");
+        var isPtr: bool = false;
+        if node.child1 != null as *HirNode {
+            if node.child1.typeKind == tyPointer {
+                isPtr = true;
+            } else if String_EndsWith(node.child1.typeName, "*") {
+                isPtr = true;
+            }
+        }
+        if isPtr {
+            StringBuilder_Append(&cbe.sb, "->");
+        } else {
+            StringBuilder_Append(&cbe.sb, ".");
+        }
         StringBuilder_Append(&cbe.sb, node.strValue);
         return;
     }
@@ -326,7 +386,53 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     }
 
     // Load: *ptr — emit as *ptr (dereference)
+    // Optimize common patterns to avoid & / * temporaries
     if kind == hLoad {
+        if node.child1 != null as *HirNode {
+            let ptrNode: *HirNode = node.child1;
+            let ptrKind: int = ptrNode.kind;
+            // field access: load(field_ptr(base, field)) → base.field
+            if ptrKind == hFieldPtr {
+                CBE_EmitExpr(cbe, ptrNode.child1);
+                var isPtr: bool = false;
+                if ptrNode.child1 != null as *HirNode {
+                    if ptrNode.child1.typeKind == tyPointer {
+                        isPtr = true;
+                    } else if String_EndsWith(ptrNode.child1.typeName, "*") {
+                        isPtr = true;
+                    }
+                }
+                if isPtr {
+                    StringBuilder_Append(&cbe.sb, "->");
+                } else {
+                    StringBuilder_Append(&cbe.sb, ".");
+                }
+                StringBuilder_Append(&cbe.sb, ptrNode.strValue);
+                return;
+            }
+            // arrow field: load(arrow_field(base, field)) → base->field
+            if ptrKind == hArrowField {
+                CBE_EmitExpr(cbe, ptrNode.child1);
+                StringBuilder_Append(&cbe.sb, "->");
+                StringBuilder_Append(&cbe.sb, ptrNode.strValue);
+                return;
+            }
+            // arrow field: load(arrow_field(base, field)) → base->field
+            if ptrKind == hArrowField {
+                CBE_EmitExpr(cbe, ptrNode.child1);
+                StringBuilder_Append(&cbe.sb, "->");
+                StringBuilder_Append(&cbe.sb, ptrNode.strValue);
+                return;
+            }
+            // index: load(index_ptr(base, idx)) → base[idx]
+            if ptrKind == hIndexPtr {
+                CBE_EmitExpr(cbe, ptrNode.child1);
+                StringBuilder_Append(&cbe.sb, "[");
+                CBE_EmitExpr(cbe, ptrNode.child2);
+                StringBuilder_Append(&cbe.sb, "]");
+                return;
+            }
+        }
         StringBuilder_Append(&cbe.sb, "(*");
         CBE_EmitExpr(cbe, node.child1);
         StringBuilder_Append(&cbe.sb, ")");
@@ -467,11 +573,18 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
 func CBE_IsGenericTypeName(name: String) -> bool {
     if String_Eq(name, "T") || String_Eq(name, "K") || String_Eq(name, "V") { return true; }
     if String_Eq(name, "T*") || String_Eq(name, "K*") || String_Eq(name, "V*") { return true; }
+    // Any type name containing '<' is a generic instantiation or parameter
+    if String_Contains(name, "<") { return true; }
     // Generic container structs and their pointer variants
     if String_Eq(name, "Array") || String_Eq(name, "Array*") { return true; }
+    if String_Eq(name, "Channel") || String_Eq(name, "Channel*") { return true; }
+    if String_Eq(name, "Iter") || String_Eq(name, "Iter*") { return true; }
+    if String_Eq(name, "Set") || String_Eq(name, "Set*") { return true; }
     if String_Eq(name, "SetEntry") || String_Eq(name, "SetEntry*") { return true; }
-    if String_Eq(name, "StringMapEntry") || String_Eq(name, "StringMapEntry*") { return true; }
+    if String_Eq(name, "Map") || String_Eq(name, "Map*") { return true; }
     if String_Eq(name, "MapEntry") || String_Eq(name, "MapEntry*") { return true; }
+    if String_Eq(name, "StringMap") || String_Eq(name, "StringMap*") { return true; }
+    if String_Eq(name, "StringMapEntry") || String_Eq(name, "StringMapEntry*") { return true; }
     return false;
 }
 
@@ -550,16 +663,104 @@ func CBackend_Generate(mod: *HirModule) -> String {
     }
     StringBuilder_Append(&cbe.sb, "\n");
 
-    // Enum definitions (typedef to int)
+    // Enum definitions
     var ei: int = 0;
     while ei < mod.enumCount {
-        StringBuilder_Append(&cbe.sb, "typedef int ");
-        StringBuilder_Append(&cbe.sb, mod.enums[ei].name);
-        StringBuilder_Append(&cbe.sb, ";\n");
+        let en: *HirEnum = &mod.enums[ei];
+        var hasData: bool = false;
+        var vi: int = 0;
+        while vi < en.variantCount {
+            if en.variants[vi].fieldCount > 0 {
+                hasData = true;
+            }
+            vi = vi + 1;
+        }
+        if !hasData {
+            // Simple enum: typedef enum { A, B } Name;
+            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
+            vi = 0;
+            while vi < en.variantCount {
+                StringBuilder_Append(&cbe.sb, "    ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_");
+                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
+                if vi < en.variantCount - 1 {
+                    StringBuilder_Append(&cbe.sb, ",");
+                }
+                StringBuilder_Append(&cbe.sb, "\n");
+                vi = vi + 1;
+            }
+            StringBuilder_Append(&cbe.sb, "} ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, ";\n\n");
+        } else {
+            // Algebraic enum: tag enum + data union + struct
+            // 1. Tag enum
+            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
+            vi = 0;
+            while vi < en.variantCount {
+                StringBuilder_Append(&cbe.sb, "    ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_");
+                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
+                if vi < en.variantCount - 1 {
+                    StringBuilder_Append(&cbe.sb, ",");
+                }
+                StringBuilder_Append(&cbe.sb, "\n");
+                vi = vi + 1;
+            }
+            StringBuilder_Append(&cbe.sb, "} ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, "_Tag;\n\n");
+            // 2. Data union
+            StringBuilder_Append(&cbe.sb, "typedef union {\n");
+            vi = 0;
+            while vi < en.variantCount {
+                let ev: *HirEnumVariant = &en.variants[vi];
+                if ev.fieldCount > 0 {
+                    if ev.fieldCount == 1 {
+                        StringBuilder_Append(&cbe.sb, "    ");
+                        StringBuilder_Append(&cbe.sb, CBackend_TypeToC(ev.fieldType0));
+                        StringBuilder_Append(&cbe.sb, " ");
+                        StringBuilder_Append(&cbe.sb, ev.name);
+                        StringBuilder_Append(&cbe.sb, "_0;\n");
+                    } else {
+                        StringBuilder_Append(&cbe.sb, "    struct {\n");
+                        StringBuilder_Append(&cbe.sb, "        ");
+                        StringBuilder_Append(&cbe.sb, CBackend_TypeToC(ev.fieldType0));
+                        StringBuilder_Append(&cbe.sb, " ");
+                        StringBuilder_Append(&cbe.sb, ev.fieldName0);
+                        StringBuilder_Append(&cbe.sb, ";\n");
+                        if ev.fieldCount > 1 {
+                            StringBuilder_Append(&cbe.sb, "        ");
+                            StringBuilder_Append(&cbe.sb, CBackend_TypeToC(ev.fieldType1));
+                            StringBuilder_Append(&cbe.sb, " ");
+                            StringBuilder_Append(&cbe.sb, ev.fieldName1);
+                            StringBuilder_Append(&cbe.sb, ";\n");
+                        }
+                        StringBuilder_Append(&cbe.sb, "    } ");
+                        StringBuilder_Append(&cbe.sb, ev.name);
+                        StringBuilder_Append(&cbe.sb, ";\n");
+                    }
+                }
+                vi = vi + 1;
+            }
+            StringBuilder_Append(&cbe.sb, "} ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, "_Data;\n\n");
+            // 3. Main struct
+            StringBuilder_Append(&cbe.sb, "typedef struct {\n");
+            StringBuilder_Append(&cbe.sb, "    ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, "_Tag tag;\n");
+            StringBuilder_Append(&cbe.sb, "    ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, "_Data data;\n");
+            StringBuilder_Append(&cbe.sb, "} ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, ";\n\n");
+        }
         ei = ei + 1;
-    }
-    if mod.enumCount > 0 {
-        StringBuilder_Append(&cbe.sb, "\n");
     }
 
     // Constant definitions
@@ -609,6 +810,22 @@ func CBackend_Generate(mod: *HirModule) -> String {
         }
         StringBuilder_Append(&cbe.sb, "};\n\n");
         si = si + 1;
+    }
+
+    // Opaque forward declarations for generic structs (used only by pointer)
+    si = 0;
+    while si < mod.structCount {
+        if CBE_StructHasGeneric(&mod.structs[si]) {
+            StringBuilder_Append(&cbe.sb, "typedef struct ");
+            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+            StringBuilder_Append(&cbe.sb, ";\n");
+        }
+        si = si + 1;
+    }
+    if mod.structCount > 0 {
+        StringBuilder_Append(&cbe.sb, "\n");
     }
 
     // Forward declarations for all functions (skip generics)

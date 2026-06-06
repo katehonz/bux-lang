@@ -507,31 +507,7 @@ int bux_write_file(const char* path, const char* content) {
     FILE* f = fopen(path, "wb");
     if (!f) return 0;
     size_t len = strlen(content);
-    size_t written = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (content[i] == '\\' && i + 1 < len && content[i + 1] == 'n') {
-            if (fputc('\n', f) == EOF) break;
-            i++;
-        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == 't') {
-            if (fputc('\t', f) == EOF) break;
-            i++;
-        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == 'r') {
-            if (fputc('\r', f) == EOF) break;
-            i++;
-        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == '\\') {
-            if (fputc('\\', f) == EOF) break;
-            i++;
-        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == '"') {
-            if (fputc('"', f) == EOF) break;
-            i++;
-        } else if (content[i] == '\\' && i + 1 < len && content[i + 1] == '\'') {
-            if (fputc('\'', f) == EOF) break;
-            i++;
-        } else {
-            if (fputc(content[i], f) == EOF) break;
-        }
-        written++;
-    }
+    size_t written = fwrite(content, 1, len, f);
     fclose(f);
     return written > 0 ? 1 : 0;
 }

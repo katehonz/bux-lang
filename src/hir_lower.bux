@@ -2,6 +2,7 @@
 // Transforms the typed AST into a lower-level IR suitable for code generation.
 module HirLower {
 
+
 // ---------------------------------------------------------------------------
 // Lowering context
 // ---------------------------------------------------------------------------
@@ -22,15 +23,7 @@ struct LowerCtx {
 // resolves the correct Type.kind for codegen.
 // ---------------------------------------------------------------------------
 
-func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
-    if te == null as *TypeExpr { return tyUnknown; }
-    let name: String = te.typeName;
-
-    if te.kind == tekPointer { return tyPointer; }
-    if te.kind == tekSlice { return tySlice; }
-    if te.kind == tekTuple { return tyTuple; }
-
-    // Named types: resolve by name
+func Lcx_ResolveTypeKindFromName(name: String) -> int {
     if String_Eq(name, "void") { return tyVoid; }
     if String_Eq(name, "bool") { return tyBool; }
     if String_Eq(name, "bool8") { return tyBool8; }
@@ -54,8 +47,17 @@ func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
     if String_Eq(name, "float32") { return tyFloat32; }
     if String_Eq(name, "float64") { return tyFloat64; }
     if String_Eq(name, "float") { return tyFloat64; }
-
     return tyNamed;
+}
+
+func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
+    if te == null as *TypeExpr { return tyUnknown; }
+
+    if te.kind == tekPointer { return tyPointer; }
+    if te.kind == tekSlice { return tySlice; }
+    if te.kind == tekTuple { return tyTuple; }
+
+    return Lcx_ResolveTypeKindFromName(te.typeName);
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +402,7 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                 alloca.typeName = stmt.refStmtType.typeName;
             }
         }
-        // Add to scope for field offset lookups
+        // Add to scope for field offset lookups (skip if already defined)
         var sym: Symbol;
         sym.kind = skVar;
         sym.name = stmt.strValue;
@@ -439,7 +441,6 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
             n.child2 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
         }
         if stmt.refStmtElse != null as *Block {
-            // Store else block in extraData (child3 is reserved for block chaining)
             n.extraData = Lcx_LowerBlock(ctx, stmt.refStmtElse, -1) as *void;
         }
         return n;
@@ -461,6 +462,18 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         if stmt.refStmtBlock != null as *Block {
             n.child1 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
         }
+        return n;
+    }
+
+    // Break
+    if kind == skBreak {
+        n.kind = hBreak;
+        return n;
+    }
+
+    // Continue
+    if kind == skContinue {
+        n.kind = hContinue;
         return n;
     }
 
@@ -557,7 +570,10 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
         f.retTypeKind = 0;
     }
 
-    // Add parameters to hir_lower scope for field offset lookups
+    // Create function scope as child of current scope
+    var funcScope: Scope = Scope_NewChild(ctx.scope);
+
+    // Add parameters to function scope for field offset lookups
     var pi: int = 0;
     while pi < decl.paramCount {
         var p: *Param = null as *Param;
@@ -575,20 +591,31 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
             sym.kind = skVar;
             sym.name = p.name;
             sym.typeKind = Lcx_ResolveTypeKind(p.refParamType);
-            sym.typeName = p.refParamType.typeName;
+            // Build typeName same as Lcx_LowerParam
+            if !String_Eq(p.refParamType.typeName, "") {
+                sym.typeName = p.refParamType.typeName;
+            } else if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
+                sym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+            } else {
+                sym.typeName = "";
+            }
             sym.isMutable = false;
             sym.isPublic = false;
             sym.decl = null as *Decl;
-            discard Scope_Define(ctx.scope, sym);
+            discard Scope_Define(&funcScope, sym);
         }
         pi = pi + 1;
     }
 
+    // Lower body with function scope active
+    let prevScope: *Scope = ctx.scope;
+    ctx.scope = &funcScope;
     if decl.refBody != null as *Block {
         f.body = Lcx_LowerBlock(ctx, decl.refBody, -1);
     } else {
         f.body = null as *HirNode;
     }
+    ctx.scope = prevScope;
 
     return f;
 }
@@ -666,6 +693,62 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
                 else if fi == 5 { fname = decl.field5.name; ftype = decl.field5.refFieldType; }
                 else if fi == 6 { fname = decl.field6.name; ftype = decl.field6.refFieldType; }
                 else if fi == 7 { fname = decl.field7.name; ftype = decl.field7.refFieldType; }
+                else if fi == 8 { fname = decl.field8.name; ftype = decl.field8.refFieldType; }
+                else if fi == 9 { fname = decl.field9.name; ftype = decl.field9.refFieldType; }
+                else if fi == 10 { fname = decl.field10.name; ftype = decl.field10.refFieldType; }
+                else if fi == 11 { fname = decl.field11.name; ftype = decl.field11.refFieldType; }
+                else if fi == 12 { fname = decl.field12.name; ftype = decl.field12.refFieldType; }
+                else if fi == 13 { fname = decl.field13.name; ftype = decl.field13.refFieldType; }
+                else if fi == 14 { fname = decl.field14.name; ftype = decl.field14.refFieldType; }
+                else if fi == 15 { fname = decl.field15.name; ftype = decl.field15.refFieldType; }
+                else if fi == 16 { fname = decl.field16.name; ftype = decl.field16.refFieldType; }
+                else if fi == 17 { fname = decl.field17.name; ftype = decl.field17.refFieldType; }
+                else if fi == 18 { fname = decl.field18.name; ftype = decl.field18.refFieldType; }
+                else if fi == 19 { fname = decl.field19.name; ftype = decl.field19.refFieldType; }
+                else if fi == 20 { fname = decl.field20.name; ftype = decl.field20.refFieldType; }
+                else if fi == 21 { fname = decl.field21.name; ftype = decl.field21.refFieldType; }
+                else if fi == 22 { fname = decl.field22.name; ftype = decl.field22.refFieldType; }
+                else if fi == 23 { fname = decl.field23.name; ftype = decl.field23.refFieldType; }
+                else if fi == 24 { fname = decl.field24.name; ftype = decl.field24.refFieldType; }
+                else if fi == 25 { fname = decl.field25.name; ftype = decl.field25.refFieldType; }
+                else if fi == 26 { fname = decl.field26.name; ftype = decl.field26.refFieldType; }
+                else if fi == 27 { fname = decl.field27.name; ftype = decl.field27.refFieldType; }
+                else if fi == 28 { fname = decl.field28.name; ftype = decl.field28.refFieldType; }
+                else if fi == 29 { fname = decl.field29.name; ftype = decl.field29.refFieldType; }
+                else if fi == 30 { fname = decl.field30.name; ftype = decl.field30.refFieldType; }
+                else if fi == 31 { fname = decl.field31.name; ftype = decl.field31.refFieldType; }
+                else if fi == 32 { fname = decl.field32.name; ftype = decl.field32.refFieldType; }
+                else if fi == 33 { fname = decl.field33.name; ftype = decl.field33.refFieldType; }
+                else if fi == 34 { fname = decl.field34.name; ftype = decl.field34.refFieldType; }
+                else if fi == 35 { fname = decl.field35.name; ftype = decl.field35.refFieldType; }
+                else if fi == 36 { fname = decl.field36.name; ftype = decl.field36.refFieldType; }
+                else if fi == 37 { fname = decl.field37.name; ftype = decl.field37.refFieldType; }
+                else if fi == 38 { fname = decl.field38.name; ftype = decl.field38.refFieldType; }
+                else if fi == 39 { fname = decl.field39.name; ftype = decl.field39.refFieldType; }
+                else if fi == 40 { fname = decl.field40.name; ftype = decl.field40.refFieldType; }
+                else if fi == 41 { fname = decl.field41.name; ftype = decl.field41.refFieldType; }
+                else if fi == 42 { fname = decl.field42.name; ftype = decl.field42.refFieldType; }
+                else if fi == 43 { fname = decl.field43.name; ftype = decl.field43.refFieldType; }
+                else if fi == 44 { fname = decl.field44.name; ftype = decl.field44.refFieldType; }
+                else if fi == 45 { fname = decl.field45.name; ftype = decl.field45.refFieldType; }
+                else if fi == 46 { fname = decl.field46.name; ftype = decl.field46.refFieldType; }
+                else if fi == 47 { fname = decl.field47.name; ftype = decl.field47.refFieldType; }
+                else if fi == 48 { fname = decl.field48.name; ftype = decl.field48.refFieldType; }
+                else if fi == 49 { fname = decl.field49.name; ftype = decl.field49.refFieldType; }
+                else if fi == 50 { fname = decl.field50.name; ftype = decl.field50.refFieldType; }
+                else if fi == 51 { fname = decl.field51.name; ftype = decl.field51.refFieldType; }
+                else if fi == 52 { fname = decl.field52.name; ftype = decl.field52.refFieldType; }
+                else if fi == 53 { fname = decl.field53.name; ftype = decl.field53.refFieldType; }
+                else if fi == 54 { fname = decl.field54.name; ftype = decl.field54.refFieldType; }
+                else if fi == 55 { fname = decl.field55.name; ftype = decl.field55.refFieldType; }
+                else if fi == 56 { fname = decl.field56.name; ftype = decl.field56.refFieldType; }
+                else if fi == 57 { fname = decl.field57.name; ftype = decl.field57.refFieldType; }
+                else if fi == 58 { fname = decl.field58.name; ftype = decl.field58.refFieldType; }
+                else if fi == 59 { fname = decl.field59.name; ftype = decl.field59.refFieldType; }
+                else if fi == 60 { fname = decl.field60.name; ftype = decl.field60.refFieldType; }
+                else if fi == 61 { fname = decl.field61.name; ftype = decl.field61.refFieldType; }
+                else if fi == 62 { fname = decl.field62.name; ftype = decl.field62.refFieldType; }
+                else if fi == 63 { fname = decl.field63.name; ftype = decl.field63.refFieldType; }
                 // Skip empty field names
                 if String_Eq(fname, "") {
                     fi = fi + 1;
@@ -701,23 +784,37 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
         if decl.kind == dkEnum {
             let ei: int = hm.enumCount;
             hm.enums[ei].name = decl.strValue;
-            hm.enumCount = hm.enumCount + 1;
-            // Emit enum variants as constants: EnumName_VariantName = value
+            // Populate variants
+            hm.enums[ei].variantCount = decl.variantCount;
+            if decl.variantCount > 0 {
+                hm.enums[ei].variants = bux_alloc(decl.variantCount as uint * sizeof(HirEnumVariant)) as *HirEnumVariant;
+            }
             var vi: int = 0;
-            while vi < decl.variantCount && hm.constCount < 512 {
-                var vname: String = "";
-                if vi == 0 { vname = decl.variant0.name; }
-                if vi == 1 { vname = decl.variant1.name; }
-                if vi == 2 { vname = decl.variant2.name; }
-                if vi == 3 { vname = decl.variant3.name; }
-                if !String_Eq(vname, "") {
-                    let ci: int = hm.constCount;
-                    hm.consts[ci].name = String_Concat(String_Concat(decl.strValue, "_"), vname);
-                    hm.consts[ci].value = vi;
-                    hm.constCount = hm.constCount + 1;
+            while vi < decl.variantCount {
+                var v: *EnumVariant = null as *EnumVariant;
+                if vi == 0 { v = &decl.variant0; }
+                if vi == 1 { v = &decl.variant1; }
+                if vi == 2 { v = &decl.variant2; }
+                if vi == 3 { v = &decl.variant3; }
+                if vi == 4 { v = &decl.variant4; }
+                if vi == 5 { v = &decl.variant5; }
+                if vi == 6 { v = &decl.variant6; }
+                if vi == 7 { v = &decl.variant7; }
+                if v != null as *EnumVariant {
+                    hm.enums[ei].variants[vi].name = v.name;
+                    hm.enums[ei].variants[vi].fieldCount = v.fieldCount;
+                    if v.fieldCount > 0 {
+                        hm.enums[ei].variants[vi].fieldName0 = "value";
+                        hm.enums[ei].variants[vi].fieldType0 = Lcx_ResolveTypeKindFromName(v.fieldTypeName0);
+                    }
+                    if v.fieldCount > 1 {
+                        hm.enums[ei].variants[vi].fieldName1 = "value2";
+                        hm.enums[ei].variants[vi].fieldType1 = Lcx_ResolveTypeKindFromName(v.fieldTypeName1);
+                    }
                 }
                 vi = vi + 1;
             }
+            hm.enumCount = hm.enumCount + 1;
         }
         decl = decl.childDecl2;
     }

@@ -129,6 +129,8 @@ struct HirConst {
 
 struct HirEnum {
     name: String;
+    variantCount: int;
+    variants: *HirEnumVariant;
 }
 
 struct HirModule {

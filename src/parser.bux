@@ -666,6 +666,9 @@ func parserParseStmt(p: *Parser) -> *Stmt {
         p.structInitAllowed = true;
         let thenBlock: *Block = parserParseBlock(p);
         var elseBlock: *Block = null as *Block;
+        while parserCheck(p, tkNewLine) {
+            discard parserAdvance(p);
+        }
         if parserMatch(p, tkElse) {
             if parserCheck(p, tkIf) {
                 // else if → parse the if statement, wrap in a synthetic block
@@ -1226,6 +1229,9 @@ func parserParseEnumDecl(p: *Parser, isPublic: bool) -> *Decl {
 
         var v: EnumVariant;
         v.name = vName.text;
+        v.fieldCount = 0;
+        v.fieldTypeName0 = "";
+        v.fieldTypeName1 = "";
 
         // Optional (Type, Type) data
         if parserMatch(p, tkLParen) {
@@ -1244,6 +1250,10 @@ func parserParseEnumDecl(p: *Parser, isPublic: bool) -> *Decl {
         else if d.variantCount == 1 { d.variant1 = v; }
         else if d.variantCount == 2 { d.variant2 = v; }
         else if d.variantCount == 3 { d.variant3 = v; }
+        else if d.variantCount == 4 { d.variant4 = v; }
+        else if d.variantCount == 5 { d.variant5 = v; }
+        else if d.variantCount == 6 { d.variant6 = v; }
+        else if d.variantCount == 7 { d.variant7 = v; }
         d.variantCount = d.variantCount + 1;
 
         parserMatch(p, tkComma);
