@@ -1,6 +1,6 @@
 import "../bootstrap/lexer", "../bootstrap/parser", "../bootstrap/ast"
 
-let source = readFile("../_selfhost/src/ast.bux")
+let source = readFile("../src/ast.bux")
 let lexRes = tokenize(source, "ast.bux")
 let res = parse(lexRes.tokens, "ast.bux")
 if res.module != nil:

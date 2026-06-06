@@ -1,5 +1,5 @@
 NIM := nim
-SRC := compiler/bootstrap/main.nim
+SRC := bootstrap/main.nim
 OUT := buxc
 BUILD_DIR := build
 
@@ -21,15 +21,15 @@ debug: dev
 
 test: build test-examples
 	@echo "Running lexer tests..."
-	$(NIM) c -r compiler/tests/lexer_test.nim
+	$(NIM) c -r tests/lexer_test.nim
 	@echo "Running parser tests..."
-	$(NIM) c -r compiler/tests/parser_test.nim
+	$(NIM) c -r tests/parser_test.nim
 	@echo "Running sema tests..."
-	$(NIM) c -r compiler/tests/sema_test.nim
+	$(NIM) c -r tests/sema_test.nim
 	@echo "Running HIR tests..."
-	$(NIM) c -r compiler/tests/hir_test.nim
+	$(NIM) c -r tests/hir_test.nim
 	@echo "Running borrow checker tests..."
-	$(NIM) c -r compiler/tests/borrow_test.nim
+	$(NIM) c -r tests/borrow_test.nim
 	@echo "Running integration tests..."
 	rm -rf _test_tmp_pkg
 	./$(OUT) new _test_tmp_pkg
@@ -62,14 +62,15 @@ clean:
 	rm -rf _test_cast _test_cast2 _test_cast3 _test_channel
 
 clean-all: clean
-	rm -rf _selfhost/src _selfhost/build
+	rm -rf build/selfhost
 
 selfhost: build
 	@echo "=== Building self-hosted compiler ==="
-	@rm -rf _selfhost/src _selfhost/build
-	@mkdir -p _selfhost/src
-	@cp compiler/selfhost/*.bux _selfhost/src/
-	@mv _selfhost/src/main.bux _selfhost/src/Main.bux 2>/dev/null || true
-	@cd _selfhost && ../$(OUT) build
-	@strip _selfhost/build/buxc2
+	@rm -rf build/selfhost
+	@mkdir -p build/selfhost/src
+	@cp src/*.bux build/selfhost/src/
+	@cp src/bux.toml build/selfhost/
+	@mv build/selfhost/src/main.bux build/selfhost/src/Main.bux 2>/dev/null || true
+	@cd build/selfhost && ../../$(OUT) build
+	@strip build/selfhost/build/buxc2 2>/dev/null || true
 	@echo "=== Self-hosted compiler built successfully ==="

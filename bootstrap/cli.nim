@@ -259,9 +259,9 @@ proc collectDepDecls(lock: Lockfile, root: string, opts: GlobalOptions): seq[Dec
 
 proc findStdlibDir(root: string): string =
   let searchPaths = @[
-    getAppDir() / ".." / "library",
-    getAppDir() / "library",
-    root / "library",
+    getAppDir() / ".." / "lib",
+    getAppDir() / "lib",
+    root / "lib",
   ]
   for path in searchPaths:
     if dirExists(path):
@@ -461,26 +461,27 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let cFile = buildDir / "main.c"
   writeFile(cFile, allCCode)
 
-  # Copy runtime and stdlib files
+  # Copy runtime files (rt/ is sibling of lib/)
   let stdlibDir = pctx.stdlibDir
   let runtimeDst = buildDir / "runtime.c"
   let ioDst = buildDir / "io.c"
   if stdlibDir == "":
     printError("stdlib directory not found", useColor)
     return 1
-  
-  let runtimeSrc = stdlibDir / "runtime" / "runtime.c"
+
+  let baseDir = stdlibDir.parentDir()
+  let runtimeSrc = baseDir / "rt" / "runtime.c"
   if fileExists(runtimeSrc):
     copyFile(runtimeSrc, runtimeDst)
   else:
-    printError("runtime.c not found in library/runtime/", useColor)
+    printError("runtime.c not found in rt/", useColor)
     return 1
-  
-  let ioSrc = stdlibDir / "runtime" / "io.c"
+
+  let ioSrc = baseDir / "rt" / "io.c"
   if fileExists(ioSrc):
     copyFile(ioSrc, ioDst)
   else:
-    printError("io.c not found in library/runtime/", useColor)
+    printError("io.c not found in rt/", useColor)
     return 1
 
   # Compile with cc

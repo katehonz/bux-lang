@@ -36,7 +36,7 @@ make dev
 
 The output is a single binary: `buxc` (bootstrap compiler in Nim).
 
-The self-hosted compiler `buxc2` is built from `compiler/selfhost/*.bux` sources via:
+The self-hosted compiler `buxc2` is built from `src/*.bux` sources via:
 ```bash
 make selfhost
 ```
@@ -135,31 +135,39 @@ cd examples_pkg/hello && ../../buxc run
 
 ```
 bux/
-├── src/              # Bootstrap compiler source (Nim)
-│   ├── main.nim      # Entry point
-│   ├── cli.nim       # CLI commands
-│   ├── lexer.nim     # Tokenizer
-│   ├── parser.nim    # Parser
-│   ├── sema.nim      # Semantic analysis
-│   ├── hir.nim       # High-level IR
-│   ├── hir_lower.nim # AST → HIR lowering
-│   ├── c_backend.nim # HIR → C code generation
+├── src/              # Self-hosted compiler source (Bux)
+│   ├── Main.bux      # Entry point
+│   ├── Cli.bux       # CLI commands
+│   ├── Lexer.bux     # Tokenizer
+│   ├── Parser.bux    # Parser
+│   ├── Ast.bux       # AST definitions
+│   ├── Sema.bux      # Semantic analysis
+│   ├── Types.bux     # Type system
+│   ├── Scope.bux     # Symbol table
+│   ├── Hir.bux       # High-level IR
+│   ├── HirLower.bux  # AST → HIR lowering
+│   ├── CBackend.bux  # HIR → C code generation
+│   ├── Manifest.bux  # bux.toml parser
+│   └── Token.bux     # Token definitions
+├── bootstrap/        # Bootstrap compiler (Nim) — compiles src/ → buxc
+│   ├── main.nim
+│   ├── cli.nim
 │   └── ...
-├── library/           # Standard library
-│   ├── Std/
-│   │   ├── Io.bux
-│   │   ├── Array.bux
-│   │   ├── String.bux
-│   │   ├── Map.bux
-│   │   ├── Fs.bux
-│   │   ├── Mem.bux
-│   │   ├── Set.bux
-│   │   ├── Path.bux
-│   │   ├── Math.bux
-│   │   ├── Task.bux
-│   │   └── Channel.bux
-│   ├── runtime.c     # C runtime shim
-│   └── io.c          # C I/O functions
+├── lib/              # Standard library (Bux)
+│   ├── Io.bux
+│   ├── Array.bux
+│   ├── String.bux
+│   ├── Map.bux
+│   ├── Fs.bux
+│   ├── Mem.bux
+│   ├── Set.bux
+│   ├── Path.bux
+│   ├── Math.bux
+│   ├── Task.bux
+│   └── Channel.bux
+├── rt/               # C runtime
+│   ├── runtime.c
+│   └── io.c
 ├── examples/         # Example programs
 ├── tests/            # Unit tests (Nim)
 ├── docs/             # Documentation
@@ -183,7 +191,7 @@ cat build/main.c
 
 ### Inspecting Generated C (self-hosted)
 ```bash
-cd _selfhost && ../buxc build
+cd src && ../buxc build
 cat build/main.c
 ```
 
@@ -191,7 +199,7 @@ cat build/main.c
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `stdlib directory not found` | `buxc` can't find `library/` | Run from project root or set correct path |
+| `stdlib directory not found` | `buxc` can't find `lib/` | Run from project root or set correct path |
 | `duplicate symbol 'bux_alloc'` | Multiple stdlib modules declare same extern | Only declare in one module |
 | `C compilation failed` | Generated C has errors | Check `build/main.c` for issues |
 

@@ -31,7 +31,7 @@ func DirExists(path: String) -> bool {
 }
 
 // Import the compiler pipeline
-// In self-hosting mode, these are compiled together from compiler/selfhost/
+// In self-hosting mode, these are compiled together from src/
 
 // ---------------------------------------------------------------------------
 // Compile a single .bux source file
@@ -139,20 +139,20 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
     Print("  → C written to ");
     PrintLine(cFile);
 
-    // Find runtime.c and io.c for linking
-    var rtPath: String = "library/runtime/runtime.c";
-    var ioPath: String = "library/runtime/io.c";
+    // Find runtime.c and io.c for linking (rt/ directory)
+    var rtPath: String = "rt/runtime.c";
+    var ioPath: String = "rt/io.c";
     if !FileExists(rtPath) {
-        rtPath = "../library/runtime/runtime.c";
+        rtPath = "../rt/runtime.c";
     }
     if !FileExists(ioPath) {
-        ioPath = "../library/runtime/io.c";
+        ioPath = "../rt/io.c";
     }
     if !FileExists(rtPath) {
-        rtPath = "/home/ziko/z-git/bux/bux/library/runtime/runtime.c";
+        rtPath = "/home/ziko/z-git/bux/bux/rt/runtime.c";
     }
     if !FileExists(ioPath) {
-        ioPath = "/home/ziko/z-git/bux/bux/library/runtime/io.c";
+        ioPath = "/home/ziko/z-git/bux/bux/rt/io.c";
     }
 
     // Compile with cc
@@ -294,11 +294,11 @@ func Cli_CompileSource(source: String, sourceName: String) -> *HirModule {
 // ---------------------------------------------------------------------------
 
 func Cli_FindStdlibDir(projectDir: String) -> String {
-    var path: String = bux_path_join(projectDir, "stdlib");
+    var path: String = bux_path_join(projectDir, "lib");
     if DirExists(path) { return path; }
-    path = bux_path_join(projectDir, "../stdlib");
+    path = bux_path_join(projectDir, "../lib");
     if DirExists(path) { return path; }
-    path = "/home/ziko/z-git/bux/bux/stdlib";
+    path = "/home/ziko/z-git/bux/bux/lib";
     if DirExists(path) { return path; }
     return "";
 }
@@ -377,7 +377,7 @@ func Cli_CollectStdlibImports(mod: *Module, outPaths: *String, maxCount: int, st
                     j = j + 1;
                 }
                 if !String_Eq(modName, "") {
-                    let filePath: String = bux_path_join(bux_path_join(stdlibDir, "Std"), String_Concat(modName, ".bux"));
+                    let filePath: String = bux_path_join(stdlibDir, String_Concat(modName, ".bux"));
                     // Check for duplicates
                     var dup: bool = false;
                     var di: int = 0;
@@ -558,31 +558,28 @@ func Cli_BuildProject(projectDir: String) -> int {
     merged.itemCount = 0;
     merged.firstItem = null as *Decl;
 
-    // Find and merge stdlib declarations (only imported modules)
+    // Find and merge ALL stdlib declarations
     let stdlibDir: String = Cli_FindStdlibDir(projectDir);
     if !String_Eq(stdlibDir, "") {
         Print("Stdlib found: ");
         PrintLine(stdlibDir);
-        // Collect imported stdlib modules from user code
-        let maxImports: int = 64;
-        let importPaths: *String = bux_alloc(maxImports * 8) as *String;
-        let importCount: int = Cli_CollectStdlibImports(userMerged, importPaths, maxImports, stdlibDir);
-        Print("Imported stdlib modules: ");
-        PrintInt(importCount);
-        PrintLine("");
-        if importCount > 0 {
+        // List all .bux files in lib/
+        var libCount: int = 0;
+        let libFiles: *String = bux_list_dir(stdlibDir, ".bux", &libCount);
+        var stdAdded: int = 0;
+        if libCount > 0 {
             var si: int = 0;
-            var stdAdded: int = 0;
-            while si < importCount {
+            while si < libCount {
                 Print("  Merging ");
-                PrintLine(importPaths[si]);
-                let added: int = Cli_MergeFileInto(merged, importPaths[si], userNames, userNameCount);
+                PrintLine(libFiles[si]);
+                let added: int = Cli_MergeFileInto(merged, libFiles[si], userNames, userNameCount);
                 stdAdded = stdAdded + added;
                 si = si + 1;
             }
-            Print("Stdlib declarations added: ");
-            PrintInt(stdAdded);
         }
+        Print("Stdlib declarations added: ");
+        PrintInt(stdAdded);
+        PrintLine("");
     }
 
     // Copy user declarations into merged (user shadows stdlib)
@@ -629,20 +626,20 @@ func Cli_BuildProject(projectDir: String) -> int {
     Print("C code written to ");
     PrintLine(cFile);
 
-    // Find runtime.c and io.c (use stdlibDir if available)
-    var rtPath: String = bux_path_join(stdlibDir, "runtime.c");
-    var ioPath: String = bux_path_join(stdlibDir, "io.c");
+    // Find runtime.c and io.c (look in rt/ directory)
+    var rtPath: String = bux_path_join(projectDir, "rt/runtime.c");
+    var ioPath: String = bux_path_join(projectDir, "rt/io.c");
     if !FileExists(rtPath) {
-        rtPath = bux_path_join(projectDir, "library/runtime/runtime.c");
+        rtPath = bux_path_join(projectDir, "../rt/runtime.c");
     }
     if !FileExists(ioPath) {
-        ioPath = bux_path_join(projectDir, "library/runtime/io.c");
+        ioPath = bux_path_join(projectDir, "../rt/io.c");
     }
     if !FileExists(rtPath) {
-        rtPath = bux_path_join(projectDir, "../library/runtime/runtime.c");
+        rtPath = bux_path_join(projectDir, "../../rt/runtime.c");
     }
     if !FileExists(ioPath) {
-        ioPath = bux_path_join(projectDir, "../library/runtime/io.c");
+        ioPath = bux_path_join(projectDir, "../../rt/io.c");
     }
 
     // Compile with cc

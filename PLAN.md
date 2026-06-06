@@ -1,15 +1,19 @@
-# Bux Programming Language — Roadmap to Self-Hosting
+# Bux Programming Language — Roadmap to v1.0.0
 
-> **Bootstrap Implementation:** Nim
-> **Target:** Bux compiler written in Bux (self-hosting)
+> **Version:** 0.3.0 (2026-06-06)
+> **Bootstrap:** Nim (`bootstrap/`) — compiles `src/` → `buxc`
+> **Self-host:** Bux (`src/`) — compiles via `buxc` → `buxc2`
+> **Target:** Bux v1.0.0 — fully self-hosting, gradual ownership, tooling
 
 ---
 
 ## Overview
 
-Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming language. The strategy is **bootstrap via Nim** — we build the first Bux compiler in Nim, then progressively rewrite it in Bux until it compiles itself.
+Bux is a fast, compiled, strongly-typed, multi-paradigm systems programming language. The strategy is **bootstrap via Nim** — we built the first Bux compiler in Nim, then rewrote it in Bux. The Nim bootstrap now exists only as a build scaffold.
 
 **Core philosophy:** Systems-level control with modern ergonomics. No hidden costs, no hidden allocations, no hidden control flow.
+
+**Killer feature:** Gradual ownership — write fast like C, add safety like Rust, but only where you choose (`@[Checked]`).
 
 ---
 
@@ -286,11 +290,11 @@ Phase 7.5 — Driver (depends on all):
 
 ---
 
-## Phase 7 — Self-Hosting: The Great Rewrite 🔄 (In Progress)
+## Phase 7 — Self-Hosting: The Great Rewrite ✅ (Complete)
 
 **Goal:** Bux compiler compiles itself. This is the **main milestone**.
 
-**All 14 modules ported** in `compiler/selfhost/` (4094 LOC total). Self-hosted project structure in `_selfhost/`.
+**All 14 modules ported** in `src/` (4094 LOC total). Built via `make selfhost`.
 
 | Task | Status | Details | LOC |
 |------|--------|---------|-----|
@@ -342,7 +346,7 @@ Phase 7.5 — Driver (depends on all):
 
 **Self-hosted compiler stats:**
 ```
-$ _selfhost/build/buxc2 version
+$ src/build/buxc2 version
 Bux 0.2.0 (self-hosting bootstrap)
 Pipeline modules:
   Lexer      ✅  695 lines
@@ -355,8 +359,8 @@ Pipeline modules:
 
 **Bootstrap loop goal:**
 ```
-buxc (Nim) → compile compiler/selfhost/*.bux → buxc2 (Bux binary)
-buxc2 (Bux) → compile compiler/selfhost/*.bux → buxc3 (Bux binary)
+buxc (Nim) → compile src/*.bux → buxc2 (Bux binary)
+buxc2 (Bux) → compile src/*.bux → buxc3 (Bux binary)
 compare buxc2 == buxc3 → SELF-HOSTED ✅
 ```
 
@@ -534,57 +538,184 @@ const TABLE_SIZE = Factorial(10);  // Computed at compile time
 
 ---
 
-## File Structure (Target)
+## File Structure (v0.3.0 — Current)
 
 ```
 bux/
-├── bux.toml                  # Compiler package manifest
+├── bux.toml                  # Bootstrap compiler manifest (v0.3.0)
 ├── README.md
-├── PLAN.md
+├── PLAN.md                   # This file
 ├── Makefile                  # build, test, selfhost
-├── src/
-│   ├── Main.bux              # CLI entry point
-│   ├── Lexer.bux
-│   ├── Parser.bux
-│   ├── Ast.bux
-│   ├── Sema.bux
-│   ├── Type.bux
-│   ├── Hir.bux
-│   ├── Lir.bux
-│   ├── CBackend.bux          # C transpiler (primary backend)
-│   ├── X64Backend.bux        # Native x86-64 backend (optional)
-│   ├── Linker.bux            # Custom linker / build driver
-│   ├── Manifest.bux          # bux.toml parser
-│   └── Package.bux           # Package resolution
-├── library/
-│   ├── Std/
-│   │   ├── Io.bux
-│   │   ├── Memory.bux
-│   │   ├── String.bux
-│   │   ├── Array.bux
-│   │   ├── Map.bux
-│   │   ├── Math.bux
-│   │   ├── Os.bux
-│   │   ├── Path.bux
-│   │   ├── Process.bux
-│   │   ├── Result.bux        # Result<T,E> and Option<T>
-│   │   ├── Iter.bux          # Iterator trait and combinators
-│   │   ├── Fmt.bux           # String formatting
-│   │   ├── Task.bux          # Lightweight concurrency
-│   │   ├── Channel.bux       # Message passing
-│   │   └── Sync.bux          # Mutex, RwLock, atomic
-│   └── Runtime.c             # C runtime shim
-├── tests/
-│   ├── Lexer/
-│   ├── Parser/
-│   ├── Sema/
-│   ├── Codegen/
-│   └── Integration/
-└── docs/
-    ├── LanguageRef.md
-    ├── Ownership.md
-    └── Concurrency.md
+├── src/                      # 🎯 CANONICAL: Bux compiler source
+│   ├── bux.toml              # Self-host compiler manifest
+│   ├── main.bux              # Entry point (renamed → Main.bux at build)
+│   ├── lexer.bux             # Tokenizer (UTF-8 state machine, 697 LOC)
+│   ├── parser.bux            # Pratt parser (1004 LOC)
+│   ├── ast.bux               # AST node types (algebraic enums)
+│   ├── sema.bux              # Type checker / semantic analysis (393 LOC)
+│   ├── types.bux             # Type factories
+│   ├── scope.bux             # Symbol table
+│   ├── hir.bux               # High-level IR definitions
+│   ├── hir_lower.bux         # AST → HIR lowering (307 LOC)
+│   ├── c_backend.bux         # HIR → C code generator (264 LOC)
+│   ├── cli.bux               # CLI command dispatch
+│   ├── manifest.bux          # bux.toml / TOML parser
+│   ├── token.bux             # Token kind definitions
+│   └── source_location.bux   # Source location tracking
+├── bootstrap/                # 🔧 Nim bootstrap (build scaffold only)
+│   ├── main.nim              # Entry point
+│   ├── cli.nim               # CLI commands + build driver
+│   └── ...                   # (mirrors src/ structure)
+├── lib/                      # 📦 Standard library (23 modules)
+│   ├── Io.bux                # Print, ReadFile, WriteFile
+│   ├── String.bux            # Full string API (len, concat, split, format...)
+│   ├── Array.bux             # Generic Array<T>
+│   ├── Map.bux               # Generic Map<K,V> + StringMap
+│   ├── Set.bux               # Generic Set<T>
+│   ├── Math.bux              # Sqrt, Pow, Min, Max, Abs
+│   ├── Mem.bux               # Alloc, Realloc, Free
+│   ├── Path.bux              # Path_Join, Path_Parent, Path_Ext
+│   ├── Fs.bux                # DirExists, Mkdir, ListDir
+│   ├── Task.bux              # Lightweight tasks (spawn/await)
+│   ├── Channel.bux           # Producer/consumer channels
+│   ├── Sync.bux              # Mutex, RwLock
+│   ├── Result.bux            # Result<T,E> + Option<T> + ? operator
+│   ├── Iter.bux              # Iterator trait
+│   ├── Fmt.bux               # String formatting
+│   ├── Os.bux                # Args, Env, Exit, Cwd
+│   ├── Time.bux              # Time measurement
+│   ├── Process.bux           # Subprocess spawning
+│   ├── Net.bux               # TCP client/server
+│   ├── Crypto.bux            # SHA256, HMAC, Base64
+│   ├── Json.bux              # JSON parse/stringify
+│   └── Test.bux              # Test framework
+├── rt/                       # ⚙️ C runtime
+│   ├── runtime.c             # Memory, string, path helpers
+│   └── io.c                  # File I/O wrappers
+├── tests/                    # 🧪 Unit tests (Nim)
+│   ├── lexer_test.nim
+│   ├── parser_test.nim
+│   ├── sema_test.nim
+│   ├── hir_test.nim
+│   ├── borrow_test.nim
+│   └── testdata/
+├── examples/                 # Example programs
+├── docs/                     # Documentation
+│   ├── LanguageRef.md
+│   ├── BuildAndTest.md
+│   ├── STRATEGY.md
+│   ├── PHASE8_STRATEGY.md
+│   └── Packages.md
+├── build/                    # Build artifacts (gitignored)
+│   └── selfhost/             # Self-host compiler build dir
+└── vendor/                   # Vendored dependencies
 ```
+
+---
+
+## Phase 10 🔄 — Path to v1.0.0 (In Progress)
+
+### 10.0 — v0.3.0 Restructuring ✅ (Completed 2026-06-06)
+
+| Task | Status | Details |
+|------|--------|---------|
+| Directory restructure | ✅ | `compiler/selfhost/` → `src/`, `compiler/bootstrap/` → `bootstrap/`, `library/std/` → `lib/`, `library/runtime/` → `rt/`, `compiler/tests/` → `tests/` |
+| Path updates | ✅ | Updated Makefile, cli.nim, cli.bux, test files, docs |
+| Selfhost fix | ✅ | Build via `build/selfhost/` (project wrapper) |
+| Push to GitHub | ✅ | `ac969b3` — v0.3.0 restructure |
+
+### 10.1 — Selfhost Loop 🔄 (v0.4.0 target)
+
+**Goal:** `buxc2` can compile itself producing a binary-identical `buxc3`.
+
+```
+buxc (Nim) → src/*.bux → buxc2 ✅ (already works)
+buxc2       → src/*.bux → buxc3 🔄 (needs verification)
+buxc2 == buxc3            🔄 (deterministic codegen)
+```
+
+| Task | Status | Details |
+|------|--------|---------|
+| `10.1.1` Verify buxc2 can build src/ | 🔄 | Run `buxc2 build` on the selfhost project |
+| `10.1.2` Deterministic C codegen | ⏳ | Remove timestamps, random IDs, non-deterministic ordering |
+| `10.1.3` Binary-identical loop | ⏳ | `make selfhost-loop` — 2-pass bootstrap verification |
+| `10.1.4` Remove hardcoded paths | ⏳ | No `/home/ziko/...` paths in cli.bux |
+| `10.1.5` Selfhost test in CI | ⏳ | Add to `make test` |
+
+### 10.2 — Gradual Ownership 🔄 (v0.5.0 target) ⭐ Killer Feature
+
+**Goal:** `@[Checked]` functions get full borrow checking. Without this, Bux is "C with modern syntax."
+
+| Task | Status | Details |
+|------|--------|---------|
+| `10.2.1` `@[Checked]` attribute gate | ⏳ | Enable/disable borrow checker per function |
+| `10.2.2` `&T` shared reference check | ⏳ | No mutation through shared refs |
+| `10.2.3` `&mut T` exclusive mutable check | ⏳ | No aliasing of mutable refs |
+| `10.2.4` Bounds checking on slices | ⏳ | Buffer overflow prevention |
+| `10.2.5` Lifetime elision (simple rules) | ⏳ | 80% of cases without annotations |
+| `10.2.6` Explicit lifetimes `'a` | ⏳ | Only for complex cases |
+
+### 10.3 — Compiler Architecture Upgrade (v0.6.0 target)
+
+**Goal:** Proper module structure instead of flat file mirror of Nim bootstrap.
+
+```
+src/
+├── main.bux
+├── frontend/
+│   ├── lexer.bux
+│   ├── parser.bux
+│   └── ast.bux
+├── analysis/
+│   ├── sema.bux
+│   ├── types.bux
+│   ├── scope.bux
+│   └── borrow.bux       # NEW — borrow checker
+├── lowering/
+│   ├── hir.bux
+│   └── hir_lower.bux
+├── backend/
+│   └── c_backend.bux
+└── driver/
+    ├── cli.bux
+    ├── manifest.bux
+    ├── token.bux
+    └── source_location.bux
+```
+
+### 10.4 — Stdlib Completion (v0.7.0 target)
+
+| Module | Status | Priority |
+|--------|--------|----------|
+| `Std::Os` — Args, Env, Exit, Cwd | ⏳ | P0 |
+| `Std::Process` — spawn subprocess | ⏳ | P0 |
+| `Std::Iter` — map, filter, fold | ⏳ | P1 |
+| `Std::Fmt` — string interpolation | ⏳ | P1 |
+
+### 10.5 — Tooling (v0.8.0 target)
+
+| Tool | Status | Priority |
+|------|--------|----------|
+| `bux test` — test runner | ⏳ | P0 |
+| `bux fmt` — code formatter | ⏳ | P1 |
+| `bux doc` — doc generator | ⏳ | P2 |
+
+### 10.6 — Native Backend (v0.9.0 target)
+
+| Task | Status |
+|------|--------|
+| Direct x86-64 codegen (no C) | ⏳ |
+| ELF64 output | ⏳ |
+| System V AMD64 ABI | ⏳ |
+
+### 10.7 — v1.0.0 Release Criteria
+
+- [ ] Compiler self-hosts binary-identically
+- [ ] `@[Checked]` borrow checker works on real code
+- [ ] Stdlib complete enough for CLI tools
+- [ ] `bux test`, `bux fmt`, `bux doc` exist
+- [ ] Documentation + 30+ examples
+- [ ] CI/CD pipeline (build + test on push)
 
 ---
 

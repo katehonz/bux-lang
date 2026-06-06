@@ -1,7 +1,7 @@
 import "../bootstrap/lexer", "../bootstrap/parser", "../bootstrap/ast", "../bootstrap/token"
 import std/os
 
-let source = readFile("../_selfhost/src/ast.bux")
+let source = readFile("../src/ast.bux")
 let lexRes = tokenize(source, "ast.bux")
 echo "Tokens: ", lexRes.tokens.len
 echo "Errors: ", lexRes.hasErrors
