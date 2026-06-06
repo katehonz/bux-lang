@@ -1,0 +1,7 @@
+[Package]
+Name    = "buxc2"
+Version = "0.3.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
