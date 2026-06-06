@@ -1,6 +1,6 @@
 # Bux Programming Language — Roadmap to v1.0.0
 
-> **Version:** 0.3.0 (2026-06-06)
+> **Version:** 0.3.1 (2026-06-06)
 > **Bootstrap:** Nim (`bootstrap/`) — compiles `src/` → `buxc`
 > **Self-host:** Bux (`src/`) — compiles via `buxc` → `buxc2`
 > **Target:** Bux v1.0.0 — fully self-hosting, gradual ownership, tooling
@@ -820,12 +820,16 @@ func Main() -> int {
 | **M2** | 2 | ✅ | Type-checker rejects invalid programs |
 | **M3** | 3 | ✅ | HIR lowering works for all constructs |
 | **M4** | 5A | ✅ | `bux run` produces working binary via C transpiler |
-| **M5** | 6 | ✅ | Can write compiler-adjacent tools in Bux (18 examples) |
-| **M6** | 7 | ✅ | **Self-hosted**: `buxc2` (Bux) compiles via `buxc` (Nim) — 88KB working binary |
+| **M5** | 6 | ✅ | Can write compiler-adjacent tools in Bux (26 examples) |
+| **M6** | 7 | ✅ | **Self-hosted**: `buxc2` (Bux) compiles via `buxc` (Nim) — working binary |
 | **M7** | 8 | ✅ | Result/Option/`?`/`!` done; **borrow checker working**; **CTFE working** |
 | **M8** | 8-9 | ✅ | **Borrow checker**, **CTFE**, **Package manager** working |
 | **M9** | 8.5 | ✅ | **Trait bounds** (`<T: Comparable>`) — semantic checking implemented |
-| **M8** | 9 | ⏳ | Package manager + LSP + formatter shipped |
+| **M10** | 10 | ✅ | **LIR backend** replaces HIR→C; 26/26 examples pass; selfhost builds |
+| **M11** | 11 | 🔄 | Selfhost loop: `buxc2` compiles itself → binary-identical `buxc3` |
+| **M12** | 11.3 | ⏳ | `@[Checked]` borrow checker works on real code |
+| **M13** | 11.4 | ⏳ | `bux test`, `bux fmt`, `bux doc` shipped |
+| **M14** | 11.5 | ⏳ | Native x86-64 backend (no C transpiler) |
 
 ---
 
@@ -883,11 +887,57 @@ func Main() -> int {
 
 ### Next Actions (Priority Order)
 
-1. **Fix parameter/return types** — `String*` instead of `int` in function signatures
-2. **Debug ast/lexer/parser** — Get all 14 modules passing check
-3. **Full 14-module project build** — Complete bootstrap loop: buxc3 produced by buxc2
-4. **Compare buxc2 vs buxc3 output** — True self-hosting verification
-5. **Phase 8** — Advanced features: ownership checker, CTFE evaluation, string interpolation
+1. ✅ **Fix LIR backend type inference** — struct temps, undeclared vars, break/continue, duplicate declarations
+2. ✅ **All 26 examples passing** — bootstrap compiler builds and runs every example
+3. ✅ **Selfhost build working** — `make selfhost` produces working `buxc2`
+4. 🔄 **Selfhost loop verification** — `buxc2` compiles `src/` → `buxc3`
+5. 🔄 **Golden tests for C codegen** — Prevent future regressions in LIR → C
+
+---
+
+## Phase 11 — Post-LIR Stabilization & Path to v0.4.0 🔄
+
+### 11.1 — LIR Backend Hardening (v0.3.1)
+
+| Task | Status | Priority | Details |
+|------|--------|----------|---------|
+| `11.1.1` Golden tests for C codegen | ⏳ | P0 | Expected `.c` output for 5–6 critical examples; diff on regression |
+| `11.1.2` LIR debug dump | ⏳ | P1 | `bux build --emit-lir` produces readable LIR |
+| `11.1.3` Type info in `LirInstr` | ⏳ | P1 | Add `cType` field to instructions; eliminate inference hacks |
+| `11.1.4` Dead code cleanup | ⏳ | P2 | Remove unused `typeFromValue`, `setTempType`, `emit` |
+
+### 11.2 — Selfhost Loop (v0.4.0) ⭐
+
+| Task | Status | Priority | Details |
+|------|--------|----------|---------|
+| `11.2.1` `buxc2 build` on `src/` | ⏳ | P0 | Verify selfhost compiler can build itself |
+| `11.2.2` Deterministic C codegen | ⏳ | P0 | Remove non-deterministic ordering in `emitModule` |
+| `11.2.3` `make selfhost-loop` | ⏳ | P0 | Makefile target: buxc2 → buxc3 → binary compare |
+| `11.2.4` Cross-module generics in selfhost | ⏳ | P1 | `Map<K,V>` and `Array<T>` from stdlib in selfhost context |
+
+### 11.3 — Gradual Ownership (v0.5.0) ⭐⭐
+
+| Task | Status | Priority | Details |
+|------|--------|----------|---------|
+| `11.3.1` `&T` / `&mut T` lifetime analysis | ⏳ | P0 | Basic borrow checker integrated in LIR lowering |
+| `11.3.2` Bounds checking on slices | ⏳ | P0 | `Slice<T>` index checks `.len` at runtime |
+| `11.3.3` Lifetime elision (simple rules) | ⏳ | P1 | 80% of cases without explicit annotations |
+
+### 11.4 — Tooling & Ecosystem (v0.6.0–v0.8.0)
+
+| Task | Status | Priority | Details |
+|------|--------|----------|---------|
+| `11.4.1` `bux test` runner | ⏳ | P0 | Built-in test framework with assertions |
+| `11.4.2` `bux fmt` formatter | ⏳ | P1 | Auto-format Bux source |
+| `11.4.3` LSP prototype | ⏳ | P2 | Autocomplete, hover types, go-to-definition |
+| `11.4.4` `bux doc` generator | ⏳ | P2 | HTML from `///` doc comments |
+
+### 11.5 — Native Backend (v0.9.0)
+
+| Task | Status | Priority | Details |
+|------|--------|----------|---------|
+| `11.5.1` x86-64 codegen (no C) | ⏳ | P1 | ELF64 output, System V AMD64 ABI |
+| `11.5.2` Custom linker / `.bcu` format | ⏳ | P2 | Bespoke object format for faster builds |
 
 ---
 
