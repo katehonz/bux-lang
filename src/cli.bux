@@ -149,10 +149,10 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
         ioPath = "../rt/io.c";
     }
     if !FileExists(rtPath) {
-        rtPath = "/home/ziko/z-git/bux/bux/rt/runtime.c";
+        rtPath = "../../rt/runtime.c";
     }
     if !FileExists(ioPath) {
-        ioPath = "/home/ziko/z-git/bux/bux/rt/io.c";
+        ioPath = "../../rt/io.c";
     }
 
     // Compile with cc
@@ -298,7 +298,7 @@ func Cli_FindStdlibDir(projectDir: String) -> String {
     if DirExists(path) { return path; }
     path = bux_path_join(projectDir, "../lib");
     if DirExists(path) { return path; }
-    path = "/home/ziko/z-git/bux/bux/lib";
+    path = bux_path_join(projectDir, "../../lib");
     if DirExists(path) { return path; }
     return "";
 }

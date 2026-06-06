@@ -89,16 +89,16 @@ func Json_ArrayGet(v: JsonValue, index: uint) -> JsonValue {
 func Json_ArrayPush(self: *JsonValue, val: JsonValue) {
     if self.tag != JsonTagArray { return; }
     if self.arrLen >= self.arrCap {
-        var newCap: uint = self.arrCap;
-        if newCap == 0 { newCap = 4; }
-        else { newCap = newCap * 2; }
-        let newSize: uint = newCap * sizeof(JsonValue);
-        if self.arrCap == 0 {
-            self.arrData = Alloc(newSize) as *JsonValue;
+        // Compute new capacity (avoid var scoping bug in selfhost sema)
+        let arrNewCap: uint = self.arrCap;
+        if arrNewCap == 0 {
+            self.arrCap = 4;
+            self.arrData = Alloc(4 * sizeof(JsonValue)) as *JsonValue;
         } else {
-            self.arrData = Realloc(self.arrData as *void, newSize) as *JsonValue;
+            let doubleCap: uint = arrNewCap * 2;
+            self.arrCap = doubleCap;
+            self.arrData = Realloc(self.arrData as *void, doubleCap * sizeof(JsonValue)) as *JsonValue;
         }
-        self.arrCap = newCap;
     }
     self.arrData[self.arrLen] = val;
     self.arrLen = self.arrLen + 1;
@@ -145,19 +145,18 @@ func Json_ObjectSet(self: *JsonValue, key: String, val: JsonValue) {
         i = i + 1;
     }
     if self.objLen >= self.objCap {
-        var newCap: uint = self.objCap;
-        if newCap == 0 { newCap = 4; }
-        else { newCap = newCap * 2; }
-        let keySize: uint = newCap * sizeof(String);
-        let valSize: uint = newCap * sizeof(JsonValue);
-        if self.objCap == 0 {
-            self.objKeys = Alloc(keySize) as *String;
-            self.objValues = Alloc(valSize) as *JsonValue;
+        // Compute new capacity (avoid var scoping bug in selfhost sema)
+        let objNewCap: uint = self.objCap;
+        if objNewCap == 0 {
+            self.objCap = 4;
+            self.objKeys = Alloc(4 * sizeof(String)) as *String;
+            self.objValues = Alloc(4 * sizeof(JsonValue)) as *JsonValue;
         } else {
-            self.objKeys = Realloc(self.objKeys as *void, keySize) as *String;
-            self.objValues = Realloc(self.objValues as *void, valSize) as *JsonValue;
+            let doubleCap: uint = objNewCap * 2;
+            self.objCap = doubleCap;
+            self.objKeys = Realloc(self.objKeys as *void, doubleCap * sizeof(String)) as *String;
+            self.objValues = Realloc(self.objValues as *void, doubleCap * sizeof(JsonValue)) as *JsonValue;
         }
-        self.objCap = newCap;
     }
     self.objKeys[self.objLen] = key;
     self.objValues[self.objLen] = val;
