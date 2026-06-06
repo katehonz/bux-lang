@@ -178,7 +178,12 @@ proc emitInstr(be: var LirCBackend, instr: LirInstr) =
 
   # ── Alloca ──
   of lirAlloca:
-    be.emitLine(&"{v(instr.src)} {v(instr.dst)};")
+    var ct = v(instr.src)
+    if instr.dst.strVal.len > 0 and be.tempTypes.hasKey(instr.dst.strVal):
+      let inferred = be.tempTypes[instr.dst.strVal]
+      if inferred != "" and inferred != ct:
+        ct = inferred
+    be.emitLine(&"{ct} {v(instr.dst)};")
 
   # ── Pointers ──
   of lirAddrOf:
@@ -236,7 +241,7 @@ proc emitInstr(be: var LirCBackend, instr: LirInstr) =
 
 # ── Function emission ──
 
-proc emitFunc(be: var LirCBackend, f: LirFunc) =
+proc emitFunc(be: var LirCBackend, f: LirFunc, funcRetTypes: Table[string, string]) =
   var paramsStr = ""
   for i, p in f.params:
     if i > 0: paramsStr.add(", ")
@@ -247,50 +252,99 @@ proc emitFunc(be: var LirCBackend, f: LirFunc) =
   be.emitLine(&"{f.retType} {f.name}({paramsStr}) {{")
   be.indent += 1
 
-  # First pass: declare all temp variables at the top of the function
-  var tempsSeen: seq[tuple[name: string, cType: string]] = @[]
+  # ── Pass 1: collect types from allocas, params, and instructions ──
+  var varTypes = initTable[string, string]()
   var tempsSet: seq[string] = @[]
+  for p in f.params:
+    varTypes[p.name] = p.cType
+    be.tempTypes[p.name] = p.cType
   for instr in f.instrs:
-    # Allocas are explicit declarations — mark name as declared, skip emission here
-    if instr.kind == lirAlloca:
-      if instr.dst.strVal.len > 0 and instr.dst.strVal notin tempsSet:
+    if instr.kind == lirAlloca and instr.dst.kind == lvkVar and instr.src.kind == lvkType:
+      varTypes[instr.dst.strVal] = instr.src.strVal
+      be.tempTypes[instr.dst.strVal] = instr.src.strVal
+      if instr.dst.strVal notin tempsSet:
         tempsSet.add(instr.dst.strVal)
-      continue
-    # Temps that are destinations of binary ops, calls, etc.
-    if instr.dst.kind == lvkTemp and instr.dst.strVal.len > 0 and instr.dst.strVal notin tempsSet:
-      # Infer type based on instruction kind
-      var ct = "int"
+
+  # ── Pass 2: iterative type inference for temps ──
+  var changed = true
+  while changed:
+    changed = false
+    for instr in f.instrs:
+      if instr.dst.kind != lvkTemp or instr.dst.strVal.len == 0:
+        continue
+      let name = instr.dst.strVal
+      let oldType = if be.tempTypes.hasKey(name): be.tempTypes[name] else: ""
+      var newType = oldType
+
       case instr.kind
-      of lirMov, lirLoad, lirLoadGlobal:
-        ct = "int"
-      of lirAdd, lirSub, lirMul, lirDiv, lirMod, lirNeg,
-         lirCmpEq, lirCmpNe, lirCmpLt, lirCmpLe, lirCmpGt, lirCmpGe:
-        ct = "int"
-      of lirAnd, lirOr, lirXor, lirShl, lirShr, lirNot, lirBNot:
-        ct = "int"
-      of lirCall, lirCallIndirect:
-        ct = "int"  # Conservative
-      of lirAddrOf, lirFieldPtr, lirArrowFieldPtr, lirIndexPtr, lirPtrAdd:
-        ct = "void*"
-      of lirStructInit, lirSliceInit:
-        ct = "int"  # Will be overwritten by the actual type in emit
+      of lirStructInit:
+        if instr.extra.len > 0 and instr.extra[0].kind == lvkType:
+          newType = instr.extra[0].strVal
+      of lirSliceInit:
+        if instr.extra.len > 0 and instr.extra[0].kind == lvkType:
+          newType = "Slice_" & instr.extra[0].strVal
       of lirCast:
-        ct = valToC(be, instr.src2)
+        if instr.src2.kind == lvkType:
+          newType = instr.src2.strVal
+      of lirCall:
+        if instr.src.kind == lvkGlobal and funcRetTypes.hasKey(instr.src.strVal):
+          newType = funcRetTypes[instr.src.strVal]
+      of lirCallIndirect:
+        # Conservative; try to infer from dst usage in later passes
+        discard
+      of lirMov:
+        if instr.src.kind == lvkTemp and be.tempTypes.hasKey(instr.src.strVal):
+          newType = be.tempTypes[instr.src.strVal]
+        elif instr.src.kind == lvkVar and varTypes.hasKey(instr.src.strVal):
+          newType = varTypes[instr.src.strVal]
+      of lirLoad, lirLoadGlobal:
+        # Try to deduce pointee type from pointer vars/temps
+        if instr.src.kind == lvkVar and varTypes.hasKey(instr.src.strVal):
+          let srcType = varTypes[instr.src.strVal]
+          if srcType.endsWith("*"):
+            newType = srcType[0 ..< srcType.len - 1]
+          elif srcType.startsWith("Slice_"):
+            newType = srcType[6 ..< srcType.len]
+        elif instr.src.kind == lvkTemp and be.tempTypes.hasKey(instr.src.strVal):
+          let srcType = be.tempTypes[instr.src.strVal]
+          if srcType.endsWith("*"):
+            newType = srcType[0 ..< srcType.len - 1]
+          elif srcType.startsWith("Slice_"):
+            newType = srcType[6 ..< srcType.len]
       of lirSelect:
-        ct = "int"
+        if instr.src2.kind == lvkTemp and be.tempTypes.hasKey(instr.src2.strVal):
+          newType = be.tempTypes[instr.src2.strVal]
+        elif instr.extra.len > 0 and instr.extra[0].kind == lvkTemp and be.tempTypes.hasKey(instr.extra[0].strVal):
+          newType = be.tempTypes[instr.extra[0].strVal]
+        elif instr.src2.kind == lvkVar and varTypes.hasKey(instr.src2.strVal):
+          newType = varTypes[instr.src2.strVal]
+      of lirAddrOf, lirFieldPtr, lirArrowFieldPtr, lirIndexPtr, lirPtrAdd:
+        newType = "void*"
+      of lirAdd, lirSub, lirMul, lirDiv, lirMod, lirNeg,
+         lirCmpEq, lirCmpNe, lirCmpLt, lirCmpLe, lirCmpGt, lirCmpGe,
+         lirAnd, lirOr, lirXor, lirShl, lirShr, lirNot, lirBNot:
+        newType = "int"
       else:
-        ct = "int"
-      tempsSeen.add((instr.dst.strVal, ct))
-      tempsSet.add(instr.dst.strVal)
-      be.tempTypes[instr.dst.strVal] = ct
+        discard
 
-  # Declare all temps
-  for t in tempsSeen:
-    # Skip if the type is a struct type (will be declared inline)
-    if t.cType == "int" or t.cType == "void*" or t.cType == "double":
-      be.emitLine(&"{t.cType} {t.name};")
+      if newType != "" and newType != oldType:
+        be.tempTypes[name] = newType
+        changed = true
 
-  # Emit instructions in order
+  # ── Pass 3: declare temps that were inferred ──
+  var declared: seq[string] = @[]
+  for instr in f.instrs:
+    if instr.kind == lirAlloca and instr.dst.strVal.len > 0 and instr.dst.strVal notin declared:
+      declared.add(instr.dst.strVal)
+      continue
+    if instr.dst.kind == lvkTemp and instr.dst.strVal.len > 0 and instr.dst.strVal notin declared:
+      if be.tempTypes.hasKey(instr.dst.strVal):
+        let ct = be.tempTypes[instr.dst.strVal]
+        if ct != "":
+          declared.add(instr.dst.strVal)
+          be.emitLine(&"{ct} {instr.dst.strVal};")
+
+  # ── Pass 4: emit instructions ──
   for instr in f.instrs:
     be.emitInstr(instr)
 
@@ -422,6 +476,13 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
   ## Emit full C source from LIR builder + HIR module metadata.
   be.output = ""
 
+  # Build function return type lookup table
+  var funcRetTypes = initTable[string, string]()
+  for f in module.funcs:
+    funcRetTypes[f.name] = typeToCStr(f.retType)
+  for f in module.externFuncs:
+    funcRetTypes[f.name] = typeToCStr(f.retType)
+
   # Header
   be.emitLine("/* Generated by Bux Compiler (LIR backend) */")
   be.emitLine("#include <stdio.h>")
@@ -539,7 +600,7 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
 
   # Emit all LIR functions
   for f in builder.funcs:
-    be.emitFunc(f)
+    be.emitFunc(f, funcRetTypes)
 
   # C main wrapper
   var hasMain = false

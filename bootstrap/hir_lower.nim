@@ -352,22 +352,63 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     if objType.isPointer and objType.inner.len > 0:
       objType = objType.inner[0]
     if objType.kind == tkNamed:
-      let sym = ctx.globalScope.lookup(objType.name)
-      if sym != nil and sym.decl != nil and sym.decl.kind == dkStruct:
-        for f in sym.decl.declStructFields:
-          if f.name == expr.exprFieldName:
-            if f.ftype != nil:
-              case f.ftype.kind
-              of tekNamed:
-                case f.ftype.typeName
-                of "int", "int32", "int64": return makeInt()
-                of "float64": return makeFloat64()
-                of "float32": return makeFloat32()
-                of "bool": return makeBool()
-                else: return makeNamed(f.ftype.typeName)
-              of tekOwn, tekPointer:
-                return ctx.resolveTypeExpr(f.ftype)
-              else: return makeUnknown()
+      var sym = ctx.globalScope.lookup(objType.name)
+      var decl = if sym != nil: sym.decl else: nil
+      # If the type is a monomorphized generic struct instance, look up the base
+      if decl == nil and ctx.structInstMap.hasKey(objType.name):
+        let (baseName, typeArgs) = ctx.structInstMap[objType.name]
+        let baseSym = ctx.globalScope.lookup(baseName)
+        if baseSym != nil and baseSym.decl != nil and baseSym.decl.kind == dkStruct:
+          decl = baseSym.decl
+          var subst = initTable[string, Type]()
+          for i, tp in decl.declStructTypeParams:
+            if i < typeArgs.len:
+              subst[tp.name] = typeArgs[i]
+          for f in decl.declStructFields:
+            if f.name == expr.exprFieldName:
+              if f.ftype != nil:
+                case f.ftype.kind
+                of tekNamed:
+                  case f.ftype.typeName
+                  of "int", "int32", "int64": return makeInt()
+                  of "float64": return makeFloat64()
+                  of "float32": return makeFloat32()
+                  of "bool": return makeBool()
+                  else:
+                    if subst.hasKey(f.ftype.typeName):
+                      return subst[f.ftype.typeName]
+                    return makeNamed(f.ftype.typeName)
+                of tekOwn, tekPointer:
+                  return substituteType(ctx, f.ftype, subst)
+                else: return makeUnknown()
+      if decl != nil:
+        case decl.kind
+        of dkStruct:
+          for f in decl.declStructFields:
+            if f.name == expr.exprFieldName:
+              if f.ftype != nil:
+                case f.ftype.kind
+                of tekNamed:
+                  case f.ftype.typeName
+                  of "int", "int32", "int64": return makeInt()
+                  of "float64": return makeFloat64()
+                  of "float32": return makeFloat32()
+                  of "bool": return makeBool()
+                  else: return makeNamed(f.ftype.typeName)
+                of tekOwn, tekPointer:
+                  return ctx.resolveTypeExpr(f.ftype)
+                else: return makeUnknown()
+        of dkEnum:
+          # Algebraic enum fields: tag and data
+          if expr.exprFieldName == "tag":
+            return makeNamed(objType.name & "_Tag")
+          elif expr.exprFieldName == "data":
+            return makeNamed(objType.name & "_Data")
+          else:
+            # Enum variant field access: e.g., r.data.Ok_0
+            # We can't easily resolve this here; return unknown
+            return makeUnknown()
+        else: discard
     return makeUnknown()
   of ekStructInit:
     if expr.exprStructInitTypeArgs.len > 0:
@@ -395,6 +436,13 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     return makeInt()
   of ekUnwrap:
     return makeInt()
+  of ekIndex:
+    let baseType = ctx.resolveExprType(expr.exprIndexObj)
+    if baseType.isSlice and baseType.inner.len > 0:
+      return baseType.inner[0]
+    if baseType.isPointer and baseType.inner.len > 0:
+      return baseType.inner[0]
+    return makeUnknown()
   of ekBlock:
     if expr.exprBlock.stmts.len > 0:
       let last = expr.exprBlock.stmts[^1]
@@ -721,7 +769,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
 
     let tmpName = ctx.freshTryVar()
     let tmpAlloca = hirAlloca(tmpName, operandType, loc)
-    let tmpVar = hirVar(tmpName, makePointer(operandType), loc)
+    let tmpVar = hirVar(tmpName, operandType, loc)
     let tmpStore = hirStore(tmpVar, operand, loc)
 
     let tagPtr = HirNode(kind: hFieldPtr, fieldPtrBase: tmpVar, fieldName: "tag",
@@ -1020,8 +1068,7 @@ proc lowerBlock(ctx: var LowerCtx, blk: Block): HirNode =
     # but for hVar/hLit/hCall etc. we could treat them as block expr.
     # For now, leave as-is to avoid breaking control-flow statements.
     discard
-  return HirNode(kind: hBlock, blockStmts: stmts, blockExpr: expr,
-                 typ: if expr != nil: expr.typ else: makeVoid(), loc: blk.loc)
+  return hirBlock(stmts, expr, if expr != nil: expr.typ else: makeVoid(), blk.loc, isScope = true)
 
 proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   # Set up type substitution for generic functions

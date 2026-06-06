@@ -16,12 +16,17 @@ type
     funcRetType*: string
     ## Current source location for debug
     currentFile*: string
+    ## Loop end labels for break/continue
+    loopEndLabels*: seq[string]
+    loopStartLabels*: seq[string]
 
 proc initLowerToLirCtx*(): LowerToLirCtx =
   result = LowerToLirCtx(
     builder: initLirBuilder(),
     varTypes: initTable[string, string](),
     varLirValues: initTable[string, LirValue](),
+    loopEndLabels: @[],
+    loopStartLabels: @[],
   )
 
 # ── Helpers ──
@@ -360,6 +365,8 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       var args: seq[LirValue] = @[]
       if node.spawnArgs.len > 0:
         args.add(lowerExpr(ctx, node.spawnArgs[0]))
+      else:
+        args.add(lirInt(0))
       let t = b.freshTemp()
       b.emitAlloca(t.strVal, "void*")
       b.emitCall(t, "bux_task_spawn", @[lirGlobal(node.spawnCallee)] & args)
@@ -492,28 +499,44 @@ proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode) =
     let bodyLbl = b.freshLabel("wbody")
     let endLbl = b.freshLabel("wend")
 
+    ctx.loopStartLabels.add(startLbl.strVal)
+    ctx.loopEndLabels.add(endLbl.strVal)
     b.emitLabel(startLbl)
     let cond = lowerExpr(ctx, node.whileCond)
     b.emitJz(endLbl, cond)
     lowerStmt(ctx, node.whileBody)
     b.emitJmp(startLbl)
     b.emitLabel(endLbl)
+    discard ctx.loopStartLabels.pop()
+    discard ctx.loopEndLabels.pop()
 
   # ── Loop (infinite) ──
   of hLoop:
     let startLbl = b.freshLabel("loop")
+    let endLbl = b.freshLabel("lend")
+
+    ctx.loopStartLabels.add(startLbl.strVal)
+    ctx.loopEndLabels.add(endLbl.strVal)
     b.emitLabel(startLbl)
     lowerStmt(ctx, node.loopBody)
     b.emitJmp(startLbl)
+    b.emitLabel(endLbl)
+    discard ctx.loopStartLabels.pop()
+    discard ctx.loopEndLabels.pop()
 
   # ── Break ──
   of hBreak:
-    # We emit a break label reference; the emitter tracks the nearest loop end
-    b.emitRawC("break;")
+    if ctx.loopEndLabels.len > 0:
+      b.emitJmp(lirLabel(ctx.loopEndLabels[^1]))
+    else:
+      b.emitRawC("break;")
 
   # ── Continue ──
   of hContinue:
-    b.emitRawC("continue;")
+    if ctx.loopStartLabels.len > 0:
+      b.emitJmp(lirLabel(ctx.loopStartLabels[^1]))
+    else:
+      b.emitRawC("continue;")
 
   # ── Alloca ──
   of hAlloca:
