@@ -1,5 +1,6 @@
 # Compiled binary
 buxc
+buxc_lir
 src/main
 
 # Nim cache

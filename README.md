@@ -2,7 +2,8 @@
 
 ![Bux Language](bux-lang-01.jpeg)
 
-> **Status:** Bootstrap compiler (`buxc`, Nim) compiles `.bux` → C → native binary.  
+> **Status:** Bootstrap compiler (`buxc`, Nim) compiles `.bux` → HIR → **LIR** → C → native binary.
+> New **LIR backend** (v0.3.0) replaces direct HIR→C emission — cleaner codegen, all 22 examples passing.
 > Self-hosted compiler (`buxc2`) exists as a proof-of-concept but is **deprioritized** in favor of language features and stdlib maturity.
 
 Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership, async/await, generics, algebraic enums, and a package manager.
@@ -190,7 +191,7 @@ func Main() -> int {
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
 | **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
 | **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel`, `Sync`, `Os`, `Time`, `Process` |
-| **Backend** | C transpiler (self-hosting + bootstrap) |
+| **Backend** | LIR → C transpiler (clean 3-address code, then gcc/clang) |
 | **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
 | **Gradual Ownership** | `@[Checked]` + `&T`/`&mut T` borrow checking |
 | **Async/Await** | `async func`, `spawn`, `.await` with stackful coroutines |

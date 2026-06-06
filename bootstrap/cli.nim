@@ -1,5 +1,5 @@
 import std/[os, strutils, terminal, strformat, osproc, sets]
-import lexer, parser, ast, sema, manifest, hir_lower, c_backend
+import lexer, parser, ast, sema, manifest, hir_lower, lir, lir_lower, lir_c_backend
 
 type
   ColorMode* = enum
@@ -454,8 +454,9 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     return 1
   
   let hirMod = lowerModule(unifiedModule, semaCtx)
-  var cbe = initCBackend()
-  var allCCode = cbe.emitModule(hirMod)
+  let lirBuilder = lowerModuleToLir(hirMod)
+  var lirCbe = initLirCBackend()
+  var allCCode = lirCbe.emitModule(lirBuilder, hirMod)
 
   # Write C file
   let cFile = buildDir / "main.c"
