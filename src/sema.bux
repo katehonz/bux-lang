@@ -2,6 +2,9 @@
 // Validates types, resolves identifiers, checks function calls.
 module Sema {
 
+extern func Print(s: String);
+extern func PrintLine(s: String);
+
 // ---------------------------------------------------------------------------
 // Sema context
 // ---------------------------------------------------------------------------
@@ -127,15 +130,14 @@ func Sema_TypeName(kind: int) -> String {
 
 func Sema_CheckBlock(sema: *Sema, block: *Block) {
     if block == null as *Block { return; }
-    var blockScope: Scope = Scope_NewChild(sema.scope);
-    let prevScope: *Scope = sema.scope;
-    sema.scope = &blockScope;
+    // Use current scope directly — only function bodies create new scopes.
+    // This matches Nim bootstrap behavior and fixes variable visibility
+    // in nested blocks (if/while bodies).
     var stmt: *Stmt = block.firstStmt;
     while stmt != null as *Stmt {
         Sema_CheckStmt(sema, stmt);
         stmt = stmt.nextStmt;
     }
-    sema.scope = prevScope;
 }
 
 // ---------------------------------------------------------------------------

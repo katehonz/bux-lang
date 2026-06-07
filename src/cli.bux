@@ -232,6 +232,8 @@ func Cli_Check(srcPath: String) -> int {
         while i < Sema_DiagCount(sema) {
             Print("  line ");
             PrintInt(sema.diags[i].line as int64);
+            Print(" col ");
+            PrintInt(sema.diags[i].column as int64);
             Print(": ");
             PrintLine(sema.diags[i].message);
             i = i + 1;
@@ -656,6 +658,8 @@ func Cli_BuildProject(projectDir: String) -> int {
         while i < Sema_DiagCount(sema) {
             Print("  line ");
             PrintInt(sema.diags[i].line as int64);
+            Print(" col ");
+            PrintInt(sema.diags[i].column as int64);
             Print(": ");
             PrintLine(sema.diags[i].message);
             i = i + 1;
