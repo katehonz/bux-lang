@@ -541,6 +541,9 @@ func Cli_BuildProject(projectDir: String) -> int {
             return 1;
         }
         let lex: *Lexer = Lexer_Tokenize(source);
+        Print("    [tokens: ");
+        PrintInt(lex.tokenCount as int64);
+        PrintLine("]");
         if Lexer_DiagCount(lex) > 0 {
             Print("  Lex errors in ");
             PrintLine(path);
