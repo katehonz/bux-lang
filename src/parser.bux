@@ -2069,10 +2069,10 @@ func parserParseDecl(p: *Parser) -> *Decl {
         return d;
     }
 
-    // Skip unknown declarations
-    while parserPeek(p, 0) != tkEndOfFile && parserPeek(p, 0) != tkNewLine && parserPeek(p, 0) != tkRBrace {
-        discard parserAdvance(p);
-    }
+    // Unknown declaration — skip one token and return null
+    // (was: skip to newline/}, which was destructive)
+    parserEmitDiag(p, parserCurToken(p).line, parserCurToken(p).column, "skipping unknown declaration");
+    discard parserAdvance(p);
     return null as *Decl;
 }
 
