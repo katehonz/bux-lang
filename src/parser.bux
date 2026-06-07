@@ -1006,6 +1006,11 @@ func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool, isAsync: bo
     // Body
     if !isExtern && parserCheck(p, tkLBrace) {
         d.refBody = parserParseBlock(p);
+        // HACK: if parserParseBlock left a stray } at current position,
+        // consume it. Without this, the module handler exits early.
+        if parserCheck(p, tkRBrace) {
+            discard parserAdvance(p);
+        }
     } else {
         d.refBody = null as *Block;
     }
