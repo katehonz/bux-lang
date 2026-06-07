@@ -204,6 +204,10 @@ proc parseBaseType(p: var Parser): TypeExpr =
       var typeArgs: seq[TypeExpr] = @[]
       discard p.advance()
       while not p.check(tkGt) and not p.isAtEnd:
+        while p.check(tkNewLine):
+          discard p.advance()
+        if p.check(tkGt) or p.isAtEnd:
+          break
         typeArgs.add(p.parseType())
         if p.check(tkComma):
           discard p.advance()
@@ -310,6 +314,10 @@ proc parsePrimaryPattern(p: var Parser): Pattern =
       discard p.advance()
       var fields: seq[tuple[name: string, pattern: Pattern]] = @[]
       while not p.check(tkRBrace) and not p.isAtEnd:
+        while p.check(tkNewLine):
+          discard p.advance()
+        if p.check(tkRBrace) or p.isAtEnd:
+          break
         let fieldName = p.expect(tkIdent, "expected field name in struct pattern").text
         discard p.expect(tkColon, "expected ':' after field name in pattern")
         fields.add((fieldName, p.parsePattern()))
@@ -965,6 +973,10 @@ proc parseTypeParams(p: var Parser): seq[TypeParam] =
   if p.check(tkLt):
     discard p.advance()
     while not p.check(tkGt) and not p.isAtEnd:
+      while p.check(tkNewLine):
+        discard p.advance()
+      if p.check(tkGt) or p.isAtEnd:
+        break
       var name = ""
       var isLifetime = false
       if p.check(tkIdent):
@@ -997,6 +1009,10 @@ proc parseTypeParams(p: var Parser): seq[TypeParam] =
 proc parseParamList(p: var Parser, allowVariadic: bool = false): seq[Param] =
   discard p.expect(tkLParen, "expected '('")
   while not p.check(tkRParen) and not p.isAtEnd:
+    while p.check(tkNewLine):
+      discard p.advance()
+    if p.check(tkRParen) or p.isAtEnd:
+      break
     let loc = p.currentLoc
     var isVar = false
     if allowVariadic and p.check(tkDotDotDot):
@@ -1261,6 +1277,10 @@ proc parseUseDecl(p: var Parser, attrs: ParsedAttrs): Decl =
     if p.check(tkLBrace):
       discard p.advance()
       while not p.check(tkRBrace) and not p.isAtEnd:
+        while p.check(tkNewLine):
+          discard p.advance()
+        if p.check(tkRBrace) or p.isAtEnd:
+          break
         names.add(p.expect(tkIdent, "expected name in multi-import").text)
         if p.check(tkComma):
           discard p.advance()

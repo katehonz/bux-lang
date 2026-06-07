@@ -6,6 +6,7 @@
 > **Selfhost loop:** `buxc2` can compile itself — deterministic C codegen verified.
 > **LIR backend** produces clean 3-address C code. All 26 examples pass.
 > **Gradual Ownership:** `@[Checked]` borrow checker, `borrow &mut` expressions, `@[Shared]` attribute.
+> **Apps tested:** compiler successfully parses all 3 real-world apps (`apps/boko-framework`, `apps/jwt-pitbul`, `apps/nexus`) — no hangs, no crashes.
 
 Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership (opt-in borrow checking), async/await, generics, algebraic enums, and a package manager.
 
@@ -251,6 +252,20 @@ make clean
 ```
 
 > **Windows users:** Use the `buxs/` directory as your project root to avoid path conflicts.
+
+---
+
+## Applications
+
+The `apps/` directory contains real-world Bux applications that serve as integration tests for the compiler:
+
+| App | Description | Lines |
+|-----|-------------|-------|
+| **boko-framework** | Async web framework (like FastAPI), multi-threaded HTTP server | ~660 |
+| **jwt-pitbul** | JWT CLI tool — sign, verify, decode (HS256/384/512, RS256/384/512, ES256/384, EdDSA) | ~326 |
+| **nexus** | High-performance HTTP/1.1, HTTP/2 & WebSocket server | ~550 |
+
+The bootstrap compiler successfully parses and type-checks all three applications without hanging or crashing.
 
 ---
 
