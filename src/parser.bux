@@ -869,8 +869,13 @@ func parserParseBlock(p: *Parser) -> *Block {
         }
         let beforePos: int = p.pos;
         let s: *Stmt = parserParseStmt(p);
-        // Infinite-loop safeguard: if no progress, advance past current token
+        // Infinite-loop safeguard
         if p.pos == beforePos {
+            // If stuck and current token is }, consume it and exit
+            if parserCheck(p, tkRBrace) {
+                discard parserAdvance(p);
+                break;
+            }
             discard parserAdvance(p);
             continue;
         }
@@ -886,7 +891,8 @@ func parserParseBlock(p: *Parser) -> *Block {
             b.stmtCount = b.stmtCount + 1;
         }
     }
-    discard parserExpect(p, tkRBrace, "expected '}'");
+    // Consume } if present (may already be consumed by safeguard)
+    parserMatch(p, tkRBrace);
     return b;
 }
 
