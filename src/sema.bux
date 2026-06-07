@@ -165,7 +165,9 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if kind == ekIdent {
         let sym: Symbol = Scope_Lookup(sema.scope, expr.strValue);
         if sym.kind == 0 && !String_Eq(sym.name, expr.strValue) {
-            Sema_EmitError(sema, expr.line, expr.column, "undeclared identifier");
+            let errMsg: String = String_Concat("undeclared identifier '", expr.strValue);
+            let errMsg2: String = String_Concat(errMsg, "'");
+            Sema_EmitError(sema, expr.line, expr.column, errMsg2);
             return tyUnknown;
         }
         if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
@@ -565,7 +567,10 @@ func Sema_CollectGlobals(sema: *Sema) {
                                 sym.isMutable = false;
                                 sym.isPublic = true;
                                 sym.decl = null as *Decl;
-                                discard Scope_Define(sema.scope, sym);
+                                let existing: Symbol = Scope_LookupLocal(sema.scope, name);
+                                if !String_Eq(existing.name, name) {
+                                    discard Scope_Define(sema.scope, sym);
+                                }
                             }
                             start = pos + 1;
                         }
@@ -600,7 +605,10 @@ func Sema_CollectGlobals(sema: *Sema) {
                     sym.isMutable = false;
                     sym.isPublic = true;
                     sym.decl = null as *Decl;
-                    discard Scope_Define(sema.scope, sym);
+                    let existing: Symbol = Scope_LookupLocal(sema.scope, lastSeg);
+                    if !String_Eq(existing.name, lastSeg) {
+                        discard Scope_Define(sema.scope, sym);
+                    }
                 }
             }
         }

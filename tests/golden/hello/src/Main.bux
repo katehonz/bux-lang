@@ -1,0 +1,5 @@
+import Std::Io::PrintLine;
+func Main() -> int {
+    PrintLine("Hello, Bux!");
+    return 0;
+}
