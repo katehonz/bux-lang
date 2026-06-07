@@ -318,7 +318,11 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         sym.typeKind = initType;
         sym.typeName = "";
         if stmt.refStmtType != null as *TypeExpr {
-            sym.typeName = stmt.refStmtType.typeName;
+            if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
+                sym.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
+            } else {
+                sym.typeName = stmt.refStmtType.typeName;
+            }
         }
         sym.isMutable = stmt.boolValue;
         sym.isPublic = false;
@@ -695,7 +699,11 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 pSym.kind = skVar;
                 if p != null as *Param && p.refParamType != null as *TypeExpr {
                     pSym.typeKind = Sema_ResolveType(s, p.refParamType);
-                    pSym.typeName = p.refParamType.typeName;
+                    if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
+                        pSym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+                    } else {
+                        pSym.typeName = p.refParamType.typeName;
+                    }
                 } else {
                     pSym.typeKind = tyInt;
                     pSym.typeName = "";

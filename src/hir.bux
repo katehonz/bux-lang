@@ -79,15 +79,15 @@ struct HirParam {
 struct HirFunc {
     name: String;
     paramCount: int;
-    param0: HirParam;
-    param1: HirParam;
-    param2: HirParam;
-    param3: HirParam;
-    param4: HirParam;
-    param5: HirParam;
-    param6: HirParam;
-    param7: HirParam;
-    param8: HirParam;
+    param0: *HirParam;
+    param1: *HirParam;
+    param2: *HirParam;
+    param3: *HirParam;
+    param4: *HirParam;
+    param5: *HirParam;
+    param6: *HirParam;
+    param7: *HirParam;
+    param8: *HirParam;
     retTypeKind: int;
     retTypeName: String;
     body: *HirNode;

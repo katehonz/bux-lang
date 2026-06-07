@@ -65,11 +65,12 @@ func CBackend_OpToC(op: int) -> String {
 struct CEmitter {
     sb: StringBuilder,
     indent: int,
+    mod: *HirModule,
 }
 
 func CBE_Init() -> CEmitter {
     var sb: StringBuilder = StringBuilder_NewCap(4096);
-    return CEmitter { sb: sb, indent: 0 };
+    return CEmitter { sb: sb, indent: 0, mod: null as *HirModule };
 }
 
 func CBE_Emit(cbe: *CEmitter, text: String) {
@@ -252,8 +253,10 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
             }
             StringBuilder_Append(&cbe.sb, " ");
             StringBuilder_Append(&cbe.sb, node.child1.strValue);
-            StringBuilder_Append(&cbe.sb, " = ");
-            CBE_EmitExpr(cbe, node.child2);
+            if node.child2 != null as *HirNode {
+                StringBuilder_Append(&cbe.sb, " = ");
+                CBE_EmitExpr(cbe, node.child2);
+            }
             return;
         }
         // Plain assignment
@@ -349,9 +352,8 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         CBE_EmitExpr(cbe, node.child1);
         var isPtr: bool = false;
         if node.child1 != null as *HirNode {
-            if node.child1.typeKind == tyPointer {
-                isPtr = true;
-            } else if String_EndsWith(node.child1.typeName, "*") {
+            let childType: String = CBE_GetExprTypeName(cbe.mod, node.child1);
+            if String_EndsWith(childType, "*") {
                 isPtr = true;
             }
         }
@@ -396,9 +398,8 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
                 CBE_EmitExpr(cbe, ptrNode.child1);
                 var isPtr: bool = false;
                 if ptrNode.child1 != null as *HirNode {
-                    if ptrNode.child1.typeKind == tyPointer {
-                        isPtr = true;
-                    } else if String_EndsWith(ptrNode.child1.typeName, "*") {
+                    let childType: String = CBE_GetExprTypeName(cbe.mod, ptrNode.child1);
+                    if String_EndsWith(childType, "*") {
                         isPtr = true;
                     }
                 }
@@ -617,6 +618,107 @@ func CBE_FuncHasGeneric(f: *HirFunc) -> bool {
     return false;
 }
 
+func CBE_IsPrimitiveTypeName(name: String) -> bool {
+    if String_Eq(name, "int") || String_Eq(name, "") { return true; }
+    if String_Eq(name, "String") { return true; }
+    if String_Eq(name, "bool") { return true; }
+    if String_Eq(name, "uint32") { return true; }
+    if String_Eq(name, "uint64") { return true; }
+    if String_Eq(name, "int64") { return true; }
+    if String_Eq(name, "float32") { return true; }
+    if String_Eq(name, "float64") { return true; }
+    if String_Eq(name, "uint8") { return true; }
+    if String_Eq(name, "uint16") { return true; }
+    if String_Eq(name, "int8") { return true; }
+    if String_Eq(name, "int16") { return true; }
+    if String_Eq(name, "uint") { return true; }
+    if String_Eq(name, "char8") { return true; }
+    if String_Eq(name, "void") { return true; }
+    if String_Eq(name, "size_t") { return true; }
+    return false;
+}
+
+func CBE_StructHasValueStructField(st: *HirStruct) -> bool {
+    var fi: int = 0;
+    while fi < st.fieldCount {
+        let ft: String = st.fields[fi].typeName;
+        if !CBE_IsPrimitiveTypeName(ft) && !String_EndsWith(ft, "*") {
+            return true;
+        }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+func CBE_EmitStructDef(cbe: *CEmitter, st: *HirStruct) {
+    StringBuilder_Append(&cbe.sb, "struct ");
+    StringBuilder_Append(&cbe.sb, st.name);
+    StringBuilder_Append(&cbe.sb, " {\n");
+    var fi: int = 0;
+    while fi < st.fieldCount {
+        StringBuilder_Append(&cbe.sb, "    ");
+        var ft: String = st.fields[fi].typeName;
+        if String_Eq(ft, "int") || String_Eq(ft, "") {
+            StringBuilder_Append(&cbe.sb, "int");
+        } else if String_Eq(ft, "String") {
+            StringBuilder_Append(&cbe.sb, "String");
+        } else if String_Eq(ft, "bool") {
+            StringBuilder_Append(&cbe.sb, "bool");
+        } else if String_Eq(ft, "uint32") {
+            StringBuilder_Append(&cbe.sb, "uint32");
+        } else {
+            StringBuilder_Append(&cbe.sb, ft);
+        }
+        StringBuilder_Append(&cbe.sb, " ");
+        StringBuilder_Append(&cbe.sb, st.fields[fi].name);
+        StringBuilder_Append(&cbe.sb, ";\n");
+        fi = fi + 1;
+    }
+    StringBuilder_Append(&cbe.sb, "};\n\n");
+}
+
+func CBE_LookupFieldType(mod: *HirModule, structName: String, fieldName: String) -> String {
+    var si: int = 0;
+    while si < mod.structCount {
+        if String_Eq(mod.structs[si].name, structName) {
+            var fi: int = 0;
+            while fi < mod.structs[si].fieldCount {
+                if String_Eq(mod.structs[si].fields[fi].name, fieldName) {
+                    let ft: String = mod.structs[si].fields[fi].typeName;
+                    if ft != null as String { return ft; }
+                    return "";
+                }
+                fi = fi + 1;
+            }
+        }
+        si = si + 1;
+    }
+    return "";
+}
+
+func CBE_GetExprTypeName(mod: *HirModule, node: *HirNode) -> String {
+    if node == null as *HirNode { return ""; }
+    if node.kind == hVar {
+        if node.typeName != null as String { return node.typeName; }
+        return "";
+    }
+    if node.kind == hFieldPtr {
+        let baseType: String = CBE_GetExprTypeName(mod, node.child1);
+        var structName: String = baseType;
+        if String_EndsWith(baseType, "*") {
+            let len: uint = String_Len(baseType);
+            if len > 1 {
+                structName = String_Slice(baseType, 0, len - 1);
+            }
+        }
+        if !String_Eq(structName, "") {
+            return CBE_LookupFieldType(mod, structName, node.strValue);
+        }
+    }
+    if node.typeName != null as String { return node.typeName; }
+    return "";
+}
+
 // ---------------------------------------------------------------------------
 // Generate complete C module
 // ---------------------------------------------------------------------------
@@ -625,6 +727,7 @@ func CBackend_Generate(mod: *HirModule) -> String {
     let cbe: *CEmitter = bux_alloc(sizeof(CEmitter)) as *CEmitter;
     cbe.sb = StringBuilder_NewCap(8192);
     cbe.indent = 0;
+    cbe.mod = mod;
 
     // Header
     StringBuilder_Append(&cbe.sb, "// Generated by Bux C Backend\n");
@@ -778,37 +881,32 @@ func CBackend_Generate(mod: *HirModule) -> String {
     }
 
     // Struct definitions (skip generics)
+    // Pass 1: emit structs with no value-typed struct fields (leaf structs)
     si = 0;
     while si < mod.structCount {
         if CBE_StructHasGeneric(&mod.structs[si]) {
             si = si + 1;
             continue;
         }
-        StringBuilder_Append(&cbe.sb, "struct ");
-        StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-        StringBuilder_Append(&cbe.sb, " {\n");
-        var fi: int = 0;
-        while fi < mod.structs[si].fieldCount {
-            StringBuilder_Append(&cbe.sb, "    ");
-            var ft: String = mod.structs[si].fields[fi].typeName;
-            if String_Eq(ft, "int") || String_Eq(ft, "") {
-                StringBuilder_Append(&cbe.sb, "int");
-            } else if String_Eq(ft, "String") {
-                StringBuilder_Append(&cbe.sb, "String");
-            } else if String_Eq(ft, "bool") {
-                StringBuilder_Append(&cbe.sb, "bool");
-            } else if String_Eq(ft, "uint32") {
-                StringBuilder_Append(&cbe.sb, "uint32");
-            } else {
-                // Use the type name directly (handles "Foo*", "Bar", etc.)
-                StringBuilder_Append(&cbe.sb, ft);
-            }
-            StringBuilder_Append(&cbe.sb, " ");
-            StringBuilder_Append(&cbe.sb, mod.structs[si].fields[fi].name);
-            StringBuilder_Append(&cbe.sb, ";\n");
-            fi = fi + 1;
+        if CBE_StructHasValueStructField(&mod.structs[si]) {
+            si = si + 1;
+            continue;
         }
-        StringBuilder_Append(&cbe.sb, "};\n\n");
+        CBE_EmitStructDef(cbe, &mod.structs[si]);
+        si = si + 1;
+    }
+    // Pass 2: emit structs that contain value-typed struct fields
+    si = 0;
+    while si < mod.structCount {
+        if CBE_StructHasGeneric(&mod.structs[si]) {
+            si = si + 1;
+            continue;
+        }
+        if !CBE_StructHasValueStructField(&mod.structs[si]) {
+            si = si + 1;
+            continue;
+        }
+        CBE_EmitStructDef(cbe, &mod.structs[si]);
         si = si + 1;
     }
 

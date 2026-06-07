@@ -172,6 +172,7 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
         StringBuilder_Append(&cmdBuf, " ");
     }
     StringBuilder_Append(&cmdBuf, "-lm");
+    StringBuilder_Append(&cmdBuf, " -lcrypto");
     let ccRc: int = bux_system(StringBuilder_Build(&cmdBuf));
     if ccRc != 0 {
         PrintLine("Error: C compilation failed");
@@ -423,8 +424,16 @@ func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCo
                 if !String_Eq(iname, "") && Cli_NameInList(iname, skipNames, skipCount) {
                     // Skip shadowed stdlib decl
                 } else {
-                    inner.childDecl2 = target.firstItem;
-                    target.firstItem = inner;
+                    inner.childDecl2 = null as *Decl;
+                    if target.firstItem == null as *Decl {
+                        target.firstItem = inner;
+                    } else {
+                        var last: *Decl = target.firstItem;
+                        while last.childDecl2 != null as *Decl {
+                            last = last.childDecl2;
+                        }
+                        last.childDecl2 = inner;
+                    }
                     target.itemCount = target.itemCount + 1;
                     added = added + 1;
                 }
@@ -435,8 +444,16 @@ func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCo
             if !String_Eq(dname, "") && Cli_NameInList(dname, skipNames, skipCount) {
                 // Skip shadowed stdlib decl
             } else {
-                decl.childDecl2 = target.firstItem;
-                target.firstItem = decl;
+                decl.childDecl2 = null as *Decl;
+                if target.firstItem == null as *Decl {
+                    target.firstItem = decl;
+                } else {
+                    var last: *Decl = target.firstItem;
+                    while last.childDecl2 != null as *Decl {
+                        last = last.childDecl2;
+                    }
+                    last.childDecl2 = decl;
+                }
                 target.itemCount = target.itemCount + 1;
                 added = added + 1;
             }
@@ -448,12 +465,26 @@ func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCo
 
 func Cli_CopyModuleDecls(target: *Module, source: *Module) {
     if source == null as *Module || source.firstItem == null as *Decl { return; }
+    // Find last item in target
+    var targetLast: *Decl = null as *Decl;
+    if target.firstItem != null as *Decl {
+        targetLast = target.firstItem;
+        while targetLast.childDecl2 != null as *Decl {
+            targetLast = targetLast.childDecl2;
+        }
+    }
     var decl: *Decl = source.firstItem;
     var limit: int = 0;
     while decl != null as *Decl && limit < 10000 {
         let next: *Decl = decl.childDecl2;
-        decl.childDecl2 = target.firstItem;
-        target.firstItem = decl;
+        decl.childDecl2 = null as *Decl;
+        if target.firstItem == null as *Decl {
+            target.firstItem = decl;
+            targetLast = decl;
+        } else {
+            targetLast.childDecl2 = decl;
+            targetLast = decl;
+        }
         target.itemCount = target.itemCount + 1;
         decl = next;
         limit = limit + 1;
@@ -660,6 +691,7 @@ func Cli_BuildProject(projectDir: String) -> int {
         StringBuilder_Append(&ccBuf, " ");
     }
     StringBuilder_Append(&ccBuf, "-lm");
+    StringBuilder_Append(&ccBuf, " -lcrypto");
     let ccRc: int = bux_system(StringBuilder_Build(&ccBuf));
     if ccRc != 0 {
         PrintLine("Error: C compilation failed");
