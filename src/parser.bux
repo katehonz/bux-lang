@@ -862,10 +862,14 @@ func parserParseBlock(p: *Parser) -> *Block {
     b.firstStmt = null as *Stmt;
     b.lastStmt = null as *Stmt;
 
+    // Build AST with parserParseStmt (may not consume all tokens)
+    var blockPos: int = p.pos;
     while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
-        if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+        while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
             discard parserAdvance(p);
-            continue;
+        }
+        if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile {
+            break;
         }
         let beforePos: int = p.pos;
         let s: *Stmt = parserParseStmt(p);
@@ -885,7 +889,14 @@ func parserParseBlock(p: *Parser) -> *Block {
             b.stmtCount = b.stmtCount + 1;
         }
     }
-    discard parserExpect(p, tkRBrace, "expected '}'");
+    // Reliable token consumption: reset to after { and use depth counter
+    p.pos = blockPos;
+    var depth: int = 1;
+    while depth > 0 && parserPeek(p, 0) != tkEndOfFile {
+        if parserCheck(p, tkLBrace) { depth = depth + 1; }
+        else if parserCheck(p, tkRBrace) { depth = depth - 1; }
+        discard parserAdvance(p);
+    }
     return b;
 }
 
