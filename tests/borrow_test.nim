@@ -26,7 +26,6 @@ func Main() -> int {
 }
 """)
     check(not res.hasErrors)
-
   test "@[Checked] function rejects write through &T":
     let res = checkSource("""
 @[Checked]
@@ -54,7 +53,6 @@ func Main() -> int {
 }
 """)
     check(not res.hasErrors)
-
   test "&T allows reading":
     let res = checkSource("""
 @[Checked]
@@ -68,7 +66,6 @@ func Main() -> int {
 }
 """)
     check(not res.hasErrors)
-
   test "own T type parses and resolves":
     let res = checkSource("""
 struct Box {
@@ -83,7 +80,6 @@ func Main() -> int {
 }
 """)
     check(not res.hasErrors)
-
   test "@[Checked] rejects double mutable borrow in call":
     let res = checkSource("""
 @[Checked]
@@ -139,7 +135,6 @@ func Main() -> int {
 }
 """)
     check(not res.hasErrors)
-
   test "@[Checked] move in assignment":
     let res = checkSource("""
 struct Box {
@@ -169,6 +164,49 @@ func Give() -> own Box {
 func Main() -> int {
   let b: own Box = Give();
   return b.value;
+}
+""")
+    check(not res.hasErrors)
+
+  test "borrow &mut expr parses and type-checks":
+    let res = checkSource("""
+struct Point {
+  x: int;
+  y: int;
+}
+func Main() -> int {
+  var p: Point;
+  p.x = 10;
+  let r: &mut Point = borrow &mut p;
+  return 0;
+}
+""")
+    check(not res.hasErrors)
+
+  test "@[Shared] attribute parses without errors":
+    let res = checkSource("""
+@[Shared]
+func SharedFunc() -> int {
+  return 42;
+}
+func Main() -> int {
+  return SharedFunc();
+}
+""")
+    check(not res.hasErrors)
+
+  test "borrow & expr with shared ref":
+    let res = checkSource("""
+struct Point {
+  x: int;
+  y: int;
+}
+func Main() -> int {
+  var p: Point;
+  p.x = 10;
+  let r: &Point = borrow &p;
+  let val: int = (*r).x;
+  return val;
 }
 """)
     check(not res.hasErrors)

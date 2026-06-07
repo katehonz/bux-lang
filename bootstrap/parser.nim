@@ -601,12 +601,10 @@ proc parseUnary(p: var Parser): Expr =
   case p.peek()
   of tkBorrow:
     discard p.advance()  # borrow
-    let isMut = p.check(tkMut)
+    discard p.expect(tkAmp, "expected '&' after 'borrow'")
+    var isMut = p.check(tkMut)
     if isMut:
       discard p.advance()  # mut
-    discard p.expect(tkAmp, "expected '&' after 'borrow'")
-    if isMut and p.check(tkMut):
-      discard p.advance()  # redundant mut after &
     let operand = p.parseUnary()  # parse the moved value
     return Expr(kind: ekBorrow, loc: loc, exprBorrowOperand: operand, exprBorrowMutable: isMut)
   of tkBang, tkMinus, tkTilde, tkStar, tkAmp:

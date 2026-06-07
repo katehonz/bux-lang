@@ -1,0 +1,33 @@
+// borrow.bux — Test explicit borrow expressions
+
+struct Point {
+	x: int;
+	y: int;
+}
+
+// NOT @[Checked] — borrow keyword available everywhere
+func MovePoint(p: *Point) {
+    let ref: &Point = borrow &p;
+    let x: int = (*ref).x;
+}
+
+// @[Checked] enables borrow protection
+@[Checked]
+func SwapPoints(a: *Point, b: *Point) {
+    let ra: &mut Point = borrow &mut a;
+    let rb: &mut Point = borrow &mut b;
+    let tmp: int = (*ra).x;
+    (*ra).x = (*rb).x;
+    (*rb).x = tmp;
+}
+
+func Main() -> int {
+    var p1: Point;
+    p1.x = 10;
+    p1.y = 20;
+    var p2: Point;
+    p2.x = 30;
+    p2.y = 40;
+    SwapPoints(&p1, &p2);
+    return 0;
+}
