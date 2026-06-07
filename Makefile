@@ -78,7 +78,7 @@ selfhost: build
 
 .PHONY: test-golden
 
-GOLDEN_TESTS := hello
+GOLDEN_TESTS := hello fibonacci
 
 test-golden: build
 	@echo "=== Golden tests ==="
