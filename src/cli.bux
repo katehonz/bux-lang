@@ -647,36 +647,6 @@ func Cli_BuildProject(projectDir: String) -> int {
     PrintInt(merged.itemCount);
     PrintLine(" declarations");
 
-    // Quick diag: scan for parserParsePostfixExpr and parserParsePrimary
-    var dd: *Decl = merged.firstItem;
-    var foundPPE_fwd: int = 0;
-    var foundPPE_real: int = 0;
-    var foundPPP_fwd: int = 0;
-    var foundPPP_real: int = 0;
-    while dd != null as *Decl {
-        if dd.kind == dkFunc {
-            if String_Eq(dd.strValue, "parserParsePostfixExpr") {
-                if dd.refBody != null as *Block { foundPPE_real = foundPPE_real + 1; }
-                else { foundPPE_fwd = foundPPE_fwd + 1; }
-            }
-            if String_Eq(dd.strValue, "parserParsePrimary") {
-                if dd.refBody != null as *Block { foundPPP_real = foundPPP_real + 1; }
-                else { foundPPP_fwd = foundPPP_fwd + 1; }
-            }
-        }
-        dd = dd.childDecl2;
-    }
-    Print("  DIAG: parserParsePostfixExpr fwd=");
-    PrintInt(foundPPE_fwd as int64);
-    Print(" real=");
-    PrintInt(foundPPE_real as int64);
-    PrintLine("");
-    Print("  DIAG: parserParsePrimary fwd=");
-    PrintInt(foundPPP_fwd as int64);
-    Print(" real=");
-    PrintInt(foundPPP_real as int64);
-    PrintLine("");
-
     // Semantic analysis
     PrintLine("Running sema...");
     let sema: *Sema = Sema_Analyze(merged);
