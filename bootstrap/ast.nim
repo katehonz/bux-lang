@@ -124,6 +124,7 @@ type
     ekUnwrap        ## expr! — unwrap or panic
     ekSpawn         ## spawn expr — create a new task
     ekAwait         ## expr.await — suspend until future resolves
+    ekBorrow        ## borrow &mut expr — explicit borrow expression
     ekBlock
     ekMatch
 
@@ -210,6 +211,9 @@ type
       exprSpawnAsync*: bool
     of ekAwait:
       exprAwaitOperand*: Expr
+    of ekBorrow:
+      exprBorrowOperand*: Expr
+      exprBorrowMutable*: bool
     of ekBlock:
       exprBlock*: Block
     of ekMatch:

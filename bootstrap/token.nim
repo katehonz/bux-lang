@@ -51,6 +51,7 @@ type
     tkSizeOf          # sizeof
     tkOwn             # own (gradual ownership transfer)
     tkMut             # mut (mutable reference)
+    tkBorrow          # borrow (explicit borrow expression)
     tkDiscard         # discard (evaluate and throw away)
     tkAsync           # async
     tkAwait           # await
@@ -151,7 +152,7 @@ proc isKeyword*(kind: TokenKind): bool =
      tkBreak, tkContinue, tkReturn, tkMatch,
      tkFunc, tkLet, tkVar, tkConst, tkType, tkStruct, tkEnum,
      tkUnion, tkInterface, tkExtend, tkModule, tkImport,
-      tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkDiscard, tkAsync, tkAwait, tkSpawn, tkStaticAssert, tkComptime, tkDyn:
+       tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkBorrow, tkDiscard, tkAsync, tkAwait, tkSpawn, tkStaticAssert, tkComptime, tkDyn:
     true
   else:
     false
@@ -207,6 +208,7 @@ proc keywordKind*(text: string): TokenKind =
   of "sizeof": tkSizeOf
   of "own": tkOwn
   of "mut": tkMut
+  of "borrow": tkBorrow
   of "discard": tkDiscard
   of "async": tkAsync
   of "await": tkAwait
@@ -259,6 +261,7 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkSuper: "'super'"
   of tkOwn: "'own'"
   of tkMut: "'mut'"
+  of tkBorrow: "'borrow'"
   of tkDiscard: "'discard'"
   of tkAsync: "'async'"
   of tkAwait: "'await'"

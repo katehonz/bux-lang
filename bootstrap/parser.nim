@@ -169,6 +169,7 @@ type
     callConv*: CallingConvention
     targetOs*: string
     checked*: bool             ## @[Checked] — enable borrow checking
+    shared*: bool              ## @[Shared] — mark function as thread-safe
 
 proc parseAttrs(p: var Parser): ParsedAttrs =
   while p.check(tkAt):
@@ -177,6 +178,8 @@ proc parseAttrs(p: var Parser): ParsedAttrs =
     let name = p.expect(tkIdent, "expected attribute name").text
     if name == "Checked":
       result.checked = true
+    elif name == "Shared":
+      result.shared = true
     elif name == "Import":
       discard p.expect(tkLParen, "expected '('")
       let key = p.expect(tkIdent, "expected attribute key").text
@@ -596,6 +599,16 @@ proc parsePostfix(p: var Parser): Expr =
 proc parseUnary(p: var Parser): Expr =
   let loc = p.currentLoc
   case p.peek()
+  of tkBorrow:
+    discard p.advance()  # borrow
+    let isMut = p.check(tkMut)
+    if isMut:
+      discard p.advance()  # mut
+    discard p.expect(tkAmp, "expected '&' after 'borrow'")
+    if isMut and p.check(tkMut):
+      discard p.advance()  # redundant mut after &
+    let operand = p.parseUnary()  # parse the moved value
+    return Expr(kind: ekBorrow, loc: loc, exprBorrowOperand: operand, exprBorrowMutable: isMut)
   of tkBang, tkMinus, tkTilde, tkStar, tkAmp:
     let op = p.advance().kind
     if op == tkAmp and p.check(tkMut):

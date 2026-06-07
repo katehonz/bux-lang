@@ -1200,6 +1200,15 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     let operand = sema.checkExpr(expr.exprAwaitOperand, scope)
     # await on a task handle returns *void (result pointer)
     return makePointer(makeVoid())
+  of ekBorrow:
+    let operand = sema.checkExpr(expr.exprBorrowOperand, scope)
+    # borrow &mut expr returns the same type as the original (reference)
+    # The borrow is tracked in the borrow checker
+    if sema.checkedFunc and expr.exprBorrowMutable:
+      # Track: variable "operand" is mutably borrowed here
+      # For now, just validate the type
+      discard
+    return operand
   of ekSpread:
     return sema.checkExpr(expr.exprSpreadOperand, scope)
 

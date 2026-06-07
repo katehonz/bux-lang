@@ -449,6 +449,8 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
       if last.kind == skExpr:
         return ctx.resolveExprType(last.stmtExpr)
     return makeVoid()
+  of ekBorrow:
+    return ctx.resolveExprType(expr.exprBorrowOperand)
   else: return makeUnknown()
 
 proc extractGenericStructInfo(ctx: LowerCtx, te: TypeExpr): tuple[baseName: string, typeArgs: seq[TypeExpr]] =
@@ -895,6 +897,11 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   of ekAwait:
     let lowered = ctx.lowerExpr(expr.exprAwaitOperand)
     return hirCall("bux_async_await", @[lowered], makePointer(makeVoid()), loc)
+
+  of ekBorrow:
+    # borrow &mut expr — lowered to the operand directly (borrow is a no-op in HIR)
+    # The borrow checker validates before lowering
+    return ctx.lowerExpr(expr.exprBorrowOperand)
 
   else:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
