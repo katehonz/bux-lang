@@ -1,0 +1,180 @@
+// =============================================================================
+// Crypto Library Test — exercises all modules in lib/crypto/
+// =============================================================================
+module Main {
+
+import Std::Io::{PrintLine, Print, PrintInt};
+import Std::String::{String_Len, String_Eq};
+import Std::Crypto::Base64::{Base64_Encode, Base64_Decode, Base64URL_Encode, Base64URL_Decode};
+import Std::Crypto::Hash::{Hash_Sha256, Hash_Sha384, Hash_Sha512, Hash_Sha256Size, Hash_Sha384Size, Hash_Sha512Size};
+import Std::Crypto::Hmac::{Hmac_Sha256, Hmac_Sha384, Hmac_Sha512};
+import Std::Crypto::Random::{Random_Bytes, Random_Hex, Random_Base64, Random_Uint32};
+import Std::Crypto::Jwt::{JwtAlg, Jwt_MakeHeader, Jwt_EncodeHS256, Jwt_Decode};
+
+// --- Minimal test framework ---
+var gPassed: int = 0;
+var gFailed: int = 0;
+
+func Assert(cond: bool, name: String) {
+    if cond {
+        gPassed = gPassed + 1;
+        Print("  PASS ");
+    } else {
+        gFailed = gFailed + 1;
+        Print("  FAIL ");
+    }
+    PrintLine(name);
+}
+
+// =============================================================================
+// Test: Base64 + Base64URL
+// =============================================================================
+func TestBase64() {
+    PrintLine("--- Base64 ---");
+
+    let encoded: String = Base64_Encode("hello");
+    Assert(String_Eq(encoded, "aGVsbG8="), "Base64_Encode('hello')");
+
+    let decoded: String = Base64_Decode("aGVsbG8=");
+    Assert(String_Eq(decoded, "hello"), "Base64_Decode('aGVsbG8=')");
+
+    let urlEnc: String = Base64URL_Encode("hello");
+    Assert(String_Eq(urlEnc, "aGVsbG8"), "Base64URL_Encode('hello') — no padding");
+
+    let urlDec: String = Base64URL_Decode("aGVsbG8");
+    Assert(String_Eq(urlDec, "hello"), "Base64URL_Decode('aGVsbG8')");
+
+    let original: String = "Bux crypto test!";
+    let rt: String = Base64_Decode(Base64_Encode(original));
+    Assert(String_Eq(rt, original), "Base64 round-trip");
+
+    let rtUrl: String = Base64URL_Decode(Base64URL_Encode(original));
+    Assert(String_Eq(rtUrl, original), "Base64URL round-trip");
+}
+
+// =============================================================================
+// Test: Hash (SHA-256, SHA-384, SHA-512)
+// =============================================================================
+func TestHash() {
+    PrintLine("--- Hash ---");
+
+    let sha256: String = Hash_Sha256("hello");
+    Assert(String_Eq(sha256,
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+        "Hash_Sha256('hello')");
+
+    let sha384: String = Hash_Sha384("hello");
+    Assert(String_Eq(sha384,
+        "59e1748777448c69de6b800d7a33bbfb9ff1b463e44354c3553bcdb9c666fa90125a3c79f90397bdf5f6a13de828684f"),
+        "Hash_Sha384('hello')");
+
+    let sha512: String = Hash_Sha512("hello");
+    Assert(String_Eq(sha512,
+        "9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca72323c3d99ba5c11d7c7acc6e14b8c5da0c4663475c2e5c3adef46f73bcdec043"),
+        "Hash_Sha512('hello')");
+
+    let empty256: String = Hash_Sha256("");
+    Assert(String_Len(empty256) == 64, "Hash_Sha256('') has 64 hex chars");
+
+    Assert(Hash_Sha256Size() == 32, "Hash_Sha256Size() == 32");
+    Assert(Hash_Sha384Size() == 48, "Hash_Sha384Size() == 48");
+    Assert(Hash_Sha512Size() == 64, "Hash_Sha512Size() == 64");
+}
+
+// =============================================================================
+// Test: HMAC
+// =============================================================================
+func TestHmac() {
+    PrintLine("--- HMAC ---");
+
+    let hmac256: String = Hmac_Sha256("secret", "hello");
+    Assert(String_Eq(hmac256,
+        "88aab3ede8d3adf94d26ab90d3bafd4a2083070c3daec8e50b3899a4a5d1e0f8"),
+        "Hmac_Sha256('secret', 'hello')");
+
+    Assert(String_Len(Hmac_Sha384("s", "h")) == 96, "Hmac_Sha384 produces 96 hex chars");
+    Assert(String_Len(Hmac_Sha512("s", "h")) == 128, "Hmac_Sha512 produces 128 hex chars");
+
+    let h1: String = Hmac_Sha256("key", "msg");
+    let h2: String = Hmac_Sha256("key", "msg");
+    Assert(String_Eq(h1, h2), "HMAC deterministic");
+}
+
+// =============================================================================
+// Test: Random
+// =============================================================================
+func TestRandom() {
+    PrintLine("--- Random ---");
+
+    Assert(String_Len(Random_Bytes(32)) == 32, "Random_Bytes(32) len=32");
+    Assert(String_Len(Random_Hex(16)) == 32, "Random_Hex(16) len=32");
+    Assert(String_Len(Random_Base64(16)) > 0, "Random_Base64(16) non-empty");
+}
+
+// =============================================================================
+// Test: JWT HS256 encode/decode
+// =============================================================================
+func TestJwtHS256() {
+    PrintLine("--- JWT HS256 ---");
+
+    let token: String = Jwt_EncodeHS256("{\"sub\":\"test\"}", "secret");
+    Assert(String_Len(token) > 20, "Jwt_EncodeHS256 returns token");
+
+    var header: String = "";
+    var payload: String = "";
+    let alg: JwtAlg = JwtAlg { tag: JwtAlg_HS256 };
+    let ok: bool = Jwt_Decode(token, alg, "secret", &header, &payload);
+    Assert(ok, "Jwt_Decode HS256 verifies");
+    Assert(String_Eq(payload, "{\"sub\":\"test\"}"), "Jwt_Decode returns correct payload");
+
+    let wrongOk: bool = Jwt_Decode(token, alg, "wrong", &header, &payload);
+    Assert(!wrongOk, "Jwt_Decode rejects wrong secret");
+}
+
+// =============================================================================
+// Test: JWT algorithm headers
+// =============================================================================
+func TestJwtHeaders() {
+    PrintLine("--- JWT Headers ---");
+
+    Assert(String_Eq(Jwt_MakeHeader(JwtAlg { tag: JwtAlg_HS256 }),
+        "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"), "JWT header HS256");
+    Assert(String_Eq(Jwt_MakeHeader(JwtAlg { tag: JwtAlg_RS256 }),
+        "{\"alg\":\"RS256\",\"typ\":\"JWT\"}"), "JWT header RS256");
+    Assert(String_Eq(Jwt_MakeHeader(JwtAlg { tag: JwtAlg_ES256 }),
+        "{\"alg\":\"ES256\",\"typ\":\"JWT\"}"), "JWT header ES256");
+    Assert(String_Eq(Jwt_MakeHeader(JwtAlg { tag: JwtAlg_EdDSA }),
+        "{\"alg\":\"EdDSA\",\"typ\":\"JWT\"}"), "JWT header EdDSA");
+}
+
+// =============================================================================
+// Main
+// =============================================================================
+func Main() -> int {
+    PrintLine("================================================");
+    PrintLine("  Bux Crypto Library — Test Suite");
+    PrintLine("================================================");
+    PrintLine("");
+
+    TestBase64();
+    TestHash();
+    TestHmac();
+    TestRandom();
+    TestJwtHS256();
+    TestJwtHeaders();
+
+    PrintLine("");
+    PrintLine("================================================");
+    Print("  Passed: ");
+    PrintInt(gPassed);
+    PrintLine("");
+    Print("  Failed: ");
+    PrintInt(gFailed);
+    PrintLine("");
+    PrintLine("================================================");
+
+    if gFailed > 0 { return 1; }
+    return 0;
+}
+
+} // module Main

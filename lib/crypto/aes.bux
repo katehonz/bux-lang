@@ -1,0 +1,67 @@
+// =============================================================================
+// Std::Crypto::Aes — AES-256-CBC and AES-256-GCM encryption/decryption
+// =============================================================================
+module Std::Crypto::Aes {
+
+import Std::Mem::{Alloc, Free};
+import Std::String::{String_Len};
+
+extern func bux_random_bytes(buf: *void, len: int) -> int;
+extern func bux_aes_256_cbc_encrypt(plain: String, plainlen: int, key: String, iv: String, outlen: *int) -> String;
+extern func bux_aes_256_cbc_decrypt(cipher: String, cipherlen: int, key: String, iv: String, outlen: *int) -> String;
+extern func bux_aes_256_gcm_encrypt(plain: String, plainlen: int, key: String, iv: String, tag: *void, outlen: *int) -> String;
+extern func bux_aes_256_gcm_decrypt(cipher: String, cipherlen: int, key: String, iv: String, tag: String, outlen: *int) -> String;
+
+// --- AES-256-CBC ---
+
+const AES_KEY_SIZE: int = 32;  // 256 bits
+const AES_IV_SIZE: int  = 16;  // 128 bits
+const AES_GCM_TAG_SIZE: int = 16;
+
+// Generate a random 256-bit AES key (returns raw 32 bytes)
+func Aes_GenerateKey() -> String {
+    let buf: *void = Alloc(AES_KEY_SIZE as uint);
+    if bux_random_bytes(buf, AES_KEY_SIZE) != 1 {
+        Free(buf);
+        return "";
+    }
+    return buf as String;
+}
+
+// Generate a random 128-bit IV (returns raw 16 bytes)
+func Aes_GenerateIV() -> String {
+    let buf: *void = Alloc(AES_IV_SIZE as uint);
+    if bux_random_bytes(buf, AES_IV_SIZE) != 1 {
+        Free(buf);
+        return "";
+    }
+    return buf as String;
+}
+
+// AES-256-CBC encrypt. plain and key are binary strings, iv is 16 bytes.
+// Returns ciphertext (may be longer than plain due to PKCS#7 padding).
+func Aes_CbcEncrypt(plain: String, key: String, iv: String) -> String {
+    let outlen: int = 0;
+    return bux_aes_256_cbc_encrypt(plain, String_Len(plain) as int, key, iv, &outlen);
+}
+
+// AES-256-CBC decrypt. Returns plaintext.
+func Aes_CbcDecrypt(cipher: String, key: String, iv: String) -> String {
+    let outlen: int = 0;
+    return bux_aes_256_cbc_decrypt(cipher, String_Len(cipher) as int, key, iv, &outlen);
+}
+
+// --- AES-256-GCM (Authenticated Encryption) ---
+
+// AES-256-GCM encrypt. Returns ciphertext. tag receives 16-byte authentication tag.
+func Aes_GcmEncrypt(plain: String, key: String, iv: String, tag: *void) -> String {
+    let outlen: int = 0;
+    return bux_aes_256_gcm_encrypt(plain, String_Len(plain) as int, key, iv, tag, &outlen);
+}
+
+// AES-256-GCM decrypt. Returns plaintext. tag must be the 16-byte auth tag from encryption.
+func Aes_GcmDecrypt(cipher: String, key: String, iv: String, tag: String) -> String {
+    let outlen: int = 0;
+    return bux_aes_256_gcm_decrypt(cipher, String_Len(cipher) as int, key, iv, tag, &outlen);
+}
+}

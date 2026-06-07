@@ -1,0 +1,80 @@
+// =============================================================================
+// Std::Crypto::Ed25519 — Ed25519 key generation, signing, and verification
+// =============================================================================
+module Std::Crypto::Ed25519 {
+
+import Std::Mem::{Alloc, Free};
+import Std::String::{String_Len, String_Concat};
+
+extern func bux_ed25519_keypair(pubKey: *void, privKey: *void) -> int;
+extern func bux_ed25519_sign(privKey: String, data: String, datalen: int, sig: *void) -> int;
+extern func bux_ed25519_verify(pubKey: String, sig: String, data: String, datalen: int) -> int;
+extern func bux_base64_encode(data: String, len: int) -> String;
+extern func bux_base64_decode(data: String, len: int, outlen: *int) -> String;
+
+const ED25519_PUBKEY_SIZE: int  = 32;
+const ED25519_PRIVKEY_SIZE: int = 32;
+const ED25519_SIG_SIZE: int     = 64;
+
+// --- Key Generation ---
+
+// Ed25519_Keypair: generates a new keypair.
+// Returns true on success. pubKey and privKey receive 32-byte raw keys.
+func Ed25519_Keypair(pubKey: *void, privKey: *void) -> bool {
+    let r: int = bux_ed25519_keypair(pubKey, privKey);
+    return r == 1;
+}
+
+// Convenience: generate and return base64-encoded keypair
+func Ed25519_KeypairBase64() -> String {
+    let pub: *void = Alloc(ED25519_PUBKEY_SIZE as uint);
+    let priv: *void = Alloc(ED25519_PRIVKEY_SIZE as uint);
+    if bux_ed25519_keypair(pub, priv) != 1 {
+        Free(pub);
+        Free(priv);
+        return "";
+    }
+    // Return "pub_b64:priv_b64"
+    let pubB64: String = bux_base64_encode(pub as String, ED25519_PUBKEY_SIZE);
+    let privB64: String = bux_base64_encode(priv as String, ED25519_PRIVKEY_SIZE);
+    Free(pub);
+    Free(priv);
+    let pair: String = String_Concat(pubB64, ":");
+    return String_Concat(pair, privB64);
+}
+
+// --- Sign ---
+
+// Ed25519_Sign: sign data with 32-byte raw private key. Returns 64-byte raw signature.
+func Ed25519_Sign(privKey: String, data: String) -> String {
+    let sig: *void = Alloc(ED25519_SIG_SIZE as uint);
+    if bux_ed25519_sign(privKey, data, String_Len(data) as int, sig) != 1 {
+        Free(sig);
+        return "";
+    }
+    return sig as String;
+}
+
+// Convenience: sign and return base64-encoded signature
+func Ed25519_SignBase64(privKey: String, data: String) -> String {
+    let sig: String = Ed25519_Sign(privKey, data);
+    if String_Len(sig) == 0 { return ""; }
+    return bux_base64_encode(sig, ED25519_SIG_SIZE);
+}
+
+// --- Verify ---
+
+// Ed25519_Verify: verify a 64-byte raw signature against data with 32-byte public key.
+func Ed25519_Verify(pubKey: String, signature: String, data: String) -> bool {
+    let r: int = bux_ed25519_verify(pubKey, signature, data, String_Len(data) as int);
+    return r == 1;
+}
+
+// Convenience: verify a base64-encoded signature
+func Ed25519_VerifyBase64(pubKey: String, signatureB64: String, data: String) -> bool {
+    let outlen: int = 0;
+    let sig: String = bux_base64_decode(signatureB64, String_Len(signatureB64) as int, &outlen);
+    if outlen != ED25519_SIG_SIZE { return false; }
+    return Ed25519_Verify(pubKey, sig, data);
+}
+}

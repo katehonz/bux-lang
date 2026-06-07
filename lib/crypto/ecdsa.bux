@@ -1,0 +1,67 @@
+// =============================================================================
+// Std::Crypto::Ecdsa — ECDSA P-256 and P-384 sign/verify
+// =============================================================================
+module Std::Crypto::Ecdsa {
+
+import Std::Mem::{Alloc, Free};
+import Std::String::{String_Len};
+
+extern func bux_ecdsa_sign_p256(pemKey: String, keylen: int, data: String, datalen: int, siglen: *int) -> String;
+extern func bux_ecdsa_sign_p384(pemKey: String, keylen: int, data: String, datalen: int, siglen: *int) -> String;
+extern func bux_ecdsa_verify_p256(pemKey: String, keylen: int, data: String, datalen: int, sig: String, siglen: int) -> int;
+extern func bux_ecdsa_verify_p384(pemKey: String, keylen: int, data: String, datalen: int, sig: String, siglen: int) -> int;
+extern func bux_base64_encode(data: String, len: int) -> String;
+extern func bux_base64_decode(data: String, len: int, outlen: *int) -> String;
+
+// --- ECDSA P-256 (ES256) ---
+
+func Ecdsa_SignP256(pemPrivateKey: String, data: String) -> String {
+    let siglen: int = 0;
+    return bux_ecdsa_sign_p256(pemPrivateKey, String_Len(pemPrivateKey) as int,
+                               data, String_Len(data) as int, &siglen);
+}
+
+func Ecdsa_SignP256Base64(pemPrivateKey: String, data: String) -> String {
+    let sig: String = Ecdsa_SignP256(pemPrivateKey, data);
+    return bux_base64_encode(sig, String_Len(sig) as int);
+}
+
+func Ecdsa_VerifyP256(pemPublicKey: String, data: String, signature: String) -> bool {
+    let r: int = bux_ecdsa_verify_p256(pemPublicKey, String_Len(pemPublicKey) as int,
+                                        data, String_Len(data) as int,
+                                        signature, String_Len(signature) as int);
+    return r == 1;
+}
+
+func Ecdsa_VerifyP256Base64(pemPublicKey: String, data: String, signatureB64: String) -> bool {
+    let outlen: int = 0;
+    let sig: String = bux_base64_decode(signatureB64, String_Len(signatureB64) as int, &outlen);
+    return Ecdsa_VerifyP256(pemPublicKey, data, sig);
+}
+
+// --- ECDSA P-384 (ES384) ---
+
+func Ecdsa_SignP384(pemPrivateKey: String, data: String) -> String {
+    let siglen: int = 0;
+    return bux_ecdsa_sign_p384(pemPrivateKey, String_Len(pemPrivateKey) as int,
+                               data, String_Len(data) as int, &siglen);
+}
+
+func Ecdsa_SignP384Base64(pemPrivateKey: String, data: String) -> String {
+    let sig: String = Ecdsa_SignP384(pemPrivateKey, data);
+    return bux_base64_encode(sig, String_Len(sig) as int);
+}
+
+func Ecdsa_VerifyP384(pemPublicKey: String, data: String, signature: String) -> bool {
+    let r: int = bux_ecdsa_verify_p384(pemPublicKey, String_Len(pemPublicKey) as int,
+                                        data, String_Len(data) as int,
+                                        signature, String_Len(signature) as int);
+    return r == 1;
+}
+
+func Ecdsa_VerifyP384Base64(pemPublicKey: String, data: String, signatureB64: String) -> bool {
+    let outlen: int = 0;
+    let sig: String = bux_base64_decode(signatureB64, String_Len(signatureB64) as int, &outlen);
+    return Ecdsa_VerifyP384(pemPublicKey, data, sig);
+}
+}

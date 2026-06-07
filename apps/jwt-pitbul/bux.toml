@@ -1,0 +1,8 @@
+[Package]
+Name    = "jwt-pitbul"
+Version = "0.1.0"
+Type    = "bin"
+Description = "JWT CLI tool — encode, decode, verify, and key generation"
+
+[Build]
+Output = "Bin"

@@ -1,0 +1,507 @@
+// =============================================================================
+// Boko — Async Web Framework for Bux (inspired by FastAPI)
+// =============================================================================
+module Boko {
+
+import Std::Io::{PrintLine, Print, PrintInt};
+import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
+import Std::String::{String_Len, String_Eq, String_StartsWith, String_Contains};
+import Std::Task::{Task_Join, TaskHandle};
+
+extern func bux_alloc(size: uint) -> *void;
+extern func bux_strlen(s: String) -> uint;
+extern func bux_strcmp(a: String, b: String) -> int;
+extern func bux_strstr(haystack: String, needle: String) -> String;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+extern func bux_str_split_count(s: String, delim: String) -> uint;
+extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
+extern func bux_sb_new(initial_cap: uint) -> *void;
+extern func bux_sb_append(sb: *void, s: String);
+extern func bux_sb_append_int(sb: *void, n: int64);
+extern func bux_sb_append_char(sb: *void, c: char8);
+extern func bux_sb_build(sb: *void) -> String;
+extern func bux_sb_free(sb: *void);
+extern func bux_base64url_encode(data: String, len: int) -> String;
+extern func bux_base64url_decode(data: String, len: int, outlen: *int) -> String;
+
+// =============================================================================
+// HTTP Methods
+// =============================================================================
+enum HttpVerb {
+    GET,
+    POST,
+    PUT,
+    DELETE,
+    PATCH,
+    HEAD,
+    OPTIONS,
+}
+
+// =============================================================================
+// Request — parsed incoming HTTP request
+// =============================================================================
+struct Request {
+    method: HttpVerb,
+    path: String,
+    body: String,
+    headerKeys: *String,
+    headerValues: *String,
+    headerCount: int,
+    queryKeys: *String,
+    queryValues: *String,
+    queryCount: int,
+    pathParamKeys: *String,
+    pathParamValues: *String,
+    pathParamCount: int,
+}
+
+// =============================================================================
+// Response — outgoing HTTP response
+// =============================================================================
+struct Response {
+    statusCode: int,
+    contentType: String,
+    body: String,
+    extraHeaders: String,
+}
+
+// =============================================================================
+// App — server instance
+// =============================================================================
+struct App {
+    port: int,
+    threadCount: int,
+    serverName: String,
+}
+
+// =============================================================================
+// Request helpers
+// =============================================================================
+
+func Request_GetHeader(req: *Request, name: String) -> String {
+    var i: int = 0;
+    while i < req.headerCount {
+        if bux_strcmp(req.headerKeys[i], name) == 0 {
+            return req.headerValues[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+func Request_GetQuery(req: *Request, name: String) -> String {
+    var i: int = 0;
+    while i < req.queryCount {
+        if bux_strcmp(req.queryKeys[i], name) == 0 {
+            return req.queryValues[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+func Request_GetPathParam(req: *Request, name: String) -> String {
+    var i: int = 0;
+    while i < req.pathParamCount {
+        if bux_strcmp(req.pathParamKeys[i], name) == 0 {
+            return req.pathParamValues[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// =============================================================================
+// Response constructors
+// =============================================================================
+
+func Response_New(status: int, contentType: String, body: String) -> Response {
+    var resp: Response;
+    resp.statusCode = status;
+    resp.contentType = contentType;
+    resp.body = body;
+    resp.extraHeaders = "";
+    return resp;
+}
+
+func Response_Ok(body: String) -> Response {
+    return Response_New(200, "text/html; charset=utf-8", body);
+}
+
+func Response_Html(html: String) -> Response {
+    return Response_New(200, "text/html; charset=utf-8", html);
+}
+
+func Response_Json(json: String) -> Response {
+    return Response_New(200, "application/json; charset=utf-8", json);
+}
+
+func Response_Text(text: String) -> Response {
+    return Response_New(200, "text/plain; charset=utf-8", text);
+}
+
+func Response_Redirect(url: String) -> Response {
+    var resp: Response;
+    resp.statusCode = 302;
+    resp.contentType = "";
+    resp.body = "";
+    let sb: *void = bux_sb_new(256);
+    bux_sb_append(sb, "Location: ");
+    bux_sb_append(sb, url);
+    bux_sb_append(sb, "\r\n");
+    resp.extraHeaders = bux_sb_build(sb);
+    bux_sb_free(sb);
+    return resp;
+}
+
+func Response_NotFound() -> Response {
+    return Response_New(404, "application/json; charset=utf-8",
+        "{\"error\":\"not_found\"}");
+}
+
+func Response_Error(status: int, message: String) -> Response {
+    return Response_New(status, "application/json; charset=utf-8", message);
+}
+
+func Response_NoContent() -> Response {
+    return Response_New(204, "", "");
+}
+
+// =============================================================================
+// Build HTTP response string from Response struct
+// =============================================================================
+func Response_Build(resp: Response) -> String {
+    let sb: *void = bux_sb_new(2048);
+
+    // Status line
+    bux_sb_append(sb, "HTTP/1.1 ");
+    bux_sb_append_int(sb, resp.statusCode as int64);
+    bux_sb_append(sb, " ");
+    if resp.statusCode == 200 { bux_sb_append(sb, "OK"); }
+    else if resp.statusCode == 201 { bux_sb_append(sb, "Created"); }
+    else if resp.statusCode == 204 { bux_sb_append(sb, "No Content"); }
+    else if resp.statusCode == 302 { bux_sb_append(sb, "Found"); }
+    else if resp.statusCode == 400 { bux_sb_append(sb, "Bad Request"); }
+    else if resp.statusCode == 404 { bux_sb_append(sb, "Not Found"); }
+    else if resp.statusCode == 500 { bux_sb_append(sb, "Internal Server Error"); }
+    else { bux_sb_append(sb, "OK"); }
+    bux_sb_append(sb, "\r\n");
+
+    // Server
+    bux_sb_append(sb, "Server: Boko/0.1.0 (Bux)\r\n");
+
+    // Extra headers (redirects, CORS, etc.)
+    if bux_strlen(resp.extraHeaders) > 0 {
+        bux_sb_append(sb, resp.extraHeaders);
+    }
+
+    // Content-Type
+    if bux_strlen(resp.contentType) > 0 {
+        bux_sb_append(sb, "Content-Type: ");
+        bux_sb_append(sb, resp.contentType);
+        bux_sb_append(sb, "\r\n");
+    }
+
+    // Content-Length
+    let bodyLen: uint = bux_strlen(resp.body);
+    bux_sb_append(sb, "Content-Length: ");
+    bux_sb_append_int(sb, bodyLen as int64);
+    bux_sb_append(sb, "\r\n");
+
+    // Connection close
+    bux_sb_append(sb, "Connection: close\r\n");
+
+    bux_sb_append(sb, "\r\n");
+
+    if bodyLen > 0 {
+        bux_sb_append(sb, resp.body);
+    }
+
+    let result: String = bux_sb_build(sb);
+    bux_sb_free(sb);
+    return result;
+}
+
+// =============================================================================
+// Parse query string: ?key=val&key2=val2 → key-value arrays
+// =============================================================================
+func Query_Parse(req: *Request, queryString: String) {
+    if bux_strlen(queryString) == 0 { return; }
+    let pairCount: uint = bux_str_split_count(queryString, "&");
+    let cap: int = pairCount as int + 1;
+    req.queryKeys = bux_alloc(cap as uint * 8) as *String;
+    req.queryValues = bux_alloc(cap as uint * 8) as *String;
+    req.queryCount = 0;
+
+    var i: uint = 0;
+    while i < pairCount {
+        let pair: String = bux_str_split_part(queryString, "&", i);
+        let eqPos: String = bux_strstr(pair, "=");
+        var key: String = pair;
+        var value: String = "";
+        if eqPos as uint != 0 {
+            let keyLen: uint = eqPos as uint - pair as uint;
+            key = bux_str_slice(pair, 0, keyLen);
+            let valStart: uint = keyLen + 1;
+            let pairLen: uint = bux_strlen(pair);
+            if valStart < pairLen {
+                value = bux_str_slice(pair, valStart, pairLen - valStart);
+            }
+        }
+        req.queryKeys[req.queryCount] = key;
+        req.queryValues[req.queryCount] = value;
+        req.queryCount = req.queryCount + 1;
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Parse incoming HTTP request from raw bytes
+// =============================================================================
+func Request_Parse(raw: String) -> Request {
+    var req: Request;
+    req.method = HttpVerb { tag: HttpVerb_GET };
+    req.path = "/";
+    req.body = "";
+    req.headerCount = 0;
+    req.queryCount = 0;
+    req.pathParamCount = 0;
+
+    if raw as uint == 0 { return req; }
+    let rawLen: uint = bux_strlen(raw);
+    if rawLen == 0 { return req; }
+
+    // Find header/body boundary
+    let boundary: String = bux_strstr(raw, "\r\n\r\n");
+    var headerLen: uint = rawLen;
+    if boundary as uint != 0 {
+        headerLen = boundary as uint - raw as uint;
+        let bodyStart: uint = headerLen + 4;
+        if bodyStart < rawLen {
+            req.body = bux_str_slice(raw, bodyStart, rawLen - bodyStart);
+        }
+    }
+
+    if headerLen == 0 { return req; }
+    let headerBlock: String = bux_str_slice(raw, 0, headerLen);
+    let lineCount: uint = bux_str_split_count(headerBlock, "\r\n");
+    if lineCount == 0 { return req; }
+
+    // Parse request line
+    let requestLine: String = bux_str_split_part(headerBlock, "\r\n", 0);
+    if bux_strlen(requestLine) > 0 {
+        let methodStr: String = bux_str_split_part(requestLine, " ", 0);
+        if String_Eq(methodStr, "GET")     { req.method = HttpVerb { tag: HttpVerb_GET }; }
+        else if String_Eq(methodStr, "POST")    { req.method = HttpVerb { tag: HttpVerb_POST }; }
+        else if String_Eq(methodStr, "PUT")     { req.method = HttpVerb { tag: HttpVerb_PUT }; }
+        else if String_Eq(methodStr, "DELETE")  { req.method = HttpVerb { tag: HttpVerb_DELETE }; }
+
+        let fullPath: String = bux_str_split_part(requestLine, " ", 1);
+        // Split path and query string
+        let qmark: String = bux_strstr(fullPath, "?");
+        if qmark as uint != 0 {
+            let pathLen: uint = qmark as uint - fullPath as uint;
+            req.path = bux_str_slice(fullPath, 0, pathLen);
+            let qsStart: uint = pathLen + 1;
+            let fullLen: uint = bux_strlen(fullPath);
+            if qsStart < fullLen {
+                let qs: String = bux_str_slice(fullPath, qsStart, fullLen - qsStart);
+                Query_Parse(&req, qs);
+            }
+        } else {
+            req.path = fullPath;
+        }
+    }
+
+    // Parse headers
+    let cap: int = lineCount as int + 1;
+    req.headerKeys = bux_alloc(cap as uint * 8) as *String;
+    req.headerValues = bux_alloc(cap as uint * 8) as *String;
+
+    var i: uint = 1;
+    while i < lineCount {
+        let line: String = bux_str_split_part(headerBlock, "\r\n", i);
+        let colonPos: String = bux_strstr(line, ": ");
+        if colonPos as uint != 0 {
+            let keyLen: uint = colonPos as uint - line as uint;
+            let key: String = bux_str_slice(line, 0, keyLen);
+            let valStart: uint = keyLen + 2;
+            let lineLen: uint = bux_strlen(line);
+            var value: String = "";
+            if valStart < lineLen {
+                value = bux_str_slice(line, valStart, lineLen - valStart);
+            }
+            req.headerKeys[req.headerCount] = key;
+            req.headerValues[req.headerCount] = value;
+            req.headerCount = req.headerCount + 1;
+        }
+        i = i + 1;
+    }
+
+    return req;
+}
+
+// =============================================================================
+// Path pattern matching: /users/{id} against /users/42 → extracts id=42
+// =============================================================================
+func Path_Match(pattern: String, path: String, req: *Request) -> bool {
+    // Split both by "/"
+    let patParts: uint = bux_str_split_count(pattern, "/");
+    let pathParts: uint = bux_str_split_count(path, "/");
+
+    if patParts != pathParts { return false; }
+
+    // Count params to allocate
+    var paramCount: int = 0;
+    var pi: uint = 0;
+    while pi < patParts {
+        let patPart: String = bux_str_split_part(pattern, "/", pi);
+        if String_StartsWith(patPart, "{") && String_Contains(patPart, "}") {
+            paramCount = paramCount + 1;
+        }
+        pi = pi + 1;
+    }
+
+    let cap: int = paramCount + 1;
+    req.pathParamKeys = bux_alloc(cap as uint * 8) as *String;
+    req.pathParamValues = bux_alloc(cap as uint * 8) as *String;
+    req.pathParamCount = 0;
+
+    // Match and extract
+    var i: uint = 0;
+    while i < patParts {
+        let patPart: String = bux_str_split_part(pattern, "/", i);
+        let pathPart: String = bux_str_split_part(path, "/", i);
+
+        if String_StartsWith(patPart, "{") && String_Contains(patPart, "}") {
+            // Extract param name from {name}
+            let braceOpen: uint = 1; // skip "{"
+            let braceClose: String = bux_strstr(patPart, "}");
+            var nameLen: uint = 0;
+            if braceClose as uint != 0 {
+                nameLen = braceClose as uint - patPart as uint - 1;
+            }
+            let name: String = bux_str_slice(patPart, braceOpen, nameLen);
+            req.pathParamKeys[req.pathParamCount] = name;
+            req.pathParamValues[req.pathParamCount] = pathPart;
+            req.pathParamCount = req.pathParamCount + 1;
+        } else {
+            // Literal match
+            if !String_Eq(patPart, pathPart) { return false; }
+        }
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// =============================================================================
+// App constructor
+// =============================================================================
+func App_New(port: int, threadCount: int) -> App {
+    var app: App;
+    app.port = port;
+    app.threadCount = threadCount;
+    app.serverName = "Boko/0.1.0 (Bux)";
+    return app;
+}
+
+// =============================================================================
+// Forward declaration — user must implement this in their module
+// =============================================================================
+func Boko_Router(req: Request) -> Response;
+
+// =============================================================================
+// Handle a single connection: parse → dispatch → respond
+// =============================================================================
+func App_HandleConnection(clientFd: int) {
+    let raw: String = Net_Recv(clientFd, 8192);
+    if raw as uint == 0 { return; }
+    if bux_strlen(raw) == 0 { return; }
+
+    let req: Request = Request_Parse(raw);
+
+    // Call user-defined dispatch (forward declaration — user must implement)
+    let resp: Response = Boko_Router(req);
+
+    // Log
+    if req.method.tag == HttpVerb_GET    { Print("GET "); }
+    else if req.method.tag == HttpVerb_POST   { Print("POST "); }
+    else if req.method.tag == HttpVerb_PUT    { Print("PUT "); }
+    else if req.method.tag == HttpVerb_DELETE { Print("DELETE "); }
+    else { Print("? "); }
+    Print(req.path);
+    Print("  →  ");
+    PrintInt(resp.statusCode);
+    PrintLine("");
+
+    // Send
+    let respStr: String = Response_Build(resp);
+    Net_Send(clientFd, respStr);
+}
+
+// =============================================================================
+// Worker thread: accept loop
+// =============================================================================
+func App_Worker(serverFd: int) {
+    while true {
+        let clientFd: int = Net_Accept(serverFd);
+        if clientFd < 0 { continue; }
+        App_HandleConnection(clientFd);
+        Net_Close(clientFd);
+    }
+}
+
+// =============================================================================
+// App_Run: start the server (blocking)
+// =============================================================================
+func App_Run(app: *App) {
+    PrintLine("╔══════════════════════════════════════╗");
+    PrintLine("║  Boko Framework v0.1.0               ║");
+    PrintLine("║  Async web framework for Bux         ║");
+    PrintLine("╚══════════════════════════════════════╝");
+    PrintLine("");
+
+    let fd: int = Net_Create();
+    if fd < 0 {
+        PrintLine("FATAL: socket() failed");
+        return;
+    }
+
+    Net_SetReuse(fd);
+
+    if !Net_Bind(fd, "0.0.0.0", app.port) {
+        Print("FATAL: bind(:");
+        PrintInt(app.port);
+        Print(") failed: ");
+        PrintLine(Net_LastError());
+        Net_Close(fd);
+        return;
+    }
+
+    if !Net_Listen(fd, 128) {
+        PrintLine("FATAL: listen() failed");
+        Net_Close(fd);
+        return;
+    }
+
+    Print("✓ Boko running on http://0.0.0.0:");
+    PrintInt(app.port);
+    PrintLine("");
+    Print("✓ Workers: ");
+    PrintInt(app.threadCount);
+    PrintLine("");
+    PrintLine("");
+
+    // Spawn workers
+    var i: int = 0;
+    while i < app.threadCount - 1 {
+        spawn App_Worker(fd);
+        i = i + 1;
+    }
+
+    // Main thread is the last worker
+    App_Worker(fd);
+}
+
+} // module Boko

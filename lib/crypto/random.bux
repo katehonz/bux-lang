@@ -1,0 +1,63 @@
+// =============================================================================
+// Std::Crypto::Random — cryptographically secure random bytes
+// =============================================================================
+module Std::Crypto::Random {
+
+import Std::Mem::{Alloc, Free};
+
+extern func bux_random_bytes(buf: *void, len: int) -> int;
+extern func bux_base64_encode(data: String, len: int) -> String;
+extern func bux_bytes_to_hex(data: *void, len: int) -> String;
+
+// RandomBytes: returns n cryptographically secure random bytes as a raw string
+func Random_Bytes(n: int) -> String {
+    if n <= 0 { return ""; }
+    let buf: *void = Alloc(n as uint);
+    if bux_random_bytes(buf, n) != 1 {
+        Free(buf);
+        return "";
+    }
+    // Return raw buffer as string (binary-safe)
+    return buf as String;
+}
+
+// RandomHex: returns n random bytes as lowercase hex
+func Random_Hex(n: int) -> String {
+    if n <= 0 { return ""; }
+    let buf: *void = Alloc(n as uint);
+    if bux_random_bytes(buf, n) != 1 {
+        Free(buf);
+        return "";
+    }
+    let result: String = bux_bytes_to_hex(buf, n);
+    Free(buf);
+    return result;
+}
+
+// RandomBase64: returns n random bytes as base64-encoded string
+func Random_Base64(n: int) -> String {
+    if n <= 0 { return ""; }
+    let buf: *void = Alloc(n as uint);
+    if bux_random_bytes(buf, n) != 1 {
+        Free(buf);
+        return "";
+    }
+    let result: String = bux_base64_encode(buf as String, n);
+    Free(buf);
+    return result;
+}
+
+// RandomUint32: returns a random 32-bit unsigned integer
+func Random_Uint32() -> uint {
+    let buf: *void = Alloc(4);
+    if bux_random_bytes(buf, 4) != 1 {
+        Free(buf);
+        return 0;
+    }
+    // Interpret first 4 bytes as uint (native endian)
+    let ptr: *uint = buf as *uint;
+    let val: uint = *ptr;
+    Free(buf);
+    return val;
+}
+}

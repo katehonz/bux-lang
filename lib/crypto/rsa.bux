@@ -1,0 +1,98 @@
+// =============================================================================
+// Std::Crypto::Rsa — RSA PKCS#1 v1.5 sign/verify (SHA-256, SHA-384, SHA-512)
+// =============================================================================
+module Std::Crypto::Rsa {
+
+import Std::Mem::{Alloc, Free};
+import Std::String::{String_Len};
+
+extern func bux_rsa_sign_sha256(pemKey: String, keylen: int, data: String, datalen: int, siglen: *int) -> String;
+extern func bux_rsa_sign_sha384(pemKey: String, keylen: int, data: String, datalen: int, siglen: *int) -> String;
+extern func bux_rsa_sign_sha512(pemKey: String, keylen: int, data: String, datalen: int, siglen: *int) -> String;
+extern func bux_rsa_verify_sha256(pemKey: String, keylen: int, data: String, datalen: int, sig: String, siglen: int) -> int;
+extern func bux_rsa_verify_sha384(pemKey: String, keylen: int, data: String, datalen: int, sig: String, siglen: int) -> int;
+extern func bux_rsa_verify_sha512(pemKey: String, keylen: int, data: String, datalen: int, sig: String, siglen: int) -> int;
+extern func bux_base64_encode(data: String, len: int) -> String;
+extern func bux_base64_decode(data: String, len: int, outlen: *int) -> String;
+
+// --- RSA Sign ---
+
+// Rsa_SignSha256: sign data with RSA private key (PEM format), returns raw signature
+func Rsa_SignSha256(pemPrivateKey: String, data: String) -> String {
+    let siglen: int = 0;
+    return bux_rsa_sign_sha256(pemPrivateKey, String_Len(pemPrivateKey) as int,
+                               data, String_Len(data) as int, &siglen);
+}
+
+func Rsa_SignSha384(pemPrivateKey: String, data: String) -> String {
+    let siglen: int = 0;
+    return bux_rsa_sign_sha384(pemPrivateKey, String_Len(pemPrivateKey) as int,
+                               data, String_Len(data) as int, &siglen);
+}
+
+func Rsa_SignSha512(pemPrivateKey: String, data: String) -> String {
+    let siglen: int = 0;
+    return bux_rsa_sign_sha512(pemPrivateKey, String_Len(pemPrivateKey) as int,
+                               data, String_Len(data) as int, &siglen);
+}
+
+// Convenience: sign and return base64-encoded signature
+func Rsa_SignSha256Base64(pemPrivateKey: String, data: String) -> String {
+    let sig: String = Rsa_SignSha256(pemPrivateKey, data);
+    return bux_base64_encode(sig, String_Len(sig) as int);
+}
+
+func Rsa_SignSha384Base64(pemPrivateKey: String, data: String) -> String {
+    let sig: String = Rsa_SignSha384(pemPrivateKey, data);
+    return bux_base64_encode(sig, String_Len(sig) as int);
+}
+
+func Rsa_SignSha512Base64(pemPrivateKey: String, data: String) -> String {
+    let sig: String = Rsa_SignSha512(pemPrivateKey, data);
+    return bux_base64_encode(sig, String_Len(sig) as int);
+}
+
+// --- RSA Verify ---
+
+// Rsa_VerifySha256: verify raw signature against data with RSA public key (PEM)
+// Returns true if signature is valid.
+func Rsa_VerifySha256(pemPublicKey: String, data: String, signature: String) -> bool {
+    let r: int = bux_rsa_verify_sha256(pemPublicKey, String_Len(pemPublicKey) as int,
+                                        data, String_Len(data) as int,
+                                        signature, String_Len(signature) as int);
+    return r == 1;
+}
+
+func Rsa_VerifySha384(pemPublicKey: String, data: String, signature: String) -> bool {
+    let r: int = bux_rsa_verify_sha384(pemPublicKey, String_Len(pemPublicKey) as int,
+                                        data, String_Len(data) as int,
+                                        signature, String_Len(signature) as int);
+    return r == 1;
+}
+
+func Rsa_VerifySha512(pemPublicKey: String, data: String, signature: String) -> bool {
+    let r: int = bux_rsa_verify_sha512(pemPublicKey, String_Len(pemPublicKey) as int,
+                                        data, String_Len(data) as int,
+                                        signature, String_Len(signature) as int);
+    return r == 1;
+}
+
+// Convenience: verify base64-encoded signature
+func Rsa_VerifySha256Base64(pemPublicKey: String, data: String, signatureB64: String) -> bool {
+    let outlen: int = 0;
+    let sig: String = bux_base64_decode(signatureB64, String_Len(signatureB64) as int, &outlen);
+    return Rsa_VerifySha256(pemPublicKey, data, sig);
+}
+
+func Rsa_VerifySha384Base64(pemPublicKey: String, data: String, signatureB64: String) -> bool {
+    let outlen: int = 0;
+    let sig: String = bux_base64_decode(signatureB64, String_Len(signatureB64) as int, &outlen);
+    return Rsa_VerifySha384(pemPublicKey, data, sig);
+}
+
+func Rsa_VerifySha512Base64(pemPublicKey: String, data: String, signatureB64: String) -> bool {
+    let outlen: int = 0;
+    let sig: String = bux_base64_decode(signatureB64, String_Len(signatureB64) as int, &outlen);
+    return Rsa_VerifySha512(pemPublicKey, data, sig);
+}
+}

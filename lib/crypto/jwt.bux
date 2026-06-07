@@ -1,0 +1,242 @@
+// =============================================================================
+// Std::Crypto::Jwt — JSON Web Token (RFC 7519) encode/decode
+// Supports HS256, HS384, HS512, RS256, RS384, RS512, ES256, ES384, EdDSA
+// =============================================================================
+module Std::Crypto::Jwt {
+
+import Std::Mem::{Alloc, Free};
+import Std::String::{String_Len, String_Eq, String_StartsWith, String_Concat};
+import Std::Crypto::Base64::{Base64URL_Encode, Base64URL_Decode};
+import Std::Crypto::Hash::{Hash_Sha256Raw, Hash_Sha384Raw, Hash_Sha512Raw};
+import Std::Crypto::Hmac::{Hmac_Sha256Raw, Hmac_Sha384Raw, Hmac_Sha512Raw};
+import Std::Crypto::Rsa::{Rsa_SignSha256, Rsa_SignSha384, Rsa_SignSha512,
+                          Rsa_VerifySha256, Rsa_VerifySha384, Rsa_VerifySha512};
+import Std::Crypto::Ecdsa::{Ecdsa_SignP256, Ecdsa_SignP384, Ecdsa_VerifyP256, Ecdsa_VerifyP384};
+import Std::Crypto::Ed25519::{Ed25519_Sign, Ed25519_Verify};
+
+extern func bux_base64_encode(data: String, len: int) -> String;
+extern func bux_str_split_count(s: String, delim: String) -> uint;
+extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
+
+// --- JWT Algorithm enum ---
+enum JwtAlg {
+    HS256,
+    HS384,
+    HS512,
+    RS256,
+    RS384,
+    RS512,
+    ES256,
+    ES384,
+    EdDSA,
+}
+
+// --- Header ---
+
+// Jwt_MakeHeader: build the JWT header JSON string for the given algorithm
+func Jwt_MakeHeader(alg: JwtAlg) -> String {
+    if alg.tag == JwtAlg_HS256 { return "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_HS384 { return "{\"alg\":\"HS384\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_HS512 { return "{\"alg\":\"HS512\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_RS256 { return "{\"alg\":\"RS256\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_RS384 { return "{\"alg\":\"RS384\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_RS512 { return "{\"alg\":\"RS512\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_ES256 { return "{\"alg\":\"ES256\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_ES384 { return "{\"alg\":\"ES384\",\"typ\":\"JWT\"}"; }
+    if alg.tag == JwtAlg_EdDSA { return "{\"alg\":\"EdDSA\",\"typ\":\"JWT\"}"; }
+    return "{\"alg\":\"none\",\"typ\":\"JWT\"}";
+}
+
+// --- Signing ---
+
+// Sign the JWT signing input with the given algorithm
+func Jwt_Sign(alg: JwtAlg, signingInput: String, key: String) -> String {
+    let algTag: int = alg.tag;
+    let inputLen: int = String_Len(signingInput) as int;
+
+    // --- HMAC algorithms ---
+    if algTag == JwtAlg_HS256 {
+        let buf: *void = Alloc(32);
+        Hmac_Sha256Raw(key, signingInput, buf);
+        let result: String = bux_base64_encode(buf as String, 32);
+        Free(buf);
+        return result;
+    }
+    if algTag == JwtAlg_HS384 {
+        let buf: *void = Alloc(48);
+        Hmac_Sha384Raw(key, signingInput, buf);
+        let result: String = bux_base64_encode(buf as String, 48);
+        Free(buf);
+        return result;
+    }
+    if algTag == JwtAlg_HS512 {
+        let buf: *void = Alloc(64);
+        Hmac_Sha512Raw(key, signingInput, buf);
+        let result: String = bux_base64_encode(buf as String, 64);
+        Free(buf);
+        return result;
+    }
+
+    // --- RSA algorithms (key is PEM private key) ---
+    if algTag == JwtAlg_RS256 {
+        let raw: String = Rsa_SignSha256(key, signingInput);
+        return bux_base64_encode(raw, String_Len(raw) as int);
+    }
+    if algTag == JwtAlg_RS384 {
+        let raw: String = Rsa_SignSha384(key, signingInput);
+        return bux_base64_encode(raw, String_Len(raw) as int);
+    }
+    if algTag == JwtAlg_RS512 {
+        let raw: String = Rsa_SignSha512(key, signingInput);
+        return bux_base64_encode(raw, String_Len(raw) as int);
+    }
+
+    // --- ECDSA algorithms (key is PEM private key) ---
+    if algTag == JwtAlg_ES256 {
+        let raw: String = Ecdsa_SignP256(key, signingInput);
+        return bux_base64_encode(raw, String_Len(raw) as int);
+    }
+    if algTag == JwtAlg_ES384 {
+        let raw: String = Ecdsa_SignP384(key, signingInput);
+        return bux_base64_encode(raw, String_Len(raw) as int);
+    }
+
+    // --- EdDSA (key is 32-byte raw private key) ---
+    if algTag == JwtAlg_EdDSA {
+        return Ed25519_Sign(key, signingInput);
+    }
+
+    return "";
+}
+
+// --- Verify ---
+
+// Verify a JWT signature
+func Jwt_Verify(alg: JwtAlg, signingInput: String, signatureB64: String, key: String) -> bool {
+    let algTag: int = alg.tag;
+    let inputLen: int = String_Len(signingInput) as int;
+
+    // --- HMAC algorithms ---
+    if algTag == JwtAlg_HS256 {
+        let expectBuf: *void = Alloc(32);
+        Hmac_Sha256Raw(key, signingInput, expectBuf);
+        let expectB64: String = bux_base64_encode(expectBuf as String, 32);
+        Free(expectBuf);
+        return String_Eq(expectB64, signatureB64);
+    }
+    if algTag == JwtAlg_HS384 {
+        let expectBuf: *void = Alloc(48);
+        Hmac_Sha384Raw(key, signingInput, expectBuf);
+        let expectB64: String = bux_base64_encode(expectBuf as String, 48);
+        Free(expectBuf);
+        return String_Eq(expectB64, signatureB64);
+    }
+    if algTag == JwtAlg_HS512 {
+        let expectBuf: *void = Alloc(64);
+        Hmac_Sha512Raw(key, signingInput, expectBuf);
+        let expectB64: String = bux_base64_encode(expectBuf as String, 64);
+        Free(expectBuf);
+        return String_Eq(expectB64, signatureB64);
+    }
+
+    // --- RSA algorithms ---
+    if algTag == JwtAlg_RS256 { return Rsa_VerifySha256(key, signingInput, signatureB64); }
+    if algTag == JwtAlg_RS384 { return Rsa_VerifySha384(key, signingInput, signatureB64); }
+    if algTag == JwtAlg_RS512 { return Rsa_VerifySha512(key, signingInput, signatureB64); }
+
+    // --- ECDSA algorithms ---
+    if algTag == JwtAlg_ES256 { return Ecdsa_VerifyP256(key, signingInput, signatureB64); }
+    if algTag == JwtAlg_ES384 { return Ecdsa_VerifyP384(key, signingInput, signatureB64); }
+
+    // --- EdDSA ---
+    if algTag == JwtAlg_EdDSA { return Ed25519_Verify(key, signatureB64, signingInput); }
+
+    return false;
+}
+
+// --- Encode ---
+
+// Jwt_Encode: create a signed JWT
+//   headerJson — JSON header string (use Jwt_MakeHeader or custom)
+//   payloadJson — JSON payload/claims string
+//   alg — signing algorithm
+//   key — signing key (HMAC secret, RSA PEM, ECDSA PEM, or Ed25519 raw privkey)
+// Returns the complete "header.payload.signature" JWT string
+func Jwt_Encode(headerJson: String, payloadJson: String, alg: JwtAlg, key: String) -> String {
+    let headerB64: String = Base64URL_Encode(headerJson);
+    let payloadB64: String = Base64URL_Encode(payloadJson);
+    let signingInput: String = String_Concat(headerB64, ".");
+    let signingInputFull: String = String_Concat(signingInput, payloadB64);
+
+    let sigB64: String = Jwt_Sign(alg, signingInputFull, key);
+
+    let part1: String = String_Concat(signingInputFull, ".");
+    return String_Concat(part1, sigB64);
+}
+
+// --- Decode ---
+
+// Jwt_Decode: decode and verify a JWT.
+//   token — the full "header.payload.signature" string
+//   alg — expected algorithm
+//   key — verification key
+//   headerOut — receives decoded header JSON
+//   payloadOut — receives decoded payload JSON
+// Returns true if signature is valid.
+func Jwt_Decode(token: String, alg: JwtAlg, key: String,
+                headerOut: *String, payloadOut: *String) -> bool {
+    // Split by "."
+    let partCount: uint = bux_str_split_count(token, ".");
+    if partCount != 3 { return false; }
+
+    let headerB64: String = bux_str_split_part(token, ".", 0);
+    let payloadB64: String = bux_str_split_part(token, ".", 1);
+    let sigB64: String = bux_str_split_part(token, ".", 2);
+
+    // Build signing input
+    let input: String = String_Concat(headerB64, ".");
+    let signingInput: String = String_Concat(input, payloadB64);
+
+    // Verify signature
+    if !Jwt_Verify(alg, signingInput, sigB64, key) {
+        return false;
+    }
+
+    // Decode
+    headerOut[0] = Base64URL_Decode(headerB64);
+    payloadOut[0] = Base64URL_Decode(payloadB64);
+    return true;
+}
+
+// --- Convenience: Encode with standard header ---
+
+func Jwt_EncodeHS256(payloadJson: String, secret: String) -> String {
+    let header: String = Jwt_MakeHeader(JwtAlg { tag: JwtAlg_HS256 });
+    return Jwt_Encode(header, payloadJson, JwtAlg { tag: JwtAlg_HS256 }, secret);
+}
+
+func Jwt_EncodeHS384(payloadJson: String, secret: String) -> String {
+    let header: String = Jwt_MakeHeader(JwtAlg { tag: JwtAlg_HS384 });
+    return Jwt_Encode(header, payloadJson, JwtAlg { tag: JwtAlg_HS384 }, secret);
+}
+
+func Jwt_EncodeHS512(payloadJson: String, secret: String) -> String {
+    let header: String = Jwt_MakeHeader(JwtAlg { tag: JwtAlg_HS512 });
+    return Jwt_Encode(header, payloadJson, JwtAlg { tag: JwtAlg_HS512 }, secret);
+}
+
+func Jwt_EncodeRS256(payloadJson: String, pemPrivateKey: String) -> String {
+    let header: String = Jwt_MakeHeader(JwtAlg { tag: JwtAlg_RS256 });
+    return Jwt_Encode(header, payloadJson, JwtAlg { tag: JwtAlg_RS256 }, pemPrivateKey);
+}
+
+func Jwt_EncodeES256(payloadJson: String, pemPrivateKey: String) -> String {
+    let header: String = Jwt_MakeHeader(JwtAlg { tag: JwtAlg_ES256 });
+    return Jwt_Encode(header, payloadJson, JwtAlg { tag: JwtAlg_ES256 }, pemPrivateKey);
+}
+
+func Jwt_EncodeEdDSA(payloadJson: String, rawPrivKey: String) -> String {
+    let header: String = Jwt_MakeHeader(JwtAlg { tag: JwtAlg_EdDSA });
+    return Jwt_Encode(header, payloadJson, JwtAlg { tag: JwtAlg_EdDSA }, rawPrivKey);
+}
+}

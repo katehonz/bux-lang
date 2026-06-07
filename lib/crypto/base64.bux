@@ -1,0 +1,34 @@
+// =============================================================================
+// Std::Crypto::Base64 — Base64 and Base64URL encode/decode
+// =============================================================================
+module Std::Crypto::Base64 {
+
+import Std::String::{String_Len};
+
+extern func bux_base64_encode(data: String, len: int) -> String;
+extern func bux_base64_decode(data: String, len: int, outlen: *int) -> String;
+extern func bux_base64url_encode(data: String, len: int) -> String;
+extern func bux_base64url_decode(data: String, len: int, outlen: *int) -> String;
+
+// --- Standard Base64 ---
+
+func Base64_Encode(s: String) -> String {
+    return bux_base64_encode(s, String_Len(s) as int);
+}
+
+func Base64_Decode(s: String) -> String {
+    let outlen: int = 0;
+    return bux_base64_decode(s, String_Len(s) as int, &outlen);
+}
+
+// --- Base64URL (RFC 4648 §5, uses - and _ instead of + and /, no padding) ---
+
+func Base64URL_Encode(s: String) -> String {
+    return bux_base64url_encode(s, String_Len(s) as int);
+}
+
+func Base64URL_Decode(s: String) -> String {
+    let outlen: int = 0;
+    return bux_base64url_decode(s, String_Len(s) as int, &outlen);
+}
+}

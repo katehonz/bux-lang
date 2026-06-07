@@ -1,0 +1,73 @@
+// =============================================================================
+// Std::Crypto::Hash — SHA-1, SHA-256, SHA-384, SHA-512
+// =============================================================================
+module Std::Crypto::Hash {
+
+import Std::Mem::{Alloc, Free};
+import Std::String::{String_Len};
+
+extern func bux_sha1(data: String, len: int, out: *void);
+extern func bux_sha256(data: String, len: int, out: *void);
+extern func bux_sha384(data: String, len: int, out: *void);
+extern func bux_sha512(data: String, len: int, out: *void);
+extern func bux_bytes_to_hex(data: *void, len: int) -> String;
+
+// --- Convenience wrappers: hex output ---
+
+func Hash_Sha1(data: String) -> String {
+    let len: int = String_Len(data) as int;
+    let buf: *void = Alloc(20);
+    bux_sha1(data, len, buf);
+    let result: String = bux_bytes_to_hex(buf, 20);
+    Free(buf);
+    return result;
+}
+
+func Hash_Sha256(data: String) -> String {
+    let len: int = String_Len(data) as int;
+    let buf: *void = Alloc(32);
+    bux_sha256(data, len, buf);
+    let result: String = bux_bytes_to_hex(buf, 32);
+    Free(buf);
+    return result;
+}
+
+func Hash_Sha384(data: String) -> String {
+    let len: int = String_Len(data) as int;
+    let buf: *void = Alloc(48);
+    bux_sha384(data, len, buf);
+    let result: String = bux_bytes_to_hex(buf, 48);
+    Free(buf);
+    return result;
+}
+
+func Hash_Sha512(data: String) -> String {
+    let len: int = String_Len(data) as int;
+    let buf: *void = Alloc(64);
+    bux_sha512(data, len, buf);
+    let result: String = bux_bytes_to_hex(buf, 64);
+    Free(buf);
+    return result;
+}
+
+// --- Raw binary output (caller must Alloc/Free) ---
+
+func Hash_Sha256Raw(data: String, out: *void) {
+    bux_sha256(data, String_Len(data) as int, out);
+}
+
+func Hash_Sha384Raw(data: String, out: *void) {
+    bux_sha384(data, String_Len(data) as int, out);
+}
+
+func Hash_Sha512Raw(data: String, out: *void) {
+    bux_sha512(data, String_Len(data) as int, out);
+}
+
+// --- Digest sizes ---
+
+func Hash_Sha1Size() -> int    { return 20; }
+func Hash_Sha256Size() -> int  { return 32; }
+func Hash_Sha384Size() -> int  { return 48; }
+func Hash_Sha512Size() -> int  { return 64; }
+}

@@ -1,0 +1,8 @@
+[Package]
+Name    = "boko-framework"
+Version = "0.1.0"
+Type    = "bin"
+Description = "Boko — async web framework for Bux, inspired by FastAPI"
+
+[Build]
+Output = "Bin"

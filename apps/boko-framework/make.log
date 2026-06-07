@@ -1,0 +1,40 @@
+nim c -o:buxc -d:release --opt:size bootstrap/main.nim
+Hint: used config file '/etc/nim/nim.cfg' [Conf]
+Hint: used config file '/etc/nim/config.nims' [Conf]
+...........................................................................................................................................
+/home/ziko/z-git/bux/bux/bootstrap/lexer.nim(340, 12) Hint: 'check3' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lexer.nim(350, 12) Hint: 'checkEq' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lexer.nim(64, 6) Hint: 'match' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lexer.nim(84, 6) Hint: 'emitWarning' is declared but not used [XDeclaredButNotUsed]
+..
+/home/ziko/z-git/bux/bux/bootstrap/parser.nim(663, 7) Hint: 'loc' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/parser.nim(1001, 9) Hint: 'isVar' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/parser.nim(59, 6) Hint: 'match' is declared but not used [XDeclaredButNotUsed]
+.......
+/home/ziko/z-git/bux/bux/bootstrap/sema.nim(1150, 9) Hint: 'operandType' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/sema.nim(1155, 9) Hint: 'operandType' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/sema.nim(1165, 9) Hint: 'subjectType' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/sema.nim(1200, 9) Hint: 'operand' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/sema.nim(94, 6) Hint: 'emitWarning' is declared but not used [XDeclaredButNotUsed]
+.
+/home/ziko/z-git/bux/bux/bootstrap/manifest.nim(93, 11) Hint: 'val' is declared but not used [XDeclaredButNotUsed]
+..
+/home/ziko/z-git/bux/bux/bootstrap/hir_lower.nim(1057, 9) Hint: 'loweredIter' is declared but not used [XDeclaredButNotUsed]
+.
+/home/ziko/z-git/bux/bux/bootstrap/lir.nim(5, 8) Warning: imported and not used: 'types' [UnusedImport]
+.
+/home/ziko/z-git/bux/bux/bootstrap/lir_lower.nim(419, 9) Hint: 't' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lir_lower.nim(595, 9) Hint: 'bodyLbl' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lir_lower.nim(734, 11) Hint: 'exprVal' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lir_lower.nim(746, 9) Hint: 'exprVal' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lir_lower.nim(6, 8) Warning: imported and not used: 'ast' [UnusedImport]
+.
+/home/ziko/z-git/bux/bux/bootstrap/lir_c_backend.nim(20, 6) Hint: 'emit' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lir_c_backend.nim(46, 6) Hint: 'typeFromValue' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/lir_c_backend.nim(58, 6) Hint: 'setTempType' is declared but not used [XDeclaredButNotUsed]
+/home/ziko/z-git/bux/bux/bootstrap/cli.nim(2, 55) Warning: imported and not used: 'lir' [UnusedImport]
+Hint:  [Link]
+Hint: mm: orc; threads: on; opt: size; options: -d:release
+76982 lines; 1.552s; 174.824MiB peakmem; proj: /home/ziko/z-git/bux/bux/bootstrap/main.nim; out: /home/ziko/z-git/bux/bux/buxc [SuccessX]
+# strip buxc
+EXIT:0

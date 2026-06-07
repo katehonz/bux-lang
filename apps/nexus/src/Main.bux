@@ -1,0 +1,550 @@
+// =============================================================================
+// Nexus — High-performance multi-threaded HTTP/1.1, HTTP/2 & WebSocket server
+// Built with the Bux programming language
+// =============================================================================
+module Main {
+
+// =============================================================================
+// Imports — only what we actually use
+// =============================================================================
+import Std::Io::{PrintLine, Print, PrintInt};
+import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
+import Std::String::{String_Len, String_Eq, String_StartsWith, String_EndsWith, String_Contains, String_Trim, String_FromInt};
+import Std::Task::{Task_Join, TaskHandle};
+
+// =============================================================================
+// Extern Functions (from C runtime — used directly for performance)
+// =============================================================================
+extern func bux_alloc(size: uint) -> *void;
+extern func bux_strlen(s: String) -> uint;
+extern func bux_strcmp(a: String, b: String) -> int;
+extern func bux_strstr(haystack: String, needle: String) -> String;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+extern func bux_str_split_count(s: String, delim: String) -> uint;
+extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
+extern func bux_sb_new(initial_cap: uint) -> *void;
+extern func bux_sb_append(sb: *void, s: String);
+extern func bux_sb_append_int(sb: *void, n: int64);
+extern func bux_sb_append_char(sb: *void, c: char8);
+extern func bux_sb_build(sb: *void) -> String;
+extern func bux_sb_free(sb: *void);
+extern func bux_path_join(a: String, b: String) -> String;
+extern func bux_read_file(path: String) -> String;
+extern func bux_file_exists(path: String) -> int;
+
+// =============================================================================
+// HTTP Method Enum (simple enum — no data payload)
+// =============================================================================
+enum HttpMethod {
+    GET,
+    POST,
+    PUT,
+    DELETE,
+    PATCH,
+    HEAD,
+    OPTIONS,
+    UNKNOWN,
+}
+
+// =============================================================================
+// Struct: HTTP Request
+// =============================================================================
+struct HttpRequest {
+    method: HttpMethod,
+    path: String,
+    body: String,
+    headerKeys: *String,
+    headerValues: *String,
+    headerCount: int,
+    headerCap: int,
+}
+
+// =============================================================================
+// Struct: HTTP Response
+// =============================================================================
+struct HttpResponse {
+    statusCode: int,
+    statusText: String,
+    contentType: String,
+    body: String,
+    extraHeaders: String,   // pre-formatted extra headers (for WS upgrade, etc.)
+    connectionClose: bool,
+}
+
+// =============================================================================
+// Utility: Status text lookup
+// =============================================================================
+func Http_StatusText(code: int) -> String {
+    if code == 200 { return "OK"; }
+    if code == 201 { return "Created"; }
+    if code == 204 { return "No Content"; }
+    if code == 301 { return "Moved Permanently"; }
+    if code == 302 { return "Found"; }
+    if code == 304 { return "Not Modified"; }
+    if code == 400 { return "Bad Request"; }
+    if code == 401 { return "Unauthorized"; }
+    if code == 403 { return "Forbidden"; }
+    if code == 404 { return "Not Found"; }
+    if code == 405 { return "Method Not Allowed"; }
+    if code == 413 { return "Payload Too Large"; }
+    if code == 414 { return "URI Too Long"; }
+    if code == 500 { return "Internal Server Error"; }
+    if code == 501 { return "Not Implemented"; }
+    if code == 503 { return "Service Unavailable"; }
+    return "Unknown";
+}
+
+// =============================================================================
+// Utility: Parse HTTP method string → HttpMethod enum
+// =============================================================================
+func Http_ParseMethod(s: String) -> HttpMethod {
+    if String_Eq(s, "GET")     { return HttpMethod { tag: HttpMethod_GET }; }
+    if String_Eq(s, "POST")    { return HttpMethod { tag: HttpMethod_POST }; }
+    if String_Eq(s, "PUT")     { return HttpMethod { tag: HttpMethod_PUT }; }
+    if String_Eq(s, "DELETE")  { return HttpMethod { tag: HttpMethod_DELETE }; }
+    if String_Eq(s, "PATCH")   { return HttpMethod { tag: HttpMethod_PATCH }; }
+    if String_Eq(s, "HEAD")    { return HttpMethod { tag: HttpMethod_HEAD }; }
+    if String_Eq(s, "OPTIONS") { return HttpMethod { tag: HttpMethod_OPTIONS }; }
+    return HttpMethod { tag: HttpMethod_UNKNOWN };
+}
+
+// =============================================================================
+// Utility: MIME type from file extension
+// =============================================================================
+func Http_MimeType(path: String) -> String {
+    if String_EndsWith(path, ".html") || String_EndsWith(path, ".htm") { return "text/html; charset=utf-8"; }
+    if String_EndsWith(path, ".css")   { return "text/css; charset=utf-8"; }
+    if String_EndsWith(path, ".js")    { return "application/javascript; charset=utf-8"; }
+    if String_EndsWith(path, ".json")  { return "application/json; charset=utf-8"; }
+    if String_EndsWith(path, ".xml")   { return "application/xml; charset=utf-8"; }
+    if String_EndsWith(path, ".txt")   { return "text/plain; charset=utf-8"; }
+    if String_EndsWith(path, ".png")   { return "image/png"; }
+    if String_EndsWith(path, ".jpg") || String_EndsWith(path, ".jpeg") { return "image/jpeg"; }
+    if String_EndsWith(path, ".gif")   { return "image/gif"; }
+    if String_EndsWith(path, ".svg")   { return "image/svg+xml"; }
+    if String_EndsWith(path, ".ico")   { return "image/x-icon"; }
+    if String_EndsWith(path, ".webp")  { return "image/webp"; }
+    if String_EndsWith(path, ".woff2") { return "font/woff2"; }
+    if String_EndsWith(path, ".woff")  { return "font/woff"; }
+    if String_EndsWith(path, ".wasm")  { return "application/wasm"; }
+    return "application/octet-stream";
+}
+
+// =============================================================================
+// Header Storage: dynamic key-value array (faster than hash map for 5-15 headers)
+// =============================================================================
+func RequestHeader_Init(req: *HttpRequest) {
+    let cap: int = 16;
+    req.headerCap = cap;
+    req.headerKeys = bux_alloc(cap as uint * 8) as *String;
+    req.headerValues = bux_alloc(cap as uint * 8) as *String;
+    req.headerCount = 0;
+}
+
+func RequestHeader_Add(req: *HttpRequest, key: String, value: String) {
+    if req.headerCount >= req.headerCap { return; }
+    req.headerKeys[req.headerCount] = key;
+    req.headerValues[req.headerCount] = value;
+    req.headerCount = req.headerCount + 1;
+}
+
+func RequestHeader_Get(req: *HttpRequest, key: String) -> String {
+    var i: int = 0;
+    while i < req.headerCount {
+        if bux_strcmp(req.headerKeys[i], key) == 0 {
+            return req.headerValues[i];
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// =============================================================================
+// HTTP Request Parser
+// =============================================================================
+func Http_ParseRequest(raw: String) -> HttpRequest {
+    var req: HttpRequest;
+    req.method = HttpMethod { tag: HttpMethod_UNKNOWN };
+    req.path = "/";
+    req.body = "";
+    RequestHeader_Init(&req);
+
+    // Guard: null/empty input
+    if raw as uint == 0 { return req; }
+    let rawLen: uint = bux_strlen(raw);
+    if rawLen == 0 { return req; }
+
+    // Find \r\n\r\n separating headers from body
+    let boundary: String = bux_strstr(raw, "\r\n\r\n");
+    var headerLen: uint = rawLen;
+    if boundary as uint != 0 {
+        headerLen = boundary as uint - raw as uint;
+        let bodyStart: uint = headerLen + 4;
+        if bodyStart < rawLen {
+            req.body = bux_str_slice(raw, bodyStart, rawLen - bodyStart);
+        }
+    }
+
+    // Slice out header block
+    if headerLen == 0 { return req; }
+    let headerBlock: String = bux_str_slice(raw, 0, headerLen);
+
+    // Count header lines
+    let lineCount: uint = bux_str_split_count(headerBlock, "\r\n");
+    if lineCount == 0 { return req; }
+
+    // --- Parse request line: "METHOD /path HTTP/1.1" ---
+    let requestLine: String = bux_str_split_part(headerBlock, "\r\n", 0);
+    if bux_strlen(requestLine) > 0 {
+        req.method = Http_ParseMethod(bux_str_split_part(requestLine, " ", 0));
+        req.path = bux_str_split_part(requestLine, " ", 1);
+        if String_Eq(req.path, "") || req.path as uint == 0 {
+            req.path = "/";
+        }
+    }
+
+    // --- Parse headers (lines 1..N-1) ---
+    var i: uint = 1;
+    while i < lineCount {
+        let line: String = bux_str_split_part(headerBlock, "\r\n", i);
+        let lineLen: uint = bux_strlen(line);
+        if lineLen == 0 { i = i + 1; continue; }
+
+        // Find ": " separator
+        let colonPos: String = bux_strstr(line, ": ");
+        var key: String = "";
+        var value: String = "";
+
+        if colonPos as uint != 0 {
+            let keyLen: uint = colonPos as uint - line as uint;
+            key = bux_str_slice(line, 0, keyLen);
+            let valStart: uint = keyLen + 2;
+            if valStart < lineLen {
+                value = bux_str_slice(line, valStart, lineLen - valStart);
+            }
+        } else {
+            // Try ":" without space
+            let colonPos2: String = bux_strstr(line, ":");
+            if colonPos2 as uint != 0 {
+                let keyLen: uint = colonPos2 as uint - line as uint;
+                key = bux_str_slice(line, 0, keyLen);
+                let valStart: uint = keyLen + 1;
+                if valStart < lineLen {
+                    value = bux_str_slice(line, valStart, lineLen - valStart);
+                }
+                value = String_Trim(value);
+            }
+        }
+
+        // Store if valid key found
+        if bux_strlen(key) > 0 {
+            key = String_Trim(key);
+            RequestHeader_Add(&req, key, value);
+        }
+
+        i = i + 1;
+    }
+
+    return req;
+}
+
+// =============================================================================
+// HTTP Response Builder
+// =============================================================================
+func Http_BuildResponse(resp: HttpResponse) -> String {
+    let sb: *void = bux_sb_new(4096);
+
+    // Status line
+    bux_sb_append(sb, "HTTP/1.1 ");
+    bux_sb_append_int(sb, resp.statusCode as int64);
+    bux_sb_append_char(sb, ' ');
+    bux_sb_append(sb, resp.statusText);
+    bux_sb_append(sb, "\r\n");
+
+    // Server
+    bux_sb_append(sb, "Server: Nexus/0.1.0 (Bux)\r\n");
+
+    // Extra headers (for WS upgrade etc.)
+    if bux_strlen(resp.extraHeaders) > 0 {
+        bux_sb_append(sb, resp.extraHeaders);
+    }
+
+    // Content-Type
+    if bux_strlen(resp.contentType) > 0 {
+        bux_sb_append(sb, "Content-Type: ");
+        bux_sb_append(sb, resp.contentType);
+        bux_sb_append(sb, "\r\n");
+    }
+
+    // Content-Length
+    let bodyLen: uint = bux_strlen(resp.body);
+    bux_sb_append(sb, "Content-Length: ");
+    bux_sb_append_int(sb, bodyLen as int64);
+    bux_sb_append(sb, "\r\n");
+
+    // Connection
+    if resp.connectionClose {
+        bux_sb_append(sb, "Connection: close\r\n");
+    } else {
+        bux_sb_append(sb, "Connection: keep-alive\r\n");
+    }
+
+    // End headers
+    bux_sb_append(sb, "\r\n");
+
+    // Body
+    if bodyLen > 0 {
+        bux_sb_append(sb, resp.body);
+    }
+
+    let result: String = bux_sb_build(sb);
+    bux_sb_free(sb);
+    return result;
+}
+
+// =============================================================================
+// Helper: Create a simple response
+// =============================================================================
+func Http_NewResponse(code: int, contentType: String, body: String) -> HttpResponse {
+    var resp: HttpResponse;
+    resp.statusCode = code;
+    resp.statusText = Http_StatusText(code);
+    resp.contentType = contentType;
+    resp.body = body;
+    resp.extraHeaders = "";
+    resp.connectionClose = true;
+    return resp;
+}
+
+// =============================================================================
+// Static File Server
+// =============================================================================
+func ServeStaticFile(requestPath: String) -> HttpResponse {
+    // Block directory traversal
+    if String_Contains(requestPath, "..") {
+        return Http_NewResponse(403, "text/plain; charset=utf-8", "Forbidden");
+    }
+
+    // Default to index.html
+    var filePath: String = requestPath;
+    if String_Eq(filePath, "/") {
+        filePath = "/index.html";
+    }
+
+    // Resolve full path
+    let fullPath: String = bux_path_join("public", filePath);
+
+    // Check existence
+    if bux_file_exists(fullPath) == 0 {
+        return Http_NewResponse(404, "text/plain; charset=utf-8", "Not Found");
+    }
+
+    // Read and serve
+    let content: String = bux_read_file(fullPath);
+    if content as uint == 0 {
+        return Http_NewResponse(500, "text/plain; charset=utf-8", "Internal Server Error");
+    }
+
+    let mime: String = Http_MimeType(filePath);
+    return Http_NewResponse(200, mime, content);
+}
+
+// =============================================================================
+// API Handlers
+// =============================================================================
+func HandleApiHealth() -> HttpResponse {
+    return Http_NewResponse(200, "application/json; charset=utf-8",
+        "{\"status\":\"ok\",\"server\":\"Nexus\",\"version\":\"0.1.0\"}");
+}
+
+func HandleApiInfo() -> HttpResponse {
+    return Http_NewResponse(200, "application/json; charset=utf-8",
+        "{\"name\":\"Nexus\",\"language\":\"Bux\",\"threads\":4,\"features\":[\"HTTP/1.1\",\"HTTP/2-detect\",\"WebSocket-upgrade\"]}");
+}
+
+// =============================================================================
+// WebSocket Upgrade Handshake
+// =============================================================================
+func HandleWebSocketUpgrade(req: HttpRequest) -> HttpResponse {
+    let wsKey: String = RequestHeader_Get(&req, "Sec-WebSocket-Key");
+
+    var resp: HttpResponse;
+    resp.statusCode = 101;
+    resp.statusText = "Switching Protocols";
+    resp.contentType = "";
+    resp.body = "";
+    resp.connectionClose = false;
+
+    // Build upgrade headers as extraHeaders
+    // TODO: SHA-1 + Base64 for proper accept key
+    let sb: *void = bux_sb_new(256);
+    bux_sb_append(sb, "Upgrade: websocket\r\n");
+    bux_sb_append(sb, "Connection: Upgrade\r\n");
+    bux_sb_append(sb, "Sec-WebSocket-Accept: ");
+    bux_sb_append(sb, wsKey);  // placeholder — real impl needs crypto
+    bux_sb_append(sb, "\r\n");
+    resp.extraHeaders = bux_sb_build(sb);
+    bux_sb_free(sb);
+
+    return resp;
+}
+
+// =============================================================================
+// Router / Dispatcher
+// =============================================================================
+func Router_Dispatch(req: HttpRequest) -> HttpResponse {
+    // Check for upgrade headers
+    let upgrade: String = RequestHeader_Get(&req, "Upgrade");
+    if bux_strlen(upgrade) > 0 {
+        if String_Contains(upgrade, "websocket") {
+            return HandleWebSocketUpgrade(req);
+        }
+    }
+
+    // API routes
+    if String_StartsWith(req.path, "/api/") {
+        if String_Eq(req.path, "/api/health") { return HandleApiHealth(); }
+        if String_Eq(req.path, "/api/info")   { return HandleApiInfo(); }
+        return Http_NewResponse(404, "application/json; charset=utf-8",
+            "{\"error\":\"not_found\"}");
+    }
+
+    // WebSocket endpoint
+    if String_Eq(req.path, "/ws") {
+        return HandleWebSocketUpgrade(req);
+    }
+
+    // Static files — GET/HEAD only
+    if req.method.tag == HttpMethod_GET || req.method.tag == HttpMethod_HEAD {
+        return ServeStaticFile(req.path);
+    }
+
+    // Method not allowed
+    return Http_NewResponse(405, "text/plain; charset=utf-8", "Method Not Allowed");
+}
+
+// =============================================================================
+// Method name for logging (avoids 8 if-checks in hot path)
+// =============================================================================
+func Http_MethodName(m: HttpMethod) -> String {
+    if m.tag == HttpMethod_GET     { return "GET"; }
+    if m.tag == HttpMethod_POST    { return "POST"; }
+    if m.tag == HttpMethod_PUT     { return "PUT"; }
+    if m.tag == HttpMethod_DELETE  { return "DELETE"; }
+    if m.tag == HttpMethod_PATCH   { return "PATCH"; }
+    if m.tag == HttpMethod_HEAD    { return "HEAD"; }
+    if m.tag == HttpMethod_OPTIONS { return "OPTIONS"; }
+    return "UNKNOWN";
+}
+
+// =============================================================================
+// Connection Handler — read, parse, route, respond
+// =============================================================================
+func HandleConnection(clientFd: int) {
+    let raw: String = Net_Recv(clientFd, 8192);
+
+    // Empty read → client disconnected
+    if raw as uint == 0 { return; }
+    if bux_strlen(raw) == 0 { return; }
+
+    // HTTP/2 connection preface detection
+    if String_StartsWith(raw, "PRI * HTTP/2.0") {
+        let resp: HttpResponse = Http_NewResponse(200, "text/plain; charset=utf-8",
+            "HTTP/2 detected — full support planned for future release.\r\n");
+        let respStr: String = Http_BuildResponse(resp);
+        Net_Send(clientFd, respStr);
+        return;
+    }
+
+    // Parse HTTP/1.1
+    let req: HttpRequest = Http_ParseRequest(raw);
+
+    // Log
+    Print(Http_MethodName(req.method));
+    Print(" ");
+    Print(req.path);
+    Print("  ->  ");
+
+    // Dispatch
+    let resp: HttpResponse = Router_Dispatch(req);
+
+    // Log result
+    PrintInt(resp.statusCode);
+    Print(" ");
+    PrintLine(resp.statusText);
+
+    // Send
+    let respStr: String = Http_BuildResponse(resp);
+    Net_Send(clientFd, respStr);
+}
+
+// =============================================================================
+// Worker Thread — accept loop
+// =============================================================================
+func Worker(serverFd: int) {
+    while true {
+        let clientFd: int = Net_Accept(serverFd);
+        if clientFd < 0 {
+            continue;
+        }
+        HandleConnection(clientFd);
+        Net_Close(clientFd);
+    }
+}
+
+// =============================================================================
+// Main Entry Point
+// =============================================================================
+func Main() -> int {
+    PrintLine("================================================");
+    PrintLine("  Nexus HTTP Server v0.1.0");
+    PrintLine("  Multi-threaded HTTP/1.1 + HTTP/2 & WS detect");
+    PrintLine("  Built with Bux");
+    PrintLine("================================================");
+    PrintLine("");
+
+    // Create socket
+    let serverFd: int = Net_Create();
+    if serverFd < 0 {
+        PrintLine("FATAL: socket() failed");
+        return 1;
+    }
+
+    // SO_REUSEADDR
+    if !Net_SetReuse(serverFd) {
+        PrintLine("WARN: SO_REUSEADDR failed");
+    }
+
+    // Bind
+    if !Net_Bind(serverFd, "0.0.0.0", 8080) {
+        Print("FATAL: bind(8080) failed: ");
+        PrintLine(Net_LastError());
+        Net_Close(serverFd);
+        return 1;
+    }
+
+    // Listen
+    if !Net_Listen(serverFd, 128) {
+        PrintLine("FATAL: listen() failed");
+        Net_Close(serverFd);
+        return 1;
+    }
+
+    PrintLine("Listening on http://0.0.0.0:8080");
+    PrintLine("4 worker threads  |  static: ./public/");
+    PrintLine("Endpoints:  /  /api/health  /api/info  /ws");
+    PrintLine("Press Ctrl+C to stop.");
+    PrintLine("");
+
+    // Spawn 3 workers (main thread is the 4th)
+    spawn Worker(serverFd);
+    spawn Worker(serverFd);
+    spawn Worker(serverFd);
+
+    // Main thread becomes worker #4 (blocking call)
+    Worker(serverFd);
+
+    return 0;
+}
+
+} // module Main

@@ -1322,6 +1322,12 @@ void bux_assert(int cond, const char* file, int line, const char* expr) {
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#include <openssl/ec.h>
+#include <openssl/ecdsa.h>
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
 
 void bux_sha256(const char* data, int len, unsigned char* out) {
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
@@ -1368,4 +1374,344 @@ char* bux_bytes_to_hex(const unsigned char* data, int len) {
     }
     out[len * 2] = '\0';
     return out;
+}
+
+/* ============================================================================
+ * Extended cryptography primitives (OpenSSL)
+ * ============================================================================ */
+
+static void bux_digest(const EVP_MD* md, const char* data, int len, unsigned char* out) {
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, md, NULL);
+    EVP_DigestUpdate(ctx, data, (size_t)len);
+    EVP_DigestFinal_ex(ctx, out, NULL);
+    EVP_MD_CTX_free(ctx);
+}
+
+void bux_sha1(const char* data, int len, unsigned char* out) {
+    bux_digest(EVP_sha1(), data, len, out);
+}
+
+void bux_sha384(const char* data, int len, unsigned char* out) {
+    bux_digest(EVP_sha384(), data, len, out);
+}
+
+void bux_sha512(const char* data, int len, unsigned char* out) {
+    bux_digest(EVP_sha512(), data, len, out);
+}
+
+/* --- HMAC --- */
+
+void bux_hmac_sha384(const char* key, int keylen, const char* msg, int msglen, unsigned char* out) {
+    unsigned int outlen = 48;
+    HMAC(EVP_sha384(), key, keylen, (const unsigned char*)msg, (size_t)msglen, out, &outlen);
+}
+
+void bux_hmac_sha512(const char* key, int keylen, const char* msg, int msglen, unsigned char* out) {
+    unsigned int outlen = 64;
+    HMAC(EVP_sha512(), key, keylen, (const unsigned char*)msg, (size_t)msglen, out, &outlen);
+}
+
+/* --- Base64URL --- */
+
+static const char b64url_table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+char* bux_base64url_encode(const unsigned char* in, int inlen) {
+    int outlen = 4 * ((inlen + 2) / 3);
+    char* out = (char*)bux_alloc(outlen + 1);
+    int j = 0;
+    for (int i = 0; i < inlen; i += 3) {
+        int a = in[i];
+        int b = (i + 1 < inlen) ? in[i + 1] : 0;
+        int c = (i + 2 < inlen) ? in[i + 2] : 0;
+        out[j++] = b64url_table[(a >> 2) & 0x3F];
+        out[j++] = b64url_table[((a << 4) | (b >> 4)) & 0x3F];
+        if (i + 1 < inlen)
+            out[j++] = b64url_table[((b << 2) | (c >> 6)) & 0x3F];
+        if (i + 2 < inlen)
+            out[j++] = b64url_table[c & 0x3F];
+    }
+    out[j] = '\0';
+    return out;
+}
+
+static int b64url_char_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '-') return 62;
+    if (c == '_') return 63;
+    return -1;
+}
+
+char* bux_base64url_decode(const char* in, int inlen, int* outlen) {
+    int maxlen = 3 * inlen / 4 + 1;
+    char* out = (char*)bux_alloc(maxlen);
+    int j = 0;
+    int buf = 0, bits = 0;
+    for (int i = 0; i < inlen; i++) {
+        int val = b64url_char_val(in[i]);
+        if (val < 0) continue;
+        buf = (buf << 6) | val;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out[j++] = (buf >> bits) & 0xFF;
+        }
+    }
+    out[j] = '\0';
+    *outlen = j;
+    return out;
+}
+
+/* --- AES-256-CBC --- */
+
+static int aes_cbc_ctx_encrypt(const unsigned char* in, int inlen,
+                                unsigned char* out, const unsigned char* key,
+                                const unsigned char* iv, int encrypt) {
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_CipherInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv, encrypt);
+    int outlen = 0, tmplen = 0;
+    EVP_CipherUpdate(ctx, out, &tmplen, in, inlen);
+    outlen = tmplen;
+    EVP_CipherFinal_ex(ctx, out + outlen, &tmplen);
+    outlen += tmplen;
+    EVP_CIPHER_CTX_free(ctx);
+    return outlen;
+}
+
+char* bux_aes_256_cbc_encrypt(const char* plain, int plainlen,
+                               const char* key, const char* iv, int* outlen) {
+    int maxlen = plainlen + EVP_MAX_BLOCK_LENGTH;
+    char* out = (char*)bux_alloc(maxlen + 1);
+    *outlen = aes_cbc_ctx_encrypt((const unsigned char*)plain, plainlen,
+                                   (unsigned char*)out,
+                                   (const unsigned char*)key,
+                                   (const unsigned char*)iv, 1);
+    out[*outlen] = '\0';
+    return out;
+}
+
+char* bux_aes_256_cbc_decrypt(const char* cipher, int cipherlen,
+                               const char* key, const char* iv, int* outlen) {
+    char* out = (char*)bux_alloc(cipherlen + 1);
+    *outlen = aes_cbc_ctx_encrypt((const unsigned char*)cipher, cipherlen,
+                                   (unsigned char*)out,
+                                   (const unsigned char*)key,
+                                   (const unsigned char*)iv, 0);
+    out[*outlen] = '\0';
+    return out;
+}
+
+/* --- AES-256-GCM --- */
+
+char* bux_aes_256_gcm_encrypt(const char* plain, int plainlen,
+                               const char* key, const char* iv,
+                               unsigned char* tag, int* outlen) {
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, (const unsigned char*)key,
+                       (const unsigned char*)iv);
+    int maxlen = plainlen + EVP_MAX_BLOCK_LENGTH;
+    char* out = (char*)bux_alloc(maxlen);
+    int tmplen = 0;
+    EVP_EncryptUpdate(ctx, (unsigned char*)out, &tmplen,
+                      (const unsigned char*)plain, plainlen);
+    *outlen = tmplen;
+    EVP_EncryptFinal_ex(ctx, (unsigned char*)out + *outlen, &tmplen);
+    *outlen += tmplen;
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag);
+    EVP_CIPHER_CTX_free(ctx);
+    return out;
+}
+
+char* bux_aes_256_gcm_decrypt(const char* cipher, int cipherlen,
+                               const char* key, const char* iv,
+                               const char* tag, int* outlen) {
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, (const unsigned char*)key,
+                       (const unsigned char*)iv);
+    char* out = (char*)bux_alloc(cipherlen);
+    int tmplen = 0;
+    EVP_DecryptUpdate(ctx, (unsigned char*)out, &tmplen,
+                      (const unsigned char*)cipher, cipherlen);
+    *outlen = tmplen;
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, (void*)tag);
+    int ret = EVP_DecryptFinal_ex(ctx, (unsigned char*)out + *outlen, &tmplen);
+    EVP_CIPHER_CTX_free(ctx);
+    if (ret <= 0) { *outlen = 0; out[0] = '\0'; return out; }
+    *outlen += tmplen;
+    out[*outlen] = '\0';
+    return out;
+}
+
+/* --- RSA PKCS#1 v1.5 sign / verify --- */
+
+static EVP_PKEY* bux_load_private_key(const char* pem, int len) {
+    BIO* bio = BIO_new_mem_buf(pem, len);
+    if (!bio) return NULL;
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    return pkey;
+}
+
+static EVP_PKEY* bux_load_public_key(const char* pem, int len) {
+    BIO* bio = BIO_new_mem_buf(pem, len);
+    if (!bio) return NULL;
+    EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    return pkey;
+}
+
+static char* bux_rsa_sign_evp(const EVP_MD* md, const char* pem_key, int keylen,
+                               const char* data, int datalen, int* siglen) {
+    EVP_PKEY* pkey = bux_load_private_key(pem_key, keylen);
+    if (!pkey) { *siglen = 0; return (char*)bux_alloc(1); }
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_SignInit_ex(ctx, md, NULL);
+    EVP_SignUpdate(ctx, data, (size_t)datalen);
+    size_t slen = (size_t)EVP_PKEY_size(pkey);
+    unsigned char* sig = (unsigned char*)bux_alloc(slen + 1);
+    EVP_SignFinal(ctx, sig, &slen, pkey);
+    *siglen = (int)slen;
+    sig[*siglen] = '\0';
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return (char*)sig;
+}
+
+static int bux_rsa_verify_evp(const EVP_MD* md, const char* pem_key, int keylen,
+                               const char* data, int datalen,
+                               const char* sig, int siglen) {
+    EVP_PKEY* pkey = bux_load_public_key(pem_key, keylen);
+    if (!pkey) return 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_VerifyInit_ex(ctx, md, NULL);
+    EVP_VerifyUpdate(ctx, data, (size_t)datalen);
+    int ret = EVP_VerifyFinal(ctx, (const unsigned char*)sig, (size_t)siglen, pkey);
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return ret;
+}
+
+char* bux_rsa_sign_sha256(const char* pem, int keylen, const char* data, int datalen, int* siglen) {
+    return bux_rsa_sign_evp(EVP_sha256(), pem, keylen, data, datalen, siglen);
+}
+char* bux_rsa_sign_sha384(const char* pem, int keylen, const char* data, int datalen, int* siglen) {
+    return bux_rsa_sign_evp(EVP_sha384(), pem, keylen, data, datalen, siglen);
+}
+char* bux_rsa_sign_sha512(const char* pem, int keylen, const char* data, int datalen, int* siglen) {
+    return bux_rsa_sign_evp(EVP_sha512(), pem, keylen, data, datalen, siglen);
+}
+
+int bux_rsa_verify_sha256(const char* pem, int keylen, const char* data, int datalen,
+                           const char* sig, int siglen) {
+    return bux_rsa_verify_evp(EVP_sha256(), pem, keylen, data, datalen, sig, siglen);
+}
+int bux_rsa_verify_sha384(const char* pem, int keylen, const char* data, int datalen,
+                           const char* sig, int siglen) {
+    return bux_rsa_verify_evp(EVP_sha384(), pem, keylen, data, datalen, sig, siglen);
+}
+int bux_rsa_verify_sha512(const char* pem, int keylen, const char* data, int datalen,
+                           const char* sig, int siglen) {
+    return bux_rsa_verify_evp(EVP_sha512(), pem, keylen, data, datalen, sig, siglen);
+}
+
+/* --- ECDSA P-256 / P-384 --- */
+
+static char* bux_ecdsa_sign_evp(const EVP_MD* md, const char* pem, int keylen,
+                                 const char* data, int datalen, int* siglen) {
+    EVP_PKEY* pkey = bux_load_private_key(pem, keylen);
+    if (!pkey) { *siglen = 0; return (char*)bux_alloc(1); }
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_SignInit_ex(ctx, md, NULL);
+    EVP_SignUpdate(ctx, data, (size_t)datalen);
+    size_t slen = (size_t)EVP_PKEY_size(pkey);
+    unsigned char* sig = (unsigned char*)bux_alloc(slen + 1);
+    EVP_SignFinal(ctx, sig, &slen, pkey);
+    *siglen = (int)slen;
+    sig[*siglen] = '\0';
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return (char*)sig;
+}
+
+static int bux_ecdsa_verify_evp(const EVP_MD* md, const char* pem, int keylen,
+                                 const char* data, int datalen,
+                                 const char* sig, int siglen) {
+    EVP_PKEY* pkey = bux_load_public_key(pem, keylen);
+    if (!pkey) return 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_VerifyInit_ex(ctx, md, NULL);
+    EVP_VerifyUpdate(ctx, data, (size_t)datalen);
+    int ret = EVP_VerifyFinal(ctx, (const unsigned char*)sig, (size_t)siglen, pkey);
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return ret;
+}
+
+char* bux_ecdsa_sign_p256(const char* pem, int keylen, const char* data, int datalen, int* siglen) {
+    return bux_ecdsa_sign_evp(EVP_sha256(), pem, keylen, data, datalen, siglen);
+}
+char* bux_ecdsa_sign_p384(const char* pem, int keylen, const char* data, int datalen, int* siglen) {
+    return bux_ecdsa_sign_evp(EVP_sha384(), pem, keylen, data, datalen, siglen);
+}
+int bux_ecdsa_verify_p256(const char* pem, int keylen, const char* data, int datalen,
+                           const char* sig, int siglen) {
+    return bux_ecdsa_verify_evp(EVP_sha256(), pem, keylen, data, datalen, sig, siglen);
+}
+int bux_ecdsa_verify_p384(const char* pem, int keylen, const char* data, int datalen,
+                           const char* sig, int siglen) {
+    return bux_ecdsa_verify_evp(EVP_sha384(), pem, keylen, data, datalen, sig, siglen);
+}
+
+/* --- Ed25519 (OpenSSL 1.1.1+) --- */
+
+int bux_ed25519_keypair(unsigned char* pub, unsigned char* priv) {
+    EVP_PKEY* pkey = NULL;
+    EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL);
+    if (!pctx) return 0;
+    if (EVP_PKEY_keygen_init(pctx) <= 0 ||
+        EVP_PKEY_keygen(pctx, &pkey) <= 0) {
+        EVP_PKEY_CTX_free(pctx);
+        return 0;
+    }
+    EVP_PKEY_CTX_free(pctx);
+    size_t pub_len = 32, priv_len = 32;
+    EVP_PKEY_get_raw_public_key(pkey, pub, &pub_len);
+    EVP_PKEY_get_raw_private_key(pkey, priv, &priv_len);
+    EVP_PKEY_free(pkey);
+    return 1;
+}
+
+int bux_ed25519_sign(const char* priv, const char* data, int datalen, unsigned char* sig) {
+    EVP_PKEY* pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL,
+                                                   (const unsigned char*)priv, 32);
+    if (!pkey) return 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    int ret = 0;
+    if (EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey) > 0) {
+        size_t siglen = 64;
+        EVP_DigestSign(ctx, sig, &siglen, (const unsigned char*)data, (size_t)datalen);
+        ret = 1;
+    }
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return ret;
+}
+
+int bux_ed25519_verify(const char* pub, const char* sig, const char* data, int datalen) {
+    EVP_PKEY* pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL,
+                                                  (const unsigned char*)pub, 32);
+    if (!pkey) return 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    int ret = 0;
+    if (EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey) > 0) {
+        ret = EVP_DigestVerify(ctx, (const unsigned char*)sig, 64,
+                               (const unsigned char*)data, (size_t)datalen);
+        ret = (ret == 1) ? 1 : 0;
+    }
+    EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pkey);
+    return ret;
 }

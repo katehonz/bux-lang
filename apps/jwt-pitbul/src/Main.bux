@@ -1,0 +1,326 @@
+// =============================================================================
+// jwt-pitbul — JWT CLI Tool (encode, decode, verify, keygen)
+// Built with Bux + Std::Crypto
+// =============================================================================
+module Main {
+
+import Std::Io::{PrintLine, Print, PrintInt};
+import Std::String::{String_Len, String_Eq, String_Contains};
+import Std::Crypto::Jwt::{
+    JwtAlg,
+    Jwt_MakeHeader,
+    Jwt_Encode,
+    Jwt_Decode,
+    Jwt_EncodeHS256, Jwt_EncodeHS384, Jwt_EncodeHS512,
+    Jwt_EncodeRS256, Jwt_EncodeES256, Jwt_EncodeEdDSA
+};
+import Std::Crypto::Base64::{Base64URL_Decode, Base64_Encode};
+import Std::Crypto::Ed25519::{Ed25519_Keypair};
+
+extern func bux_argc() -> int;
+extern func bux_argv(index: int) -> String;
+extern func bux_alloc(size: uint) -> *void;
+extern func bux_read_file(path: String) -> String;
+extern func bux_file_exists(path: String) -> int;
+extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
+extern func bux_str_split_count(s: String, delim: String) -> uint;
+extern func bux_base64_encode(data: String, len: int) -> String;
+
+// =============================================================================
+// Help / Usage
+// =============================================================================
+func PrintUsage() {
+    PrintLine("╔══════════════════════════════════════════════════════╗");
+    PrintLine("║  jwt-pitbul — JWT CLI Tool v0.1.0                   ║");
+    PrintLine("║  Sign, verify, decode JSON Web Tokens               ║");
+    PrintLine("╚══════════════════════════════════════════════════════╝");
+    PrintLine("");
+    PrintLine("Usage:");
+    PrintLine("  jwt-pitbul sign <alg> <key> <claims>");
+    PrintLine("  jwt-pitbul verify <token> <alg> <key>");
+    PrintLine("  jwt-pitbul decode <token>");
+    PrintLine("  jwt-pitbul keygen <type>");
+    PrintLine("");
+    PrintLine("Commands:");
+    PrintLine("  sign     Create a signed JWT from claims JSON");
+    PrintLine("  verify   Verify a JWT signature and print payload");
+    PrintLine("  decode   Decode a JWT without verification");
+    PrintLine("  keygen   Generate cryptographic keys");
+    PrintLine("");
+    PrintLine("Algorithms:");
+    PrintLine("  HS256, HS384, HS512     — HMAC (symmetric)");
+    PrintLine("  RS256, RS384, RS512     — RSA PKCS#1 v1.5");
+    PrintLine("  ES256, ES384            — ECDSA P-256 / P-384");
+    PrintLine("  EdDSA                   — Ed25519");
+    PrintLine("");
+    PrintLine("Key formats:");
+    PrintLine("  HMAC:  raw secret string");
+    PrintLine("  RSA:   path to PEM private/public key file");
+    PrintLine("  ECDSA: path to PEM private/public key file");
+    PrintLine("  EdDSA: base64-encoded 32-byte raw key");
+    PrintLine("");
+    PrintLine("Key generation:");
+    PrintLine("  jwt-pitbul keygen rsa       # RSA 2048-bit (PEM)");
+    PrintLine("  jwt-pitbul keygen ecdsa     # ECDSA P-256 (PEM)");
+    PrintLine("  jwt-pitbul keygen ed25519   # Ed25519 (raw base64)");
+    PrintLine("");
+    PrintLine("Examples:");
+    PrintLine("  jwt-pitbul sign HS256 'my-secret' '{\"sub\":\"123\"}'");
+    PrintLine("  jwt-pitbul verify eyJh... HS256 'my-secret'");
+    PrintLine("  jwt-pitbul decode eyJh...");
+    PrintLine("  jwt-pitbul keygen ed25519");
+}
+
+// =============================================================================
+// Algorithm name → JwtAlg enum
+// =============================================================================
+func ParseAlg(name: String) -> JwtAlg {
+    if String_Eq(name, "HS256") { return JwtAlg { tag: JwtAlg_HS256 }; }
+    if String_Eq(name, "HS384") { return JwtAlg { tag: JwtAlg_HS384 }; }
+    if String_Eq(name, "HS512") { return JwtAlg { tag: JwtAlg_HS512 }; }
+    if String_Eq(name, "RS256") { return JwtAlg { tag: JwtAlg_RS256 }; }
+    if String_Eq(name, "RS384") { return JwtAlg { tag: JwtAlg_RS384 }; }
+    if String_Eq(name, "RS512") { return JwtAlg { tag: JwtAlg_RS512 }; }
+    if String_Eq(name, "ES256") { return JwtAlg { tag: JwtAlg_ES256 }; }
+    if String_Eq(name, "ES384") { return JwtAlg { tag: JwtAlg_ES384 }; }
+    if String_Eq(name, "EdDSA") { return JwtAlg { tag: JwtAlg_EdDSA }; }
+    return JwtAlg { tag: JwtAlg_HS256 };
+}
+
+// =============================================================================
+// Resolve key — for RSA/ECDSA, read PEM file; for HMAC/EdDSA, pass through
+// =============================================================================
+func ResolveKey(alg: JwtAlg, keyArg: String) -> String {
+    let algTag: int = alg.tag;
+
+    // RSA and ECDSA: key is a path to PEM file
+    if algTag == JwtAlg_RS256 || algTag == JwtAlg_RS384 || algTag == JwtAlg_RS512 ||
+       algTag == JwtAlg_ES256 || algTag == JwtAlg_ES384 {
+        if bux_file_exists(keyArg) != 0 {
+            let pem: String = bux_read_file(keyArg);
+            if pem as uint != 0 && String_Len(pem) > 0 {
+                return pem;
+            }
+            Print("ERROR: could not read PEM file: ");
+            PrintLine(keyArg);
+            return "";
+        }
+        Print("ERROR: PEM file not found: ");
+        PrintLine(keyArg);
+        return "";
+    }
+
+    // HMAC and EdDSA: key is used directly
+    return keyArg;
+}
+
+// =============================================================================
+// Check if algorithm is symmetric (HMAC) or asymmetric
+// =============================================================================
+func IsSymmetric(alg: JwtAlg) -> bool {
+    let t: int = alg.tag;
+    return t == JwtAlg_HS256 || t == JwtAlg_HS384 || t == JwtAlg_HS512;
+}
+
+// =============================================================================
+// Command: sign
+// =============================================================================
+func CmdSign(algName: String, keyArg: String, claimsJson: String) -> int {
+    let alg: JwtAlg = ParseAlg(algName);
+    let key: String = ResolveKey(alg, keyArg);
+    if String_Len(key) == 0 {
+        return 1;
+    }
+
+    let header: String = Jwt_MakeHeader(alg);
+    let token: String = Jwt_Encode(header, claimsJson, alg, key);
+
+    if String_Len(token) == 0 {
+        PrintLine("ERROR: signing failed");
+        return 1;
+    }
+
+    PrintLine(token);
+    return 0;
+}
+
+// =============================================================================
+// Command: verify
+// =============================================================================
+func CmdVerify(token: String, algName: String, keyArg: String) -> int {
+    let alg: JwtAlg = ParseAlg(algName);
+    let key: String = ResolveKey(alg, keyArg);
+    if String_Len(key) == 0 {
+        return 1;
+    }
+
+    var header: String = "";
+    var payload: String = "";
+
+    let ok: bool = Jwt_Decode(token, alg, key, &header, &payload);
+
+    if ok {
+        PrintLine("✓ Signature valid");
+        PrintLine("");
+        PrintLine("Header:");
+        PrintLine(header);
+        PrintLine("");
+        PrintLine("Payload:");
+        PrintLine(payload);
+        return 0;
+    }
+
+    PrintLine("✗ Signature INVALID (or malformed token)");
+    return 1;
+}
+
+// =============================================================================
+// Command: decode (no verification)
+// =============================================================================
+func CmdDecode(token: String) -> int {
+    let partCount: uint = bux_str_split_count(token, ".");
+    if partCount != 3 {
+        PrintLine("ERROR: not a valid JWT (expected 3 parts)");
+        return 1;
+    }
+
+    let headerB64: String = bux_str_split_part(token, ".", 0);
+    let payloadB64: String = bux_str_split_part(token, ".", 1);
+    let sigB64: String = bux_str_split_part(token, ".", 2);
+
+    let headerJson: String = Base64URL_Decode(headerB64);
+    let payloadJson: String = Base64URL_Decode(payloadB64);
+
+    PrintLine("Decoded (no verification):");
+    PrintLine("");
+    PrintLine("Header:");
+    PrintLine(headerJson);
+    PrintLine("");
+    PrintLine("Payload:");
+    PrintLine(payloadJson);
+    PrintLine("");
+    Print("Signature (base64url): ");
+    PrintLine(sigB64);
+
+    return 0;
+}
+
+// =============================================================================
+// Command: keygen
+// =============================================================================
+func CmdKeygen(keyType: String) -> int {
+    if String_Eq(keyType, "ed25519") {
+        let pub: *void = bux_alloc(32);
+        let priv: *void = bux_alloc(32);
+        if !Ed25519_Keypair(pub, priv) {
+            PrintLine("ERROR: Ed25519 key generation failed (OpenSSL 1.1.1+ required)");
+            return 1;
+        }
+        let pubB64: String = bux_base64_encode(pub as String, 32);
+        let privB64: String = bux_base64_encode(priv as String, 32);
+        PrintLine("Ed25519 keypair (base64):");
+        Print("  Public:  ");
+        PrintLine(pubB64);
+        Print("  Private: ");
+        PrintLine(privB64);
+        return 0;
+    }
+
+    if String_Eq(keyType, "rsa") {
+        PrintLine("RSA key generation requires OpenSSL CLI:");
+        PrintLine("  openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048");
+        PrintLine("  openssl rsa -in private.pem -pubout -out public.pem");
+        PrintLine("");
+        PrintLine("(Key generation from within Bux requires PEM write support — coming soon)");
+        return 0;
+    }
+
+    if String_Eq(keyType, "ecdsa") {
+        PrintLine("ECDSA key generation requires OpenSSL CLI:");
+        PrintLine("  openssl ecparam -genkey -name prime256v1 -noout -out ec_private.pem");
+        PrintLine("  openssl ec -in ec_private.pem -pubout -out ec_public.pem");
+        PrintLine("");
+        PrintLine("(Key generation from within Bux requires PEM write support — coming soon)");
+        return 0;
+    }
+
+    Print("ERROR: unknown key type '");
+    Print(keyType);
+    PrintLine("'. Use: rsa, ecdsa, ed25519");
+    return 1;
+}
+
+// =============================================================================
+// Main Entry Point
+// =============================================================================
+func Main() -> int {
+    let argc: int = bux_argc();
+
+    if argc < 2 {
+        PrintUsage();
+        return 0;
+    }
+
+    // Collect arguments
+    let args: *String = bux_alloc(argc as uint * 8) as *String;
+    var i: int = 0;
+    while i < argc {
+        args[i] = bux_argv(i);
+        i = i + 1;
+    }
+
+    let command: String = args[1];
+
+    if String_Eq(command, "help") || String_Eq(command, "--help") || String_Eq(command, "-h") {
+        PrintUsage();
+        return 0;
+    }
+
+    // --- sign <alg> <key> <claims> ---
+    if String_Eq(command, "sign") {
+        if argc < 5 {
+            PrintLine("ERROR: 'sign' requires: <alg> <key> <claims_json>");
+            PrintLine("  jwt-pitbul sign HS256 'secret' '{\"sub\":\"123\"}'");
+            return 1;
+        }
+        return CmdSign(args[2], args[3], args[4]);
+    }
+
+    // --- verify <token> <alg> <key> ---
+    if String_Eq(command, "verify") {
+        if argc < 5 {
+            PrintLine("ERROR: 'verify' requires: <token> <alg> <key>");
+            PrintLine("  jwt-pitbul verify eyJh... HS256 'secret'");
+            return 1;
+        }
+        return CmdVerify(args[2], args[3], args[4]);
+    }
+
+    // --- decode <token> ---
+    if String_Eq(command, "decode") {
+        if argc < 3 {
+            PrintLine("ERROR: 'decode' requires: <token>");
+            PrintLine("  jwt-pitbul decode eyJh...");
+            return 1;
+        }
+        return CmdDecode(args[2]);
+    }
+
+    // --- keygen <type> ---
+    if String_Eq(command, "keygen") {
+        if argc < 3 {
+            PrintLine("ERROR: 'keygen' requires: <type>");
+            PrintLine("  jwt-pitbul keygen ed25519");
+            return 1;
+        }
+        return CmdKeygen(args[3]);
+    }
+
+    Print("ERROR: unknown command '");
+    Print(command);
+    PrintLine("'");
+    PrintLine("Run 'jwt-pitbul help' for usage.");
+    return 1;
+}
+
+} // module Main

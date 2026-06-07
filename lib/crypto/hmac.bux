@@ -1,0 +1,92 @@
+// =============================================================================
+// Std::Crypto::Hmac — HMAC-SHA256, HMAC-SHA384, HMAC-SHA512
+// =============================================================================
+module Std::Crypto::Hmac {
+
+import Std::Mem::{Alloc, Free};
+import Std::String::{String_Len};
+
+extern func bux_hmac_sha256(key: String, keylen: int, msg: String, msglen: int, out: *void);
+extern func bux_hmac_sha384(key: String, keylen: int, msg: String, msglen: int, out: *void);
+extern func bux_hmac_sha512(key: String, keylen: int, msg: String, msglen: int, out: *void);
+extern func bux_bytes_to_hex(data: *void, len: int) -> String;
+extern func bux_base64_encode(data: String, len: int) -> String;
+
+// --- HMAC-SHA256 ---
+
+func Hmac_Sha256(key: String, message: String) -> String {
+    let kl: int = String_Len(key) as int;
+    let ml: int = String_Len(message) as int;
+    let buf: *void = Alloc(32);
+    bux_hmac_sha256(key, kl, message, ml, buf);
+    let result: String = bux_bytes_to_hex(buf, 32);
+    Free(buf);
+    return result;
+}
+
+func Hmac_Sha256Raw(key: String, message: String, out: *void) {
+    bux_hmac_sha256(key, String_Len(key) as int, message, String_Len(message) as int, out);
+}
+
+func Hmac_Sha256Base64(key: String, message: String) -> String {
+    let kl: int = String_Len(key) as int;
+    let ml: int = String_Len(message) as int;
+    let buf: *void = Alloc(32);
+    bux_hmac_sha256(key, kl, message, ml, buf);
+    let result: String = bux_base64_encode(buf as String, 32);
+    Free(buf);
+    return result;
+}
+
+// --- HMAC-SHA384 ---
+
+func Hmac_Sha384(key: String, message: String) -> String {
+    let kl: int = String_Len(key) as int;
+    let ml: int = String_Len(message) as int;
+    let buf: *void = Alloc(48);
+    bux_hmac_sha384(key, kl, message, ml, buf);
+    let result: String = bux_bytes_to_hex(buf, 48);
+    Free(buf);
+    return result;
+}
+
+func Hmac_Sha384Raw(key: String, message: String, out: *void) {
+    bux_hmac_sha384(key, String_Len(key) as int, message, String_Len(message) as int, out);
+}
+
+func Hmac_Sha384Base64(key: String, message: String) -> String {
+    let kl: int = String_Len(key) as int;
+    let ml: int = String_Len(message) as int;
+    let buf: *void = Alloc(48);
+    bux_hmac_sha384(key, kl, message, ml, buf);
+    let result: String = bux_base64_encode(buf as String, 48);
+    Free(buf);
+    return result;
+}
+
+// --- HMAC-SHA512 ---
+
+func Hmac_Sha512(key: String, message: String) -> String {
+    let kl: int = String_Len(key) as int;
+    let ml: int = String_Len(message) as int;
+    let buf: *void = Alloc(64);
+    bux_hmac_sha512(key, kl, message, ml, buf);
+    let result: String = bux_bytes_to_hex(buf, 64);
+    Free(buf);
+    return result;
+}
+
+func Hmac_Sha512Raw(key: String, message: String, out: *void) {
+    bux_hmac_sha512(key, String_Len(key) as int, message, String_Len(message) as int, out);
+}
+
+func Hmac_Sha512Base64(key: String, message: String) -> String {
+    let kl: int = String_Len(key) as int;
+    let ml: int = String_Len(message) as int;
+    let buf: *void = Alloc(64);
+    bux_hmac_sha512(key, kl, message, ml, buf);
+    let result: String = bux_base64_encode(buf as String, 64);
+    Free(buf);
+    return result;
+}
+}

@@ -1,0 +1,160 @@
+// =============================================================================
+// Boko Example App — demonstrates the framework API
+// =============================================================================
+module Main {
+
+import Std::Io::{PrintLine, Print};
+import Std::String::{String_Eq};
+import Boko::{
+    App, App_New, App_Run,
+    Request, Response,
+    Request_GetQuery, Request_GetPathParam,
+    Response_Html, Response_Json, Response_NotFound, Response_Redirect,
+    Path_Match,
+    HttpVerb
+};
+
+extern func bux_strlen(s: String) -> uint;
+extern func bux_sb_new(initial_cap: uint) -> *void;
+extern func bux_sb_append(sb: *void, s: String);
+extern func bux_sb_build(sb: *void) -> String;
+extern func bux_sb_free(sb: *void);
+
+// =============================================================================
+// Boko_Router — user-defined dispatch (called by the framework)
+// =============================================================================
+func Boko_Router(req: Request) -> Response {
+    // --- GET / ---
+    if String_Eq(req.path, "/") && req.method.tag == HttpVerb_GET {
+        return Response_Html(PageHome());
+    }
+
+    // --- GET /api/health ---
+    if String_Eq(req.path, "/api/health") {
+        return Response_Json("{\"status\":\"ok\",\"framework\":\"Boko\",\"version\":\"0.1.0\"}");
+    }
+
+    // --- GET /api/info ---
+    if String_Eq(req.path, "/api/info") {
+        return Response_Json("{\"name\":\"Boko\",\"language\":\"Bux\",\"inspiration\":\"FastAPI\",\"features\":[\"routing\",\"path-params\",\"query-params\",\"json\"]}");
+    }
+
+    // --- GET /hello?name=World ---
+    if String_Eq(req.path, "/hello") {
+        let name: String = Request_GetQuery(&req, "name");
+        if bux_strlen(name) == 0 { name = "World"; }
+        let sb: *void = bux_sb_new(256);
+        bux_sb_append(sb, "<h1>Hello, ");
+        bux_sb_append(sb, name);
+        bux_sb_append(sb, "!</h1>");
+        let html: String = bux_sb_build(sb);
+        bux_sb_free(sb);
+        return Response_Html(html);
+    }
+
+    // --- GET /users/{id} ---
+    if Path_Match("/users/{id}", req.path, &req) {
+        let id: String = Request_GetPathParam(&req, "id");
+        let sb: *void = bux_sb_new(128);
+        bux_sb_append(sb, "{\"id\":");
+        bux_sb_append(sb, id);
+        bux_sb_append(sb, ",\"name\":\"User ");
+        bux_sb_append(sb, id);
+        bux_sb_append(sb, "\"}");
+        let json: String = bux_sb_build(sb);
+        bux_sb_free(sb);
+        return Response_Json(json);
+    }
+
+    // --- GET /posts/{postId}/comments/{commentId} ---
+    if Path_Match("/posts/{postId}/comments/{commentId}", req.path, &req) {
+        let pid: String = Request_GetPathParam(&req, "postId");
+        let cid: String = Request_GetPathParam(&req, "commentId");
+        let sb: *void = bux_sb_new(128);
+        bux_sb_append(sb, "{\"postId\":");
+        bux_sb_append(sb, pid);
+        bux_sb_append(sb, ",\"commentId\":");
+        bux_sb_append(sb, cid);
+        bux_sb_append(sb, ",\"text\":\"Great post!\"}");
+        let json: String = bux_sb_build(sb);
+        bux_sb_free(sb);
+        return Response_Json(json);
+    }
+
+    // --- GET /redirect → 302 to / ---
+    if String_Eq(req.path, "/redirect") {
+        return Response_Redirect("/");
+    }
+
+    // --- POST /api/echo ---
+    if String_Eq(req.path, "/api/echo") && req.method.tag == HttpVerb_POST {
+        let sb: *void = bux_sb_new(256);
+        bux_sb_append(sb, "{\"echo\":");
+        bux_sb_append(sb, req.body);
+        bux_sb_append(sb, "}");
+        let json: String = bux_sb_build(sb);
+        bux_sb_free(sb);
+        return Response_Json(json);
+    }
+
+    // --- 404 ---
+    return Response_NotFound();
+}
+
+// =============================================================================
+// HTML landing page (raw multi-line string via backticks)
+// =============================================================================
+func PageHome() -> String {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boko Framework</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:3rem;max-width:560px;width:100%}
+h1{color:#58a6ff;font-size:2rem;margin-bottom:.5rem}
+.tag{color:#8b949e;font-size:.9rem;margin-bottom:2rem}
+h3{color:#d2a8ff;margin:1.5rem 0 .75rem}
+.ep{display:flex;gap:1rem;padding:.35rem 0;font-family:monospace;font-size:.9rem}
+.ep .m{color:#3fb950;font-weight:bold;min-width:52px}
+.ep .p{color:#c9d1d9}
+.ep .d{color:#484f58;margin-left:auto}
+a{color:#58a6ff}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>⚡ Boko</h1>
+<p class="tag">Async web framework for Bux — inspired by FastAPI</p>
+<h3>Try it</h3>
+<div class="ep"><span class="m">GET</span><span class="p"><a href="/hello?name=Bux">/hello?name=Bux</a></span><span class="d">query param</span></div>
+<div class="ep"><span class="m">GET</span><span class="p"><a href="/users/42">/users/42</a></span><span class="d">path param</span></div>
+<div class="ep"><span class="m">GET</span><span class="p"><a href="/posts/7/comments/3">/posts/7/comments/3</a></span><span class="d">multi params</span></div>
+<div class="ep"><span class="m">GET</span><span class="p"><a href="/redirect">/redirect</a></span><span class="d">302 → /</span></div>
+<div class="ep"><span class="m">GET</span><span class="p"><a href="/api/health">/api/health</a></span><span class="d">JSON</span></div>
+<div class="ep"><span class="m">GET</span><span class="p"><a href="/api/info">/api/info</a></span><span class="d">JSON</span></div>
+<h3>Features</h3>
+<div class="ep"><span class="m">✓</span><span class="p">Path routing with {params}</span></div>
+<div class="ep"><span class="m">✓</span><span class="p">Query parameter extraction</span></div>
+<div class="ep"><span class="m">✓</span><span class="p">JSON / HTML / Text responses</span></div>
+<div class="ep"><span class="m">✓</span><span class="p">Multi-threaded (configurable)</span></div>
+<div class="ep"><span class="m">✓</span><span class="p">Redirects (302)</span></div>
+<div class="ep"><span class="m">✓</span><span class="p">POST body access</span></div>
+</div>
+</body>
+</html>`;
+}
+
+// =============================================================================
+// Main — start the server
+// =============================================================================
+func Main() -> int {
+    let app: App = App_New(8080, 4);
+    App_Run(&app);
+    return 0;
+}
+
+} // module Main

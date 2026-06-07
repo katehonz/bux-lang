@@ -1,0 +1,8 @@
+[Package]
+Name    = "nexus"
+Version = "0.1.0"
+Type    = "bin"
+Description = "High-performance multi-threaded HTTP/1.1, HTTP/2 and WebSocket server"
+
+[Build]
+Output = "Bin"
