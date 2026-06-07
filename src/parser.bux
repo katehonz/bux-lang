@@ -2049,7 +2049,7 @@ func parserParseDecl(p: *Parser) -> *Decl {
                     discard parserAdvance(p);
                 }
             }
-            parserMatch(p, tkRBrace); // consume }
+            discard parserExpect(p, tkRBrace, "expected '}' to close module");
             d.childDecl1 = items; // first item of module
         } else {
             parserMatch(p, tkSemicolon);
