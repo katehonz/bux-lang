@@ -1950,6 +1950,10 @@ func parserParseExternDecl(p: *Parser, isPublic: bool) -> *Decl {
 // ---------------------------------------------------------------------------
 
 func parserParseDecl(p: *Parser) -> *Decl {
+    // Skip newlines before declaration (matching bootstrap behavior)
+    while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+        discard parserAdvance(p);
+    }
     let isPublic: bool = parserMatch(p, tkPub);
     let kind: int = parserPeek(p, 0);
 
