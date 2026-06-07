@@ -554,26 +554,53 @@ func Cli_BuildProject(projectDir: String) -> int {
         }
         // Merge declarations from this module into userMerged
         var decl: *Decl = mod.firstItem;
+        var fileDeclCount: int = 0;
         while decl != null as *Decl {
             let next: *Decl = decl.childDecl2;
             decl.childDecl2 = null as *Decl;
             // Flatten module declarations
             if decl.kind == dkModule {
                 var inner: *Decl = decl.childDecl1;
+                // Find last item to append (preserve original order)
+                var last: *Decl = userMerged.firstItem;
+                if last != null as *Decl {
+                    while last.childDecl2 != null as *Decl {
+                        last = last.childDecl2;
+                    }
+                }
                 while inner != null as *Decl {
                     let innerNext: *Decl = inner.childDecl2;
-                    inner.childDecl2 = userMerged.firstItem;
-                    userMerged.firstItem = inner;
+                    inner.childDecl2 = null as *Decl;
+                    if userMerged.firstItem == null as *Decl {
+                        userMerged.firstItem = inner;
+                        last = inner;
+                    } else {
+                        last.childDecl2 = inner;
+                        last = inner;
+                    }
                     userMerged.itemCount = userMerged.itemCount + 1;
+                    fileDeclCount = fileDeclCount + 1;
                     inner = innerNext;
                 }
             } else {
-                decl.childDecl2 = userMerged.firstItem;
-                userMerged.firstItem = decl;
+                decl.childDecl2 = null as *Decl;
+                var last2: *Decl = userMerged.firstItem;
+                if last2 != null as *Decl {
+                    while last2.childDecl2 != null as *Decl {
+                        last2 = last2.childDecl2;
+                    }
+                    last2.childDecl2 = decl;
+                } else {
+                    userMerged.firstItem = decl;
+                }
                 userMerged.itemCount = userMerged.itemCount + 1;
+                fileDeclCount = fileDeclCount + 1;
             }
             decl = next;
         }
+        Print("    -> ");
+        PrintInt(fileDeclCount as int64);
+        PrintLine(" decls merged");
         i = i + 1;
     }
 
