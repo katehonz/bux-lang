@@ -1,0 +1,77 @@
+{
+    "name": "bux-lang",
+    "displayName": "Bux Language Support",
+    "description": "Syntax highlighting, snippets, and LSP support for the Bux programming language",
+    "version": "0.1.0",
+    "publisher": "bux-lang",
+    "license": "MIT",
+    "icon": "icon.png",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/katehonz/bux"
+    },
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Snippets",
+        "Linters"
+    ],
+    "activationEvents": [
+        "onLanguage:bux"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "bux",
+                "aliases": ["Bux", "bux"],
+                "extensions": [".bux"],
+                "configuration": "./language-configuration.json",
+                "icon": {
+                    "dark": "./icon.png",
+                    "light": "./icon.png"
+                }
+            }
+        ],
+        "grammars": [
+            {
+                "language": "bux",
+                "scopeName": "source.bux",
+                "path": "./syntaxes/bux.tmLanguage.json"
+            }
+        ],
+        "snippets": [
+            {
+                "language": "bux",
+                "path": "./snippets/bux.json"
+            }
+        ],
+        "configuration": {
+            "title": "Bux",
+            "properties": {
+                "bux.lsp.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable LSP server for diagnostics and autocomplete"
+                },
+                "bux.lsp.path": {
+                    "type": "string",
+                    "default": "bux-lsp",
+                    "description": "Path to the bux-lsp binary"
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.85.0",
+        "typescript": "^5.0.0",
+        "vscode-languageclient": "^9.0.0"
+    }
+}

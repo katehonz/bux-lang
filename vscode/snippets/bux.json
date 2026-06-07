@@ -1,0 +1,162 @@
+{
+    "Main function": {
+        "prefix": "main",
+        "body": [
+            "func Main() -> int {",
+            "    $1",
+            "    return 0;",
+            "}"
+        ],
+        "description": "Main entry point function"
+    },
+    "Function": {
+        "prefix": "func",
+        "body": [
+            "func ${1:Name}(${2:params}) -> ${3:void} {",
+            "    $4",
+            "}"
+        ],
+        "description": "Function declaration"
+    },
+    "Async Function": {
+        "prefix": "afunc",
+        "body": [
+            "async func ${1:Name}(${2:params}) -> ${3:void} {",
+            "    $4",
+            "}"
+        ],
+        "description": "Async function declaration"
+    },
+    "Variable (let)": {
+        "prefix": "let",
+        "body": [
+            "let ${1:name}: ${2:Type} = ${3:value};"
+        ],
+        "description": "Immutable variable"
+    },
+    "Variable (var)": {
+        "prefix": "var",
+        "body": [
+            "var ${1:name}: ${2:Type} = ${3:value};"
+        ],
+        "description": "Mutable variable"
+    },
+    "Struct": {
+        "prefix": "struct",
+        "body": [
+            "struct ${1:Name} {",
+            "    ${2:field}: ${3:Type};",
+            "}"
+        ],
+        "description": "Struct declaration"
+    },
+    "Enum": {
+        "prefix": "enum",
+        "body": [
+            "enum ${1:Name} {",
+            "    ${2:Variant1},",
+            "    ${3:Variant2},",
+            "}"
+        ],
+        "description": "Enum declaration"
+    },
+    "If statement": {
+        "prefix": "if",
+        "body": [
+            "if ${1:condition} {",
+            "    ${2:body}",
+            "}"
+        ],
+        "description": "If statement"
+    },
+    "If-else": {
+        "prefix": "ifelse",
+        "body": [
+            "if ${1:condition} {",
+            "    ${2:body}",
+            "} else {",
+            "    ${3:elseBody}",
+            "}"
+        ],
+        "description": "If-else statement"
+    },
+    "While loop": {
+        "prefix": "while",
+        "body": [
+            "while ${1:condition} {",
+            "    ${2:body}",
+            "}"
+        ],
+        "description": "While loop"
+    },
+    "For loop": {
+        "prefix": "for",
+        "body": [
+            "for ${1:item} in ${2:iterable} {",
+            "    ${3:body}",
+            "}"
+        ],
+        "description": "For-in loop"
+    },
+    "Match": {
+        "prefix": "match",
+        "body": [
+            "match ${1:expr} {",
+            "    ${2:pattern} => ${3:action},",
+            "    _ => ${4:default},",
+            "}"
+        ],
+        "description": "Pattern match expression"
+    },
+    "Import": {
+        "prefix": "import",
+        "body": [
+            "import Std::${1:Module}::{${2:items}};"
+        ],
+        "description": "Import statement"
+    },
+    "Module": {
+        "prefix": "module",
+        "body": [
+            "module ${1:Name} {",
+            "${2:body}",
+            "}"
+        ],
+        "description": "Module declaration"
+    },
+    "Extend": {
+        "prefix": "extend",
+        "body": [
+            "extend ${1:Type} {",
+            "    ${2:methods}",
+            "}"
+        ],
+        "description": "Extend block for methods"
+    },
+    "@Checked": {
+        "prefix": "checked",
+        "body": [
+            "@[Checked]",
+            "func ${1:Name}(${2:params}) -> ${3:void} {",
+            "    ${4:body}",
+            "}"
+        ],
+        "description": "Checked function with borrow checker enabled"
+    },
+    "PrintLine": {
+        "prefix": "pl",
+        "body": [
+            "PrintLine(\"${1:message}\");"
+        ],
+        "description": "Print with newline"
+    },
+    "Generic function": {
+        "prefix": "gfunc",
+        "body": [
+            "func ${1:Name}<${2:T}>(${3:param}: ${2:T}) -> ${2:T} {",
+            "    ${4:body}",
+            "}"
+        ],
+        "description": "Generic function"
+    }
+}

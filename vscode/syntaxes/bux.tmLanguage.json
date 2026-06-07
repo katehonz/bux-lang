@@ -1,0 +1,157 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Bux",
+    "scopeName": "source.bux",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#constants"
+        },
+        {
+            "include": "#operators"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#attributes"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.block.bux",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                },
+                {
+                    "name": "comment.line.bux",
+                    "match": "//.*$"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.bux",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.bux",
+                            "match": "\\\\."
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.backtick.bux",
+                    "begin": "`",
+                    "end": "`"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.bux",
+                    "match": "\\b(if|else|while|for|do|loop|in|break|continue|return|match|case|default|spawn|async|await|try|catch|throw|discard)\\b"
+                },
+                {
+                    "name": "keyword.declaration.bux",
+                    "match": "\\b(func|var|let|const|type|struct|enum|union|interface|extend|module|import|extern|pub)\\b"
+                },
+                {
+                    "name": "keyword.operator.bux",
+                    "match": "\\b(as|is|sizeof|comptime|static_assert|dyn)\\b"
+                },
+                {
+                    "name": "keyword.ownership.bux",
+                    "match": "\\b(own|mut|borrow)\\b"
+                },
+                {
+                    "name": "storage.modifier.bux",
+                    "match": "@\\[(Checked|Shared|Import)\\]"
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "support.type.bux",
+                    "match": "\\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|char8|char32|String|void)\\b"
+                },
+                {
+                    "name": "entity.name.type.bux",
+                    "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.bux",
+                    "match": "\\b([a-z_][a-zA-Z0-9_]*)(?=\\s*\\()"
+                }
+            ]
+        },
+        "constants": {
+            "patterns": [
+                {
+                    "name": "constant.language.bux",
+                    "match": "\\b(true|false|null)\\b"
+                },
+                {
+                    "name": "constant.numeric.bux",
+                    "match": "\\b(true|false|null|self|super)\\b"
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.float.bux",
+                    "match": "\\b[0-9]+\\.[0-9]+(?:[eE][+-]?[0-9]+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.hex.bux",
+                    "match": "\\b0[xX][0-9a-fA-F]+\\b"
+                },
+                {
+                    "name": "constant.numeric.bux",
+                    "match": "\\b[0-9]+\\b"
+                }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.bux",
+                    "match": "->|=>|==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!&|^~@]"
+                }
+            ]
+        },
+        "attributes": {
+            "patterns": [
+                {
+                    "name": "storage.modifier.bux",
+                    "match": "@(Checked|Shared|Import)"
+                }
+            ]
+        }
+    }
+}
