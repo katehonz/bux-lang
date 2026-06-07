@@ -42,7 +42,7 @@ func Net_Connect(fd: int, addr: String, port: int) -> bool {
 
 /* Send data. Returns bytes sent or -1 on error. */
 func Net_Send(fd: int, data: String) -> int {
-    return bux_socket_send(fd, data, String_Len(data) as int);
+    return bux_socket_send(fd, data, bux_strlen(data) as int);
 }
 
 /* Receive up to maxLen bytes. Returns empty string on error/EOF. */

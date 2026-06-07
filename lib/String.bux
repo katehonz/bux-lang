@@ -161,6 +161,11 @@ func String_Join2(a: String, b: String, sep: String) -> String {
 // String find/replace/format
 // ---------------------------------------------------------------------------
 
+// String_Chars — return single-character string at index (for iteration)
+func String_Chars(s: String, index: uint) -> String {
+    return bux_str_slice(s, index, 1);
+}
+
 func String_Find(haystack: String, needle: String) -> String {
     return bux_strstr(haystack, needle);
 }
@@ -183,6 +188,11 @@ extern func bux_str_to_float(s: String) -> float64;
 
 func String_ToFloat(s: String) -> float64 {
     return bux_str_to_float(s);
+}
+
+func String_FromBool(b: bool) -> String {
+    if b { return "true"; }
+    return "false";
 }
 
 func String_FromFloat(f: float64) -> String {
