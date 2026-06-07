@@ -869,13 +869,7 @@ func parserParseBlock(p: *Parser) -> *Block {
         }
         let beforePos: int = p.pos;
         let s: *Stmt = parserParseStmt(p);
-        // Infinite-loop safeguard
         if p.pos == beforePos {
-            // If stuck and current token is }, consume it and exit
-            if parserCheck(p, tkRBrace) {
-                discard parserAdvance(p);
-                break;
-            }
             discard parserAdvance(p);
             continue;
         }
@@ -891,8 +885,7 @@ func parserParseBlock(p: *Parser) -> *Block {
             b.stmtCount = b.stmtCount + 1;
         }
     }
-    // Consume } if present (may already be consumed by safeguard)
-    parserMatch(p, tkRBrace);
+    discard parserExpect(p, tkRBrace, "expected '}'");
     return b;
 }
 
@@ -1002,11 +995,6 @@ func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool, isAsync: bo
     // Body
     if !isExtern && parserCheck(p, tkLBrace) {
         d.refBody = parserParseBlock(p);
-        // HACK: consume any leftover } that parserParseBlock may have missed
-        // Without this, the module handler sees the } and exits early.
-        if parserCheck(p, tkRBrace) {
-            discard parserAdvance(p);
-        }
     } else {
         d.refBody = null as *Block;
     }
@@ -2038,22 +2026,9 @@ func parserParseDecl(p: *Parser) -> *Decl {
             discard parserAdvance(p); // consume {
             var items: *Decl = null as *Decl;
             var lastItem: *Decl = null as *Decl;
-            var moduleDepth: int = 1;
-            while moduleDepth > 0 && parserPeek(p, 0) != tkEndOfFile {
+            while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
                 if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
                     discard parserAdvance(p);
-                    continue;
-                }
-                // Track stray braces that parserParseDecl may have left behind
-                if parserCheck(p, tkLBrace) {
-                    moduleDepth = moduleDepth + 1;
-                    discard parserAdvance(p);
-                    continue;
-                }
-                if parserCheck(p, tkRBrace) {
-                    moduleDepth = moduleDepth - 1;
-                    discard parserAdvance(p);
-                    if moduleDepth <= 0 { break; }
                     continue;
                 }
                 let beforePos: int = p.pos;
@@ -2073,6 +2048,7 @@ func parserParseDecl(p: *Parser) -> *Decl {
                     discard parserAdvance(p);
                 }
             }
+            discard parserExpect(p, tkRBrace, "expected '}' to close module");
             d.childDecl1 = items; // first item of module
         } else {
             parserMatch(p, tkSemicolon);
