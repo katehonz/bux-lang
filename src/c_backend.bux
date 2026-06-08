@@ -778,44 +778,36 @@ func CBackend_Generate(mod: *HirModule) -> String {
             }
             vi = vi + 1;
         }
-        if !hasData {
-            // Simple enum: typedef enum { A, B } Name;
-            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
-            vi = 0;
-            while vi < en.variantCount {
-                StringBuilder_Append(&cbe.sb, "    ");
-                StringBuilder_Append(&cbe.sb, en.name);
-                StringBuilder_Append(&cbe.sb, "_");
-                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
-                if vi < en.variantCount - 1 {
-                    StringBuilder_Append(&cbe.sb, ",");
-                }
-                StringBuilder_Append(&cbe.sb, "\n");
-                vi = vi + 1;
+        // Emit tag enum for all enums (simple and algebraic)
+        StringBuilder_Append(&cbe.sb, "typedef enum {\n");
+        vi = 0;
+        while vi < en.variantCount {
+            StringBuilder_Append(&cbe.sb, "    ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, "_");
+            StringBuilder_Append(&cbe.sb, en.variants[vi].name);
+            if vi < en.variantCount - 1 {
+                StringBuilder_Append(&cbe.sb, ",");
             }
+            StringBuilder_Append(&cbe.sb, "\n");
+            vi = vi + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "} ");
+        StringBuilder_Append(&cbe.sb, en.name);
+        StringBuilder_Append(&cbe.sb, "_Tag;\n\n");
+
+        if !hasData {
+            // Simple enum: struct wrapper with only tag
+            StringBuilder_Append(&cbe.sb, "typedef struct {\n");
+            StringBuilder_Append(&cbe.sb, "    ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, "_Tag tag;\n");
             StringBuilder_Append(&cbe.sb, "} ");
             StringBuilder_Append(&cbe.sb, en.name);
             StringBuilder_Append(&cbe.sb, ";\n\n");
         } else {
-            // Algebraic enum: tag enum + data union + struct
-            // 1. Tag enum
-            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
-            vi = 0;
-            while vi < en.variantCount {
-                StringBuilder_Append(&cbe.sb, "    ");
-                StringBuilder_Append(&cbe.sb, en.name);
-                StringBuilder_Append(&cbe.sb, "_");
-                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
-                if vi < en.variantCount - 1 {
-                    StringBuilder_Append(&cbe.sb, ",");
-                }
-                StringBuilder_Append(&cbe.sb, "\n");
-                vi = vi + 1;
-            }
-            StringBuilder_Append(&cbe.sb, "} ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, "_Tag;\n\n");
-            // 2. Data union
+            // Algebraic enum: data union + struct (tag enum already emitted above)
+            // 1. Data union
             StringBuilder_Append(&cbe.sb, "typedef union {\n");
             vi = 0;
             while vi < en.variantCount {
