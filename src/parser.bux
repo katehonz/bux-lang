@@ -236,6 +236,9 @@ func parserMakeExpr(kind: int, line: uint32, col: uint32) -> *Expr {
 // ---------------------------------------------------------------------------
 
 func parserParsePrimary(p: *Parser) -> *Expr {
+    while parserCheck(p, tkNewLine) {
+        discard parserAdvance(p);
+    }
     let tok: LexToken = parserCurToken(p);
     let line: uint32 = tok.line;
     let col: uint32 = tok.column;
@@ -572,6 +575,9 @@ func parserPrecedence(op: int) -> int {
 }
 
 func parserParseUnary(p: *Parser) -> *Expr {
+    while parserCheck(p, tkNewLine) {
+        discard parserAdvance(p);
+    }
     let tok: LexToken = parserCurToken(p);
     let line: uint32 = tok.line;
     let col: uint32 = tok.column;
@@ -592,6 +598,9 @@ func parserParseUnary(p: *Parser) -> *Expr {
 func parserParseBinaryPrec(p: *Parser, minPrec: int) -> *Expr {
     var left: *Expr = parserParseUnary(p);
     while true {
+        while parserCheck(p, tkNewLine) {
+            discard parserAdvance(p);
+        }
         let op: int = parserPeek(p, 0);
         let prec: int = parserPrecedence(op);
         if prec < minPrec { break; }
@@ -1851,7 +1860,7 @@ func parserParseEnumDecl(p: *Parser, isPublic: bool) -> *Decl {
 
     discard parserExpect(p, tkLBrace, "expected '{'");
     while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
-        if d.variantCount >= 8 { break; }
+        if d.variantCount >= 9 { break; }
         if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
         let vName: LexToken = parserExpect(p, tkIdent, "expected variant name");
 
@@ -1882,6 +1891,7 @@ func parserParseEnumDecl(p: *Parser, isPublic: bool) -> *Decl {
         else if d.variantCount == 5 { d.variant5 = v; }
         else if d.variantCount == 6 { d.variant6 = v; }
         else if d.variantCount == 7 { d.variant7 = v; }
+        else if d.variantCount == 8 { d.variant8 = v; }
         d.variantCount = d.variantCount + 1;
 
         parserMatch(p, tkComma);

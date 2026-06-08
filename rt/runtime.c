@@ -647,45 +647,75 @@ unsigned int bux_hash_string(const char* s) {
 #include <dirent.h>
 #include <sys/stat.h>
 
-/* bux_list_dir: returns array of file paths in dir matching ext suffix.
+/* bux_list_dir: returns array of file paths in dir (recursively) matching ext suffix.
  * Result is malloc'd array of malloc'd strings. Caller must free.
  * Sets *out_count to number of files found. */
-char** bux_list_dir(const char* dir, const char* ext, int* out_count) {
+static int bux_count_files_recursive(const char* dir, const char* ext, size_t ext_len) {
     DIR* d = opendir(dir);
-    if (!d) { *out_count = 0; return NULL; }
-    
-    /* First pass: count matching files */
+    if (!d) return 0;
     int count = 0;
-    size_t ext_len = strlen(ext);
     struct dirent* entry;
     while ((entry = readdir(d)) != NULL) {
-        size_t name_len = strlen(entry->d_name);
-        if (name_len > ext_len && strcmp(entry->d_name + name_len - ext_len, ext) == 0) {
-            count++;
-        }
-    }
-    
-    /* Allocate result array */
-    char** result = (char**)malloc(count * sizeof(char*));
-    if (!result) { closedir(d); *out_count = 0; return NULL; }
-    
-    /* Second pass: collect paths */
-    rewinddir(d);
-    int idx = 0;
-    size_t dir_len = strlen(dir);
-    while ((entry = readdir(d)) != NULL && idx < count) {
-        size_t name_len = strlen(entry->d_name);
-        if (name_len > ext_len && strcmp(entry->d_name + name_len - ext_len, ext) == 0) {
-            /* Build full path: dir/name */
-            size_t path_len = dir_len + 1 + name_len + 1;
-            char* path = (char*)malloc(path_len);
-            if (path) {
-                snprintf(path, path_len, "%s/%s", dir, entry->d_name);
-                result[idx++] = path;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        size_t path_len = strlen(dir) + 1 + strlen(entry->d_name) + 1;
+        char* path = (char*)malloc(path_len);
+        if (!path) continue;
+        snprintf(path, path_len, "%s/%s", dir, entry->d_name);
+        struct stat st;
+        if (stat(path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                count += bux_count_files_recursive(path, ext, ext_len);
+            } else {
+                size_t name_len = strlen(entry->d_name);
+                if (name_len > ext_len && strcmp(entry->d_name + name_len - ext_len, ext) == 0) {
+                    count++;
+                }
             }
+        }
+        free(path);
+    }
+    closedir(d);
+    return count;
+}
+
+static int bux_collect_files_recursive(const char* dir, const char* ext, size_t ext_len, char** result, int idx) {
+    DIR* d = opendir(dir);
+    if (!d) return idx;
+    struct dirent* entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        size_t path_len = strlen(dir) + 1 + strlen(entry->d_name) + 1;
+        char* path = (char*)malloc(path_len);
+        if (!path) continue;
+        snprintf(path, path_len, "%s/%s", dir, entry->d_name);
+        struct stat st;
+        if (stat(path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                idx = bux_collect_files_recursive(path, ext, ext_len, result, idx);
+                free(path);
+            } else {
+                size_t name_len = strlen(entry->d_name);
+                if (name_len > ext_len && strcmp(entry->d_name + name_len - ext_len, ext) == 0) {
+                    result[idx++] = path;
+                } else {
+                    free(path);
+                }
+            }
+        } else {
+            free(path);
         }
     }
     closedir(d);
+    return idx;
+}
+
+char** bux_list_dir(const char* dir, const char* ext, int* out_count) {
+    size_t ext_len = strlen(ext);
+    int count = bux_count_files_recursive(dir, ext, ext_len);
+    if (count == 0) { *out_count = 0; return NULL; }
+    char** result = (char**)malloc(count * sizeof(char*));
+    if (!result) { *out_count = 0; return NULL; }
+    int idx = bux_collect_files_recursive(dir, ext, ext_len, result, 0);
     *out_count = idx;
     return result;
 }

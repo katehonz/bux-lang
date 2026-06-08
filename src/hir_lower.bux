@@ -1006,6 +1006,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
                 if vi == 5 { v = &decl.variant5; }
                 if vi == 6 { v = &decl.variant6; }
                 if vi == 7 { v = &decl.variant7; }
+                if vi == 8 { v = &decl.variant8; }
                 if v != null as *EnumVariant {
                     hm.enums[ei].variants[vi].name = v.name;
                     hm.enums[ei].variants[vi].fieldCount = v.fieldCount;

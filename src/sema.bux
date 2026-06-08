@@ -490,7 +490,7 @@ func Sema_CollectGlobals(sema: *Sema) {
 
             // Register enum variants as constants
             var vi: int = 0;
-            while vi < decl.variantCount && vi < 8 {
+            while vi < decl.variantCount && vi < 9 {
                 var v: EnumVariant;
                 if vi == 0 { v = decl.variant0; }
                 else if vi == 1 { v = decl.variant1; }
@@ -500,6 +500,7 @@ func Sema_CollectGlobals(sema: *Sema) {
                 else if vi == 5 { v = decl.variant5; }
                 else if vi == 6 { v = decl.variant6; }
                 else if vi == 7 { v = decl.variant7; }
+                else if vi == 8 { v = decl.variant8; }
                 if v.name == null as String || String_Eq(v.name, "") {
                     vi = vi + 1;
                     continue;

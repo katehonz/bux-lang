@@ -265,6 +265,7 @@ struct Decl {
     variant5: EnumVariant,
     variant6: EnumVariant,
     variant7: EnumVariant,
+    variant8: EnumVariant,
     // Impl methods (up to 4)
     methodCount: int,
     // Use/import
