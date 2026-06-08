@@ -1925,6 +1925,12 @@ func parserParseImportDecl(p: *Parser, isPublic: bool) -> *Decl {
         discard parserAdvance(p); // {
         var names: String = "";
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+            while parserCheck(p, tkNewLine) {
+                discard parserAdvance(p);
+            }
+            if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile {
+                break;
+            }
             let n: LexToken = parserExpect(p, tkIdent, "expected import name");
             names = String_Concat(names, n.text);
             names = String_Concat(names, ",");
