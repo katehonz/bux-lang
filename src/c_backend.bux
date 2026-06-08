@@ -108,12 +108,23 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
             let slen: int = String_Len(s) as int;
             var start: int = 0;
             var end: int = slen;
+            var isQuoted: bool = false;
+            var isBacktick: bool = false;
             // If the literal is wrapped in quotes (from lexer), preserve outer quotes
             // and only escape the inner content.
             if slen >= 2 && s[0] == 34 as char8 && s[slen - 1] == 34 as char8 {
-                StringBuilder_Append(&cbe.sb, "\"");
+                isQuoted = true;
                 start = 1;
                 end = slen - 1;
+            }
+            // Backtick raw string: strip backticks, escape inner content for C
+            if slen >= 2 && s[0] == 96 as char8 && s[slen - 1] == 96 as char8 {
+                isBacktick = true;
+                start = 1;
+                end = slen - 1;
+            }
+            if isQuoted || isBacktick {
+                StringBuilder_Append(&cbe.sb, "\"");
             }
             var i: int = start;
             while i < end {
@@ -133,7 +144,7 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
                 }
                 i = i + 1;
             }
-            if slen >= 2 && s[0] == 34 as char8 && s[slen - 1] == 34 as char8 {
+            if isQuoted || isBacktick {
                 StringBuilder_Append(&cbe.sb, "\"");
             }
         }
