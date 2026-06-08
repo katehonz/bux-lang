@@ -91,11 +91,9 @@ func ParseAlg(name: String) -> JwtAlg {
 // Resolve key — for RSA/ECDSA, read PEM file; for HMAC/EdDSA, pass through
 // =============================================================================
 func ResolveKey(alg: JwtAlg, keyArg: String) -> String {
-    let algTag: int = alg.tag;
-
     // RSA and ECDSA: key is a path to PEM file
-    if algTag == JwtAlg_RS256 || algTag == JwtAlg_RS384 || algTag == JwtAlg_RS512 ||
-       algTag == JwtAlg_ES256 || algTag == JwtAlg_ES384 {
+    if alg.tag == JwtAlg_RS256 || alg.tag == JwtAlg_RS384 || alg.tag == JwtAlg_RS512 ||
+       alg.tag == JwtAlg_ES256 || alg.tag == JwtAlg_ES384 {
         if bux_file_exists(keyArg) != 0 {
             let pem: String = bux_read_file(keyArg);
             if pem as uint != 0 && String_Len(pem) > 0 {
@@ -118,8 +116,7 @@ func ResolveKey(alg: JwtAlg, keyArg: String) -> String {
 // Check if algorithm is symmetric (HMAC) or asymmetric
 // =============================================================================
 func IsSymmetric(alg: JwtAlg) -> bool {
-    let t: int = alg.tag;
-    return t == JwtAlg_HS256 || t == JwtAlg_HS384 || t == JwtAlg_HS512;
+    return alg.tag == JwtAlg_HS256 || alg.tag == JwtAlg_HS384 || alg.tag == JwtAlg_HS512;
 }
 
 // =============================================================================
@@ -210,13 +207,13 @@ func CmdDecode(token: String) -> int {
 // =============================================================================
 func CmdKeygen(keyType: String) -> int {
     if String_Eq(keyType, "ed25519") {
-        let pub: *void = bux_alloc(32);
+        let pubBuf: *void = bux_alloc(32);
         let priv: *void = bux_alloc(32);
-        if !Ed25519_Keypair(pub, priv) {
+        if !Ed25519_Keypair(pubBuf, priv) {
             PrintLine("ERROR: Ed25519 key generation failed (OpenSSL 1.1.1+ required)");
             return 1;
         }
-        let pubB64: String = bux_base64_encode(pub as String, 32);
+        let pubB64: String = bux_base64_encode(pubBuf as String, 32);
         let privB64: String = bux_base64_encode(priv as String, 32);
         PrintLine("Ed25519 keypair (base64):");
         Print("  Public:  ");

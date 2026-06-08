@@ -535,10 +535,17 @@ proc collectGlobals*(sema: var Sema) =
       if not sema.globalScope.define(sym):
         sema.emitError(decl.loc, &"duplicate symbol '{decl.declEnumName}'")
       sema.typeTable[decl.declEnumName] = t
+      # Check if algebraic or simple enum
+      var hasData = false
+      for variant in decl.declEnumVariants:
+        if variant.fields.len > 0 or variant.namedFields.len > 0:
+          hasData = true
+          break
       # For algebraic enums, add variant constants with _Tag type
+      # For simple enums, variant constants have the enum type itself
       for variant in decl.declEnumVariants:
         let variantName = decl.declEnumName & "_" & variant.name
-        let variantType = makeNamed(decl.declEnumName & "_Tag")
+        let variantType = if hasData: makeNamed(decl.declEnumName & "_Tag") else: makeNamed(decl.declEnumName)
         let variantSym = Symbol(kind: skConst, name: variantName, typ: variantType,
                                 decl: decl, isPublic: decl.isPublic)
         discard sema.globalScope.define(variantSym)
@@ -563,24 +570,8 @@ proc collectGlobals*(sema: var Sema) =
         sema.emitError(decl.loc, &"duplicate symbol '{decl.declAliasName}'")
       sema.typeTable[decl.declAliasName] = t
     of dkUse:
-      # Imports: register imported names into scope
-      if decl.declUsePath.len > 0:
-        case decl.declUseKind
-        of ukMulti:
-          for name in decl.declUseNames:
-            if sema.globalScope.lookup(name) == nil:
-              let sym = Symbol(kind: skFunc, name: name, typ: makeUnknown(), isPublic: true)
-              discard sema.globalScope.define(sym)
-        of ukGlob:
-          let name = decl.declUsePath[^1]
-          if sema.globalScope.lookup(name) == nil:
-            let sym = Symbol(kind: skModule, name: name, typ: makeUnknown(), isPublic: true)
-            discard sema.globalScope.define(sym)
-        of ukSingle:
-          let name = decl.declUsePath[^1]
-          if sema.globalScope.lookup(name) == nil:
-            let sym = Symbol(kind: skFunc, name: name, typ: makeUnknown(), isPublic: true)
-            discard sema.globalScope.define(sym)
+      # Imports handled in second pass after all declarations are registered
+      discard
     of dkInterface:
       # Register interface for conformance checking
       sema.interfaceTable[decl.declInterfaceName] = decl
@@ -641,6 +632,26 @@ proc collectGlobals*(sema: var Sema) =
   for decl in sema.module.items:
     if decl.kind == dkConst:
       discard sema.constFoldConstDecl(decl)
+  # Third pass: register imports after all real declarations are known
+  for decl in sema.module.items:
+    if decl.kind == dkUse:
+      if decl.declUsePath.len > 0:
+        case decl.declUseKind
+        of ukMulti:
+          for name in decl.declUseNames:
+            if sema.globalScope.lookup(name) == nil:
+              let sym = Symbol(kind: skFunc, name: name, typ: makeUnknown(), isPublic: true)
+              discard sema.globalScope.define(sym)
+        of ukGlob:
+          let name = decl.declUsePath[^1]
+          if sema.globalScope.lookup(name) == nil:
+            let sym = Symbol(kind: skModule, name: name, typ: makeUnknown(), isPublic: true)
+            discard sema.globalScope.define(sym)
+        of ukSingle:
+          let name = decl.declUsePath[^1]
+          if sema.globalScope.lookup(name) == nil:
+            let sym = Symbol(kind: skFunc, name: name, typ: makeUnknown(), isPublic: true)
+            discard sema.globalScope.define(sym)
 
 # ---------------------------------------------------------------------------
 # Expression type checking
@@ -1085,7 +1096,14 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
             sema.emitError(expr.loc, &"struct '{objType.name}' has no field '{expr.exprFieldName}'")
           elif sym.decl.kind == dkEnum:
             # Algebraic enum fields
-            if expr.exprFieldName == "tag":
+            var hasData = false
+            for v in sym.decl.declEnumVariants:
+              if v.fields.len > 0 or v.namedFields.len > 0:
+                hasData = true
+                break
+            if not hasData and expr.exprFieldName == "tag":
+              return makeNamed(objType.name)
+            elif expr.exprFieldName == "tag":
               return makeNamed(objType.name & "_Tag")
             elif expr.exprFieldName == "data":
               return makeNamed(objType.name & "_Data")

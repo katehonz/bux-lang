@@ -22,3 +22,12 @@ build/
 _test_tmp_pkg/
 test_pkg/
 examples_pkg/
+
+# Temporary test directories
+_test_*/
+
+# Backup files
+*.bak
+
+# Log files
+*.log

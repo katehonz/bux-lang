@@ -400,7 +400,14 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
                 else: return makeUnknown()
         of dkEnum:
           # Algebraic enum fields: tag and data
-          if expr.exprFieldName == "tag":
+          var hasData = false
+          for v in decl.declEnumVariants:
+            if v.fields.len > 0 or v.namedFields.len > 0:
+              hasData = true
+              break
+          if not hasData and expr.exprFieldName == "tag":
+            return makeNamed(objType.name)
+          elif expr.exprFieldName == "tag":
             return makeNamed(objType.name & "_Tag")
           elif expr.exprFieldName == "data":
             return makeNamed(objType.name & "_Data")
@@ -670,6 +677,17 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   of ekField:
     let objType = ctx.resolveExprType(expr.exprFieldObj)
     let base = ctx.lowerExpr(expr.exprFieldObj)
+    # Simple enum .tag is the enum value itself
+    if objType.kind == tkNamed and expr.exprFieldName == "tag":
+      let sym = ctx.globalScope.lookup(objType.name)
+      if sym != nil and sym.decl != nil and sym.decl.kind == dkEnum:
+        var hasData = false
+        for v in sym.decl.declEnumVariants:
+          if v.fields.len > 0 or v.namedFields.len > 0:
+            hasData = true
+            break
+        if not hasData:
+          return base
     # Auto-dereference pointer types for field access
     if objType.isPointer:
       let arrowPtr = HirNode(kind: hArrowField, arrowFieldBase: base,
@@ -703,9 +721,6 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                    typ: makeVoid(), loc: loc)
 
   of ekStructInit:
-    var fields: seq[tuple[name: string, value: HirNode]] = @[]
-    for f in expr.exprStructInitFields:
-      fields.add((f.name, ctx.lowerExpr(f.value)))
     var structName = expr.exprStructInitName
     if expr.exprStructInitTypeArgs.len > 0:
       var suffix = ""
@@ -714,6 +729,24 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         let argType = ctx.resolveTypeExpr(targ)
         suffix.add(argType.toString)
       structName = structName & "_" & suffix
+    # Simple enum init: EnumName { tag: EnumName_Variant } -> EnumName_Variant
+    var enumDecl: Decl = nil
+    let enumSym = ctx.globalScope.lookup(structName)
+    if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+      enumDecl = enumSym.decl
+    var isSimple = false
+    if enumDecl != nil:
+      for v in enumDecl.declEnumVariants:
+        if v.fields.len > 0 or v.namedFields.len > 0:
+          isSimple = true
+          break
+      isSimple = not isSimple
+    if isSimple and expr.exprStructInitFields.len == 1 and expr.exprStructInitFields[0].name == "tag":
+      let variantExpr = ctx.lowerExpr(expr.exprStructInitFields[0].value)
+      return variantExpr
+    var fields: seq[tuple[name: string, value: HirNode]] = @[]
+    for f in expr.exprStructInitFields:
+      fields.add((f.name, ctx.lowerExpr(f.value)))
     return HirNode(kind: hStructInit, structInitName: structName,
                    structInitFields: fields, typ: typ, loc: loc)
 

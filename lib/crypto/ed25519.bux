@@ -27,17 +27,17 @@ func Ed25519_Keypair(pubKey: *void, privKey: *void) -> bool {
 
 // Convenience: generate and return base64-encoded keypair
 func Ed25519_KeypairBase64() -> String {
-    let pub: *void = Alloc(ED25519_PUBKEY_SIZE as uint);
+    let pubBuf: *void = Alloc(ED25519_PUBKEY_SIZE as uint);
     let priv: *void = Alloc(ED25519_PRIVKEY_SIZE as uint);
-    if bux_ed25519_keypair(pub, priv) != 1 {
-        Free(pub);
+    if bux_ed25519_keypair(pubBuf, priv) != 1 {
+        Free(pubBuf);
         Free(priv);
         return "";
     }
     // Return "pub_b64:priv_b64"
-    let pubB64: String = bux_base64_encode(pub as String, ED25519_PUBKEY_SIZE);
+    let pubB64: String = bux_base64_encode(pubBuf as String, ED25519_PUBKEY_SIZE);
     let privB64: String = bux_base64_encode(priv as String, ED25519_PRIVKEY_SIZE);
-    Free(pub);
+    Free(pubBuf);
     Free(priv);
     let pair: String = String_Concat(pubB64, ":");
     return String_Concat(pair, privB64);
