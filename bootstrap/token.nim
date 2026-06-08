@@ -25,6 +25,9 @@ type
     tkContinue        # continue
     tkReturn          # return
     tkMatch           # match
+    tkSwitch          # switch
+    tkCase            # case
+    tkDefault         # default
 
     ##Declaration keywords
     tkFunc            # func
@@ -150,7 +153,7 @@ type
 proc isKeyword*(kind: TokenKind): bool =
   case kind
   of tkIf, tkElse, tkWhile, tkDo, tkLoop, tkFor, tkIn,
-     tkBreak, tkContinue, tkReturn, tkMatch,
+     tkBreak, tkContinue, tkReturn, tkMatch, tkSwitch, tkCase, tkDefault,
      tkFunc, tkLet, tkVar, tkConst, tkType, tkStruct, tkEnum,
      tkUnion, tkInterface, tkExtend, tkModule, tkImport,
        tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkBorrow, tkDiscard, tkAsync, tkAwait, tkSpawn, tkStaticAssert, tkComptime, tkDyn, tkDefer:
@@ -201,6 +204,9 @@ proc keywordKind*(text: string): TokenKind =
   of "continue": tkContinue
   of "return": tkReturn
   of "match": tkMatch
+  of "switch": tkSwitch
+  of "case": tkCase
+  of "default": tkDefault
   of "as": tkAs
   of "is": tkIs
   of "null": tkNull
@@ -242,6 +248,9 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkContinue: "'continue'"
   of tkReturn: "'return'"
   of tkMatch: "'match'"
+  of tkSwitch: "'switch'"
+  of tkCase: "'case'"
+  of tkDefault: "'default'"
   of tkFunc: "'func'"
   of tkLet: "'let'"
   of tkVar: "'var'"

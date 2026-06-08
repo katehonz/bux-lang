@@ -1338,6 +1338,14 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
   of skDefer:
     discard sema.checkExpr(stmt.stmtDeferBody, scope)
     return makeVoid()
+  of skSwitch:
+    discard sema.checkExpr(stmt.stmtSwitchExpr, scope)
+    for caseBranch in stmt.stmtSwitchCases:
+      discard sema.checkExpr(caseBranch.caseValue, scope)
+      discard sema.checkStmt(Stmt(kind: skExpr, loc: caseBranch.caseBody.loc, stmtExpr: Expr(kind: ekBlock, loc: caseBranch.caseBody.loc, exprBlock: caseBranch.caseBody)), scope)
+    if stmt.stmtSwitchDefault != nil:
+      discard sema.checkStmt(Stmt(kind: skExpr, loc: stmt.stmtSwitchDefault.loc, stmtExpr: Expr(kind: ekBlock, loc: stmt.stmtSwitchDefault.loc, exprBlock: stmt.stmtSwitchDefault)), scope)
+    return makeVoid()
   of skDecl:
     # Local declaration inside block
     case stmt.stmtDecl.kind

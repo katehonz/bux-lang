@@ -855,6 +855,79 @@ func parserParseStmt(p: *Parser) -> *Stmt {
         return s;
     }
 
+    // switch
+    if kind == tkSwitch {
+        discard parserAdvance(p);
+        p.structInitAllowed = false;
+        let subject: *Expr = parserParseExpr(p);
+        p.structInitAllowed = true;
+        while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+        discard parserExpect(p, tkLBrace, "expected '{' to start switch body");
+        var caseBlock: *Block = bux_alloc(sizeof(Block)) as *Block;
+        caseBlock.line = line;
+        caseBlock.column = col;
+        caseBlock.stmtCount = 0;
+        caseBlock.firstStmt = null as *Stmt;
+        caseBlock.lastStmt = null as *Stmt;
+        var defaultBody: *Block = null as *Block;
+        while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+            while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+            if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile { break; }
+            if parserCheck(p, tkDefault) {
+                discard parserAdvance(p);
+                discard parserExpect(p, tkColon, "expected ':' after default");
+                let defaultStmt: *Stmt = parserParseStmt(p);
+                defaultBody = bux_alloc(sizeof(Block)) as *Block;
+                defaultBody.line = defaultStmt.line;
+                defaultBody.column = defaultStmt.column;
+                defaultBody.stmtCount = 1;
+                defaultBody.firstStmt = defaultStmt;
+                defaultBody.lastStmt = defaultStmt;
+                defaultStmt.nextStmt = null as *Stmt;
+                continue;
+            }
+            if parserCheck(p, tkCase) {
+                discard parserAdvance(p);
+                let caseVal: *Expr = parserParseExpr(p);
+                discard parserExpect(p, tkColon, "expected ':' after case value");
+                let caseStmt: *Stmt = parserParseStmt(p);
+                let caseBody: *Block = bux_alloc(sizeof(Block)) as *Block;
+                caseBody.line = caseStmt.line;
+                caseBody.column = caseStmt.column;
+                caseBody.stmtCount = 1;
+                caseBody.firstStmt = caseStmt;
+                caseBody.lastStmt = caseStmt;
+                caseStmt.nextStmt = null as *Stmt;
+                let c: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+                c.kind = skExpr;
+                c.line = caseVal.line;
+                c.column = caseVal.column;
+                c.child1 = caseVal;
+                c.refStmtBlock = caseBody;
+                c.nextStmt = null as *Stmt;
+                if caseBlock.firstStmt == null as *Stmt {
+                    caseBlock.firstStmt = c;
+                    caseBlock.lastStmt = c;
+                } else {
+                    caseBlock.lastStmt.nextStmt = c;
+                    caseBlock.lastStmt = c;
+                }
+                caseBlock.stmtCount = caseBlock.stmtCount + 1;
+                continue;
+            }
+            discard parserAdvance(p);
+        }
+        discard parserExpect(p, tkRBrace, "expected '}' to close switch");
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skSwitch;
+        s.line = line;
+        s.column = col;
+        s.child1 = subject;
+        s.refStmtBlock = caseBlock;
+        s.refStmtElse = defaultBody;
+        return s;
+    }
+
     // Expression statement
     if kind == tkNewLine || kind == tkSemicolon {
         discard parserAdvance(p);

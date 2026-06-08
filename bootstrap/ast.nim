@@ -239,12 +239,18 @@ type
     skComptime
     skEmit
     skDefer
+    skSwitch
     skDecl
 
   ElseIf* = object
     loc*: SourceLocation
     cond*: Expr
     blk*: Block
+
+  SwitchCase* = object
+    loc*: SourceLocation
+    caseValue*: Expr
+    caseBody*: Block
 
   Block* = ref object
     loc*: SourceLocation
@@ -301,6 +307,10 @@ type
       stmtEmitEvaluated*: string  ## filled by sema CTFE
     of skDefer:
       stmtDeferBody*: Expr
+    of skSwitch:
+      stmtSwitchExpr*: Expr
+      stmtSwitchCases*: seq[SwitchCase]
+      stmtSwitchDefault*: Block
     of skDecl:
       stmtDecl*: Decl
 

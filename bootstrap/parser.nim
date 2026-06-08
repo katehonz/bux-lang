@@ -901,6 +901,37 @@ proc parseStmt(p: var Parser): Stmt =
         discard p.advance()
     discard p.expect(tkRBrace, "expected '}' to close match")
     return Stmt(kind: skExpr, loc: loc, stmtExpr: Expr(kind: ekMatch, loc: loc, exprMatchSubject: subject, exprMatchArms: arms))
+  of tkSwitch:
+    discard p.advance()
+    p.structInitAllowed = false
+    let subject = p.parseExpr()
+    p.structInitAllowed = true
+    while p.check(tkNewLine):
+      discard p.advance()
+    discard p.expect(tkLBrace, "expected '{' to start switch body")
+    var cases: seq[SwitchCase] = @[]
+    var defaultBlock: Block = nil
+    while not p.check(tkRBrace) and not p.isAtEnd:
+      while p.check(tkNewLine):
+        discard p.advance()
+      if p.check(tkRBrace) or p.isAtEnd:
+        break
+      if p.check(tkDefault):
+        discard p.advance()
+        discard p.expect(tkColon, "expected ':' after default")
+        defaultBlock = Block(loc: p.currentLoc, stmts: @[p.parseStmt()])
+        continue
+      if p.check(tkCase):
+        discard p.advance()
+        let caseVal = p.parseExpr()
+        discard p.expect(tkColon, "expected ':' after case value")
+        let caseBody = Block(loc: p.currentLoc, stmts: @[p.parseStmt()])
+        cases.add(SwitchCase(loc: caseVal.loc, caseValue: caseVal, caseBody: caseBody))
+        continue
+      # Unknown token in switch body — skip
+      discard p.advance()
+    discard p.expect(tkRBrace, "expected '}' to close switch")
+    return Stmt(kind: skSwitch, loc: loc, stmtSwitchExpr: subject, stmtSwitchCases: cases, stmtSwitchDefault: defaultBlock)
   of tkReturn:
     discard p.advance()
     var val: Expr = nil

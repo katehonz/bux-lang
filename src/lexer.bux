@@ -302,6 +302,9 @@ func lexKeywordKind(text: String) -> int {
     if String_Eq(text, "sizeof") { return tkSizeOf; }
     if String_Eq(text, "discard") { return tkDiscard; }
     if String_Eq(text, "defer") { return tkDefer; }
+    if String_Eq(text, "switch") { return tkSwitch; }
+    if String_Eq(text, "case") { return tkCase; }
+    if String_Eq(text, "default") { return tkDefault; }
     if String_Eq(text, "async") { return tkAsync; }
     if String_Eq(text, "await") { return tkAwait; }
     if String_Eq(text, "spawn") { return tkSpawn; }

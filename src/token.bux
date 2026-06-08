@@ -139,6 +139,9 @@ const tkAwait: int = 103;
 const tkSpawn: int = 104;
 const tkDiscard: int = 105;
 const tkDefer: int = 106;
+const tkSwitch: int = 107;
+const tkCase: int = 108;
+const tkDefault: int = 109;
 
 // ---------------------------------------------------------------------------
 // Token struct

@@ -1127,6 +1127,24 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     return ctx.flushPending(HirNode(kind: hMatch, matchSubject: subject, matchArms: arms,
                    typ: makeVoid(), loc: loc))
 
+  of skSwitch:
+    let subject = ctx.lowerExpr(stmt.stmtSwitchExpr)
+    var current: HirNode = nil
+    # Build if-else chain from bottom up (default first)
+    if stmt.stmtSwitchDefault != nil:
+      current = ctx.lowerBlock(stmt.stmtSwitchDefault)
+    # Cases in reverse order
+    for i in countdown(stmt.stmtSwitchCases.len - 1, 0):
+      let caseBranch = stmt.stmtSwitchCases[i]
+      let caseVal = ctx.lowerExpr(caseBranch.caseValue)
+      let caseBody = ctx.lowerBlock(caseBranch.caseBody)
+      let cond = HirNode(kind: hBinary, binaryOp: tkEq,
+                         binaryLeft: subject, binaryRight: caseVal,
+                         typ: makeBool(), loc: caseBranch.loc)
+      current = HirNode(kind: hIf, ifCond: cond, ifThen: caseBody, ifElse: current,
+                        typ: makeVoid(), loc: caseBranch.loc)
+    return ctx.flushPending(current)
+
   of skDefer:
     let body = ctx.lowerExpr(stmt.stmtDeferBody)
     ctx.deferStmts.add(body)

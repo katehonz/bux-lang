@@ -491,6 +491,72 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         return n;
     }
 
+    // Switch — desugar to if-else chain
+    if kind == skSwitch {
+        let subject: *HirNode = Lcx_LowerExpr(ctx, stmt.child1);
+        var current: *HirNode = null as *HirNode;
+        // Default first (bottom of chain)
+        if stmt.refStmtElse != null as *Block {
+            current = Lcx_LowerBlock(ctx, stmt.refStmtElse, -1);
+        }
+        // Cases in reverse order (from caseBlock)
+        if stmt.refStmtBlock != null as *Block {
+            let caseBlock: *Block = stmt.refStmtBlock;
+            var caseCount: int = caseBlock.stmtCount;
+            // Collect cases into array for reverse iteration
+            var c0: *Stmt = null as *Stmt;
+            var c1: *Stmt = null as *Stmt;
+            var c2: *Stmt = null as *Stmt;
+            var c3: *Stmt = null as *Stmt;
+            var c4: *Stmt = null as *Stmt;
+            var c5: *Stmt = null as *Stmt;
+            var c6: *Stmt = null as *Stmt;
+            var c7: *Stmt = null as *Stmt;
+            var ci: int = 0;
+            var cs: *Stmt = caseBlock.firstStmt;
+            while cs != null as *Stmt && ci < 8 {
+                if ci == 0 { c0 = cs; }
+                if ci == 1 { c1 = cs; }
+                if ci == 2 { c2 = cs; }
+                if ci == 3 { c3 = cs; }
+                if ci == 4 { c4 = cs; }
+                if ci == 5 { c5 = cs; }
+                if ci == 6 { c6 = cs; }
+                if ci == 7 { c7 = cs; }
+                ci = ci + 1;
+                cs = cs.nextStmt;
+            }
+            while caseCount > 0 {
+                caseCount = caseCount - 1;
+                var c: *Stmt = null as *Stmt;
+                if caseCount == 0 { c = c0; }
+                if caseCount == 1 { c = c1; }
+                if caseCount == 2 { c = c2; }
+                if caseCount == 3 { c = c3; }
+                if caseCount == 4 { c = c4; }
+                if caseCount == 5 { c = c5; }
+                if caseCount == 6 { c = c6; }
+                if caseCount == 7 { c = c7; }
+                if c != null as *Stmt {
+                    let caseVal: *HirNode = Lcx_LowerExpr(ctx, c.child1);
+                    let caseBody: *HirNode = Lcx_LowerBlock(ctx, c.refStmtBlock, -1);
+                    let cond: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    cond.kind = hBinary;
+                    cond.intValue = 74;  // tkEq
+                    cond.child1 = subject;
+                    cond.child2 = caseVal;
+                    let ifNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    ifNode.kind = hIf;
+                    ifNode.child1 = cond;
+                    ifNode.child2 = caseBody;
+                    ifNode.child3 = current;
+                    current = ifNode;
+                }
+            }
+        }
+        return current;
+    }
+
     return n;
 }
 
