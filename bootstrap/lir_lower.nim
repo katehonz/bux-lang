@@ -105,6 +105,11 @@ proc typeToCStr(typ: Type): string =
     of "float64": return "double"
     of "bool": return "bool"
     else: return typ.name
+  of tkFunc:
+    if typ.inner.len == 0: return "void (*)(void)"
+    let params = typ.inner[0..^2].mapIt(typeToCStr(it)).join(", ")
+    let ret = typeToCStr(typ.inner[^1])
+    return ret & " (*)(" & params & ")"
   else: return "int"
 
 proc hirTypeToC(ctx: var LowerToLirCtx, node: HirNode): string =

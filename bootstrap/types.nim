@@ -183,6 +183,10 @@ proc isAssignableTo*(a, b: Type): bool =
       return true
     if b.isDynRef and a.isMutRef:
       return true
+  # &mut func(...) -> func(...) (function pointer decay)
+  if a.isMutRef and b.kind == tkFunc:
+    if a.inner.len > 0 and a.inner[0].kind == tkFunc:
+      return true
   return false
 
 # String representation

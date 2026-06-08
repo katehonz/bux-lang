@@ -33,6 +33,7 @@ type
     tekDynRef    ## &dyn Trait — trait object (fat pointer)
     tekTuple
     tekSelf
+    tekFunc
 
   TypeExpr* = ref object
     loc*: SourceLocation
@@ -54,6 +55,9 @@ type
       tupleElements*: seq[TypeExpr]
     of tekSelf:
       discard
+    of tekFunc:
+      funcParams*: seq[TypeExpr]
+      funcRet*: TypeExpr
 
   # ---------------------------------------------------------------------------
   # Patterns

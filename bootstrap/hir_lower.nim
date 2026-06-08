@@ -264,6 +264,12 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
   of tekDynRef: return makeDynRef(te.dynInterface)
   of tekPointer: return makePointer(ctx.resolveTypeExpr(te.pointerPointee))
   of tekSlice: return makeSlice(ctx.resolveTypeExpr(te.sliceElement))
+  of tekFunc:
+    var params: seq[Type] = @[]
+    for p in te.funcParams:
+      params.add(ctx.resolveTypeExpr(p))
+    let ret = if te.funcRet != nil: ctx.resolveTypeExpr(te.funcRet) else: makeVoid()
+    return makeFunc(params, ret)
   else: return makeUnknown()
 
 # Forward declarations
@@ -320,7 +326,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
   of ekUnary:
     case expr.exprUnaryOp
     of tkBang: return makeBool()
-    of tkAmp: return makePointer(ctx.resolveExprType(expr.exprUnaryOperand))
+    of tkAmp: return makeMutRef(ctx.resolveExprType(expr.exprUnaryOperand))
     of tkStar:
       let inner = ctx.resolveExprType(expr.exprUnaryOperand)
       if inner.isPointer: return inner.inner[0]

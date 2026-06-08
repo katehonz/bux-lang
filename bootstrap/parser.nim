@@ -248,6 +248,20 @@ proc parseBaseType(p: var Parser): TypeExpr =
         discard p.advance()
     discard p.expect(tkRParen, "expected ')' to close tuple type")
     return TypeExpr(kind: tekTuple, loc: loc, tupleElements: elems)
+  of tkFunc:
+    discard p.advance()  # func
+    discard p.expect(tkLParen, "expected '(' after 'func'")
+    var params: seq[TypeExpr] = @[]
+    while not p.check(tkRParen) and not p.isAtEnd:
+      params.add(p.parseType())
+      if p.check(tkComma):
+        discard p.advance()
+    discard p.expect(tkRParen, "expected ')' to close func param types")
+    var ret: TypeExpr = nil
+    if p.check(tkArrow):
+      discard p.advance()
+      ret = p.parseType()
+    return TypeExpr(kind: tekFunc, loc: loc, funcParams: params, funcRet: ret)
   else:
     p.emitError(loc, "expected type expression")
     return TypeExpr(kind: tekNamed, loc: loc, typeName: "")

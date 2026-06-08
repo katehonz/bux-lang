@@ -126,6 +126,10 @@ proc typeExprReferencesTypeParam(te: TypeExpr, name: string): bool =
   of tekTuple:
     for elem in te.tupleElements:
       if typeExprReferencesTypeParam(elem, name): return true
+  of tekFunc:
+    for p in te.funcParams:
+      if typeExprReferencesTypeParam(p, name): return true
+    return typeExprReferencesTypeParam(te.funcRet, name)
   of tekSelf:
     return false
 
@@ -278,6 +282,12 @@ proc resolveType(sema: var Sema, te: TypeExpr): Type =
     return makeTuple(elems)
   of tekSelf:
     return makeNamed("self")
+  of tekFunc:
+    var params: seq[Type] = @[]
+    for p in te.funcParams:
+      params.add(sema.resolveType(p))
+    let ret = if te.funcRet != nil: sema.resolveType(te.funcRet) else: makeVoid()
+    return makeFunc(params, ret)
 
 # ---------------------------------------------------------------------------
 # First pass: collect global symbols
