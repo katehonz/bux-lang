@@ -352,6 +352,19 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     if objType.isPointer and objType.inner.len > 0:
       objType = objType.inner[0]
     if objType.kind == tkNamed:
+      # Check if this is a _Data union field access
+      if objType.name.endsWith("_Data"):
+        let enumName = objType.name[0..^6]
+        let enumSym = ctx.globalScope.lookup(enumName)
+        if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+          for variant in enumSym.decl.declEnumVariants:
+            for i, f in variant.fields:
+              let fieldName = variant.name & "_" & $i
+              if fieldName == expr.exprFieldName:
+                return ctx.resolveTypeExpr(f)
+            for nf in variant.namedFields:
+              if nf.name == expr.exprFieldName:
+                return ctx.resolveTypeExpr(nf.ftype)
       var sym = ctx.globalScope.lookup(objType.name)
       var decl = if sym != nil: sym.decl else: nil
       # If the type is a monomorphized generic struct instance, look up the base
