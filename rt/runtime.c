@@ -351,12 +351,14 @@ void bux_sb_append_char(BuxStringBuilder* sb, char c) {
 
 const char* bux_sb_build(BuxStringBuilder* sb) {
     if (!sb) return "";
-    return sb->buf;
+    const char* buf = sb->buf;
+    sb->buf = NULL;  // detach — ownership transferred to caller
+    return buf;
 }
 
 void bux_sb_free(BuxStringBuilder* sb) {
     if (!sb) return;
-    bux_free(sb->buf);
+    bux_free(sb->buf);  // safe: NULL if bux_sb_build already detached
     bux_free(sb);
 }
 
