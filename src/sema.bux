@@ -46,9 +46,52 @@ func Sema_ZeroInitSymbol(sym: *Symbol) {
     sym.name = "";
     sym.typeKind = 0;
     sym.typeName = "";
+    sym.refType = null as *TypeExpr;
     sym.isMutable = false;
     sym.isPublic = false;
     sym.decl = null as *Decl;
+}
+
+// ---------------------------------------------------------------------------
+// Build a tekFunc TypeExpr from a function declaration
+// ---------------------------------------------------------------------------
+
+func Sema_BuildFuncTypeExprFromDecl(decl: *Decl) -> *TypeExpr {
+    let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+    te.kind = tekFunc;
+    te.line = decl.line;
+    te.column = decl.column;
+    te.funcRet = decl.retType;
+    te.funcParamCount = decl.paramCount;
+    var head: *TypeExprList = null as *TypeExprList;
+    var tail: *TypeExprList = null as *TypeExprList;
+    var i: int = 0;
+    while i < decl.paramCount && i < 9 {
+        var p: Param;
+        if i == 0 { p = decl.param0; }
+        else if i == 1 { p = decl.param1; }
+        else if i == 2 { p = decl.param2; }
+        else if i == 3 { p = decl.param3; }
+        else if i == 4 { p = decl.param4; }
+        else if i == 5 { p = decl.param5; }
+        else if i == 6 { p = decl.param6; }
+        else if i == 7 { p = decl.param7; }
+        else { p = decl.param8; }
+        if p.refParamType != null as *TypeExpr {
+            let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
+            node.te = p.refParamType;
+            node.next = null as *TypeExprList;
+            if head == null as *TypeExprList {
+                head = node;
+            } else {
+                tail.next = node;
+            }
+            tail = node;
+        }
+        i = i + 1;
+    }
+    te.funcParams = head;
+    return te;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +104,10 @@ func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
 
     if te.kind == tekPointer {
         return tyPointer;
+    }
+
+    if te.kind == tekFunc {
+        return tyFunc;
     }
 
     if String_Eq(name, "void") { return tyVoid; }
@@ -271,7 +318,9 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             Sema_EmitError(sema, expr.line, expr.column, errMsg2);
             return tyUnknown;
         }
-        if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
+        if sym.refType != null as *TypeExpr {
+            expr.refType = sym.refType;
+        } else if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
             let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
             te.kind = tekNamed;
             te.typeName = sym.typeName;
@@ -318,7 +367,12 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         let op: int = expr.intValue;
         if op == tkBang { return tyBool; }
         if op == tkStar { return tyUnknown; } // dereference — resolve pointee
-        if op == tkAmp { return tyPointer; }
+        if op == tkAmp {
+            if expr.child1.refType != null as *TypeExpr {
+                expr.refType = expr.child1.refType;
+            }
+            return tyPointer;
+        }
         return operand;
     }
 
@@ -332,14 +386,23 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
 
     // Call
     if kind == ekCall {
-        discard Sema_CheckExpr(sema, expr.child1);
+        let calleeType: int = Sema_CheckExpr(sema, expr.child1);
         Sema_ResolveCallArgs(sema, expr);
         var arg: *ExprList = expr.callArgs;
         while arg != null as *ExprList {
             discard Sema_CheckExpr(sema, arg.expr);
             arg = arg.next;
         }
-        // Try to resolve return type from function declaration
+        // Indirect call through function-typed value
+        if calleeType == tyFunc {
+            if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekFunc {
+                if expr.child1.refType.funcRet != null as *TypeExpr {
+                    return Sema_ResolveType(sema, expr.child1.refType.funcRet);
+                }
+                return tyVoid;
+            }
+        }
+        // Direct call to named function
         if expr.child1.kind == ekIdent {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
             if sym.kind == skFunc {
@@ -421,7 +484,9 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         sym.name = stmt.strValue;
         sym.typeKind = initType;
         sym.typeName = "";
+        sym.refType = null as *TypeExpr;
         if stmt.refStmtType != null as *TypeExpr {
+            sym.refType = stmt.refStmtType;
             if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
                 sym.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
             } else {
@@ -560,6 +625,7 @@ func Sema_CollectGlobals(sema: *Sema) {
             sym.kind = skFunc;
             sym.name = decl.strValue;
             sym.typeKind = tyFunc;
+            sym.refType = Sema_BuildFuncTypeExprFromDecl(decl);
             sym.isPublic = decl.isPublic;
             sym.decl = decl;
             discard Scope_Define(sema.scope, sym);
@@ -629,6 +695,7 @@ func Sema_CollectGlobals(sema: *Sema) {
             if decl.constType != null as *TypeExpr {
                 sym.typeKind = Sema_ResolveType(sema, decl.constType);
                 sym.typeName = decl.constType.typeName;
+                sym.refType = decl.constType;
             } else {
                 sym.typeKind = tyInt;
             }
@@ -810,6 +877,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 pSym.kind = skVar;
                 if p != null as *Param && p.refParamType != null as *TypeExpr {
                     pSym.typeKind = Sema_ResolveType(s, p.refParamType);
+                    pSym.refType = p.refParamType;
                     if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
                         pSym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
                     } else {

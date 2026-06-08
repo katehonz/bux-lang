@@ -31,7 +31,17 @@ func CBackend_TypeToC(kind: int) -> String {
     if kind == tyFloat64 { return "float64"; }
     if kind == tyPointer { return "void*"; }
     if kind == tyNamed { return "int"; }
+    if kind == tyFunc { return "void (*)(void)"; }
     return "int";
+}
+
+// Emit a C parameter/variable declaration, embedding the name inside function-pointer syntax.
+func CBE_CParamDecl(typeStr: String, name: String) -> String {
+    if String_Contains(typeStr, "(*)") {
+        let replacement: String = String_Concat("(*", String_Concat(name, ")"));
+        return String_Replace(typeStr, "(*)", replacement);
+    }
+    return String_Concat(typeStr, String_Concat(" ", name));
 }
 
 func CBackend_OpToC(op: int) -> String {
@@ -263,6 +273,38 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
+    // Indirect call through function pointer
+    if kind == hCallIndirect {
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, "(");
+        var needsComma: bool = false;
+        if node.child2 != null as *HirNode {
+            CBE_EmitExpr(cbe, node.child2);
+            needsComma = true;
+        }
+        if node.child3 != null as *HirNode {
+            if needsComma {
+                StringBuilder_Append(&cbe.sb, ", ");
+            }
+            CBE_EmitExpr(cbe, node.child3);
+            needsComma = true;
+        }
+        // Emit extra args from linked list
+        var ai: int = 0;
+        var curExtra: *HirArgList = node.extraData as *HirArgList;
+        while ai < node.extraCount {
+            if needsComma {
+                StringBuilder_Append(&cbe.sb, ", ");
+            }
+            CBE_EmitExpr(cbe, curExtra.node);
+            needsComma = true;
+            curExtra = curExtra.next;
+            ai = ai + 1;
+        }
+        StringBuilder_Append(&cbe.sb, ")");
+        return;
+    }
+
     // spawn Callee(args)
     if kind == hSpawn {
         StringBuilder_Append(&cbe.sb, "bux_async_spawn(");
@@ -310,13 +352,11 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
 
     // Alloca
     if kind == hAlloca {
+        var ct: String = "int";
         if !String_Eq(node.typeName, "") {
-            StringBuilder_Append(&cbe.sb, node.typeName);
-        } else {
-            StringBuilder_Append(&cbe.sb, "int");
+            ct = node.typeName;
         }
-        StringBuilder_Append(&cbe.sb, " ");
-        StringBuilder_Append(&cbe.sb, node.strValue);
+        StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.strValue));
         return;
     }
 
@@ -324,13 +364,11 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     if kind == hStore {
         if node.child1 != null as *HirNode && node.child1.kind == hAlloca {
             // Declaration with initializer: Type x = value;
+            var ct: String = CBackend_TypeToC(node.child1.intValue);
             if !String_Eq(node.child1.typeName, "") {
-                StringBuilder_Append(&cbe.sb, node.child1.typeName);
-            } else {
-                StringBuilder_Append(&cbe.sb, CBackend_TypeToC(node.child1.intValue));
+                ct = node.child1.typeName;
             }
-            StringBuilder_Append(&cbe.sb, " ");
-            StringBuilder_Append(&cbe.sb, node.child1.strValue);
+            StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.child1.strValue));
             if node.child2 != null as *HirNode {
                 StringBuilder_Append(&cbe.sb, " = ");
                 CBE_EmitExpr(cbe, node.child2);
@@ -624,26 +662,11 @@ func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
         if i == 6 { pname = f.param6.name; ptype = f.param6.typeName; }
         if i == 7 { pname = f.param7.name; ptype = f.param7.typeName; }
         if i == 8 { pname = f.param8.name; ptype = f.param8.typeName; }
-        // Emit type
-        if String_Eq(ptype, "String") || String_Eq(ptype, "str") {
-            StringBuilder_Append(&cbe.sb, "String ");
-        } else if String_Eq(ptype, "bool") {
-            StringBuilder_Append(&cbe.sb, "bool ");
-        } else if String_Eq(ptype, "int") {
-            StringBuilder_Append(&cbe.sb, "int ");
-        } else if String_Eq(ptype, "int64") {
-            StringBuilder_Append(&cbe.sb, "int64 ");
-        } else if String_Eq(ptype, "uint") {
-            StringBuilder_Append(&cbe.sb, "uint ");
-        } else if String_Eq(ptype, "float64") {
-            StringBuilder_Append(&cbe.sb, "float64 ");
-        } else if !String_Eq(ptype, "") {
-            StringBuilder_Append(&cbe.sb, ptype);
-            StringBuilder_Append(&cbe.sb, " ");
-        } else {
-            StringBuilder_Append(&cbe.sb, "int "); // fallback
+        // Emit type + name
+        if String_Eq(ptype, "") {
+            ptype = "int";
         }
-        StringBuilder_Append(&cbe.sb, pname);
+        StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ptype, pname));
         i = i + 1;
     }
 

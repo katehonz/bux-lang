@@ -28,19 +28,28 @@ const tekSlice: int = 2;
 const tekPointer: int = 3;
 const tekTuple: int = 4;
 const tekSelf: int = 5;
+const tekFunc: int = 6;
+
+struct TypeExprList {
+    te: *TypeExpr,
+    next: *TypeExprList,
+}
 
 struct TypeExpr {
     kind: int,
     line: uint32,
     column: uint32,
-    typeName: String,        // for tekNamed
-    pathStr: String,         // for tekPath (segments joined with ::)
-    pathCount: int,          // number of path segments
-    typeArgName0: String,    // up to 2 type args
+    typeName: String,         // for tekNamed / diagnostic name for tekFunc
+    pathStr: String,          // for tekPath (segments joined with ::)
+    pathCount: int,           // number of path segments
+    typeArgName0: String,     // up to 2 type args
     typeArgName1: String,
     typeArgCount: int,
-    sliceElement: *TypeExpr, // for tekSlice
+    sliceElement: *TypeExpr,  // for tekSlice
     pointerPointee: *TypeExpr, // for tekPointer
+    funcParams: *TypeExprList, // for tekFunc
+    funcRet: *TypeExpr,        // for tekFunc
+    funcParamCount: int,       // for tekFunc
 }
 
 // ---------------------------------------------------------------------------

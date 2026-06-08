@@ -173,6 +173,45 @@ func parserParseType(p: *Parser) -> *TypeExpr {
         return te;
     }
 
+    // func(Params) -> Ret
+    if kindTok == tkFunc {
+        discard parserAdvance(p);
+        discard parserExpect(p, tkLParen, "expected '(' after 'func'");
+        var params: *TypeExprList = null as *TypeExprList;
+        var paramsTail: *TypeExprList = null as *TypeExprList;
+        var count: int = 0;
+        while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+            let paramTe: *TypeExpr = parserParseType(p);
+            let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
+            node.te = paramTe;
+            node.next = null as *TypeExprList;
+            if params == null as *TypeExprList {
+                params = node;
+            } else {
+                paramsTail.next = node;
+            }
+            paramsTail = node;
+            count = count + 1;
+            if parserCheck(p, tkComma) {
+                discard parserAdvance(p);
+            }
+        }
+        discard parserExpect(p, tkRParen, "expected ')' after func params");
+        var ret: *TypeExpr = null as *TypeExpr;
+        if parserCheck(p, tkArrow) {
+            discard parserAdvance(p);
+            ret = parserParseType(p);
+        }
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekFunc;
+        te.line = line;
+        te.column = col;
+        te.funcParams = params;
+        te.funcRet = ret;
+        te.funcParamCount = count;
+        return te;
+    }
+
     // name
     let nameTok: LexToken = parserExpect(p, tkIdent, "expected type name");
     let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;

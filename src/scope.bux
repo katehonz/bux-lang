@@ -16,6 +16,7 @@ struct Symbol {
     name: String;
     typeKind: int;
     typeName: String;
+    refType: *TypeExpr;     // original type expression (for func types, etc.)
     isMutable: bool;
     isPublic: bool;
     decl: *Decl;            // associated declaration (for funcs, structs, enums)
@@ -72,7 +73,7 @@ func Scope_Lookup(scope: *Scope, name: String) -> Symbol {
         }
         cur = cur.parent;
     }
-    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", isMutable: false, isPublic: false, decl: null as *Decl };
+    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
     return empty;
 }
 
@@ -84,7 +85,7 @@ func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
         }
         i = i + 1;
     }
-    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", isMutable: false, isPublic: false, decl: null as *Decl };
+    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
     return empty;
 }
 

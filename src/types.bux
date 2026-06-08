@@ -183,6 +183,7 @@ func Type_ToString(t: Type) -> String {
     if t.kind == tyNamed { return t.name; }
     if t.kind == tyTypeParam { return t.name; }
     if t.kind == tyPointer { return String_Concat("*", t.innerName1); }
+    if t.kind == tyFunc { return t.name; }
     return "?";
 }
 }
