@@ -1092,6 +1092,47 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     # The borrow checker validates before lowering
     return ctx.lowerExpr(expr.exprBorrowOperand)
 
+  of ekStringInterp:
+    # Desugar string interpolation to chained String_Concat calls with conversions
+    var resultNode: HirNode = nil
+    for i in 0 ..< expr.exprInterpExprs.len:
+      let textPart = expr.exprInterpTexts[i]
+      let exprPart = expr.exprInterpExprs[i]
+      # Text literal
+      var textNode = HirNode(kind: hLit,
+        litToken: Token(kind: tkStringLiteral, text: "\"" & textPart & "\"", loc: loc),
+        typ: makeStr(), loc: loc)
+      if resultNode == nil:
+        resultNode = textNode
+      else:
+        resultNode = hirCall("String_Concat", @[resultNode, textNode], makeStr(), loc)
+      # Expression part with conversion if needed
+      let loweredExpr = ctx.lowerExpr(exprPart)
+      let exprType = ctx.resolveExprType(exprPart)
+      var convertedExpr = loweredExpr
+      if exprType.kind == tkInt or exprType.kind == tkInt8 or exprType.kind == tkInt16 or
+         exprType.kind == tkInt32 or exprType.kind == tkInt64 or
+         exprType.kind == tkUInt or exprType.kind == tkUInt8 or exprType.kind == tkUInt16 or
+         exprType.kind == tkUInt32 or exprType.kind == tkUInt64:
+        convertedExpr = hirCall("String_FromInt", @[loweredExpr], makeStr(), loc)
+      elif exprType.kind == tkFloat32 or exprType.kind == tkFloat64:
+        convertedExpr = hirCall("String_FromFloat", @[loweredExpr], makeStr(), loc)
+      elif exprType.kind == tkBool:
+        convertedExpr = hirCall("String_FromBool", @[loweredExpr], makeStr(), loc)
+      elif exprType.kind == tkStr:
+        discard  # already a string
+      resultNode = hirCall("String_Concat", @[resultNode, convertedExpr], makeStr(), loc)
+    # Add final text part
+    let lastText = expr.exprInterpTexts[^1]
+    var lastTextNode = HirNode(kind: hLit,
+      litToken: Token(kind: tkStringLiteral, text: "\"" & lastText & "\"", loc: loc),
+      typ: makeStr(), loc: loc)
+    if resultNode == nil:
+      resultNode = lastTextNode
+    else:
+      resultNode = hirCall("String_Concat", @[resultNode, lastTextNode], makeStr(), loc)
+    return resultNode
+
   else:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
                    typ: makeVoid(), loc: loc)

@@ -1,5 +1,5 @@
 import std/strutils
-import token, source_location, ast
+import token, source_location, ast, lexer
 
 type
   ParserDiagnosticSeverity* = enum
@@ -47,6 +47,12 @@ proc advance(p: var Parser): Token =
   result = p.at
   if p.pos < p.tokens.len:
     inc p.pos
+
+proc hasErrors*(p: Parser): bool =
+  for d in p.diagnostics:
+    if d.severity == pdsError:
+      return true
+  return false
 
 proc check(p: Parser, kind: TokenKind): bool =
   p.peek() == kind
@@ -391,13 +397,77 @@ proc parseAssign(p: var Parser): Expr
 proc parseExpr(p: var Parser): Expr =
   p.parseAssign()
 
+proc parseStringInterpolation(p: var Parser, tok: Token): Expr =
+  ## Parse a string literal that contains {expr} interpolations.
+  let text = tok.text
+  # Only f"..." strings support interpolation; plain "...", backtick, and c8/c16/c32 are raw.
+  if text.len < 3 or text[0] != 'f' or text[1] != '"' or text[^1] != '"':
+    return newLiteralExpr(tok)
+  let inner = text[2 ..< ^1]  # strip f" ... "
+  var texts: seq[string] = @[]
+  var exprs: seq[Expr] = @[]
+  var i = 0
+  var currentText = ""
+  while i < inner.len:
+    if inner[i] == '\\' and i + 1 < inner.len:
+      if inner[i + 1] == '{':
+        currentText.add('{')
+        i += 2
+        continue
+      elif inner[i + 1] == '}':
+        currentText.add('}')
+        i += 2
+        continue
+    elif inner[i] == '{':
+      texts.add(currentText)
+      currentText = ""
+      var j = i + 1
+      var depth = 1
+      while j < inner.len and depth > 0:
+        if inner[j] == '{': depth += 1
+        elif inner[j] == '}': depth -= 1
+        j += 1
+      if depth != 0:
+        p.diagnostics.add(ParserDiagnostic(severity: pdsError, loc: tok.loc,
+          message: "unmatched '{' in string interpolation"))
+        return newLiteralExpr(tok)
+      let exprStr = inner[i + 1 ..< j - 1]
+      if exprStr.len == 0:
+        p.diagnostics.add(ParserDiagnostic(severity: pdsError, loc: tok.loc,
+          message: "empty interpolation {}"))
+        return newLiteralExpr(tok)
+      let lexRes = tokenize(exprStr, p.sourceName & "<interp>")
+      if lexRes.hasErrors:
+        p.diagnostics.add(ParserDiagnostic(severity: pdsError, loc: tok.loc,
+          message: "invalid expression in string interpolation: " & exprStr))
+        return newLiteralExpr(tok)
+      var subParser = initParser(lexRes.tokens, p.sourceName & "<interp>")
+      let expr = subParser.parseExpr()
+      if subParser.hasErrors:
+        for d in subParser.diagnostics:
+          p.diagnostics.add(ParserDiagnostic(severity: pdsError, loc: tok.loc,
+            message: "interpolation parse error: " & d.message))
+        return newLiteralExpr(tok)
+      exprs.add(expr)
+      i = j
+      continue
+    currentText.add(inner[i])
+    i += 1
+  texts.add(currentText)
+  if exprs.len == 0:
+    return newLiteralExpr(tok)
+  return newStringInterpExpr(texts, exprs, tok.loc)
+
 proc parsePrimary(p: var Parser): Expr =
   while p.check(tkNewLine):
     discard p.advance()
   let loc = p.currentLoc
   case p.peek()
   of tkIntLiteral, tkFloatLiteral, tkStringLiteral, tkCharLiteral, tkBoolLiteral:
-    return newLiteralExpr(p.advance())
+    let tok = p.advance()
+    if tok.kind == tkStringLiteral:
+      return parseStringInterpolation(p, tok)
+    return newLiteralExpr(tok)
   of tkSelf:
     discard p.advance()
     return Expr(kind: ekSelf, loc: loc)

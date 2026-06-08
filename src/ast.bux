@@ -95,6 +95,7 @@ const ekBlock: int = 21;
 const ekMatch: int = 22;
 const ekSpawn: int = 24;
 const ekAwait: int = 25;
+const ekStringInterp: int = 26;
 
 struct ExprList {
     expr: *Expr,

@@ -527,7 +527,10 @@ proc nextToken(lex: var Lexer): Token =
     discard lex.advance()
     return Token(kind: tkNewLine, text: "\n", loc: startLoc)
 
-  # String prefixes: c8" c16" c32" — must come before ident check
+  # String prefixes: f" c8" c16" c32" — must come before ident check
+  if c == 'f' and lex.peek(1) == '"':
+    discard lex.advance()  # f
+    return lex.scanString(startLoc, 1)
   if c == 'c' and lex.peek(1) in {'8', '1', '3'}:
     let d = lex.peek(1)
     if d == '8' and lex.peek(2) == '"':

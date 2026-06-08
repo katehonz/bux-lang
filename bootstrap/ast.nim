@@ -127,6 +127,7 @@ type
     ekBorrow        ## borrow &mut expr — explicit borrow expression
     ekBlock
     ekMatch
+    ekStringInterp
 
   MatchArm* = object
     loc*: SourceLocation
@@ -219,6 +220,9 @@ type
     of ekMatch:
       exprMatchSubject*: Expr
       exprMatchArms*: seq[MatchArm]
+    of ekStringInterp:
+      exprInterpTexts*: seq[string]
+      exprInterpExprs*: seq[Expr]
 
   # ---------------------------------------------------------------------------
   # Statements
@@ -458,3 +462,6 @@ proc newBinaryExpr*(op: TokenKind, left, right: Expr, loc: SourceLocation): Expr
 
 proc newUnaryExpr*(op: TokenKind, operand: Expr, loc: SourceLocation): Expr =
   result = Expr(kind: ekUnary, loc: loc, exprUnaryOp: op, exprUnaryOperand: operand)
+
+proc newStringInterpExpr*(texts: seq[string], exprs: seq[Expr], loc: SourceLocation): Expr =
+  result = Expr(kind: ekStringInterp, loc: loc, exprInterpTexts: texts, exprInterpExprs: exprs)

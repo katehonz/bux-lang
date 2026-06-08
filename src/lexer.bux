@@ -704,7 +704,12 @@ func lexNextToken(lex: *Lexer) {
         return;
     }
 
-    // String prefixes: c8" c16" c32"
+    // String prefixes: f" c8" c16" c32"
+    if c == 102 && lexPeek(lex, 1) == 34 { // f"
+        discard lexAdvance(lex); // f
+        lexMarkStart(lex); // treat as plain string literal in selfhost
+        lexScanString(lex); return;
+    }
     if c == 99 { // 'c'
         let d: uint32 = lexPeek(lex, 1);
         if d == 56 && lexPeek(lex, 2) == 34 { // c8"

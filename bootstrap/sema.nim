@@ -1264,6 +1264,10 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     return operand
   of ekSpread:
     return sema.checkExpr(expr.exprSpreadOperand, scope)
+  of ekStringInterp:
+    for e in expr.exprInterpExprs:
+      discard sema.checkExpr(e, scope)
+    return makeStr()
 
 # ---------------------------------------------------------------------------
 # Statement type checking
