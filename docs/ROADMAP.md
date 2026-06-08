@@ -6,10 +6,10 @@ This document tracks planned language constructs beyond Phase 8 strategy.
 
 ---
 
-## P0 — Critical (Unlocks Major Use Cases)
+## ✅ Done
 
 ### 1. `defer` Statement
-**Why:** No GC + no destructors = manual `Free` everywhere. `defer` is the pragmatic fix.
+**Status:** ✅ Implemented in both bootstrap and selfhost.
 
 **Syntax:**
 ```bux
@@ -22,18 +22,84 @@ func ReadFile(path: String) -> String {
 }
 ```
 
-**Implementation Steps:**
-1. Add `tkDefer` token (or reuse `tkDefer` if exists)
-2. Add `DeferStmt` AST node (`child: *Stmt`)
-3. Parser: parse `defer <expr>;` or `defer { <block> }`
-4. C backend: collect all `defer`s per block, emit cleanup code before every exit point (return, break, continue)
-5. Handle LIFO ordering for multiple defers in same scope
+---
 
-**Complexity:** Low — localized to parser + C backend. No type system changes.
+### 2. Native `switch` / `case`
+**Status:** ✅ Implemented in both bootstrap and selfhost. Desugars to if-else chain.
+
+**Syntax:**
+```bux
+switch statusCode {
+    case 200: PrintLine("OK");
+    case 404: PrintLine("Not Found");
+    case 500: PrintLine("Server Error");
+    default:  PrintLine("Unknown");
+}
+```
 
 ---
 
-### 2. Closures / Anonymous Functions
+### 3. Operator Overloading
+**Status:** ✅ Implemented in bootstrap. Selfhost has no method-table yet (not needed for selfhost-loop parity).
+
+**Supported operators:**
+```bux
+func Vec2_operator_add(self: *Vec2, other: Vec2) -> Vec2 { ... }
+func Vec2_operator_sub(self: *Vec2, other: Vec2) -> Vec2 { ... }
+func Vec2_operator_eq(self: *Vec2, other: Vec2) -> bool { ... }
+func Vec2_operator_lt(self: *Vec2, other: Vec2) -> bool { ... }
+func MyArray_operator_index_get(self: *MyArray, idx: int) -> int { ... }
+func MyArray_operator_index_set(self: *MyArray, idx: int, value: int) { ... }
+```
+
+**Notes:**
+- Works via method-table lookup in sema + hir_lower.
+- Generic method instantiation supported.
+- Short-circuit operators (`&&`, `||`) remain builtin.
+
+---
+
+## P0 — Critical (Unlocks Major Use Cases)
+
+### 4. String Interpolation
+**Why:** `Fmt_Fmt1("hello {0}", name)` is verbose.
+
+**Syntax:**
+```bux
+let name: String = "Bux";
+let msg: String = "Hello, {name}!";
+let num: int = 42;
+let msg2: String = "Count: {num}";
+```
+
+**Implementation Steps:**
+1. Lexer: detect `{` inside string literals, parse interpolation expressions
+2. Parser: create string concatenation AST node
+3. Desugar to `String_Concat` calls or `Fmt_FmtN`
+
+**Complexity:** Low — lexer/parser changes only.
+
+---
+
+### 5. Named / Default Parameters
+**Why:** API ergonomics.
+
+**Syntax:**
+```bux
+func HttpResponse(code: int = 200, contentType: String = "text/plain", body: String = "") -> Response { ... }
+let r: Response = HttpResponse(body: "hello");  // code=200, contentType=default
+```
+
+**Implementation Steps:**
+1. Parser: allow `param: Type = defaultExpr`
+2. Sema: fill missing args at call sites
+3. C backend: emit args in correct order with defaults
+
+**Complexity:** Medium — sema changes for call resolution.
+
+---
+
+### 6. Closures / Anonymous Functions
 **Why:** Callbacks, iterators, functional APIs. Currently only named functions exist.
 
 **Syntax:**
@@ -54,7 +120,7 @@ Array_Filter(nums, |x| { return x > 10; });
 
 ---
 
-### 3. `for x in collection` Iterator Loops
+### 7. `for x in collection` Iterator Loops
 **Why:** Currently only `for i in 0..10` works. No way to iterate arrays/channels/maps.
 
 **Syntax:**
@@ -78,27 +144,7 @@ for msg in channel {
 
 ## P1 — High Impact
 
-### 4. Operator Overloading
-**Why:** Can't write `arr[i]`, `a + b`, `s1 == s2` for user types.
-
-**Syntax:**
-```bux
-extend Array<T> {
-    func operator[](self: Array<T>, idx: uint) -> T { ... }
-    func operator+(self: Array<T>, other: Array<T>) -> Array<T> { ... }
-}
-```
-
-**Implementation Steps:**
-1. Parser: allow `operator[]`, `operator+`, etc. as function names
-2. Sema: resolve operator calls to user-defined functions when available
-3. C backend: emit regular function call
-
-**Complexity:** Medium — mainly sema + parser changes.
-
----
-
-### 5. Destructors / `Drop` Trait
+### 8. Destructors / `Drop` Trait
 **Why:** `own T` exists but nothing cleans up automatically. Complements `defer`.
 
 **Syntax:**
@@ -119,74 +165,47 @@ extend Array<T> {
 
 ---
 
-### 6. String Interpolation
-**Why:** `Fmt_Fmt1("hello {0}", name)` is verbose.
-
-**Syntax:**
-```bux
-let name: String = "Bux";
-let msg: String = "Hello, {name}!";
-let num: int = 42;
-let msg2: String = "Count: {num}";
-```
-
-**Implementation Steps:**
-1. Lexer: detect `{` inside string literals, parse interpolation expressions
-2. Parser: create string concatenation AST node
-3. Desugar to `String_Concat` calls or `Fmt_FmtN`
-
-**Complexity:** Low — lexer/parser changes only.
-
----
-
 ## P2 — Nice to Have
 
-### 7. Native `switch` / `case`
-**Why:** `match` is powerful but overkill for simple integer dispatch. Jump tables are faster.
+### 9. Trait System Enhancement
+**Why:** Currently have `interface` + `extend` (basic). Need trait bounds, associated types.
 
 **Syntax:**
 ```bux
-switch statusCode {
-    case 200: PrintLine("OK");
-    case 404: PrintLine("Not Found");
-    case 500: PrintLine("Server Error");
-    default:  PrintLine("Unknown");
-}
+func Sort<T: Comparable>(arr: &mut Array<T>) { ... }
 ```
-
-**Implementation Steps:**
-1. Parser: `switch expr { case literal: stmts ... default: stmts }`
-2. C backend: emit `switch(expr) { case N: ... }`
-
-**Complexity:** Low — straightforward C mapping.
 
 ---
 
-### 8. Named / Default Parameters
-**Why:** API ergonomics.
+### 10. CTFE (Compile-Time Function Execution)
+**Why:** Precomputed tables for embedded / kernel dev.
 
 **Syntax:**
 ```bux
-func HttpResponse(code: int = 200, contentType: String = "text/plain", body: String = "") -> Response { ... }
-let r: Response = HttpResponse(body: "hello");  // code=200, contentType=default
+const func Fib(n: int) -> int { ... }
+const TABLE_SIZE = Fib(20);
 ```
 
-**Implementation Steps:**
-1. Parser: allow `param: Type = defaultExpr`
-2. Sema: fill missing args at call sites
-3. C backend: emit args in correct order with defaults
+---
 
-**Complexity:** Medium — sema changes for call resolution.
+### 11. Concurrency
+**Why:** Go-style goroutines + channels, but without GC.
+
+**Syntax:**
+```bux
+let (tx, rx) = Channel::New<int>();
+Task::Spawn(Worker, rx);
+```
 
 ---
 
 ## Recommended Order
 
-1. **`defer`** — Low complexity, huge impact, unlocks safe resource management immediately.
-2. **String interpolation** — Low complexity, big ergonomics win.
-3. **`switch`/`case`** — Low complexity, complements `match` for numeric dispatch.
-4. **Named/default parameters** — Medium complexity, improves stdlib APIs.
-5. **Operator overloading** — Medium complexity, transforms stdlib ergonomics.
+1. ✅ **`defer`** — Done
+2. ✅ **`switch`/`case`** — Done
+3. ✅ **Operator overloading** — Done (bootstrap)
+4. **String interpolation** — Low complexity, big ergonomics win. **← NEXT**
+5. **Named/default parameters** — Medium complexity, improves stdlib APIs.
 6. **Closures** — High complexity, unlocks iterators and functional style.
 7. **`for x in collection`** — Depends on closures or trait system.
 8. **Destructors / Drop** — High complexity, needs ownership + move semantics.

@@ -1,6 +1,7 @@
 # Фаза 8 — Стратегия: Как Bux печели, без да бие пряко Rust/Nim/Zig
 
-> **Дата:** 2026-05-31 | **Статус:** Фаза 8.1 ✅, 8.2-8.6 🔄
+> **Дата:** 2026-06-08 | **Статус:** Фаза 8.1 ✅, 8.2-8.6 🔄
+> **Последни постижения:** defer ✅, switch/case ✅, operator overloading ✅, selfhost-loop deterministic ✅
 > **Правило #1:** Не се биеш с някого там, където той е най-силен.
 
 ---
@@ -285,10 +286,12 @@ Crates.io е непреодолимо предимство. Ние се конк
 
 ## 6. Пътна карта за победа (реалистична)
 
-### Milestone A: "Използваем за CLI tools" (2-3 седмици)
+### Milestone A: "Използваем за CLI tools" ✅ ЗАВЪРШЕН
 - ✅ Generics, Result/Option, pattern matching — готово
-- 🔄 Fix `buxc2` bootstrap loop (14/14 modules)
-- 🔄 File I/O, path ops, process spawn в stdlib
+- ✅ Fix `buxc2` bootstrap loop (14/14 модула)
+- ✅ Selfhost-loop deterministic (C output identical)
+- ✅ File I/O, path ops, process spawn в stdlib
+- ✅ defer, switch/case, operator overloading — готово
 - 🎯 Target: Можеш да напишеш `bux` package manager на Bux
 
 ### Milestone B: "Използваем за systems programming" (2 месеца)

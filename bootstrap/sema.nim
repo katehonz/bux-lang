@@ -797,6 +797,33 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
   of ekBinary:
     let left = sema.checkExpr(expr.exprBinaryLeft, scope)
     let right = sema.checkExpr(expr.exprBinaryRight, scope)
+    # Operator overloading: check method table before builtin rules
+    let opMethodName = case expr.exprBinaryOp
+      of tkPlus: "operator_add"
+      of tkMinus: "operator_sub"
+      of tkStar: "operator_mul"
+      of tkSlash: "operator_div"
+      of tkPercent: "operator_mod"
+      of tkEq: "operator_eq"
+      of tkNe: "operator_ne"
+      of tkLt: "operator_lt"
+      of tkLe: "operator_le"
+      of tkGt: "operator_gt"
+      of tkGe: "operator_ge"
+      of tkAmp: "operator_bitand"
+      of tkPipe: "operator_bitor"
+      of tkCaret: "operator_xor"
+      of tkShl: "operator_shl"
+      of tkShr: "operator_shr"
+      else: ""
+    if opMethodName != "" and left.kind == tkNamed and sema.methodTable.hasKey(left.name):
+      for minfo in sema.methodTable[left.name]:
+        if minfo.name == opMethodName:
+          # Validate argument count (self + other)
+          if minfo.params.len == 2:
+            let otherType = minfo.params[1]
+            if right.isAssignableTo(otherType) or otherType.isAssignableTo(right) or right.kind == tkUnknown:
+              return minfo.retType
     case expr.exprBinaryOp
     of tkPlus, tkMinus, tkStar, tkSlash, tkPercent, tkStarStar:
       if not left.isNumeric or not right.isNumeric:
@@ -1057,6 +1084,14 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       return obj.inner[0]
     elif obj.kind == tkStr:
       return makeChar8()
+    elif obj.kind == tkNamed and sema.methodTable.hasKey(obj.name):
+      for minfo in sema.methodTable[obj.name]:
+        if minfo.name == "operator_index_get" and minfo.params.len == 2:
+          let idxType = minfo.params[1]
+          if idx.isAssignableTo(idxType) or idxType.isAssignableTo(idx) or idx.kind == tkUnknown:
+            return minfo.retType
+      sema.emitError(expr.loc, "cannot index non-slice/non-pointer type")
+      return makeUnknown()
     else:
       sema.emitError(expr.loc, "cannot index non-slice/non-pointer type")
       return makeUnknown()

@@ -533,6 +533,103 @@ proc findMethodEntry(ctx: LowerCtx, typeName: string): (string, seq[MethodInfo])
       return (prefix, ctx.methodTable[prefix])
   return ("", @[])
 
+proc operatorMethodName(op: TokenKind): string =
+  case op
+  of tkPlus: "operator_add"
+  of tkMinus: "operator_sub"
+  of tkStar: "operator_mul"
+  of tkSlash: "operator_div"
+  of tkPercent: "operator_mod"
+  of tkEq: "operator_eq"
+  of tkNe: "operator_ne"
+  of tkLt: "operator_lt"
+  of tkLe: "operator_le"
+  of tkGt: "operator_gt"
+  of tkGe: "operator_ge"
+  of tkAmp: "operator_bitand"
+  of tkPipe: "operator_bitor"
+  of tkCaret: "operator_xor"
+  of tkShl: "operator_shl"
+  of tkShr: "operator_shr"
+  else: ""
+
+proc tryLowerOperatorCall(ctx: var LowerCtx, op: TokenKind, leftExpr, rightExpr: Expr, typ: Type, loc: SourceLocation): HirNode =
+  ## Try to lower a binary operator to a method call. Returns nil if no overload found.
+  let methodName = operatorMethodName(op)
+  if methodName == "": return nil
+  let receiverType = ctx.resolveExprType(leftExpr)
+  var receiverTypeName = ""
+  if receiverType.kind == tkNamed:
+    receiverTypeName = receiverType.name
+    if ctx.typeSubst.hasKey(receiverTypeName):
+      let substituted = ctx.typeSubst[receiverTypeName]
+      if substituted.kind == tkNamed:
+        receiverTypeName = substituted.name
+      elif substituted.isPointer and substituted.inner.len > 0 and substituted.inner[0].kind == tkNamed:
+        receiverTypeName = substituted.inner[0].name
+  elif receiverType.kind in {tkInt, tkInt8, tkInt16, tkInt32, tkInt64,
+                             tkUInt, tkUInt8, tkUInt16, tkUInt32, tkUInt64,
+                             tkFloat32, tkFloat64, tkBool, tkStr, tkChar8}:
+    receiverTypeName = receiverType.toString
+  elif receiverType.isPointer and receiverType.inner.len > 0 and receiverType.inner[0].kind == tkNamed:
+    receiverTypeName = receiverType.inner[0].name
+  let (typeName, methods) = ctx.findMethodEntry(receiverTypeName)
+  if typeName == "": return nil
+  for minfo in methods:
+    if minfo.name == methodName:
+      var calleeName = typeName & "_" & methodName
+      # Check generic method instantiation
+      let recvTypeExpr = ctx.getReceiverTypeExpr(leftExpr)
+      let (baseName, typeArgs) = ctx.extractGenericStructInfo(recvTypeExpr)
+      if baseName != "" and baseName == typeName and minfo.decl.declFuncTypeParams.len > 0:
+        calleeName = ctx.generateMethodInstance(calleeName, typeArgs)
+      var args: seq[HirNode] = @[]
+      let loweredReceiver = ctx.lowerExpr(leftExpr)
+      if minfo.params.len > 0 and minfo.params[0].isPointer and not receiverType.isPointer:
+        args.add(hirUnary(tkAmp, loweredReceiver, makePointer(receiverType), loc))
+      else:
+        args.add(loweredReceiver)
+      args.add(ctx.lowerExpr(rightExpr))
+      return hirCall(calleeName, args, typ, loc)
+  return nil
+
+proc tryLowerIndexCall(ctx: var LowerCtx, objExpr, idxExpr: Expr, typ: Type, loc: SourceLocation): HirNode =
+  ## Try to lower arr[i] to operator_index_get(arr, i). Returns nil if no overload found.
+  let receiverType = ctx.resolveExprType(objExpr)
+  var receiverTypeName = ""
+  if receiverType.kind == tkNamed:
+    receiverTypeName = receiverType.name
+    if ctx.typeSubst.hasKey(receiverTypeName):
+      let substituted = ctx.typeSubst[receiverTypeName]
+      if substituted.kind == tkNamed:
+        receiverTypeName = substituted.name
+      elif substituted.isPointer and substituted.inner.len > 0 and substituted.inner[0].kind == tkNamed:
+        receiverTypeName = substituted.inner[0].name
+  elif receiverType.kind in {tkInt, tkInt8, tkInt16, tkInt32, tkInt64,
+                             tkUInt, tkUInt8, tkUInt16, tkUInt32, tkUInt64,
+                             tkFloat32, tkFloat64, tkBool, tkStr, tkChar8}:
+    receiverTypeName = receiverType.toString
+  elif receiverType.isPointer and receiverType.inner.len > 0 and receiverType.inner[0].kind == tkNamed:
+    receiverTypeName = receiverType.inner[0].name
+  let (typeName, methods) = ctx.findMethodEntry(receiverTypeName)
+  if typeName == "": return nil
+  for minfo in methods:
+    if minfo.name == "operator_index_get":
+      var calleeName = typeName & "_operator_index_get"
+      let recvTypeExpr = ctx.getReceiverTypeExpr(objExpr)
+      let (baseName, typeArgs) = ctx.extractGenericStructInfo(recvTypeExpr)
+      if baseName != "" and baseName == typeName and minfo.decl.declFuncTypeParams.len > 0:
+        calleeName = ctx.generateMethodInstance(calleeName, typeArgs)
+      var args: seq[HirNode] = @[]
+      let loweredReceiver = ctx.lowerExpr(objExpr)
+      if minfo.params.len > 0 and minfo.params[0].isPointer and not receiverType.isPointer:
+        args.add(hirUnary(tkAmp, loweredReceiver, makePointer(receiverType), loc))
+      else:
+        args.add(loweredReceiver)
+      args.add(ctx.lowerExpr(idxExpr))
+      return hirCall(calleeName, args, typ, loc)
+  return nil
+
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   if expr == nil: return nil
   let loc = expr.loc
@@ -584,6 +681,9 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       let ifNode = hirIf(left, thenBlock, elseBlock, loc)
       return hirBlock(@[tmp, ifNode], hirLoad(tmp, makeBool(), loc), makeBool(), loc)
     else:
+      let lowered = ctx.tryLowerOperatorCall(expr.exprBinaryOp, expr.exprBinaryLeft, expr.exprBinaryRight, typ, loc)
+      if lowered != nil:
+        return lowered
       let left = ctx.lowerExpr(expr.exprBinaryLeft)
       let right = ctx.lowerExpr(expr.exprBinaryRight)
       return hirBinary(expr.exprBinaryOp, left, right, typ, loc)
@@ -714,9 +814,13 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return HirNode(kind: hLoad, loadPtr: basePtr, typ: typ, loc: loc)
 
   of ekIndex:
+    let baseType = ctx.resolveExprType(expr.exprIndexObj)
+    if not baseType.isSlice:
+      let lowered = ctx.tryLowerIndexCall(expr.exprIndexObj, expr.exprIndexIdx, typ, loc)
+      if lowered != nil:
+        return lowered
     let base = ctx.lowerExpr(expr.exprIndexObj)
     let idx = ctx.lowerExpr(expr.exprIndexIdx)
-    let baseType = ctx.resolveExprType(expr.exprIndexObj)
     if baseType.isSlice:
       let sliceIdx = HirNode(kind: hSliceIndex, sliceIndexBase: base,
                              sliceIndexIndex: idx,
@@ -728,6 +832,44 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return HirNode(kind: hLoad, loadPtr: basePtr, typ: typ, loc: loc)
 
   of ekAssign:
+    # Check for operator_index_set overload
+    if expr.exprAssignTarget.kind == ekIndex:
+      let objExpr = expr.exprAssignTarget.exprIndexObj
+      let idxExpr = expr.exprAssignTarget.exprIndexIdx
+      let receiverType = ctx.resolveExprType(objExpr)
+      var receiverTypeName = ""
+      if receiverType.kind == tkNamed:
+        receiverTypeName = receiverType.name
+        if ctx.typeSubst.hasKey(receiverTypeName):
+          let substituted = ctx.typeSubst[receiverTypeName]
+          if substituted.kind == tkNamed:
+            receiverTypeName = substituted.name
+          elif substituted.isPointer and substituted.inner.len > 0 and substituted.inner[0].kind == tkNamed:
+            receiverTypeName = substituted.inner[0].name
+      elif receiverType.kind in {tkInt, tkInt8, tkInt16, tkInt32, tkInt64,
+                                 tkUInt, tkUInt8, tkUInt16, tkUInt32, tkUInt64,
+                                 tkFloat32, tkFloat64, tkBool, tkStr, tkChar8}:
+        receiverTypeName = receiverType.toString
+      elif receiverType.isPointer and receiverType.inner.len > 0 and receiverType.inner[0].kind == tkNamed:
+        receiverTypeName = receiverType.inner[0].name
+      let (typeName, methods) = ctx.findMethodEntry(receiverTypeName)
+      if typeName != "":
+        for minfo in methods:
+          if minfo.name == "operator_index_set":
+            var calleeName = typeName & "_operator_index_set"
+            let recvTypeExpr = ctx.getReceiverTypeExpr(objExpr)
+            let (baseName, typeArgs) = ctx.extractGenericStructInfo(recvTypeExpr)
+            if baseName != "" and baseName == typeName and minfo.decl.declFuncTypeParams.len > 0:
+              calleeName = ctx.generateMethodInstance(calleeName, typeArgs)
+            var args: seq[HirNode] = @[]
+            let loweredReceiver = ctx.lowerExpr(objExpr)
+            if minfo.params.len > 0 and minfo.params[0].isPointer and not receiverType.isPointer:
+              args.add(hirUnary(tkAmp, loweredReceiver, makePointer(receiverType), loc))
+            else:
+              args.add(loweredReceiver)
+            args.add(ctx.lowerExpr(idxExpr))
+            args.add(ctx.lowerExpr(expr.exprAssignValue))
+            return hirCall(calleeName, args, makeVoid(), loc)
     let target = ctx.lowerExpr(expr.exprAssignTarget)
     let value = ctx.lowerExpr(expr.exprAssignValue)
     return HirNode(kind: hAssign, assignOp: expr.exprAssignOp,
