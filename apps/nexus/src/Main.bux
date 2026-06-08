@@ -9,7 +9,7 @@ module Main {
 // =============================================================================
 import Std::Io::{PrintLine, Print, PrintInt};
 import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
-import Std::String::{String_Len, String_Eq, String_StartsWith, String_EndsWith, String_Contains, String_Trim, String_FromInt};
+import Std::String::{String_Len, String_Eq, String_StartsWith, String_EndsWith, String_Contains, String_Trim, String_FromInt, String_Offset};
 import Std::Task::{Task_Join, TaskHandle};
 
 // =============================================================================
@@ -170,15 +170,15 @@ func Http_ParseRequest(raw: String) -> HttpRequest {
     RequestHeader_Init(&req);
 
     // Guard: null/empty input
-    if raw as uint == 0 { return req; }
+    if String_Len(raw) == 0 { return req; }
     let rawLen: uint = bux_strlen(raw);
     if rawLen == 0 { return req; }
 
     // Find \r\n\r\n separating headers from body
     let boundary: String = bux_strstr(raw, "\r\n\r\n");
     var headerLen: uint = rawLen;
-    if boundary as uint != 0 {
-        headerLen = boundary as uint - raw as uint;
+    if String_Len(boundary) > 0 {
+        headerLen = String_Offset(boundary, raw);
         let bodyStart: uint = headerLen + 4;
         if bodyStart < rawLen {
             req.body = bux_str_slice(raw, bodyStart, rawLen - bodyStart);
@@ -198,7 +198,7 @@ func Http_ParseRequest(raw: String) -> HttpRequest {
     if bux_strlen(requestLine) > 0 {
         req.method = Http_ParseMethod(bux_str_split_part(requestLine, " ", 0));
         req.path = bux_str_split_part(requestLine, " ", 1);
-        if String_Eq(req.path, "") || req.path as uint == 0 {
+        if String_Eq(req.path, "") || req.String_Len(path) == 0 {
             req.path = "/";
         }
     }
@@ -215,8 +215,8 @@ func Http_ParseRequest(raw: String) -> HttpRequest {
         var key: String = "";
         var value: String = "";
 
-        if colonPos as uint != 0 {
-            let keyLen: uint = colonPos as uint - line as uint;
+        if String_Len(colonPos) > 0 {
+            let keyLen: uint = String_Offset(colonPos, line);
             key = bux_str_slice(line, 0, keyLen);
             let valStart: uint = keyLen + 2;
             if valStart < lineLen {
@@ -225,8 +225,8 @@ func Http_ParseRequest(raw: String) -> HttpRequest {
         } else {
             // Try ":" without space
             let colonPos2: String = bux_strstr(line, ":");
-            if colonPos2 as uint != 0 {
-                let keyLen: uint = colonPos2 as uint - line as uint;
+            if String_Len(colonPos2) > 0 {
+                let keyLen: uint = String_Offset(colonPos2, line);
                 key = bux_str_slice(line, 0, keyLen);
                 let valStart: uint = keyLen + 1;
                 if valStart < lineLen {
@@ -341,7 +341,7 @@ func ServeStaticFile(requestPath: String) -> HttpResponse {
 
     // Read and serve
     let content: String = bux_read_file(fullPath);
-    if content as uint == 0 {
+    if String_Len(content) == 0 {
         return Http_NewResponse(500, "text/plain; charset=utf-8", "Internal Server Error");
     }
 
@@ -444,7 +444,7 @@ func HandleConnection(clientFd: int) {
     let raw: String = Net_Recv(clientFd, 8192);
 
     // Empty read → client disconnected
-    if raw as uint == 0 { return; }
+    if String_Len(raw) == 0 { return; }
     if bux_strlen(raw) == 0 { return; }
 
     // HTTP/2 connection preface detection

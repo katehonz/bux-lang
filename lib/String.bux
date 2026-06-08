@@ -8,6 +8,8 @@ extern func bux_strcat(dest: *char8, src: String) -> *char8;
 extern func bux_strncpy(dest: *char8, src: String, n: uint) -> *char8;
 extern func bux_strstr(haystack: String, needle: String) -> String;
 extern func bux_str_contains(haystack: String, needle: String) -> int;
+extern func bux_str_offset(pos: String, base: String) -> uint;
+extern func bux_str_is_null(s: String) -> int;
 extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
 extern func bux_str_trim_left(s: String) -> String;
 extern func bux_str_trim_right(s: String) -> String;
@@ -30,6 +32,10 @@ extern func bux_str_format(pattern: String, a0: String, a1: String, a2: String, 
 
 func String_Len(s: String) -> uint {
     return bux_strlen(s);
+}
+
+func String_IsNull(s: String) -> bool {
+    return bux_str_is_null(s) != 0;
 }
 
 func String_Eq(a: String, b: String) -> bool {
@@ -170,13 +176,17 @@ func String_Find(haystack: String, needle: String) -> String {
     return bux_strstr(haystack, needle);
 }
 
+func String_Offset(pos: String, base: String) -> uint {
+    return bux_str_offset(pos, base);
+}
+
 func String_Replace(s: String, old: String, new: String) -> String {
     let pos: String = bux_strstr(s, old);
-    if pos as uint == 0 {
+    if String_IsNull(pos) {
         return s;
     }
     let oldLen: uint = bux_strlen(old);
-    let prefixLen: uint = pos as uint - s as uint;
+    let prefixLen: uint = String_Offset(pos, s);
     let prefix: String = bux_str_slice(s, 0, prefixLen);
     let suffix: String = bux_str_slice(s, prefixLen + oldLen, bux_strlen(s) - prefixLen - oldLen);
     let temp: String = String_Concat(prefix, new);

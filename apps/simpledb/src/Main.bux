@@ -2,7 +2,7 @@ module Main {
 
 import Std::Io::{PrintLine, Print, PrintInt, ReadFile, WriteFile, FileExists};
 import Std::Os::{Os_ArgsCount, Os_Args};
-import Std::String::{String_Len, String_Eq, String_StartsWith, String_Find, String_Slice};
+import Std::String::{String_Len, String_Eq, String_StartsWith, String_Find, String_Slice, String_Offset};
 
 extern func bux_strlen(s: String) -> uint;
 extern func bux_strstr(haystack: String, needle: String) -> String;
@@ -46,7 +46,7 @@ func DB_Load(self: *Database) -> bool {
     }
 
     let raw: String = ReadFile(self.path);
-    if raw as uint == 0 || bux_strlen(raw) == 0 {
+    if String_Len(raw) == 0 || bux_strlen(raw) == 0 {
         self.loaded = true;
         return true;
     }
@@ -76,7 +76,7 @@ func DB_Get(self: *Database, key: String) -> String {
         let line: String = bux_str_split_part(raw, "\n", i);
         if String_StartsWith(line, key) {
             let eqPos: String = String_Find(line, "=");
-            if eqPos as uint != 0 {
+            if String_Len(eqPos) > 0 {
                 let keyLen: uint = bux_strlen(key);
                 let valStart: uint = keyLen + 1;
                 let lineLen: uint = bux_strlen(line);
@@ -102,7 +102,7 @@ func DB_Set(self: *Database, key: String, value: String) {
         if bux_strlen(line) > 0 {
             if String_StartsWith(line, key) {
                 let eqPos: String = String_Find(line, "=");
-                if eqPos as uint != 0 {
+                if String_Len(eqPos) > 0 {
                     bux_sb_append(newSb, key);
                     SB_AppendChar(newSb, 61);
                     bux_sb_append(newSb, value);
@@ -144,7 +144,7 @@ func DB_Del(self: *Database, key: String) {
         if bux_strlen(line) > 0 {
             if String_StartsWith(line, key) {
                 let eqPos: String = String_Find(line, "=");
-                if eqPos as uint != 0 {
+                if String_Len(eqPos) > 0 {
                     delCount = delCount + 1;
                 } else {
                     bux_sb_append(newSb, line);
@@ -188,8 +188,8 @@ func DB_Keys(self: *Database) -> *String {
         let line: String = bux_str_split_part(raw, "\n", i);
         if bux_strlen(line) > 0 {
             let eqPos: String = String_Find(line, "=");
-            if eqPos as uint != 0 {
-                let keyLen: uint = eqPos as uint - line as uint;
+            if String_Len(eqPos) > 0 {
+                let keyLen: uint = String_Offset(eqPos, line);
                 keys[found] = bux_str_slice(line, 0, keyLen);
                 found = found + 1;
             }

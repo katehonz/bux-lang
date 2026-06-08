@@ -96,7 +96,7 @@ func ResolveKey(alg: JwtAlg, keyArg: String) -> String {
        alg.tag == JwtAlg_ES256 || alg.tag == JwtAlg_ES384 {
         if bux_file_exists(keyArg) != 0 {
             let pem: String = bux_read_file(keyArg);
-            if pem as uint != 0 && String_Len(pem) > 0 {
+            if String_Len(pem) > 0 && String_Len(pem) > 0 {
                 return pem;
             }
             Print("ERROR: could not read PEM file: ");

@@ -5,7 +5,7 @@ module Boko {
 
 import Std::Io::{PrintLine, Print, PrintInt};
 import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
-import Std::String::{String_Len, String_Eq, String_StartsWith, String_Contains};
+import Std::String::{String_Len, String_Eq, String_StartsWith, String_Contains, String_Offset};
 import Std::Task::{Task_Join, TaskHandle};
 
 extern func bux_alloc(size: uint) -> *void;
@@ -239,8 +239,8 @@ func Query_Parse(req: *Request, queryString: String) {
         let eqPos: String = bux_strstr(pair, "=");
         var key: String = pair;
         var value: String = "";
-        if eqPos as uint != 0 {
-            let keyLen: uint = eqPos as uint - pair as uint;
+        if String_Len(eqPos) > 0 {
+            let keyLen: uint = String_Offset(eqPos, pair);
             key = bux_str_slice(pair, 0, keyLen);
             let valStart: uint = keyLen + 1;
             let pairLen: uint = bux_strlen(pair);
@@ -267,15 +267,15 @@ func Request_Parse(raw: String) -> Request {
     req.queryCount = 0;
     req.pathParamCount = 0;
 
-    if raw as uint == 0 { return req; }
+    if String_Len(raw) == 0 { return req; }
     let rawLen: uint = bux_strlen(raw);
     if rawLen == 0 { return req; }
 
     // Find header/body boundary
     let boundary: String = bux_strstr(raw, "\r\n\r\n");
     var headerLen: uint = rawLen;
-    if boundary as uint != 0 {
-        headerLen = boundary as uint - raw as uint;
+    if String_Len(boundary) > 0 {
+        headerLen = String_Offset(boundary, raw);
         let bodyStart: uint = headerLen + 4;
         if bodyStart < rawLen {
             req.body = bux_str_slice(raw, bodyStart, rawLen - bodyStart);
@@ -299,8 +299,8 @@ func Request_Parse(raw: String) -> Request {
         let fullPath: String = bux_str_split_part(requestLine, " ", 1);
         // Split path and query string
         let qmark: String = bux_strstr(fullPath, "?");
-        if qmark as uint != 0 {
-            let pathLen: uint = qmark as uint - fullPath as uint;
+        if String_Len(qmark) > 0 {
+            let pathLen: uint = String_Offset(qmark, fullPath);
             req.path = bux_str_slice(fullPath, 0, pathLen);
             let qsStart: uint = pathLen + 1;
             let fullLen: uint = bux_strlen(fullPath);
@@ -322,8 +322,8 @@ func Request_Parse(raw: String) -> Request {
     while i < lineCount {
         let line: String = bux_str_split_part(headerBlock, "\r\n", i);
         let colonPos: String = bux_strstr(line, ": ");
-        if colonPos as uint != 0 {
-            let keyLen: uint = colonPos as uint - line as uint;
+        if String_Len(colonPos) > 0 {
+            let keyLen: uint = String_Offset(colonPos, line);
             let key: String = bux_str_slice(line, 0, keyLen);
             let valStart: uint = keyLen + 2;
             let lineLen: uint = bux_strlen(line);
@@ -378,8 +378,8 @@ func Path_Match(pattern: String, path: String, req: *Request) -> bool {
             let braceOpen: uint = 1; // skip "{"
             let braceClose: String = bux_strstr(patPart, "}");
             var nameLen: uint = 0;
-            if braceClose as uint != 0 {
-                nameLen = braceClose as uint - patPart as uint - 1;
+            if String_Len(braceClose) > 0 {
+                nameLen = String_Offset(braceClose, patPart) - 1;
             }
             let name: String = bux_str_slice(patPart, braceOpen, nameLen);
             req.pathParamKeys[req.pathParamCount] = name;
@@ -416,7 +416,7 @@ func Boko_Router(req: Request) -> Response;
 // =============================================================================
 func App_HandleConnection(clientFd: int) {
     let raw: String = Net_Recv(clientFd, 8192);
-    if raw as uint == 0 { return; }
+    if String_Len(raw) == 0 { return; }
     if bux_strlen(raw) == 0 { return; }
 
     let req: Request = Request_Parse(raw);

@@ -920,6 +920,12 @@ func parserParseParamList(p: *Parser) -> *Decl {
 
     discard parserExpect(p, tkLParen, "expected '('");
     while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+        while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+            discard parserAdvance(p);
+        }
+        if parserCheck(p, tkRParen) || parserPeek(p, 0) == tkEndOfFile {
+            break;
+        }
         if d.paramCount >= 9 { break; }
         let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected parameter name");
         discard parserExpect(p, tkColon, "expected ':' in parameter");

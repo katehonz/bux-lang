@@ -232,9 +232,20 @@ const char* bux_strstr(const char* haystack, const char* needle) {
     return strstr(haystack, needle);
 }
 
+/* String offset: byte offset of pos within base (both must point into same string) */
+unsigned int bux_str_offset(const char* pos, const char* base) {
+    if (!pos || !base) return 0;
+    return (unsigned int)(pos - base);
+}
+
 /* String contains: returns 1 if haystack contains needle, 0 otherwise */
 int bux_str_contains(const char* haystack, const char* needle) {
     return bux_strstr(haystack, needle) != NULL;
+}
+
+/* String is null: returns 1 if string is NULL */
+int bux_str_is_null(const char* s) {
+    return s == NULL;
 }
 
 /* String slice: extract substring from start, length len */
