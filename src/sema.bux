@@ -141,6 +141,105 @@ func Sema_CheckBlock(sema: *Sema, block: *Block) {
 }
 
 // ---------------------------------------------------------------------------
+// Call argument resolution: inject defaults and reorder named args
+// ---------------------------------------------------------------------------
+
+func Sema_ResolveCallArgs(sema: *Sema, expr: *Expr) {
+    if expr == null as *Expr || expr.kind != ekCall { return; }
+    if expr.child1 == null as *Expr || expr.child1.kind != ekIdent { return; }
+    let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
+    if sym.kind != skFunc || sym.decl == null as *Decl { return; }
+    let decl: *Decl = sym.decl;
+    if decl.paramCount == 0 { return; }
+
+    // Check if any named args present
+    var hasNamed: bool = false;
+    var arg: *ExprList = expr.callArgs;
+    while arg != null as *ExprList {
+        if !String_Eq(arg.argName, "") { hasNamed = true; }
+        arg = arg.next;
+    }
+    if !hasNamed && expr.callArgCount >= decl.paramCount { return; }
+
+    // Build new linked list in param order
+    var newFirst: *ExprList = null as *ExprList;
+    var newLast: *ExprList = null as *ExprList;
+    var newCount: int = 0;
+    var usedPositional: int = 0;
+    var positionalAfterNamed: bool = false;
+
+    var i: int = 0;
+    while i < decl.paramCount {
+        var p: *Param = null as *Param;
+        if i == 0 { p = &decl.param0; }
+        else if i == 1 { p = &decl.param1; }
+        else if i == 2 { p = &decl.param2; }
+        else if i == 3 { p = &decl.param3; }
+        else if i == 4 { p = &decl.param4; }
+        else if i == 5 { p = &decl.param5; }
+        else if i == 6 { p = &decl.param6; }
+        else if i == 7 { p = &decl.param7; }
+        else if i == 8 { p = &decl.param8; }
+
+        var matched: *Expr = null as *Expr;
+
+        // Look for positional arg at this index
+        if usedPositional < expr.callArgCount {
+            var posIdx: int = 0;
+            var posArg: *ExprList = expr.callArgs;
+            while posArg != null as *ExprList {
+                if String_Eq(posArg.argName, "") {
+                    if posIdx == usedPositional {
+                        matched = posArg.expr;
+                        usedPositional = usedPositional + 1;
+                        break;
+                    }
+                    posIdx = posIdx + 1;
+                }
+                posArg = posArg.next;
+            }
+        }
+
+        // Look for named arg matching this param
+        if matched == null as *Expr {
+            var namedArg: *ExprList = expr.callArgs;
+            while namedArg != null as *ExprList {
+                if String_Eq(namedArg.argName, p.name) {
+                    matched = namedArg.expr;
+                    break;
+                }
+                namedArg = namedArg.next;
+            }
+        }
+
+        // Use default if available
+        if matched == null as *Expr && p.defaultExpr != null as *Expr {
+            matched = p.defaultExpr;
+        }
+
+        if matched != null as *Expr {
+            let node: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+            node.expr = matched;
+            node.next = null as *ExprList;
+            node.argName = "";
+            if newFirst == null as *ExprList {
+                newFirst = node;
+                newLast = node;
+            } else {
+                newLast.next = node;
+                newLast = node;
+            }
+            newCount = newCount + 1;
+        }
+
+        i = i + 1;
+    }
+
+    expr.callArgs = newFirst;
+    expr.callArgCount = newCount;
+}
+
+// ---------------------------------------------------------------------------
 // Expression type checking
 // ---------------------------------------------------------------------------
 
@@ -234,6 +333,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     // Call
     if kind == ekCall {
         discard Sema_CheckExpr(sema, expr.child1);
+        Sema_ResolveCallArgs(sema, expr);
         var arg: *ExprList = expr.callArgs;
         while arg != null as *ExprList {
             discard Sema_CheckExpr(sema, arg.expr);

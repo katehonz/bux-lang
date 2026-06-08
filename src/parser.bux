@@ -353,10 +353,22 @@ func parserParsePostfixExpr(p: *Parser) -> *Expr {
             var firstArg: *ExprList = null as *ExprList;
             var lastArg: *ExprList = null as *ExprList;
             while !parserCheck(p, tkRParen) {
-                let argExpr: *Expr = parserParseExpr(p);
+                var argExpr: *Expr = null as *Expr;
+                var argName: String = "";
+                // Named argument: name: value
+                if parserPeek(p, 0) == tkIdent && parserPeek(p, 1) == tkColon {
+                    let nameTok: LexToken = parserCurToken(p);
+                    argName = nameTok.text;
+                    discard parserAdvance(p); // ident
+                    discard parserAdvance(p); // :
+                    argExpr = parserParseExpr(p);
+                } else {
+                    argExpr = parserParseExpr(p);
+                }
                 let argNode: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
                 argNode.expr = argExpr;
                 argNode.next = null as *ExprList;
+                argNode.argName = argName;
                 if firstArg == null as *ExprList {
                     firstArg = argNode;
                     lastArg = argNode;
@@ -1016,34 +1028,47 @@ func parserParseParamList(p: *Parser) -> *Decl {
         let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected parameter name");
         discard parserExpect(p, tkColon, "expected ':' in parameter");
         let ptype: *TypeExpr = parserParseType(p);
+        var defExpr: *Expr = null as *Expr;
+        if parserMatch(p, tkAssign) {
+            defExpr = parserParseExpr(p);
+        }
 
         if d.paramCount == 0 {
             d.param0.name = nameTok.text;
             d.param0.refParamType = ptype;
+            d.param0.defaultExpr = defExpr;
         } else if d.paramCount == 1 {
             d.param1.name = nameTok.text;
             d.param1.refParamType = ptype;
+            d.param1.defaultExpr = defExpr;
         } else if d.paramCount == 2 {
             d.param2.name = nameTok.text;
             d.param2.refParamType = ptype;
+            d.param2.defaultExpr = defExpr;
         } else if d.paramCount == 3 {
             d.param3.name = nameTok.text;
             d.param3.refParamType = ptype;
+            d.param3.defaultExpr = defExpr;
         } else if d.paramCount == 4 {
             d.param4.name = nameTok.text;
             d.param4.refParamType = ptype;
+            d.param4.defaultExpr = defExpr;
         } else if d.paramCount == 5 {
             d.param5.name = nameTok.text;
             d.param5.refParamType = ptype;
+            d.param5.defaultExpr = defExpr;
         } else if d.paramCount == 6 {
             d.param6.name = nameTok.text;
             d.param6.refParamType = ptype;
+            d.param6.defaultExpr = defExpr;
         } else if d.paramCount == 7 {
             d.param7.name = nameTok.text;
             d.param7.refParamType = ptype;
+            d.param7.defaultExpr = defExpr;
         } else if d.paramCount == 8 {
             d.param8.name = nameTok.text;
             d.param8.refParamType = ptype;
+            d.param8.defaultExpr = defExpr;
         }
         d.paramCount = d.paramCount + 1;
 

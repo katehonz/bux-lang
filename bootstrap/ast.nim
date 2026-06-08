@@ -174,6 +174,7 @@ type
     of ekCall:
       exprCallCallee*: Expr
       exprCallArgs*: seq[Expr]
+      exprCallArgNames*: seq[string]  ## empty = positional, non-empty = named arg
       exprCallInferredTypeArgs*: seq[TypeExpr]  ## filled by sema for inferred generic calls
     of ekGenericCall:
       exprGenericCallee*: string

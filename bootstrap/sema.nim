@@ -725,6 +725,63 @@ proc checkExprList(sema: var Sema, exprs: seq[Expr], scope: Scope): seq[Type] =
   for e in exprs:
     result.add(sema.checkExpr(e, scope))
 
+proc resolveCallArgs(sema: var Sema, expr: Expr, calleeDecl: Decl, scope: Scope) =
+  ## Reorder named args and inject defaults for missing positional args.
+  if expr.kind != ekCall or calleeDecl == nil or calleeDecl.kind != dkFunc:
+    return
+  let params = calleeDecl.declFuncParams
+  let providedArgs = expr.exprCallArgs
+  let providedNames = expr.exprCallArgNames
+  if providedNames.len == 0:
+    # All positional — just inject defaults for trailing missing args
+    if providedArgs.len < params.len:
+      var newArgs = providedArgs
+      var newNames = providedNames
+      for i in providedArgs.len ..< params.len:
+        if params[i].defaultValue != nil:
+          newArgs.add(params[i].defaultValue)
+          newNames.add("")
+        else:
+          sema.emitError(expr.loc, &"missing argument for parameter '{params[i].name}'")
+          break
+      expr.exprCallArgs = newArgs
+      expr.exprCallArgNames = newNames
+    return
+  # Named args present
+  var newArgs: seq[Expr] = @[]
+  var newNames: seq[string] = @[]
+  var usedNamed = false
+  var namedArgMap: Table[string, Expr]
+  # Collect named args and validate ordering
+  for i in 0 ..< providedArgs.len:
+    if providedNames[i] != "":
+      usedNamed = true
+      if providedNames[i] in namedArgMap:
+        sema.emitError(expr.loc, &"duplicate named argument '{providedNames[i]}'")
+        return
+      namedArgMap[providedNames[i]] = providedArgs[i]
+    else:
+      if usedNamed:
+        sema.emitError(expr.loc, "positional argument after named argument")
+        return
+  # Build final arg list in param order
+  for i in 0 ..< params.len:
+    if i < providedArgs.len and providedNames[i] == "":
+      # Positional arg at expected position
+      newArgs.add(providedArgs[i])
+      newNames.add("")
+    elif params[i].name in namedArgMap:
+      newArgs.add(namedArgMap[params[i].name])
+      newNames.add("")
+    elif params[i].defaultValue != nil:
+      newArgs.add(params[i].defaultValue)
+      newNames.add("")
+    else:
+      sema.emitError(expr.loc, &"missing argument for parameter '{params[i].name}'")
+      break
+  expr.exprCallArgs = newArgs
+  expr.exprCallArgNames = newNames
+
 proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
   if expr == nil:
     return makeUnknown()
@@ -983,8 +1040,7 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     
     # Regular function call
     let calleeType = sema.checkExpr(expr.exprCallCallee, scope)
-    var argTypes = sema.checkExprList(expr.exprCallArgs, scope)
-    # Look up callee declaration early (needed for borrow checking)
+    # Look up callee declaration early (needed for borrow checking and defaults)
     var calleeDecl: Decl = nil
     case expr.exprCallCallee.kind
     of ekIdent:
@@ -995,6 +1051,9 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       let sym = scope.lookup(fullName)
       if sym != nil: calleeDecl = sym.decl
     else: discard
+    # Resolve named args and inject defaults before type-checking args
+    sema.resolveCallArgs(expr, calleeDecl, scope)
+    var argTypes = sema.checkExprList(expr.exprCallArgs, scope)
     if calleeDecl != nil and calleeDecl.kind == dkFunc and calleeDecl.declFuncTypeParams.len > 0:
       discard  # will be handled later
     if calleeType.kind == tkFunc:

@@ -589,17 +589,27 @@ proc parsePostfix(p: var Parser): Expr =
       # Call expression
       discard p.advance()
       var args: seq[Expr] = @[]
+      var argNames: seq[string] = @[]
       while not p.check(tkRParen) and not p.isAtEnd:
         if p.check(tkDotDotDot):
           discard p.advance()
           let operand = p.parseExpr()
           args.add(Expr(kind: ekSpread, loc: operand.loc, exprSpreadOperand: operand))
+          argNames.add("")
+        elif p.peek() == tkIdent and p.peek(1) == tkColon:
+          # Named argument: name: value
+          let nameTok = p.advance()
+          discard p.advance()  # :
+          let value = p.parseExpr()
+          args.add(value)
+          argNames.add(nameTok.text)
         else:
           args.add(p.parseExpr())
+          argNames.add("")
         if p.check(tkComma):
           discard p.advance()
       discard p.expect(tkRParen, "expected ')' to close call")
-      left = Expr(kind: ekCall, loc: loc, exprCallCallee: left, exprCallArgs: args)
+      left = Expr(kind: ekCall, loc: loc, exprCallCallee: left, exprCallArgs: args, exprCallArgNames: argNames)
     of tkLt:
       # Generic type arguments: Max<int>(10, 20)
       # Only treat '<' as generic args if lookahead confirms a matching '>'

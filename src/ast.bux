@@ -100,6 +100,7 @@ const ekStringInterp: int = 26;
 struct ExprList {
     expr: *Expr,
     next: *ExprList,
+    argName: String,
 }
 
 struct Expr {
@@ -212,6 +213,7 @@ struct Param {
     name: String;
     refParamType: *TypeExpr;
     isVariadic: bool;
+    defaultExpr: *Expr;
 }
 
 struct StructField {

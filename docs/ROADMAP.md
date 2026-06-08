@@ -81,21 +81,21 @@ let msg2: String = "Count: {num}";
 
 ---
 
-### 5. Named / Default Parameters
+### 5. Named / Default Parameters ✅ DONE
 **Why:** API ergonomics.
 
 **Syntax:**
 ```bux
-func HttpResponse(code: int = 200, contentType: String = "text/plain", body: String = "") -> Response { ... }
-let r: Response = HttpResponse(body: "hello");  // code=200, contentType=default
+func HttpResponse(code: int = 200, body: String = "") -> Response { ... }
+let r: Response = HttpResponse(body: "hello");  // code=200
+let s = HttpResponse(404, body: "err");         // positional + named mixed
 ```
 
-**Implementation Steps:**
-1. Parser: allow `param: Type = defaultExpr`
-2. Sema: fill missing args at call sites
-3. C backend: emit args in correct order with defaults
-
-**Complexity:** Medium — sema changes for call resolution.
+**Status:** Implemented in both bootstrap and selfhost.
+- Bootstrap parser already parsed defaults; added named-arg parsing and sema injection.
+- Selfhost parser now parses `= defaultExpr` in params and `name: value` at call sites.
+- Sema injects default expressions and reorders named args into param order.
+- HIR lowerer unchanged — desugaring happens in sema.
 
 ---
 
