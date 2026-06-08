@@ -1613,7 +1613,7 @@ static char* bux_rsa_sign_evp(const EVP_MD* md, const char* pem_key, int keylen,
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     EVP_SignInit_ex(ctx, md, NULL);
     EVP_SignUpdate(ctx, data, (size_t)datalen);
-    size_t slen = (size_t)EVP_PKEY_size(pkey);
+    unsigned int slen = (unsigned int)EVP_PKEY_size(pkey);
     unsigned char* sig = (unsigned char*)bux_alloc(slen + 1);
     EVP_SignFinal(ctx, sig, &slen, pkey);
     *siglen = (int)slen;
@@ -1669,7 +1669,7 @@ static char* bux_ecdsa_sign_evp(const EVP_MD* md, const char* pem, int keylen,
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     EVP_SignInit_ex(ctx, md, NULL);
     EVP_SignUpdate(ctx, data, (size_t)datalen);
-    size_t slen = (size_t)EVP_PKEY_size(pkey);
+    unsigned int slen = (unsigned int)EVP_PKEY_size(pkey);
     unsigned char* sig = (unsigned char*)bux_alloc(slen + 1);
     EVP_SignFinal(ctx, sig, &slen, pkey);
     *siglen = (int)slen;
