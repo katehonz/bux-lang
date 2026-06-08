@@ -1335,6 +1335,9 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
     elif not exprType.isUnknown and exprType.kind != tkStr:
       sema.emitError(stmt.loc, "#emit requires a string expression")
     return makeVoid()
+  of skDefer:
+    discard sema.checkExpr(stmt.stmtDeferBody, scope)
+    return makeVoid()
   of skDecl:
     # Local declaration inside block
     case stmt.stmtDecl.kind

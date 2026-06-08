@@ -11,6 +11,7 @@ type
     varCounter*: int
     tryCounter*: int
     pendingStmts*: seq[HirNode]
+    deferStmts*: seq[HirNode]
     typeSubst*: Table[string, Type]  # Type parameter substitution for generics
     importTable*: Table[string, string]  # Local name → fully qualified name for imports
     genericStructs*: Table[string, Decl]  # Generic struct declarations
@@ -1005,7 +1006,13 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
 
   of skReturn:
     let value = if stmt.stmtReturnValue != nil: ctx.lowerExpr(stmt.stmtReturnValue) else: nil
-    return ctx.flushPending(hirReturn(value, loc))
+    var stmts = ctx.pendingStmts
+    ctx.pendingStmts = @[]
+    # Add defers in reverse order (LIFO)
+    for i in countdown(ctx.deferStmts.len - 1, 0):
+      stmts.add(ctx.deferStmts[i])
+    stmts.add(hirReturn(value, loc))
+    return hirBlock(stmts, nil, makeVoid(), loc)
 
   of skIf:
     let cond = ctx.lowerExpr(stmt.stmtIfCond)
@@ -1120,6 +1127,11 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     return ctx.flushPending(HirNode(kind: hMatch, matchSubject: subject, matchArms: arms,
                    typ: makeVoid(), loc: loc))
 
+  of skDefer:
+    let body = ctx.lowerExpr(stmt.stmtDeferBody)
+    ctx.deferStmts.add(body)
+    return nil
+
   of skDecl:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
                    typ: makeVoid(), loc: loc)
@@ -1188,7 +1200,24 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   ctx.currentFuncRetType = retType
   ctx.currentFuncDecl = decl
   ctx.varTypeExprs = initTable[string, TypeExpr]()  # Clear local vars for new function
-  let body = if funcBody != nil: ctx.lowerBlock(funcBody) else: nil
+  var body = if funcBody != nil: ctx.lowerBlock(funcBody) else: nil
+  
+  # Inject remaining defers at end of function (for implicit return)
+  if ctx.deferStmts.len > 0 and body != nil and body.kind == hBlock:
+    # Only add if last statement is not already a return (defers already injected there)
+    var hasReturn = false
+    if body.blockStmts.len > 0 and body.blockStmts[^1].kind == hReturn:
+      hasReturn = true
+    elif body.blockStmts.len > 0 and body.blockStmts[^1].kind == hBlock:
+      # Check nested block's last statement
+      let last = body.blockStmts[^1]
+      if last.blockStmts.len > 0 and last.blockStmts[^1].kind == hReturn:
+        hasReturn = true
+    if not hasReturn:
+      for i in countdown(ctx.deferStmts.len - 1, 0):
+        body.blockStmts.add(ctx.deferStmts[i])
+    ctx.deferStmts = @[]
+  
   ctx.currentFuncDecl = oldFuncDecl
   ctx.currentFuncRetType = oldFuncRetType
   ctx.varTypeExprs = oldVarTypeExprs

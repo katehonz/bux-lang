@@ -482,6 +482,15 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         return n;
     }
 
+    // Defer
+    if kind == skDefer {
+        n.kind = hDefer;
+        if stmt.child1 != null as *Expr {
+            n.child1 = Lcx_LowerExpr(ctx, stmt.child1);
+        }
+        return n;
+    }
+
     return n;
 }
 

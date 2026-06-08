@@ -17,6 +17,7 @@ type
     hBreak
     hContinue
     hReturn
+    hDefer
     # Memory
     hAlloca
     hLoad
@@ -84,6 +85,8 @@ type
       continueLabel*: string
     of hReturn:
       returnValue*: HirNode
+    of hDefer:
+      deferBody*: HirNode
     of hAlloca:
       allocaType*: Type
       allocaName*: string
@@ -199,6 +202,9 @@ proc hirCall*(callee: string, args: seq[HirNode], typ: Type, loc: SourceLocation
 
 proc hirReturn*(value: HirNode, loc: SourceLocation): HirNode =
   HirNode(kind: hReturn, returnValue: value, typ: makeVoid(), loc: loc)
+
+proc hirDefer*(body: HirNode, loc: SourceLocation): HirNode =
+  HirNode(kind: hDefer, deferBody: body, typ: makeVoid(), loc: loc)
 
 proc hirBlock*(stmts: seq[HirNode], expr: HirNode, typ: Type, loc: SourceLocation, isScope: bool = false): HirNode =
   HirNode(kind: hBlock, blockStmts: stmts, blockExpr: expr, typ: typ, loc: loc, isScope: isScope)

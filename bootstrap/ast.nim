@@ -238,6 +238,7 @@ type
     skStaticAssert
     skComptime
     skEmit
+    skDefer
     skDecl
 
   ElseIf* = object
@@ -298,6 +299,8 @@ type
     of skEmit:
       stmtEmitExpr*: Expr
       stmtEmitEvaluated*: string  ## filled by sema CTFE
+    of skDefer:
+      stmtDeferBody*: Expr
     of skDecl:
       stmtDecl*: Decl
 

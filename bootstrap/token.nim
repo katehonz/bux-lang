@@ -59,6 +59,7 @@ type
     tkStaticAssert    # static_assert
     tkComptime        # comptime
     tkDyn             # dyn
+    tkDefer           # defer
     tkLifetime        # 'a (lifetime parameter)
 
     ##Punctuation
@@ -152,7 +153,7 @@ proc isKeyword*(kind: TokenKind): bool =
      tkBreak, tkContinue, tkReturn, tkMatch,
      tkFunc, tkLet, tkVar, tkConst, tkType, tkStruct, tkEnum,
      tkUnion, tkInterface, tkExtend, tkModule, tkImport,
-       tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkBorrow, tkDiscard, tkAsync, tkAwait, tkSpawn, tkStaticAssert, tkComptime, tkDyn:
+       tkPub, tkExtern, tkAs, tkIs, tkNull, tkSelf, tkSuper, tkOwn, tkMut, tkBorrow, tkDiscard, tkAsync, tkAwait, tkSpawn, tkStaticAssert, tkComptime, tkDyn, tkDefer:
     true
   else:
     false
@@ -216,6 +217,7 @@ proc keywordKind*(text: string): TokenKind =
   of "static_assert": tkStaticAssert
   of "comptime": tkComptime
   of "dyn": tkDyn
+  of "defer": tkDefer
   of "true", "false": tkBoolLiteral
   else: tkIdent
 
@@ -269,6 +271,7 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkStaticAssert: "'static_assert'"
   of tkComptime: "'comptime'"
   of tkDyn: "'dyn'"
+  of tkDefer: "'defer'"
   of tkLifetime: "lifetime"
   of tkLParen: "'('"
   of tkRParen: "')'"

@@ -959,6 +959,12 @@ proc parseStmt(p: var Parser): Stmt =
       # No-op: emit literal 0 as expression statement
       let zeroTok = Token(kind: tkIntLiteral, text: "0", loc: loc)
       return Stmt(kind: skExpr, loc: loc, stmtExpr: Expr(kind: ekLiteral, loc: loc, exprLit: zeroTok))
+  of tkDefer:
+    discard p.advance()
+    let expr = p.parseExpr()
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skDefer, loc: loc, stmtDeferBody: expr)
   of tkFunc, tkStruct, tkEnum, tkUnion, tkInterface, tkExtend, tkModule,
      tkImport, tkConst, tkType, tkExtern, tkPub:
     # Local declaration

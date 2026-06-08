@@ -157,6 +157,7 @@ const skReturn: int = 8;
 const skBreak: int = 9;
 const skContinue: int = 10;
 const skDecl: int = 11;
+const skDefer: int = 12;
 
 struct ElseIf {
     line: uint32;

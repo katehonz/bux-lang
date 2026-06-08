@@ -66,11 +66,63 @@ struct CEmitter {
     sb: StringBuilder,
     indent: int,
     mod: *HirModule,
+    deferCount: int,
+    defer0: *HirNode,
+    defer1: *HirNode,
+    defer2: *HirNode,
+    defer3: *HirNode,
+    defer4: *HirNode,
+    defer5: *HirNode,
+    defer6: *HirNode,
+    defer7: *HirNode,
 }
 
 func CBE_Init() -> CEmitter {
     var sb: StringBuilder = StringBuilder_NewCap(4096);
     return CEmitter { sb: sb, indent: 0, mod: null as *HirModule };
+}
+
+func CBE_PushDefer(cbe: *CEmitter, node: *HirNode) {
+    if cbe.deferCount == 0 { cbe.defer0 = node; }
+    if cbe.deferCount == 1 { cbe.defer1 = node; }
+    if cbe.deferCount == 2 { cbe.defer2 = node; }
+    if cbe.deferCount == 3 { cbe.defer3 = node; }
+    if cbe.deferCount == 4 { cbe.defer4 = node; }
+    if cbe.deferCount == 5 { cbe.defer5 = node; }
+    if cbe.deferCount == 6 { cbe.defer6 = node; }
+    if cbe.deferCount == 7 { cbe.defer7 = node; }
+    cbe.deferCount = cbe.deferCount + 1;
+}
+
+func CBE_EmitDefers(cbe: *CEmitter) -> int {
+    if cbe.deferCount == 0 { return 0; }
+    var i: int = cbe.deferCount - 1;
+    while i >= 0 {
+        StringBuilder_Append(&cbe.sb, "\n");
+        var sp: int = 0;
+        while sp < cbe.indent {
+            StringBuilder_Append(&cbe.sb, "    ");
+            sp = sp + 1;
+        }
+        var dn: *HirNode = null as *HirNode;
+        if i == 0 { dn = cbe.defer0; }
+        if i == 1 { dn = cbe.defer1; }
+        if i == 2 { dn = cbe.defer2; }
+        if i == 3 { dn = cbe.defer3; }
+        if i == 4 { dn = cbe.defer4; }
+        if i == 5 { dn = cbe.defer5; }
+        if i == 6 { dn = cbe.defer6; }
+        if i == 7 { dn = cbe.defer7; }
+        CBE_EmitExpr(cbe, dn);
+        StringBuilder_Append(&cbe.sb, ";");
+        i = i - 1;
+    }
+    cbe.deferCount = 0;
+    return 1;
+}
+
+func CBE_ClearDefers(cbe: *CEmitter) {
+    cbe.deferCount = 0;
 }
 
 func CBE_Emit(cbe: *CEmitter, text: String) {
@@ -231,8 +283,23 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
+    // Defer
+    if kind == hDefer {
+        CBE_PushDefer(cbe, node.child1);
+        return;
+    }
+
     // Return
     if kind == hReturn {
+        let hadDefers: int = CBE_EmitDefers(cbe);
+        if hadDefers != 0 {
+            StringBuilder_Append(&cbe.sb, "\n");
+            var sp: int = 0;
+            while sp < cbe.indent {
+                StringBuilder_Append(&cbe.sb, "    ");
+                sp = sp + 1;
+            }
+        }
         StringBuilder_Append(&cbe.sb, "return");
         if node.child1 != null as *HirNode {
             StringBuilder_Append(&cbe.sb, " ");
@@ -500,6 +567,11 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     if kind == hBlock {
         var child: *HirNode = node.child1;
         while child != null as *HirNode {
+            if child.kind == hDefer {
+                CBE_EmitExpr(cbe, child);
+                child = child.child3;
+                continue;
+            }
             // Indent
             var sp: int = 0;
             while sp < cbe.indent {
@@ -971,6 +1043,7 @@ func CBackend_Generate(mod: *HirModule) -> String {
         var hasReturn: bool = false;
         cbe.indent = 1;
         CBE_EmitExpr(cbe, body);
+        CBE_EmitDefers(cbe);
         cbe.indent = 0;
         // Check if body has a return statement
         var stmt: *HirNode = body.child1;
@@ -982,7 +1055,7 @@ func CBackend_Generate(mod: *HirModule) -> String {
         if String_Eq(mod.funcs[i].retTypeName, "int") && !hasReturn {
             StringBuilder_Append(&cbe.sb, "    return 0;\n");
         }
-        StringBuilder_Append(&cbe.sb, "}\n\n");
+        StringBuilder_Append(&cbe.sb, "\n}\n\n");
         i = i + 1;
     }
 

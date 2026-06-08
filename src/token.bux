@@ -138,6 +138,7 @@ const tkAsync: int = 102;
 const tkAwait: int = 103;
 const tkSpawn: int = 104;
 const tkDiscard: int = 105;
+const tkDefer: int = 106;
 
 // ---------------------------------------------------------------------------
 // Token struct

@@ -8,6 +8,7 @@ type
     varCounter*: int
     declaredVars*: seq[string]
     sliceTypeDefs*: seq[tuple[name: string, elem: string]]  ## Generated Slice_<T> typedefs
+    deferStack*: seq[seq[string]]  ## Function-level deferred statements (LIFO)
 
 proc cEscape(s: string): string =
   ## Escape a string for use as a C string literal.
@@ -44,6 +45,28 @@ proc emitIndent(be: var CBackend) =
 proc freshVar(be: var CBackend): string =
   inc be.varCounter
   result = &"__tmp_{be.varCounter}"
+
+# ---------------------------------------------------------------------------
+# Defer helpers
+# ---------------------------------------------------------------------------
+proc pushDeferScope(be: var CBackend) =
+  be.deferStack.add(@[])
+
+proc popDeferScope(be: var CBackend) =
+  if be.deferStack.len > 0:
+    be.deferStack.setLen(be.deferStack.len - 1)
+
+proc emitCurrentDefers(be: var CBackend) =
+  ## Emit all deferred statements in current scope, LIFO order
+  if be.deferStack.len == 0: return
+  let idx = be.deferStack.len - 1
+  for i in countdown(be.deferStack[idx].len - 1, 0):
+    be.emitLine(be.deferStack[idx][i])
+
+proc clearCurrentDefers(be: var CBackend) =
+  if be.deferStack.len > 0:
+    let idx = be.deferStack.len - 1
+    be.deferStack[idx].setLen(0)
 
 # Type conversion: Bux Type → C type string
 proc typeToC*(be: var CBackend, typ: Type): string =
@@ -358,7 +381,14 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
 proc emitStmt(be: var CBackend, node: HirNode) =
   if node == nil: return
   case node.kind
+  of hDefer:
+    let expr = be.emitExpr(node.deferBody)
+    if be.deferStack.len > 0:
+      let idx = be.deferStack.len - 1
+      be.deferStack[idx].add(expr & ";")
+
   of hReturn:
+    be.emitCurrentDefers()
     if node.returnValue != nil:
       let val = be.emitExpr(node.returnValue)
       be.emitLine(&"return {val};")
@@ -394,9 +424,11 @@ proc emitStmt(be: var CBackend, node: HirNode) =
     be.emitLine("}")
 
   of hBreak:
+    be.emitCurrentDefers()
     be.emitLine("break;")
 
   of hContinue:
+    be.emitCurrentDefers()
     be.emitLine("continue;")
 
   of hEmit:
@@ -453,15 +485,23 @@ proc emitFunc*(be: var CBackend, hfunc: HirFunc) =
   let paramsStr = params.join(", ")
   be.emitLine(&"{retType} {hfunc.name}({paramsStr}) {{")
   inc be.indent
+  be.pushDeferScope()
   if hfunc.body != nil:
     if hfunc.body.kind == hBlock:
       for stmt in hfunc.body.blockStmts:
         be.emitStmt(stmt)
       if hfunc.body.blockExpr != nil and hfunc.retType.kind != tkVoid:
+        be.emitCurrentDefers()
         let val = be.emitExpr(hfunc.body.blockExpr)
         be.emitLine(&"return {val};")
+      else:
+        be.emitCurrentDefers()
     else:
       be.emitStmt(hfunc.body)
+      be.emitCurrentDefers()
+  else:
+    be.emitCurrentDefers()
+  be.popDeferScope()
   dec be.indent
   be.emitLine("}")
   be.emitLine("")

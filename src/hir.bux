@@ -33,6 +33,7 @@ const hTupleInit: int = 27;
 const hMatch: int = 28;
 const hSpawn: int = 29;
 const hAwait: int = 30;
+const hDefer: int = 31;
 
 // ---------------------------------------------------------------------------
 // HirArgList — linked list for call arguments beyond 2

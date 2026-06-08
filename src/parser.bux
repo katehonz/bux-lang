@@ -704,6 +704,19 @@ func parserParseStmt(p: *Parser) -> *Stmt {
         return s;
     }
 
+    // defer expr
+    if kind == tkDefer {
+        discard parserAdvance(p);
+        let val: *Expr = parserParseExpr(p);
+        parserMatch(p, tkSemicolon);
+        let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        s.kind = skDefer;
+        s.line = line;
+        s.column = col;
+        s.child1 = val;
+        return s;
+    }
+
     // if
     if kind == tkIf {
         discard parserAdvance(p);
