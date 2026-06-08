@@ -198,7 +198,7 @@ func Http_ParseRequest(raw: String) -> HttpRequest {
     if bux_strlen(requestLine) > 0 {
         req.method = Http_ParseMethod(bux_str_split_part(requestLine, " ", 0));
         req.path = bux_str_split_part(requestLine, " ", 1);
-        if String_Eq(req.path, "") || req.String_Len(path) == 0 {
+        if String_Eq(req.path, "") || String_Len(req.path) == 0 {
             req.path = "/";
         }
     }
@@ -257,7 +257,7 @@ func Http_BuildResponse(resp: HttpResponse) -> String {
     // Status line
     bux_sb_append(sb, "HTTP/1.1 ");
     bux_sb_append_int(sb, resp.statusCode as int64);
-    bux_sb_append_char(sb, ' ');
+    bux_sb_append(sb, " ");
     bux_sb_append(sb, resp.statusText);
     bux_sb_append(sb, "\r\n");
 

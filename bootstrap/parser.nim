@@ -392,6 +392,8 @@ proc parseExpr(p: var Parser): Expr =
   p.parseAssign()
 
 proc parsePrimary(p: var Parser): Expr =
+  while p.check(tkNewLine):
+    discard p.advance()
   let loc = p.currentLoc
   case p.peek()
   of tkIntLiteral, tkFloatLiteral, tkStringLiteral, tkCharLiteral, tkBoolLiteral:
@@ -509,6 +511,8 @@ proc parsePrimary(p: var Parser): Expr =
 proc parsePostfix(p: var Parser): Expr =
   var left = p.parsePrimary()
   while true:
+    while p.check(tkNewLine):
+      discard p.advance()
     let loc = p.currentLoc
     case p.peek()
     of tkLParen:
@@ -605,6 +609,8 @@ proc parsePostfix(p: var Parser): Expr =
   return left
 
 proc parseUnary(p: var Parser): Expr =
+  while p.check(tkNewLine):
+    discard p.advance()
   let loc = p.currentLoc
   case p.peek()
   of tkBorrow:
