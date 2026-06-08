@@ -51,25 +51,22 @@ func Jwt_MakeHeader(alg: JwtAlg) -> String {
 
 // Sign the JWT signing input with the given algorithm
 func Jwt_Sign(alg: JwtAlg, signingInput: String, key: String) -> String {
-    let algTag: int = alg.tag;
-    let inputLen: int = String_Len(signingInput) as int;
-
     // --- HMAC algorithms ---
-    if algTag == JwtAlg_HS256 {
+    if alg.tag == JwtAlg_HS256 {
         let buf: *void = Alloc(32);
         Hmac_Sha256Raw(key, signingInput, buf);
         let result: String = bux_base64_encode(buf as String, 32);
         Free(buf);
         return result;
     }
-    if algTag == JwtAlg_HS384 {
+    if alg.tag == JwtAlg_HS384 {
         let buf: *void = Alloc(48);
         Hmac_Sha384Raw(key, signingInput, buf);
         let result: String = bux_base64_encode(buf as String, 48);
         Free(buf);
         return result;
     }
-    if algTag == JwtAlg_HS512 {
+    if alg.tag == JwtAlg_HS512 {
         let buf: *void = Alloc(64);
         Hmac_Sha512Raw(key, signingInput, buf);
         let result: String = bux_base64_encode(buf as String, 64);
@@ -78,31 +75,31 @@ func Jwt_Sign(alg: JwtAlg, signingInput: String, key: String) -> String {
     }
 
     // --- RSA algorithms (key is PEM private key) ---
-    if algTag == JwtAlg_RS256 {
+    if alg.tag == JwtAlg_RS256 {
         let raw: String = Rsa_SignSha256(key, signingInput);
         return bux_base64_encode(raw, String_Len(raw) as int);
     }
-    if algTag == JwtAlg_RS384 {
+    if alg.tag == JwtAlg_RS384 {
         let raw: String = Rsa_SignSha384(key, signingInput);
         return bux_base64_encode(raw, String_Len(raw) as int);
     }
-    if algTag == JwtAlg_RS512 {
+    if alg.tag == JwtAlg_RS512 {
         let raw: String = Rsa_SignSha512(key, signingInput);
         return bux_base64_encode(raw, String_Len(raw) as int);
     }
 
     // --- ECDSA algorithms (key is PEM private key) ---
-    if algTag == JwtAlg_ES256 {
+    if alg.tag == JwtAlg_ES256 {
         let raw: String = Ecdsa_SignP256(key, signingInput);
         return bux_base64_encode(raw, String_Len(raw) as int);
     }
-    if algTag == JwtAlg_ES384 {
+    if alg.tag == JwtAlg_ES384 {
         let raw: String = Ecdsa_SignP384(key, signingInput);
         return bux_base64_encode(raw, String_Len(raw) as int);
     }
 
     // --- EdDSA (key is 32-byte raw private key) ---
-    if algTag == JwtAlg_EdDSA {
+    if alg.tag == JwtAlg_EdDSA {
         return Ed25519_Sign(key, signingInput);
     }
 
@@ -113,25 +110,22 @@ func Jwt_Sign(alg: JwtAlg, signingInput: String, key: String) -> String {
 
 // Verify a JWT signature
 func Jwt_Verify(alg: JwtAlg, signingInput: String, signatureB64: String, key: String) -> bool {
-    let algTag: int = alg.tag;
-    let inputLen: int = String_Len(signingInput) as int;
-
     // --- HMAC algorithms ---
-    if algTag == JwtAlg_HS256 {
+    if alg.tag == JwtAlg_HS256 {
         let expectBuf: *void = Alloc(32);
         Hmac_Sha256Raw(key, signingInput, expectBuf);
         let expectB64: String = bux_base64_encode(expectBuf as String, 32);
         Free(expectBuf);
         return String_Eq(expectB64, signatureB64);
     }
-    if algTag == JwtAlg_HS384 {
+    if alg.tag == JwtAlg_HS384 {
         let expectBuf: *void = Alloc(48);
         Hmac_Sha384Raw(key, signingInput, expectBuf);
         let expectB64: String = bux_base64_encode(expectBuf as String, 48);
         Free(expectBuf);
         return String_Eq(expectB64, signatureB64);
     }
-    if algTag == JwtAlg_HS512 {
+    if alg.tag == JwtAlg_HS512 {
         let expectBuf: *void = Alloc(64);
         Hmac_Sha512Raw(key, signingInput, expectBuf);
         let expectB64: String = bux_base64_encode(expectBuf as String, 64);
@@ -140,16 +134,16 @@ func Jwt_Verify(alg: JwtAlg, signingInput: String, signatureB64: String, key: St
     }
 
     // --- RSA algorithms ---
-    if algTag == JwtAlg_RS256 { return Rsa_VerifySha256(key, signingInput, signatureB64); }
-    if algTag == JwtAlg_RS384 { return Rsa_VerifySha384(key, signingInput, signatureB64); }
-    if algTag == JwtAlg_RS512 { return Rsa_VerifySha512(key, signingInput, signatureB64); }
+    if alg.tag == JwtAlg_RS256 { return Rsa_VerifySha256(key, signingInput, signatureB64); }
+    if alg.tag == JwtAlg_RS384 { return Rsa_VerifySha384(key, signingInput, signatureB64); }
+    if alg.tag == JwtAlg_RS512 { return Rsa_VerifySha512(key, signingInput, signatureB64); }
 
     // --- ECDSA algorithms ---
-    if algTag == JwtAlg_ES256 { return Ecdsa_VerifyP256(key, signingInput, signatureB64); }
-    if algTag == JwtAlg_ES384 { return Ecdsa_VerifyP384(key, signingInput, signatureB64); }
+    if alg.tag == JwtAlg_ES256 { return Ecdsa_VerifyP256(key, signingInput, signatureB64); }
+    if alg.tag == JwtAlg_ES384 { return Ecdsa_VerifyP384(key, signingInput, signatureB64); }
 
     // --- EdDSA ---
-    if algTag == JwtAlg_EdDSA { return Ed25519_Verify(key, signatureB64, signingInput); }
+    if alg.tag == JwtAlg_EdDSA { return Ed25519_Verify(key, signatureB64, signingInput); }
 
     return false;
 }

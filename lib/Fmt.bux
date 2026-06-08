@@ -45,7 +45,7 @@ func Fmt_Format(tmpl: String, argStrs: *String, argCount: int) -> String {
                         let closeCh: String = String_Chars(tmpl, i);
                         if String_Eq(closeCh, "}") {
                             i = i + 1; // skip }
-                            let argStr: String = *(argStrs + (d * 8) as uint);
+                            let argStr: String = argStrs[d as uint];
                             StringBuilder_Append(&sb, argStr);
                             continue;
                         }
@@ -62,8 +62,8 @@ func Fmt_Format(tmpl: String, argStrs: *String, argCount: int) -> String {
 
 // Convenience wrappers
 func Fmt_Fmt1(tmpl: String, a1: String) -> String {
-    var args: *String = bux_alloc(8) as *String;
-    *(args + 0) = a1;
+    var args: *String = bux_alloc(sizeof(String)) as *String;
+    args[0] = a1;
     return Fmt_Format(tmpl, args, 1);
 }
 
@@ -83,17 +83,17 @@ func Fmt_FmtFloat(tmpl: String, val: float64) -> String {
 }
 
 func Fmt_Fmt2(tmpl: String, a1: String, a2: String) -> String {
-    var args: *String = bux_alloc(16) as *String;
-    *(args + 0) = a1;
-    *(args + 8) = a2;
+    var args: *String = bux_alloc(2 * sizeof(String)) as *String;
+    args[0] = a1;
+    args[1] = a2;
     return Fmt_Format(tmpl, args, 2);
 }
 
 func Fmt_Fmt3(tmpl: String, a1: String, a2: String, a3: String) -> String {
-    var args: *String = bux_alloc(24) as *String;
-    *(args + 0) = a1;
-    *(args + 8) = a2;
-    *(args + 16) = a3;
+    var args: *String = bux_alloc(3 * sizeof(String)) as *String;
+    args[0] = a1;
+    args[1] = a2;
+    args[2] = a3;
     return Fmt_Format(tmpl, args, 3);
 }
 

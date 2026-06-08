@@ -1,0 +1,339 @@
+module Main {
+
+import Std::Io::{PrintLine, Print, PrintInt, ReadFile, WriteFile, FileExists};
+import Std::Os::{Os_ArgsCount, Os_Args};
+import Std::String::{String_Len, String_Eq, String_StartsWith, String_Find, String_Slice};
+
+extern func bux_strlen(s: String) -> uint;
+extern func bux_strstr(haystack: String, needle: String) -> String;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+extern func bux_str_split_count(s: String, delim: String) -> uint;
+extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
+extern func bux_sb_new(initial_cap: uint) -> *void;
+extern func bux_sb_append(sb: *void, s: String);
+extern func bux_sb_append_char(sb: *void, c: char8);
+
+func SB_AppendChar(sb: *void, c: int) {
+    bux_sb_append_char(sb, c as char8);
+}
+extern func bux_sb_build(sb: *void) -> String;
+extern func bux_sb_free(sb: *void);
+extern func bux_alloc(size: uint) -> *void;
+extern func bux_free(ptr: *void);
+
+struct Database {
+    path: String,
+    sb: *void,
+    loaded: bool,
+    count: uint,
+}
+
+func DB_New(filePath: String) -> Database {
+    var db: Database;
+    db.path = filePath;
+    db.sb = bux_sb_new(4096);
+    db.loaded = false;
+    db.count = 0;
+    return db;
+}
+
+func DB_Load(self: *Database) -> bool {
+    if self.loaded { return true; }
+
+    if !FileExists(self.path) {
+        self.loaded = true;
+        return true;
+    }
+
+    let raw: String = ReadFile(self.path);
+    if raw as uint == 0 || bux_strlen(raw) == 0 {
+        self.loaded = true;
+        return true;
+    }
+
+    bux_sb_append(self.sb, raw);
+
+    let lineCount: uint = bux_str_split_count(raw, "\n");
+    var i: uint = 0;
+    var n: uint = 0;
+    while i < lineCount {
+        let line: String = bux_str_split_part(raw, "\n", i);
+        if bux_strlen(line) > 0 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    self.count = n;
+    self.loaded = true;
+    return true;
+}
+
+func DB_Get(self: *Database, key: String) -> String {
+    let raw: String = bux_sb_build(self.sb);
+    let lineCount: uint = bux_str_split_count(raw, "\n");
+    var i: uint = 0;
+    while i < lineCount {
+        let line: String = bux_str_split_part(raw, "\n", i);
+        if String_StartsWith(line, key) {
+            let eqPos: String = String_Find(line, "=");
+            if eqPos as uint != 0 {
+                let keyLen: uint = bux_strlen(key);
+                let valStart: uint = keyLen + 1;
+                let lineLen: uint = bux_strlen(line);
+                if valStart < lineLen {
+                    return bux_str_slice(line, valStart, lineLen - valStart);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+func DB_Set(self: *Database, key: String, value: String) {
+    let raw: String = bux_sb_build(self.sb);
+    let lineCount: uint = bux_str_split_count(raw, "\n");
+
+    var newSb: *void = bux_sb_new(4096);
+    var found: bool = false;
+    var i: uint = 0;
+    while i < lineCount {
+        let line: String = bux_str_split_part(raw, "\n", i);
+        if bux_strlen(line) > 0 {
+            if String_StartsWith(line, key) {
+                let eqPos: String = String_Find(line, "=");
+                if eqPos as uint != 0 {
+                    bux_sb_append(newSb, key);
+                    SB_AppendChar(newSb, 61);
+                    bux_sb_append(newSb, value);
+                    SB_AppendChar(newSb, 10);
+                    found = true;
+                } else {
+                    bux_sb_append(newSb, line);
+                    SB_AppendChar(newSb, 10);
+                }
+            } else {
+                bux_sb_append(newSb, line);
+                SB_AppendChar(newSb, 10);
+            }
+        }
+        i = i + 1;
+    }
+
+    if !found {
+        bux_sb_append(newSb, key);
+        SB_AppendChar(newSb, 61);
+        bux_sb_append(newSb, value);
+        SB_AppendChar(newSb, 10);
+        self.count = self.count + 1;
+    }
+
+    bux_sb_free(self.sb);
+    self.sb = newSb;
+}
+
+func DB_Del(self: *Database, key: String) {
+    let raw: String = bux_sb_build(self.sb);
+    let lineCount: uint = bux_str_split_count(raw, "\n");
+
+    var newSb: *void = bux_sb_new(4096);
+    var i: uint = 0;
+    var delCount: uint = 0;
+    while i < lineCount {
+        let line: String = bux_str_split_part(raw, "\n", i);
+        if bux_strlen(line) > 0 {
+            if String_StartsWith(line, key) {
+                let eqPos: String = String_Find(line, "=");
+                if eqPos as uint != 0 {
+                    delCount = delCount + 1;
+                } else {
+                    bux_sb_append(newSb, line);
+                    SB_AppendChar(newSb, 10);
+                }
+            } else {
+                bux_sb_append(newSb, line);
+                SB_AppendChar(newSb, 10);
+            }
+        }
+        i = i + 1;
+    }
+
+    if delCount > 0 {
+        self.count = self.count - delCount;
+    }
+
+    bux_sb_free(self.sb);
+    self.sb = newSb;
+}
+
+func DB_Has(self: *Database, key: String) -> bool {
+    let val: String = DB_Get(self, key);
+    return bux_strlen(val) > 0;
+}
+
+func DB_Count(self: *Database) -> uint {
+    return self.count;
+}
+
+func DB_Keys(self: *Database) -> *String {
+    if self.count == 0 { return null as *String; }
+
+    let raw: String = bux_sb_build(self.sb);
+    let lineCount: uint = bux_str_split_count(raw, "\n");
+    let keys: *String = bux_alloc(self.count * sizeof(String)) as *String;
+
+    var found: uint = 0;
+    var i: uint = 0;
+    while i < lineCount && found < self.count {
+        let line: String = bux_str_split_part(raw, "\n", i);
+        if bux_strlen(line) > 0 {
+            let eqPos: String = String_Find(line, "=");
+            if eqPos as uint != 0 {
+                let keyLen: uint = eqPos as uint - line as uint;
+                keys[found] = bux_str_slice(line, 0, keyLen);
+                found = found + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    return keys;
+}
+
+func DB_Save(self: *Database) -> bool {
+    let content: String = bux_sb_build(self.sb);
+    let ok: bool = WriteFile(self.path, content);
+    return ok;
+}
+
+func PrintUsage() {
+    PrintLine("SimpleDB — file-backed key-value database");
+    PrintLine("Usage:");
+    PrintLine("  simpledb <dbfile> set <key> <value>");
+    PrintLine("  simpledb <dbfile> get <key>");
+    PrintLine("  simpledb <dbfile> del <key>");
+    PrintLine("  simpledb <dbfile> has <key>");
+    PrintLine("  simpledb <dbfile> keys");
+    PrintLine("  simpledb <dbfile> count");
+}
+
+func Main() -> int {
+    let argc: int = Os_ArgsCount();
+
+    if argc < 3 {
+        PrintUsage();
+        return 1;
+    }
+
+    let dbFile: String = Os_Args(1);
+    let cmd: String = Os_Args(2);
+
+    var db: Database = DB_New(dbFile);
+
+    if String_Eq(cmd, "get") {
+        DB_Load(&db);
+        if argc < 4 {
+            PrintLine("get: missing key");
+            return 1;
+        }
+        let key: String = Os_Args(3);
+        let val: String = DB_Get(&db, key);
+        if bux_strlen(val) > 0 {
+            PrintLine(val);
+        } else {
+            Print("(not found) ");
+            PrintLine(key);
+        }
+        return 0;
+    }
+
+    if String_Eq(cmd, "set") {
+        DB_Load(&db);
+        if argc < 5 {
+            PrintLine("set: missing key or value");
+            return 1;
+        }
+        let key: String = Os_Args(3);
+        let val: String = Os_Args(4);
+        DB_Set(&db, key, val);
+        let saved: bool = DB_Save(&db);
+        if saved {
+            Print("OK  ");
+            Print(key);
+            Print(" = ");
+            PrintLine(val);
+        } else {
+            PrintLine("set: save failed");
+        }
+        return 0;
+    }
+
+    if String_Eq(cmd, "del") {
+        DB_Load(&db);
+        if argc < 4 {
+            PrintLine("del: missing key");
+            return 1;
+        }
+        let key: String = Os_Args(3);
+        DB_Del(&db, key);
+        DB_Save(&db);
+        Print("DEL ");
+        PrintLine(key);
+        return 0;
+    }
+
+    if String_Eq(cmd, "has") {
+        DB_Load(&db);
+        if argc < 4 {
+            PrintLine("has: missing key");
+            return 1;
+        }
+        let key: String = Os_Args(3);
+        let found: bool = DB_Has(&db, key);
+        if found {
+            Print("true  ");
+            PrintLine(key);
+        } else {
+            Print("false  ");
+            PrintLine(key);
+        }
+        return 0;
+    }
+
+    if String_Eq(cmd, "keys") {
+        DB_Load(&db);
+        let n: uint = DB_Count(&db);
+        Print("keys: ");
+        PrintInt(n as int);
+        PrintLine("");
+
+        if n == 0 {
+            return 0;
+        }
+
+        let list: *String = DB_Keys(&db);
+        var i: uint = 0;
+        while i < n {
+            Print("  ");
+            PrintLine(list[i]);
+            i = i + 1;
+        }
+        bux_free(list as *void);
+        return 0;
+    }
+
+    if String_Eq(cmd, "count") {
+        DB_Load(&db);
+        let n: uint = DB_Count(&db);
+        Print("count: ");
+        PrintInt(n as int);
+        PrintLine("");
+        return 0;
+    }
+
+    Print("unknown command: ");
+    PrintLine(cmd);
+    return 1;
+}
+
+}

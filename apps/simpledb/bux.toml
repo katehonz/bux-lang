@@ -1,0 +1,8 @@
+[Package]
+Name    = "simpledb"
+Version = "0.1.0"
+Type    = "bin"
+Description = "SimpleDB — file-backed JSON key-value database for Bux"
+
+[Build]
+Output = "Bin"
