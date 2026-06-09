@@ -16,7 +16,14 @@ struct Sema {
     currentRetType: int;    // return type of the function being checked
     checkedFunc: bool;      // true inside @[Checked] function
     movedCount: int;        // number of moved variables
-    movedNames: *String;    // array of moved variable names
+    movedName0: String;     // inline moved var names (up to 8)
+    movedName1: String;
+    movedName2: String;
+    movedName3: String;
+    movedName4: String;
+    movedName5: String;
+    movedName6: String;
+    movedName7: String;
 }
 
 struct SemaDiag {
@@ -273,6 +280,64 @@ func Sema_ResolveCallArgs(sema: *Sema, expr: *Expr) {
 }
 
 // ---------------------------------------------------------------------------
+// Borrow checker helpers (inline array, matching Decl param pattern)
+// ---------------------------------------------------------------------------
+
+func Sema_AddMoved(sema: *Sema, name: String) {
+    if sema == null as *Sema { return; }
+    if sema.movedCount >= 8 { return; }
+    if sema.movedCount == 0 { sema.movedName0 = name; }
+    else if sema.movedCount == 1 { sema.movedName1 = name; }
+    else if sema.movedCount == 2 { sema.movedName2 = name; }
+    else if sema.movedCount == 3 { sema.movedName3 = name; }
+    else if sema.movedCount == 4 { sema.movedName4 = name; }
+    else if sema.movedCount == 5 { sema.movedName5 = name; }
+    else if sema.movedCount == 6 { sema.movedName6 = name; }
+    else if sema.movedCount == 7 { sema.movedName7 = name; }
+    sema.movedCount = sema.movedCount + 1;
+}
+
+func Sema_IsMoved(sema: *Sema, name: String) -> bool {
+    if sema == null as *Sema { return false; }
+    if sema.movedCount > 0 && String_Eq(sema.movedName0, name) { return true; }
+    if sema.movedCount > 1 && String_Eq(sema.movedName1, name) { return true; }
+    if sema.movedCount > 2 && String_Eq(sema.movedName2, name) { return true; }
+    if sema.movedCount > 3 && String_Eq(sema.movedName3, name) { return true; }
+    if sema.movedCount > 4 && String_Eq(sema.movedName4, name) { return true; }
+    if sema.movedCount > 5 && String_Eq(sema.movedName5, name) { return true; }
+    if sema.movedCount > 6 && String_Eq(sema.movedName6, name) { return true; }
+    if sema.movedCount > 7 && String_Eq(sema.movedName7, name) { return true; }
+    return false;
+}
+
+func Sema_RemoveMoved(sema: *Sema, name: String) {
+    if sema == null as *Sema { return; }
+    var found: int = -1;
+    if sema.movedCount > 0 && String_Eq(sema.movedName0, name) { found = 0; }
+    else if sema.movedCount > 1 && String_Eq(sema.movedName1, name) { found = 1; }
+    else if sema.movedCount > 2 && String_Eq(sema.movedName2, name) { found = 2; }
+    else if sema.movedCount > 3 && String_Eq(sema.movedName3, name) { found = 3; }
+    else if sema.movedCount > 4 && String_Eq(sema.movedName4, name) { found = 4; }
+    else if sema.movedCount > 5 && String_Eq(sema.movedName5, name) { found = 5; }
+    else if sema.movedCount > 6 && String_Eq(sema.movedName6, name) { found = 6; }
+    else if sema.movedCount > 7 && String_Eq(sema.movedName7, name) { found = 7; }
+    if found >= 0 {
+        var i: int = found;
+        while i < sema.movedCount - 1 {
+            if i == 0 { sema.movedName0 = sema.movedName1; }
+            else if i == 1 { sema.movedName1 = sema.movedName2; }
+            else if i == 2 { sema.movedName2 = sema.movedName3; }
+            else if i == 3 { sema.movedName3 = sema.movedName4; }
+            else if i == 4 { sema.movedName4 = sema.movedName5; }
+            else if i == 5 { sema.movedName5 = sema.movedName6; }
+            else if i == 6 { sema.movedName6 = sema.movedName7; }
+            i = i + 1;
+        }
+        sema.movedCount = sema.movedCount - 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Expression type checking
 // ---------------------------------------------------------------------------
 
@@ -294,6 +359,11 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
 
     // Identifier — look up in scope
     if kind == ekIdent {
+        // Borrow check: use-after-move in @[Checked] functions
+        if sema.checkedFunc && Sema_IsMoved(sema, expr.strValue) {
+            Sema_EmitError(sema, expr.line, expr.column,
+                String_Concat("use of moved value '", String_Concat(expr.strValue, "'")));
+        }
         let sym: Symbol = Scope_Lookup(sema.scope, expr.strValue);
         if sym.kind == 0 && !String_Eq(sym.name, expr.strValue) {
             let errMsg: String = String_Concat("undeclared identifier '", expr.strValue);
@@ -333,6 +403,13 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             if expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
                 Sema_EmitError(sema, expr.line, expr.column,
                     "cannot assign through raw pointer in checked function — use '&mut T' instead");
+            }
+        }
+
+        // Borrow check: reinitialization after move
+        if sema.checkedFunc && op == tkAssign {
+            if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                Sema_RemoveMoved(sema, expr.child1.strValue);
             }
         }
 
@@ -501,6 +578,10 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
     // Let/var
     if kind == skLet {
         let initType: int = Sema_CheckExpr(sema, stmt.child1);
+        // Borrow check: move tracking
+        if sema.checkedFunc && stmt.child1 != null as *Expr && stmt.child1.kind == ekIdent {
+            Sema_AddMoved(sema, stmt.child1.strValue);
+        }
         // Register variable in scope
         var sym: Symbol;
         sym.kind = skVar;
@@ -941,7 +1022,6 @@ func Sema_Analyze(mod: *Module) -> *Sema {
     s.currentRetType = tyVoid;
     s.checkedFunc = false;
     s.movedCount = 0;
-    s.movedNames = bux_alloc(64 as uint * 256) as *String; // up to 64 moved var names
             }
 
             // Enable borrow checking for @[Checked] functions
