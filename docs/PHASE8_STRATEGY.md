@@ -296,6 +296,8 @@ Crates.io е непреодолимо предимство. Ние се конк
 - ✅ Basic borrow checker (`@[Checked]`) — готово
 - ✅ Closures (capture-less anonymous functions) — готово
 - ✅ Closures with captures — готово
+- ✅ `for i in lo..hi` / `for i in lo..=hi` range loops — готово
+- 🔄 `for x in collection` (Array/Map/Channel) — чака generic monomorphization
 - 🎯 Target: Можеш да напишеш `bux` package manager на Bux
 
 ### Milestone B: "Използваем за systems programming" (2 месеца)

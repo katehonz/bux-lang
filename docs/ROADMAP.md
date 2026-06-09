@@ -173,11 +173,13 @@ for msg in channel {
 ```
 
 **Implementation Steps:**
-1. Parser: extend `for` to accept `for <ident> in <expr> { ... }`
-2. Desugar to while loop using `Iter_HasNext` / `Iter_Next` or trait-based iterator
-3. C backend: generate standard while loop with iterator state
+1. ✅ Parser: extend `for` to accept `for <ident> in <expr> { ... }`
+2. ✅ Range-based: `for i in lo..hi` and `for i in lo..=hi` — desugared to `while` loop with counter
+3. 🔄 Collection-based: `for x in arr` — needs `Iter<T>` desugaring or trait-based iterator
+   - Blocked by: generic monomorphization in selfhost C backend
+   - Once unblocked: desugar to `let __iter = Array_Iter(&arr); while Iter_HasNext(&__iter) { let x = Iter_Next(&__iter); body }`
 
-**Complexity:** Medium — needs either trait system enhancement or hardcoded desugaring.
+**Complexity:** Medium — range-based done; collection-based needs generic monomorphization first.
 
 ---
 
