@@ -388,6 +388,34 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             discard Sema_CheckExpr(sema, arg.expr);
             arg = arg.next;
         }
+        // Borrow check: reject double mutable borrow in @[Checked] functions
+        if sema.checkedFunc {
+            var a: *ExprList = expr.callArgs;
+            var ai: int = 0;
+            while a != null as *ExprList {
+                if a.expr != null as *Expr && a.expr.kind == ekUnary && a.expr.intValue == tkAmp {
+                    if a.expr.child1 != null as *Expr && a.expr.child1.kind == ekIdent {
+                        let name1: String = a.expr.child1.strValue;
+                        var b: *ExprList = a.next;
+                        var bi: int = ai + 1;
+                        while b != null as *ExprList {
+                            if b.expr != null as *Expr && b.expr.kind == ekUnary && b.expr.intValue == tkAmp {
+                                if b.expr.child1 != null as *Expr && b.expr.child1.kind == ekIdent {
+                                    if String_Eq(name1, b.expr.child1.strValue) {
+                                        Sema_EmitError(sema, expr.line, expr.column,
+                                            String_Concat("mutable borrow conflict: multiple &mut references to '", String_Concat(name1, "'")));
+                                    }
+                                }
+                            }
+                            b = b.next;
+                            bi = bi + 1;
+                        }
+                    }
+                }
+                a = a.next;
+                ai = ai + 1;
+            }
+        }
         // Indirect call through function-typed value
         if calleeType == tyFunc {
             if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekFunc {
