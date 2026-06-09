@@ -73,7 +73,7 @@ func Fmt_CountBraceDelta(line: String) -> int {
     return delta;
 }
 
-func Fmt_Format(source: String) -> String {
+func Fmt_FormatSource(source: String) -> String {
     let sb: StringBuilder = StringBuilder_NewCap(8192);
     var indent: int = 0;
     var i: uint = 0;
@@ -130,7 +130,7 @@ func Fmt_Format(source: String) -> String {
 func Fmt_FormatFile(path: String) -> bool {
     let source: String = bux_read_file(path);
     if source == null as String || String_Eq(source, "") { return false; }
-    let formatted: String = Fmt_Format(source);
+    let formatted: String = Fmt_FormatSource(source);
     if String_Eq(formatted, "") { return false; }
     return bux_write_file(path, formatted);
 }

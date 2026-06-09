@@ -756,6 +756,15 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
             } else {
                 sym.typeName = stmt.refStmtType.typeName;
             }
+        } else if stmt.child1 != null as *Expr && stmt.child1.refType != null as *TypeExpr {
+            // Infer type from initializer expression
+            sym.refType = stmt.child1.refType;
+            stmt.refStmtType = stmt.child1.refType;
+            if stmt.child1.refType.kind == tekPointer && stmt.child1.refType.pointerPointee != null as *TypeExpr {
+                sym.typeName = String_Concat(stmt.child1.refType.pointerPointee.typeName, "*");
+            } else {
+                sym.typeName = stmt.child1.refType.typeName;
+            }
         }
         sym.isMutable = stmt.boolValue;
         sym.isPublic = false;

@@ -2,6 +2,8 @@
 // Transforms the typed AST into a lower-level IR suitable for code generation.
 module HirLower {
 
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+extern func bux_strlen(s: String) -> uint;
 
 // ---------------------------------------------------------------------------
 // Lowering context
@@ -619,7 +621,12 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     if kind == ekSizeOf {
         n.kind = hSizeOf;
         if expr.refType != null as *TypeExpr {
-            n.typeName = expr.refType.typeName;
+            let substTe: *TypeExpr = Lcx_SubstituteType(ctx, expr.refType);
+            if substTe != null as *TypeExpr {
+                n.typeName = substTe.typeName;
+            } else {
+                n.typeName = expr.refType.typeName;
+            }
         }
         return n;
     }
@@ -704,13 +711,15 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         n.kind = hCast;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         if expr.refType != null as *TypeExpr {
-            let resolvedKind: int = Lcx_ResolveTypeKind(expr.refType);
+            let substTe: *TypeExpr = Lcx_SubstituteType(ctx, expr.refType);
+            if substTe == null as *TypeExpr { substTe = expr.refType; }
+            let resolvedKind: int = Lcx_ResolveTypeKind(substTe);
             n.typeKind = resolvedKind;
             // For pointer types, construct "PointeeType*"
-            if expr.refType.kind == tekPointer && expr.refType.pointerPointee != null as *TypeExpr {
-                n.typeName = String_Concat(expr.refType.pointerPointee.typeName, "*");
-            } else if !String_Eq(expr.refType.typeName, "") {
-                n.typeName = expr.refType.typeName;
+            if substTe.kind == tekPointer && substTe.pointerPointee != null as *TypeExpr {
+                n.typeName = String_Concat(substTe.pointerPointee.typeName, "*");
+            } else if !String_Eq(substTe.typeName, "") {
+                n.typeName = substTe.typeName;
             }
         }
         return n;
@@ -1082,10 +1091,40 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                     elemTypeKind = Lcx_ResolveTypeKindFromName(elemTypeName);
                 }
 
-                if !String_Eq(elemTypeName, "") {
-                    var isArray: bool = String_Eq(collTypeName, "Array");
-                    var isIter: bool = String_Eq(collTypeName, "Iter");
+                // Handle already-monomorphized types like Array_int, Iter_string
+                var isArray: bool = String_Eq(collTypeName, "Array");
+                var isIter: bool = String_Eq(collTypeName, "Iter");
+                if String_Eq(elemTypeName, "") {
+                    // Manual prefix check for "Array_"
+                    var isArrayPrefix: bool = false;
+                    var isIterPrefix: bool = false;
+                    let collName: String = collTypeName;
+                    if collName[0] as int == 65 && collName[1] as int == 114 && collName[2] as int == 114 && collName[3] as int == 97 && collName[4] as int == 121 && collName[5] as int == 95 {
+                        isArrayPrefix = true;
+                    }
+                    if collName[0] as int == 73 && collName[1] as int == 116 && collName[2] as int == 101 && collName[3] as int == 114 && collName[4] as int == 95 {
+                        isIterPrefix = true;
+                    }
+                    if isArrayPrefix {
+                        isArray = true;
+                        let prefixLen: uint = 6; // len("Array_")
+                        let totalLen: uint = bux_strlen(collTypeName);
+                        if totalLen > prefixLen {
+                            elemTypeName = bux_str_slice(collTypeName, prefixLen, totalLen - prefixLen);
+                            elemTypeKind = Lcx_ResolveTypeKindFromName(elemTypeName);
+                        }
+                    } else if isIterPrefix {
+                        isIter = true;
+                        let prefixLen: uint = 5; // len("Iter_")
+                        let totalLen: uint = bux_strlen(collTypeName);
+                        if totalLen > prefixLen {
+                            elemTypeName = bux_str_slice(collTypeName, prefixLen, totalLen - prefixLen);
+                            elemTypeKind = Lcx_ResolveTypeKindFromName(elemTypeName);
+                        }
+                    }
+                }
 
+                if !String_Eq(elemTypeName, "") {
                     if isArray || isIter {
                         let iterVarName: String = String_Concat("__iter_", varName);
                         let iterTypeName: String = Lcx_MangleName("Iter", elemTypeName, "", 1);
