@@ -89,7 +89,6 @@ func Json_ArrayGet(v: JsonValue, index: uint) -> JsonValue {
 func Json_ArrayPush(self: *JsonValue, val: JsonValue) {
     if self.tag != JsonTagArray { return; }
     if self.arrLen >= self.arrCap {
-        // Compute new capacity (avoid var scoping bug in selfhost sema)
         let arrNewCap: uint = self.arrCap;
         if arrNewCap == 0 {
             self.arrCap = 4;
@@ -145,7 +144,6 @@ func Json_ObjectSet(self: *JsonValue, key: String, val: JsonValue) {
         i = i + 1;
     }
     if self.objLen >= self.objCap {
-        // Compute new capacity (avoid var scoping bug in selfhost sema)
         let objNewCap: uint = self.objCap;
         if objNewCap == 0 {
             self.objCap = 4;

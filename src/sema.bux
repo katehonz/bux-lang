@@ -134,10 +134,9 @@ func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
     if String_Eq(name, "float64") { return tyFloat64; }
     if String_Eq(name, "float") { return tyFloat64; }
 
-    // Check type table for user-defined types (StringMap not yet supported)
-    // TODO: re-enable when StringMap generic is available
-    // if sema.typeTable != null as *void { ... }
-    return tyNamed; // assume named type
+    // Type resolution uses scope-based lookup via Sema_CollectGlobals
+    // TODO: add StringMap-based type table for faster named-type validation
+    return tyNamed;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,14 +176,16 @@ func Sema_TypeName(kind: int) -> String {
 
 func Sema_CheckBlock(sema: *Sema, block: *Block) {
     if block == null as *Block { return; }
-    // Use current scope directly — only function bodies create new scopes.
-    // This matches Nim bootstrap behavior and fixes variable visibility
-    // in nested blocks (if/while bodies).
+    // Create child scope for block (matching Nim bootstrap behavior)
+    var blockScope: Scope = Scope_NewChild(sema.scope);
+    let prevScope: *Scope = sema.scope;
+    sema.scope = &blockScope;
     var stmt: *Stmt = block.firstStmt;
     while stmt != null as *Stmt {
         Sema_CheckStmt(sema, stmt);
         stmt = stmt.nextStmt;
     }
+    sema.scope = prevScope;
 }
 
 // ---------------------------------------------------------------------------
