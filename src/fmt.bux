@@ -1,0 +1,138 @@
+// fmt.bux — Bux source code formatter (indentation-based, preserves line structure)
+module Fmt {
+
+extern func bux_read_file(path: String) -> String;
+extern func bux_write_file(path: String, content: String) -> bool;
+extern func bux_strlen(s: String) -> uint;
+
+// Count leading spaces on a line
+func Fmt_CountLeadingSpaces(line: String) -> int {
+    var count: int = 0;
+    while count < 256 {
+        let c: int = line[count] as int;
+        if c == 0 { break; }
+        if c != 32 { break; } // space
+        count = count + 1;
+    }
+    return count;
+}
+
+// Skip whitespace from start of line, return rest
+func Fmt_TrimLeft(line: String) -> String {
+    var i: int = 0;
+    while i < 256 {
+        let c: int = line[i] as int;
+        if c == 0 { break; }
+        if c != 32 && c != 9 { break; }
+        i = i + 1;
+    }
+    if i == 0 { return line; }
+    // Extract substring from i
+    var len: int = 0;
+    while len < 256 {
+        let c: int = line[len] as int;
+        if c == 0 { break; }
+        len = len + 1;
+    }
+    if i >= len { return ""; }
+    return bux_str_slice(line, i as uint, (len - i) as uint);
+}
+
+// Check if char at position is inside a string or comment (simplified)
+func Fmt_IsInStringOrComment(line: String, pos: int) -> bool {
+    var inString: bool = false;
+    var inChar: bool = false;
+    var inComment: bool = false;
+    var i: int = 0;
+    while i < pos {
+        let c: int = line[i] as int;
+        let n: int = 0;
+        if i + 1 < 256 { n = line[i + 1] as int; }
+        if inComment { i = i + 1; continue; }
+        if c == 47 && n == 47 { inComment = true; i = i + 1; continue; } // //
+        if c == 34 && !inChar { inString = !inString; }
+        if c == 39 && !inString { inChar = !inChar; }
+        i = i + 1;
+    }
+    return inString || inChar || inComment;
+}
+
+// Count brace depth change on a line, skipping strings/comments
+func Fmt_CountBraceDelta(line: String) -> int {
+    var delta: int = 0;
+    var i: int = 0;
+    while i < 256 {
+        let c: int = line[i] as int;
+        if c == 0 { break; }
+        if !Fmt_IsInStringOrComment(line, i) {
+            if c == 123 { delta = delta + 1; } // {
+            if c == 125 { delta = delta - 1; } // }
+        }
+        i = i + 1;
+    }
+    return delta;
+}
+
+func Fmt_Format(source: String) -> String {
+    let sb: StringBuilder = StringBuilder_NewCap(8192);
+    var indent: int = 0;
+    var i: uint = 0;
+    let lineCount: uint = bux_str_split_count(source, "\n");
+
+    while i < lineCount {
+        let line: String = bux_str_split_part(source, "\n", i);
+        let trimmed: String = Fmt_TrimLeft(line);
+
+        // Skip empty lines
+        if String_Eq(trimmed, "") {
+            StringBuilder_Append(&sb, "\n");
+            i = i + 1;
+            continue;
+        }
+
+        // Adjust indent for closing braces on this line
+        let delta: int = Fmt_CountBraceDelta(trimmed);
+        // If line starts with }, decrease indent before emitting
+        let firstChar: int = trimmed[0] as int;
+        if firstChar == 125 { // }
+            indent = indent - 1;
+            if indent < 0 { indent = 0; }
+        }
+
+        // Emit indentation
+        var si: int = 0;
+        while si < indent {
+            StringBuilder_Append(&sb, "    ");
+            si = si + 1;
+        }
+
+        // Emit the trimmed line
+        StringBuilder_Append(&sb, trimmed);
+        StringBuilder_Append(&sb, "\n");
+
+        // Adjust indent for opening braces
+        if firstChar != 125 {
+            indent = indent + delta;
+        } else {
+            // For lines starting with }, apply the net delta after the initial decrease
+            indent = indent + delta + 1;
+            if indent < 0 { indent = 0; }
+        }
+
+        i = i + 1;
+    }
+
+    let result: String = StringBuilder_Build(&sb);
+    StringBuilder_Free(&sb);
+    return result;
+}
+
+func Fmt_FormatFile(path: String) -> bool {
+    let source: String = bux_read_file(path);
+    if source == null as String || String_Eq(source, "") { return false; }
+    let formatted: String = Fmt_Format(source);
+    if String_Eq(formatted, "") { return false; }
+    return bux_write_file(path, formatted);
+}
+
+}

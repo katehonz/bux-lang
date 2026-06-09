@@ -609,6 +609,44 @@ func Cli_Init() -> int {
 // Test command — build and run tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Fmt command — format source files
+// ---------------------------------------------------------------------------
+
+func Cli_Fmt(dir: String) -> int {
+    // If dir is a file, format just that file
+    if FileExists(dir) {
+        Print("Formatting ");
+        PrintLine(dir);
+        if Fmt_FormatFile(dir) {
+            PrintLine("  OK");
+            return 0;
+        }
+        return 1;
+    }
+    // Otherwise format all .bux files in directory
+    Print("Formatting ");
+    PrintLine(dir);
+    var fileCount: int = 0;
+    let files: *String = bux_list_dir(dir, ".bux", &fileCount);
+    if fileCount == 0 {
+        PrintLine("No .bux files found");
+        return 1;
+    }
+    var i: int = 0;
+    var okCount: int = 0;
+    while i < fileCount {
+        Print("  ");
+        PrintLine(files[i]);
+        if Fmt_FormatFile(files[i]) {
+            okCount = okCount + 1;
+        }
+        i = i + 1;
+    }
+    Print("Formatted "); PrintInt(okCount as int64); Print("/"); PrintInt(fileCount as int64); PrintLine(" files");
+    return 0;
+}
+
 func Cli_Test(projectDir: String) -> int {
     Print("Testing project: ");
     PrintLine(projectDir);
@@ -906,7 +944,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, fmt, test, run, project, help, version");
         return 0;
     }
 
@@ -919,7 +957,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, fmt, test, run, project, help, version");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅  695 lines");
         PrintLine("  Parser     ✅ 1004 lines");
@@ -940,6 +978,12 @@ func Cli_Run(args: *String, argCount: int) -> int {
 
     if String_Eq(cmd, "init") {
         return Cli_Init();
+    }
+
+    if String_Eq(cmd, "fmt") {
+        let dir: String = ".";
+        if argCount >= 3 { dir = args[2]; }
+        return Cli_Fmt(dir);
     }
 
     if String_Eq(cmd, "check") {
