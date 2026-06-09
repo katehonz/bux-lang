@@ -276,6 +276,7 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode
 proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode
 proc lowerBlock(ctx: var LowerCtx, blk: Block): HirNode
+proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc
 
 proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
   if expr == nil: return makeUnknown()
@@ -1139,6 +1140,10 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       resultNode = hirCall("String_Concat", @[resultNode, lastTextNode], makeStr(), loc)
     return resultNode
 
+  of ekClosure:
+    let f = ctx.lowerClosureFunc(expr)
+    return hirUnary(tkAmp, hirVar(f.name, makeFunc(@[], makeVoid()), loc), typ, loc)
+
   else:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
                    typ: makeVoid(), loc: loc)
@@ -1167,6 +1172,12 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
       of tekSlice:
         let elemType = ctx.resolveTypeExpr(stmt.stmtLetType.sliceElement)
         makeSlice(elemType)
+      of tekFunc:
+        var params: seq[Type] = @[]
+        for p in stmt.stmtLetType.funcParams:
+          params.add(ctx.resolveTypeExpr(p))
+        let ret = if stmt.stmtLetType.funcRet != nil: ctx.resolveTypeExpr(stmt.stmtLetType.funcRet) else: makeVoid()
+        makeFunc(params, ret)
       else: makeUnknown()
     elif stmt.stmtLetInit != nil:
       ctx.resolveExprType(stmt.stmtLetInit)
@@ -1474,6 +1485,25 @@ proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs:
     ctx.typeSubst = oldSubst
     ctx.generatedFuncInsts[mangledName] = true
   return mangledName
+
+proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc =
+  let loc = expr.loc
+  let name = "__closure_" & $ctx.varCounter
+  inc ctx.varCounter
+  var f = HirFunc(name: name, isPublic: false)
+  # Params
+  for p in expr.exprClosureParams:
+    f.params.add((name: p.name, typ: if p.ptype != nil: ctx.resolveTypeExpr(p.ptype) else: makeUnknown()))
+  # Return type
+  if expr.exprClosureReturnType != nil:
+    f.retType = ctx.resolveTypeExpr(expr.exprClosureReturnType)
+  else:
+    f.retType = makeVoid()
+  # Body
+  if expr.exprClosureBody != nil:
+    f.body = ctx.lowerBlock(expr.exprClosureBody)
+  ctx.extraFuncs.add(f)
+  return f
 
 proc lowerModule*(module: Module, sema: Sema): HirModule =
   var ctx = initLowerCtx(module, sema)

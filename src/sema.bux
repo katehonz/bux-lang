@@ -564,6 +564,105 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         return tyVoid;
     }
 
+    // Closure: |params| -> Ret { body }
+    if kind == ekClosure {
+        let savedRetType: int = sema.currentRetType;
+        let savedScope: *Scope = sema.scope;
+        let childScope: Scope = Scope_NewChild(sema.scope);
+        sema.scope = &childScope;
+
+        // Set return type from annotation, or unknown for inference
+        var closureRetType: int = tyUnknown;
+        if expr.refType != null as *TypeExpr {
+            closureRetType = Sema_ResolveType(sema, expr.refType);
+        }
+        sema.currentRetType = closureRetType;
+
+        // Register params in child scope
+        let params: *Decl = expr.closureParams;
+        if params != null as *Decl {
+            var i: int = 0;
+            while i < params.paramCount {
+                var p: Param;
+                if i == 0 { p = params.param0; }
+                else if i == 1 { p = params.param1; }
+                else if i == 2 { p = params.param2; }
+                else if i == 3 { p = params.param3; }
+                else if i == 4 { p = params.param4; }
+                else if i == 5 { p = params.param5; }
+                else if i == 6 { p = params.param6; }
+                else if i == 7 { p = params.param7; }
+                else if i == 8 { p = params.param8; }
+
+                if !String_Eq(p.name, "") {
+                    var sym: Symbol;
+                    sym.kind = skVar;
+                    sym.name = p.name;
+                    sym.typeKind = tyUnknown;
+                    if p.refParamType != null as *TypeExpr {
+                        sym.typeKind = Sema_ResolveType(sema, p.refParamType);
+                        sym.refType = p.refParamType;
+                    }
+                    sym.typeName = "";
+                    sym.isMutable = false;
+                    sym.isPublic = false;
+                    sym.decl = null as *Decl;
+                    discard Scope_Define(sema.scope, sym);
+                }
+                i = i + 1;
+            }
+        }
+
+        // Check body
+        if expr.refBlock != null as *Block {
+            Sema_CheckBlock(sema, expr.refBlock);
+        }
+
+        // Restore
+        sema.scope = savedScope;
+        sema.currentRetType = savedRetType;
+
+        // Build function type expression for later use
+        let funcType: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        funcType.kind = tekFunc;
+        funcType.funcRet = expr.refType;
+        funcType.funcParamCount = params.paramCount;
+        // Build param type list
+        if params.paramCount > 0 {
+            var head: *TypeExprList = null as *TypeExprList;
+            var tail: *TypeExprList = null as *TypeExprList;
+            var i: int = 0;
+            while i < params.paramCount {
+                var p: Param;
+                if i == 0 { p = params.param0; }
+                else if i == 1 { p = params.param1; }
+                else if i == 2 { p = params.param2; }
+                else if i == 3 { p = params.param3; }
+                else if i == 4 { p = params.param4; }
+                else if i == 5 { p = params.param5; }
+                else if i == 6 { p = params.param6; }
+                else if i == 7 { p = params.param7; }
+                else if i == 8 { p = params.param8; }
+
+                let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
+                node.te = p.refParamType;
+                node.next = null as *TypeExprList;
+                if head == null as *TypeExprList {
+                    head = node;
+                    tail = node;
+                } else {
+                    tail.next = node;
+                    tail = node;
+                }
+                i = i + 1;
+            }
+            funcType.funcParams = head;
+        }
+        expr.refType = funcType;
+
+        return tyFunc;
+    }
+
     return tyUnknown;
 }
 

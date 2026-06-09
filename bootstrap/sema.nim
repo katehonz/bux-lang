@@ -44,6 +44,7 @@ type
     checkedFunc*: bool  ## true inside @[Checked] function
     currentFuncIsAsync*: bool  ## true inside async func
     movedVars*: seq[string]  ## variables moved in current checked function
+    currentRetType*: Type    ## return type of the function being checked
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1337,6 +1338,25 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     for e in expr.exprInterpExprs:
       discard sema.checkExpr(e, scope)
     return makeStr()
+  of ekClosure:
+    let savedRetType = sema.currentRetType
+    let childScope = Scope(parent: scope)
+    sema.currentRetType = if expr.exprClosureReturnType != nil: sema.resolveType(expr.exprClosureReturnType) else: makeUnknown()
+    # Register params
+    for p in expr.exprClosureParams:
+      let ptype = if p.ptype != nil: sema.resolveType(p.ptype) else: makeUnknown()
+      discard childScope.define(Symbol(kind: skVar, name: p.name, typ: ptype))
+    # Check body
+    if expr.exprClosureBody != nil:
+      for stmt in expr.exprClosureBody.stmts:
+        discard sema.checkStmt(stmt, childScope)
+    sema.currentRetType = savedRetType
+    # Build function type
+    var params: seq[Type] = @[]
+    for p in expr.exprClosureParams:
+      params.add(if p.ptype != nil: sema.resolveType(p.ptype) else: makeUnknown())
+    let retType = if expr.exprClosureReturnType != nil: sema.resolveType(expr.exprClosureReturnType) else: makeVoid()
+    return makeFunc(params, retType)
 
 # ---------------------------------------------------------------------------
 # Statement type checking

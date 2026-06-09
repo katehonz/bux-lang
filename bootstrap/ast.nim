@@ -132,6 +132,7 @@ type
     ekBlock
     ekMatch
     ekStringInterp
+    ekClosure
 
   MatchArm* = object
     loc*: SourceLocation
@@ -228,6 +229,10 @@ type
     of ekStringInterp:
       exprInterpTexts*: seq[string]
       exprInterpExprs*: seq[Expr]
+    of ekClosure:
+      exprClosureParams*: seq[Param]
+      exprClosureBody*: Block
+      exprClosureReturnType*: TypeExpr
 
   # ---------------------------------------------------------------------------
   # Statements

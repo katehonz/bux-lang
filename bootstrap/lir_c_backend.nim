@@ -58,6 +58,13 @@ proc typeFromValue(be: var LirCBackend, v: LirValue): string =
 proc setTempType(be: var LirCBackend, temp: string, cType: string) =
   be.tempTypes[temp] = cType
 
+proc cParamDecl(cType, name: string): string =
+  ## Emit a C parameter declaration, handling function-pointer syntax.
+  if cType.contains("(*)"):
+    return cType.replace("(*)", "(*" & name & ")")
+  else:
+    return cType & " " & name
+
 # ── Per-instruction emission ──
 
 proc emitInstr(be: var LirCBackend, instr: LirInstr) =
@@ -183,7 +190,7 @@ proc emitInstr(be: var LirCBackend, instr: LirInstr) =
       let inferred = be.tempTypes[instr.dst.strVal]
       if inferred != "" and inferred != ct:
         ct = inferred
-    be.emitLine(&"{ct} {v(instr.dst)};")
+    be.emitLine(cParamDecl(ct, v(instr.dst)) & ";")
 
   # ── Pointers ──
   of lirAddrOf:
@@ -240,13 +247,6 @@ proc emitInstr(be: var LirCBackend, instr: LirInstr) =
     be.emitLine(&"/* {text} */")
 
 # ── Function emission ──
-
-proc cParamDecl(cType, name: string): string =
-  ## Emit a C parameter declaration, handling function-pointer syntax.
-  if cType.contains("(*)"):
-    return cType.replace("(*)", "(*" & name & ")")
-  else:
-    return cType & " " & name
 
 proc emitFunc(be: var LirCBackend, f: LirFunc, funcRetTypes: Table[string, string], funcPtrTypes: Table[string, string]) =
   var paramsStr = ""

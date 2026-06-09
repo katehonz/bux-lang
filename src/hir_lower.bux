@@ -384,6 +384,23 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         return n;
     }
 
+    // Closure: generate function and return address-of
+    if kind == ekClosure {
+        let f: *HirFunc = Lcx_LowerClosureFunc(ctx, expr);
+        n.kind = hUnary;
+        n.intValue = tkAmp;
+        let varNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        varNode.kind = hVar;
+        varNode.strValue = f.name;
+        varNode.typeKind = tyFunc;
+        n.child1 = varNode;
+        n.typeKind = tyFunc;
+        if expr.refType != null as *TypeExpr {
+            n.typeName = Lcx_BuildFuncTypeName(expr.refType);
+        }
+        return n;
+    }
+
     // Cast
     if kind == ekCast {
         n.kind = hCast;
@@ -775,6 +792,93 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
         f.body = null as *HirNode;
     }
     ctx.scope = prevScope;
+
+    return f;
+}
+
+// ---------------------------------------------------------------------------
+// Closure lowering — generate a global function for a closure expression
+// ---------------------------------------------------------------------------
+
+func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
+    let f: *HirFunc = bux_alloc(sizeof(HirFunc)) as *HirFunc;
+
+    // Generate unique name
+    let numStr: String = String_FromInt(ctx.funcCount);
+    f.name = String_Concat("__closure_", numStr);
+    f.isPublic = false;
+
+    let params: *Decl = expr.closureParams;
+    if params != null as *Decl {
+        f.paramCount = params.paramCount;
+        if params.paramCount > 0 { f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param0, &params.param0); }
+        if params.paramCount > 1 { f.param1 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param1, &params.param1); }
+        if params.paramCount > 2 { f.param2 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param2, &params.param2); }
+        if params.paramCount > 3 { f.param3 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param3, &params.param3); }
+        if params.paramCount > 4 { f.param4 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param4, &params.param4); }
+        if params.paramCount > 5 { f.param5 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param5, &params.param5); }
+        if params.paramCount > 6 { f.param6 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param6, &params.param6); }
+        if params.paramCount > 7 { f.param7 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param7, &params.param7); }
+        if params.paramCount > 8 { f.param8 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param8, &params.param8); }
+    }
+
+    if expr.refType != null as *TypeExpr && expr.refType.kind == tekFunc && expr.refType.funcRet != null as *TypeExpr {
+        f.retTypeName = expr.refType.funcRet.typeName;
+        f.retTypeKind = Lcx_ResolveTypeKind(expr.refType.funcRet);
+    } else {
+        f.retTypeName = "";
+        f.retTypeKind = 0;
+    }
+
+    // Create function scope
+    var funcScope: Scope = Scope_NewChild(ctx.scope);
+    var pi: int = 0;
+    while pi < params.paramCount {
+        var p: *Param = null as *Param;
+        if pi == 0 { p = &params.param0; }
+        else if pi == 1 { p = &params.param1; }
+        else if pi == 2 { p = &params.param2; }
+        else if pi == 3 { p = &params.param3; }
+        else if pi == 4 { p = &params.param4; }
+        else if pi == 5 { p = &params.param5; }
+        else if pi == 6 { p = &params.param6; }
+        else if pi == 7 { p = &params.param7; }
+        else if pi == 8 { p = &params.param8; }
+        if p != null as *Param && p.refParamType != null as *TypeExpr {
+            var sym: Symbol;
+            sym.kind = skVar;
+            sym.name = p.name;
+            sym.typeKind = Lcx_ResolveTypeKind(p.refParamType);
+            sym.refType = p.refParamType;
+            if p.refParamType.kind == tekFunc {
+                sym.typeName = Lcx_BuildFuncTypeName(p.refParamType);
+            } else if !String_Eq(p.refParamType.typeName, "") {
+                sym.typeName = p.refParamType.typeName;
+            } else if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
+                sym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+            } else {
+                sym.typeName = "";
+            }
+            sym.isMutable = false;
+            sym.isPublic = false;
+            sym.decl = null as *Decl;
+            discard Scope_Define(&funcScope, sym);
+        }
+        pi = pi + 1;
+    }
+
+    let prevScope: *Scope = ctx.scope;
+    ctx.scope = &funcScope;
+    if expr.refBlock != null as *Block {
+        f.body = Lcx_LowerBlock(ctx, expr.refBlock, -1);
+    } else {
+        f.body = null as *HirNode;
+    }
+    ctx.scope = prevScope;
+
+    // Add to module functions
+    ctx.funcs[ctx.funcCount] = *f;
+    ctx.funcCount = ctx.funcCount + 1;
 
     return f;
 }

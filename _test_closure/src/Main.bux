@@ -1,0 +1,34 @@
+module Main {
+
+extern func PrintInt(x: int);
+extern func PrintLine(msg: String);
+
+func Apply(x: int, op: func(int) -> int) -> int {
+    return op(x);
+}
+
+func Double(x: int) -> int {
+    return x * 2;
+}
+
+func main() -> int {
+    // Closure as variable
+    let add: func(int, int) -> int = |a: int, b: int| -> int { return a + b; };
+    let sum: int = add(3, 4);
+    PrintInt(sum);
+    PrintLine("");
+
+    // Closure passed to function
+    let result: int = Apply(5, |x: int| -> int { return x * 3; });
+    PrintInt(result);
+    PrintLine("");
+
+    // Address of named function as function pointer
+    let d: func(int) -> int = &Double;
+    PrintInt(d(7));
+    PrintLine("");
+
+    return 0;
+}
+
+}

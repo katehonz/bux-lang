@@ -107,6 +107,7 @@ const ekMatch: int = 22;
 const ekSpawn: int = 24;
 const ekAwait: int = 25;
 const ekStringInterp: int = 26;
+const ekClosure: int = 27;
 
 struct ExprList {
     expr: *Expr,
@@ -139,6 +140,8 @@ struct Expr {
     // Struct init fields
     structName: String,
     structFieldCount: int,
+    // Closure params (for ekClosure)
+    closureParams: *Decl,
     // Call arguments (linked list for multi-arg support)
     callArgs: *ExprList,
     callArgCount: int,

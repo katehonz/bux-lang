@@ -587,6 +587,26 @@ proc parsePrimary(p: var Parser): Expr =
   of tkNull:
     discard p.advance()
     return newLiteralExpr(Token(kind: tkNull, text: "null", loc: loc))
+  of tkPipe:
+    # Closure: |params| -> Ret { body }
+    discard p.advance()  # |
+    var params: seq[Param] = @[]
+    while not p.check(tkPipe) and not p.isAtEnd:
+      let nameTok = p.expect(tkIdent, "expected parameter name in closure")
+      discard p.expect(tkColon, "expected ':' in closure parameter")
+      let ptype = p.parseType()
+      params.add(Param(name: nameTok.text, ptype: ptype))
+      if p.check(tkComma):
+        discard p.advance()
+      else:
+        break
+    discard p.expect(tkPipe, "expected '|' to close closure params")
+    var retType: TypeExpr = nil
+    if p.check(tkArrow):
+      discard p.advance()  # ->
+      retType = p.parseType()
+    let body = p.parseBlock()
+    return Expr(kind: ekClosure, loc: loc, exprClosureParams: params, exprClosureBody: body, exprClosureReturnType: retType)
   else:
     p.emitError(loc, "expected expression")
     discard p.advance()

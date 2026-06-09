@@ -384,8 +384,87 @@ func parserParsePrimary(p: *Parser) -> *Expr {
         return e;
     }
 
+    // Closure: |params| -> Ret { body }
+    if kind == tkPipe {
+        return parserParseClosure(p);
+    }
+
     parserEmitDiag(p, line, col, "expected expression");
     return parserMakeExpr(ekLiteral, line, col);
+}
+
+// ---------------------------------------------------------------------------
+// Closure: |params| -> Ret { body }
+// ---------------------------------------------------------------------------
+
+func parserParseClosure(p: *Parser) -> *Expr {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserExpect(p, tkPipe, "expected '|' to start closure params");
+
+    let e: *Expr = parserMakeExpr(ekClosure, line, col);
+    let params: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    params.kind = dkFunc;
+    params.paramCount = 0;
+
+    // Parse params: name: Type
+    while !parserCheck(p, tkPipe) && parserPeek(p, 0) != tkEndOfFile {
+        while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+            discard parserAdvance(p);
+        }
+        if parserCheck(p, tkPipe) || parserPeek(p, 0) == tkEndOfFile {
+            break;
+        }
+        if params.paramCount >= 9 { break; }
+        let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected parameter name in closure");
+        discard parserExpect(p, tkColon, "expected ':' in closure parameter");
+        let ptype: *TypeExpr = parserParseType(p);
+
+        let idx: int = params.paramCount;
+        if idx == 0 {
+            params.param0.name = nameTok.text;
+            params.param0.refParamType = ptype;
+        } else if idx == 1 {
+            params.param1.name = nameTok.text;
+            params.param1.refParamType = ptype;
+        } else if idx == 2 {
+            params.param2.name = nameTok.text;
+            params.param2.refParamType = ptype;
+        } else if idx == 3 {
+            params.param3.name = nameTok.text;
+            params.param3.refParamType = ptype;
+        } else if idx == 4 {
+            params.param4.name = nameTok.text;
+            params.param4.refParamType = ptype;
+        } else if idx == 5 {
+            params.param5.name = nameTok.text;
+            params.param5.refParamType = ptype;
+        } else if idx == 6 {
+            params.param6.name = nameTok.text;
+            params.param6.refParamType = ptype;
+        } else if idx == 7 {
+            params.param7.name = nameTok.text;
+            params.param7.refParamType = ptype;
+        } else if idx == 8 {
+            params.param8.name = nameTok.text;
+            params.param8.refParamType = ptype;
+        }
+        params.paramCount = params.paramCount + 1;
+        if parserMatch(p, tkComma) { continue; }
+        break;
+    }
+
+    discard parserExpect(p, tkPipe, "expected '|' to close closure params");
+    e.closureParams = params;
+
+    // Optional return type: -> Type
+    if parserMatch(p, tkArrow) {
+        e.refType = parserParseType(p);
+    }
+
+    // Body: { ... }
+    e.refBlock = parserParseBlock(p);
+    return e;
 }
 
 // ---------------------------------------------------------------------------
