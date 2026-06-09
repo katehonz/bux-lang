@@ -14,6 +14,9 @@ struct Sema {
     diags: *SemaDiag;
     hasError: bool;
     currentRetType: int;    // return type of the function being checked
+    checkedFunc: bool;      // true inside @[Checked] function
+    movedCount: int;        // number of moved variables
+    movedNames: *String;    // array of moved variable names
 }
 
 struct SemaDiag {
@@ -325,6 +328,14 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         let right: int = Sema_CheckExpr(sema, expr.child2);
         let op: int = expr.intValue;
 
+        // Borrow check: reject assignment through deref in @[Checked] functions
+        if sema.checkedFunc && op == tkAssign {
+            if expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
+                Sema_EmitError(sema, expr.line, expr.column,
+                    "cannot assign through raw pointer in checked function — use '&mut T' instead");
+            }
+        }
+
         // Assignment operators return target type
         if op == tkAssign || (op >= tkPlusAssign && op <= tkShrAssign) {
             return left;
@@ -360,7 +371,11 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if kind == ekAssign {
         let target: int = Sema_CheckExpr(sema, expr.child1);
         let value: int = Sema_CheckExpr(sema, expr.child2);
-        // Basic type compatibility (permissive for now)
+        // Borrow check: reject assignment through deref in @[Checked] functions
+        if sema.checkedFunc && expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
+            Sema_EmitError(sema, expr.line, expr.column,
+                "cannot assign through raw pointer in checked function — use '&mut T' instead");
+        }
         return target;
     }
 
@@ -895,8 +910,15 @@ func Sema_Analyze(mod: *Module) -> *Sema {
             if decl.retType != null as *TypeExpr {
                 s.currentRetType = Sema_ResolveType(s, decl.retType);
             } else {
-                s.currentRetType = tyVoid;
+    s.currentRetType = tyVoid;
+    s.checkedFunc = false;
+    s.movedCount = 0;
+    s.movedNames = bux_alloc(64 as uint * 256) as *String; // up to 64 moved var names
             }
+
+            // Enable borrow checking for @[Checked] functions
+            let wasChecked: bool = s.checkedFunc;
+            s.checkedFunc = decl.isChecked != 0;
 
             // Check body statements
             var stmt: *Stmt = decl.refBody.firstStmt;
@@ -905,6 +927,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
                 stmt = stmt.nextStmt;
             }
 
+            s.checkedFunc = wasChecked;
             s.scope = prevScope;
         }
         decl = decl.childDecl2;

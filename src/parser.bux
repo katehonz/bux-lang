@@ -1361,14 +1361,42 @@ func parserParseDecl(p: *Parser) -> *Decl {
         discard parserAdvance(p);
     }
     let isPublic: bool = parserMatch(p, tkPub);
+
+    // Parse @[Checked] attribute
+    var isChecked: int = 0;
+    if parserCheck(p, tkAt) {
+        discard parserAdvance(p); // @
+        if parserCheck(p, tkLBracket) {
+            discard parserAdvance(p); // [
+            if parserCheck(p, tkIdent) {
+                let attrName: LexToken = parserCurToken(p);
+                if String_Eq(attrName.text, "Checked") {
+                    isChecked = 1;
+                }
+                discard parserAdvance(p); // attribute name
+            }
+            if parserCheck(p, tkRBracket) {
+                discard parserAdvance(p); // ]
+            }
+        }
+        // Skip newlines after attribute before the declaration
+        while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+            discard parserAdvance(p);
+        }
+    }
+
     let kind: int = parserPeek(p, 0);
 
     if kind == tkAsync && parserPeek(p, 1) == tkFunc {
         discard parserAdvance(p); // async
-        return parserParseFuncDecl(p, isPublic, false, true);
+        let d: *Decl = parserParseFuncDecl(p, isPublic, false, true);
+        d.isChecked = isChecked;
+        return d;
     }
     if kind == tkFunc {
-        return parserParseFuncDecl(p, isPublic, false, false);
+        let d: *Decl = parserParseFuncDecl(p, isPublic, false, false);
+        d.isChecked = isChecked;
+        return d;
     }
     if kind == tkStruct { return parserParseStructDecl(p, isPublic); }
     if kind == tkEnum { return parserParseEnumDecl(p, isPublic); }

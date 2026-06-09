@@ -250,6 +250,7 @@ struct Decl {
     column: uint32,
     isPublic: bool,
     isAsync: bool,
+    isChecked: int,          // @[Checked] attribute (0/1)
     // Names
     strValue: String,        // decl name
     strValue2: String,       // interface name, dll name, module path
