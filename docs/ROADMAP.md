@@ -59,30 +59,26 @@ func MyArray_operator_index_set(self: *MyArray, idx: int, value: int) { ... }
 
 ---
 
-## P0 — Critical (Unlocks Major Use Cases)
-
 ### 4. String Interpolation
-**Why:** `Fmt_Fmt1("hello {0}", name)` is verbose.
+**Status:** ✅ Implemented in bootstrap (selfhost reserves AST node).
 
 **Syntax:**
 ```bux
 let name: String = "Bux";
-let msg: String = "Hello, {name}!";
+let msg: String = f"Hello, {name}!";
 let num: int = 42;
-let msg2: String = "Count: {num}";
+let msg2: String = f"Count: {num}";
 ```
 
-**Implementation Steps:**
-1. Lexer: detect `{` inside string literals, parse interpolation expressions
-2. Parser: create string concatenation AST node
-3. Desugar to `String_Concat` calls or `Fmt_FmtN`
-
-**Complexity:** Low — lexer/parser changes only.
+**Notes:**
+- `f"..."` prefix enables interpolation.
+- Escaped braces: `\{` and `\}`.
+- Auto-converts `int`, `uint`, `float`, `bool`, and `String` inside braces.
 
 ---
 
-### 5. Named / Default Parameters ✅ DONE
-**Why:** API ergonomics.
+### 5. Named / Default Parameters
+**Status:** ✅ Implemented in both bootstrap and selfhost.
 
 **Syntax:**
 ```bux
@@ -91,11 +87,43 @@ let r: Response = HttpResponse(body: "hello");  // code=200
 let s = HttpResponse(404, body: "err");         // positional + named mixed
 ```
 
-**Status:** Implemented in both bootstrap and selfhost.
+**Notes:**
 - Bootstrap parser already parsed defaults; added named-arg parsing and sema injection.
-- Selfhost parser now parses `= defaultExpr` in params and `name: value` at call sites.
+- Selfhost parser parses `= defaultExpr` in params and `name: value` at call sites.
 - Sema injects default expressions and reorders named args into param order.
-- HIR lowerer unchanged — desugaring happens in sema.
+
+---
+
+### 6. CLI Commands (`bux new`, `bux init`, `bux test`, `bux fmt`)
+**Status:** ✅ Implemented in selfhost.
+
+| Command | Description |
+|---------|-------------|
+| `bux new <name>` | Create a new project directory with `bux.toml` and `src/Main.bux` |
+| `bux init` | Initialize a Bux project in the current directory |
+| `bux test [dir]` | Build and run the project binary, reporting pass/fail |
+| `bux fmt <file|dir>` | Format `.bux` files (4-space indentation, preserves comments) |
+
+---
+
+### 7. Basic Borrow Checker (`@[Checked]`)
+**Status:** ✅ Implemented in selfhost.
+
+**Features:**
+- `@[Checked]` attribute enables per-function borrow checking.
+- `&T` (shared reference) and `&mut T` (mutable reference) type syntax.
+- Rejects write-through raw pointer (`*T`) in checked functions.
+- Detects double mutable borrow (`Swap(&mut x, &mut x)`).
+- Tracks use-after-move for `own T` values.
+
+---
+
+## P0 — Critical (Unlocks Major Use Cases)
+
+### 8. Full Selfhost Bootstrap Loop
+**Why:** The selfhost compiler must compile itself deterministically.
+
+**Status:** 🔄 In progress — borrow checker works, but some features still missing in selfhost vs bootstrap.
 
 ---
 
@@ -204,8 +232,10 @@ Task::Spawn(Worker, rx);
 1. ✅ **`defer`** — Done
 2. ✅ **`switch`/`case`** — Done
 3. ✅ **Operator overloading** — Done (bootstrap)
-4. **String interpolation** — Low complexity, big ergonomics win. **← NEXT**
-5. **Named/default parameters** — Medium complexity, improves stdlib APIs.
-6. **Closures** — High complexity, unlocks iterators and functional style.
-7. **`for x in collection`** — Depends on closures or trait system.
-8. **Destructors / Drop** — High complexity, needs ownership + move semantics.
+4. ✅ **String interpolation** — Done (bootstrap)
+5. ✅ **Named/default parameters** — Done
+6. ✅ **Basic borrow checker (`@[Checked]`)** — Done (selfhost)
+7. ✅ **`bux fmt`, `bux test`, `bux new`, `bux init`** — Done (selfhost)
+8. **Closures** — High complexity, unlocks iterators and functional style. **← NEXT**
+9. **`for x in collection`** — Depends on closures or trait system.
+10. **Destructors / Drop** — High complexity, needs ownership + move semantics.

@@ -1,7 +1,7 @@
 # Фаза 8 — Стратегия: Как Bux печели, без да бие пряко Rust/Nim/Zig
 
-> **Дата:** 2026-06-08 | **Статус:** Фаза 8.1 ✅, 8.2-8.6 🔄
-> **Последни постижения:** defer ✅, switch/case ✅, operator overloading ✅, selfhost-loop deterministic ✅
+> **Дата:** 2026-06-09 | **Статус:** Фаза 8.1 ✅, 8.2 ✅ (basic), 8.3-8.6 🔄
+> **Последни постижения:** defer ✅, switch/case ✅, operator overloading ✅, string interpolation ✅, named/default params ✅, basic borrow checker ✅, `bux fmt` ✅, `bux test` ✅, `bux new`/`init` ✅, selfhost-loop deterministic ✅
 > **Правило #1:** Не се биеш с някого там, където той е най-силен.
 
 ---
@@ -52,7 +52,7 @@ Bux е единственият език, който позволява:
 
 ### 3.1 Фаза 8.2 — Gradual Ownership (The Killer Feature)
 
-**Статус сега:** Синтаксисът е парсен, но borrow checker-ът не работи.
+**Статус сега:** ✅ Basic borrow checker работи в selfhost. Поддържа `@[Checked]`, `&T`, `&mut T`, use-after-move tracking и double-mutable-borrow detection.
 
 **Защо е критично:** Без работещ `@[Checked]`, Bux е просто "C с модерен синтаксис". С него — ставаме единствени на пазара.
 
@@ -76,14 +76,14 @@ func MergeSorted(a: &[int], b: &[int]) -> Vec<int> { ... }
 
 **Имплементационен план (прагматичен):**
 
-| Етап | Фичър | За какво е | Priority |
-|------|-------|-----------|----------|
-| 8.2.1 | `@[Checked]` атрибут — вкл/изкл на checker | Да знаем кога да проверяваме | **P0 — критично** |
-| 8.2.2 | `&T` shared reference + lifetime elision | Basic borrow без annotations | **P0** |
-| 8.2.3 | `&mut T` exclusive mutable | Да няма data races | **P0** |
-| 8.2.4 | Bounds checking на slices | Да няма buffer overflows | **P1** |
-| 8.2.5 | Explicit lifetimes `'a` | Само за сложни случаи | **P2** |
-| 8.2.6 | `own T` + move semantics | RAII без GC | **P2** |
+| Етап | Фичър | За какво е | Priority | Статус |
+|------|-------|-----------|----------|--------|
+| 8.2.1 | `@[Checked]` атрибут — вкл/изкл на checker | Да знаем кога да проверяваме | **P0 — критично** | ✅ |
+| 8.2.2 | `&T` shared reference + lifetime elision | Basic borrow без annotations | **P0** | ✅ |
+| 8.2.3 | `&mut T` exclusive mutable | Да няма data races | **P0** | ✅ |
+| 8.2.4 | Bounds checking на slices | Да няма buffer overflows | **P1** | 🔄 |
+| 8.2.5 | Explicit lifetimes `'a` | Само за сложни случаи | **P2** | ⏳ |
+| 8.2.6 | `own T` + move semantics | RAII без GC | **P2** | ✅ (basic) |
 
 **Какво ПРОПУСКАМЕ (за да не стане Rust #2):**
 - ❌ Няма да правим lifetime annotations задължителни
@@ -292,18 +292,22 @@ Crates.io е непреодолимо предимство. Ние се конк
 - ✅ Selfhost-loop deterministic (C output identical)
 - ✅ File I/O, path ops, process spawn в stdlib
 - ✅ defer, switch/case, operator overloading — готово
+- ✅ `bux new`, `bux init`, `bux test`, `bux fmt` — готово
+- ✅ Basic borrow checker (`@[Checked]`) — готово
 - 🎯 Target: Можеш да напишеш `bux` package manager на Bux
 
 ### Milestone B: "Използваем за systems programming" (2 месеца)
-- 🔄 Working `@[Checked]` с basic borrow checking
-- 🔄 CTFE за precomputed tables
+- ✅ Working `@[Checked]` с basic borrow checking
+- ✅ CTFE за precomputed tables
 - 🔄 Trait bounds (`T: Comparable`)
+- 🔄 Bounds checking на slices
 - 🎯 Target: Можеш да напишеш game engine или embedded firmware
 
 ### Milestone C: "Екосистема" (6 месеца)
 - 🔄 Package manager (`bux add`, registry)
-- 🔄 LSP (autocomplete, hover)
-- 🔄 Formatter (`bux fmt`)
+- ✅ LSP (autocomplete, hover, diagnostics)
+- ✅ Formatter (`bux fmt`)
+- ✅ Test runner (`bux test`)
 - 🔄 Green threads + channels
 - 🎯 Target: Екип от 3 човека може да продуцира shipping продукт
 

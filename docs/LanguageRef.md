@@ -19,7 +19,8 @@ This document describes the Bux programming language as implemented by the boots
 11. [Error Handling](#error-handling)
 12. [Modules and Imports](#modules-and-imports)
 13. [Async/Await](#asyncawait)
-14. [Operators](#operators)
+14. [Operator Overloading](#operator-overloading)
+15. [Operators](#operators)
 
 ---
 
@@ -43,7 +44,7 @@ Identifiers start with a letter or underscore, followed by letters, digits, or u
 func, let, var, const, type, struct, enum, union, interface, extend
 module, import, pub, extern, if, else, while, do, loop, for, in
 break, continue, return, match, as, is, null, self, super, sizeof
-async, await, spawn
+async, await, spawn, defer, switch, case, default, checked
 ```
 
 ### String Literals
@@ -56,12 +57,18 @@ c32"Hello"        // *char32
 `line 1
 line 2
 line 3`           // Newlines preserved as-is
+f"Hello, {name}"  // Interpolated string — expressions inside {}
 ```
 
 **Backtick raw strings** (`` `...` ``) treat all characters literally:
 - `\n` is two characters, not a newline
 - Actual newlines in source are preserved in the string
 - No way to escape the backtick character itself (use regular strings if needed)
+
+**Interpolated strings** (`f"..."`):
+- Expressions inside `{}` are evaluated and converted to `String`
+- Supported types: `int`, `uint`, `float`, `bool`, `String`
+- Escaped braces: `\{` and `\}`
 
 ### Number Literals
 ```bux
@@ -93,6 +100,9 @@ line 3`           // Newlines preserved as-is
 
 ```bux
 *T              // Pointer to T
+&T              // Shared reference (read-only in checked functions)
+&mut T          // Mutable reference (exclusive borrow)
+own T           // Owned value (move semantics)
 T[]             // Slice (unsized)
 T[N]            // Fixed-size array
 (T1, T2, T3)    // Tuple
@@ -161,6 +171,19 @@ func Min<T>(a: T, b: T) -> T {
     }
     return b;
 }
+
+// Named and default parameters
+func HttpResponse(code: int = 200, body: String = "") -> Response { ... }
+let r: Response = HttpResponse(body: "hello");      // code defaults to 200
+let s: Response = HttpResponse(404, body: "err");   // positional + named mixed
+
+// Operator overloading (bootstrap only)
+func Vec2_operator_add(self: *Vec2, other: Vec2) -> Vec2 { ... }
+func Vec2_operator_sub(self: *Vec2, other: Vec2) -> Vec2 { ... }
+func Vec2_operator_eq(self: *Vec2, other: Vec2) -> bool { ... }
+func Vec2_operator_lt(self: *Vec2, other: Vec2) -> bool { ... }
+func MyArray_operator_index_get(self: *MyArray, idx: int) -> int { ... }
+func MyArray_operator_index_set(self: *MyArray, idx: int, value: int) { ... }
 ```
 
 ---
@@ -208,6 +231,31 @@ outer: loop {
     loop {
         break outer;
     }
+}
+```
+
+### `defer`
+Runs an expression when the current scope exits (LIFO order).
+
+```bux
+func ReadFile(path: String) -> String {
+    let fd: int = Open(path);
+    defer Close(fd);
+    defer PrintLine("done");
+    let data: String = ReadAll(fd);
+    return data;   // both defers run before return
+}
+```
+
+### `switch` / `case`
+Desugars to an if-else chain. Supports a `default` case.
+
+```bux
+switch statusCode {
+    case 200: PrintLine("OK");
+    case 404: PrintLine("Not Found");
+    case 500: PrintLine("Server Error");
+    default:  PrintLine("Unknown");
 }
 ```
 
@@ -436,6 +484,18 @@ Moves happen in three contexts:
 - `&mut T` allows mutation
 - `*T` pointers are unrestricted (escape hatch)
 - `&mut T` coerces to `&T` and `*T`
+- **Double mutable borrow**: passing `&mut x` twice to the same call is an error
+  ```bux
+  Swap(&mut x, &mut x);  // ERROR: double mutable borrow of x
+  ```
+- **Use after move**: using a moved `own T` value is an error until reassigned
+  ```bux
+  let msg: own String = "hello";
+  Process(msg);          // move
+  PrintLine(msg);        // ERROR: use of moved value
+  msg = "reassigned";    // OK: reinitialization
+  PrintLine(msg);
+  ```
 
 ---
 
@@ -629,6 +689,34 @@ func Main() -> int {
 | `bux_async_run()` | Run the scheduler (called implicitly from main) |
 | `bux_async_sleep(ms)` | Sleep for `ms` milliseconds (non-blocking) |
 | `bux_async_return(value, size)` | Copy return value into task result buffer |
+
+---
+
+## Operator Overloading
+
+> **Status:** ✅ Implemented in bootstrap. Selfhost reserves syntax but has no method-table yet.
+
+Overloadable operators use the naming convention `TypeName_operator_<op>`:
+
+| Operator | Function Name | Signature Example |
+|----------|--------------|-------------------|
+| `+` | `operator_add` | `func T_operator_add(self: *T, other: T) -> T` |
+| `-` | `operator_sub` | `func T_operator_sub(self: *T, other: T) -> T` |
+| `*` | `operator_mul` | `func T_operator_mul(self: *T, other: T) -> T` |
+| `/` | `operator_div` | `func T_operator_div(self: *T, other: T) -> T` |
+| `%` | `operator_mod` | `func T_operator_mod(self: *T, other: T) -> T` |
+| `==` | `operator_eq` | `func T_operator_eq(self: *T, other: T) -> bool` |
+| `!=` | `operator_ne` | `func T_operator_ne(self: *T, other: T) -> bool` |
+| `<` | `operator_lt` | `func T_operator_lt(self: *T, other: T) -> bool` |
+| `<=` | `operator_le` | `func T_operator_le(self: *T, other: T) -> bool` |
+| `>` | `operator_gt` | `func T_operator_gt(self: *T, other: T) -> bool` |
+| `>=` | `operator_ge` | `func T_operator_ge(self: *T, other: T) -> bool` |
+| `[]` (get) | `operator_index_get` | `func T_operator_index_get(self: *T, idx: int) -> U` |
+| `[]` (set) | `operator_index_set` | `func T_operator_index_set(self: *T, idx: int, value: U)` |
+
+**Notes:**
+- Short-circuit operators (`&&`, `||`) cannot be overloaded.
+- Generic method instantiation is supported.
 
 ---
 

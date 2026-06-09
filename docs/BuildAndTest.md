@@ -50,6 +50,10 @@ This compiles `buxc2` using the bootstrap compiler. The self-hosted compiler gen
 # Create a new package in a new directory
 ./buxc new myproject
 cd myproject
+
+# Or initialize in the current directory
+mkdir myproject && cd myproject
+./buxc init
 ```
 
 This generates:
@@ -89,8 +93,13 @@ Output = "Bin"
 ./buxc run
 ./buxc run ./myproject
 
-# Run tests
+# Run tests (builds and runs the binary, reports pass/fail)
 ./buxc test
+./buxc test ./myproject
+
+# Format code
+./buxc fmt src/Main.bux       # single file
+./buxc fmt src/               # all .bux files in directory
 
 # Clean build artifacts
 ./buxc clean
@@ -113,6 +122,18 @@ This runs:
 - Semantic analysis unit tests
 - HIR lowering unit tests
 - Integration tests (`buxc new`, `buxc --version`)
+- Golden C-codegen tests (8 examples)
+
+### Project Tests (`bux test`)
+```bash
+./buxc test
+```
+
+Builds the project and runs the resulting binary. Reports:
+- `Tests passed` on exit code 0
+- `Tests failed (exit code N)` on non-zero exit
+
+Use `Std::Test` module for assertions inside test code.
 
 ### Example Programs
 ```bash
@@ -137,17 +158,18 @@ cd examples_pkg/hello && ../../buxc run
 bux/
 ├── src/              # Self-hosted compiler source (Bux)
 │   ├── Main.bux      # Entry point
-│   ├── Cli.bux       # CLI commands
+│   ├── Cli.bux       # CLI commands (build, run, test, fmt, new, init)
 │   ├── Lexer.bux     # Tokenizer
 │   ├── Parser.bux    # Parser
 │   ├── Ast.bux       # AST definitions
-│   ├── Sema.bux      # Semantic analysis
+│   ├── Sema.bux      # Semantic analysis (borrow checker)
 │   ├── Types.bux     # Type system
 │   ├── Scope.bux     # Symbol table
 │   ├── Hir.bux       # High-level IR
 │   ├── HirLower.bux  # AST → HIR lowering
 │   ├── CBackend.bux  # HIR → C code generation
 │   ├── Manifest.bux  # bux.toml parser
+│   ├── Fmt.bux       # Code formatter
 │   └── Token.bux     # Token definitions
 ├── bootstrap/        # Bootstrap compiler (Nim) — compiles src/ → buxc
 │   ├── main.nim
