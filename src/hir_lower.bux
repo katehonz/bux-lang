@@ -53,7 +53,7 @@ func Lcx_ResolveTypeKindFromName(name: String) -> int {
 func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
     if te == null as *TypeExpr { return tyUnknown; }
 
-    if te.kind == tekPointer { return tyPointer; }
+    if te.kind == tekPointer || te.kind == tekRef || te.kind == tekMutRef { return tyPointer; }
     if te.kind == tekSlice { return tySlice; }
     if te.kind == tekTuple { return tyTuple; }
     if te.kind == tekFunc { return tyFunc; }

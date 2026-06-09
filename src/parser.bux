@@ -149,6 +149,33 @@ func parserParseType(p: *Parser) -> *TypeExpr {
     let col: uint32 = parserCurToken(p).column;
     let kindTok: int = parserPeek(p, 0);
 
+    // &T (shared reference) and &mut T (mutable reference)
+    if kindTok == tkAmp {
+        discard parserAdvance(p); // &
+        var isMut: bool = false;
+        // Check for "mut" keyword
+        if parserCheck(p, tkIdent) {
+            let tok: LexToken = parserCurToken(p);
+            if String_Eq(tok.text, "mut") {
+                isMut = true;
+                discard parserAdvance(p); // mut
+            }
+        }
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        if isMut {
+            te.kind = tekMutRef;
+        } else {
+            te.kind = tekRef;
+        }
+        te.line = line;
+        te.column = col;
+        te.pointerPointee = parserParseType(p);
+        if te.pointerPointee != null as *TypeExpr {
+            te.typeName = String_Concat(te.pointerPointee.typeName, "*");
+        }
+        return te;
+    }
+
     // *T (pointer)
     if kindTok == tkStar {
         discard parserAdvance(p);
