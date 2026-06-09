@@ -78,7 +78,7 @@ selfhost: build
 
 .PHONY: test-golden
 
-GOLDEN_TESTS := hello fibonacci
+GOLDEN_TESTS := hello fibonacci structs generics algebraic_enums enums methods strings
 
 test-golden: build
 	@echo "=== Golden tests ==="

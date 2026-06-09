@@ -553,7 +553,6 @@ func parserParsePostfixExpr(p: *Parser) -> *Expr {
                 let siCol: uint32 = parserCurToken(p).column;
                 let typeName: String = left.strValue;
                 var fieldCount: int = 0;
-    PrintLine("PARSER FIX V2 ACTIVE");
                 var firstField: *Expr = null as *Expr;
                 var lastField: *Expr = null as *Expr;
                 while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {

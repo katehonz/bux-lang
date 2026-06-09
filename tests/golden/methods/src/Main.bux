@@ -1,0 +1,38 @@
+// Methods - Struct with methods using extend
+import Std::Io::{PrintLine, PrintInt};
+
+
+struct Rectangle {
+    width: int;
+    height: int;
+}
+
+extend Rectangle {
+    func Area(self: Rectangle) -> int {
+        return self.width * self.height;
+    }
+    
+    func Perimeter(self: Rectangle) -> int {
+        return 2 * (self.width + self.height);
+    }
+}
+
+func Main() -> int {
+    let rect: Rectangle = Rectangle { width: 10, height: 5 };
+    
+    PrintLine("Rectangle:");
+    PrintLine("Width = ");
+    PrintInt(rect.width);
+    PrintLine("");
+    PrintLine("Height = ");
+    PrintInt(rect.height);
+    PrintLine("");
+    PrintLine("Area = ");
+    PrintInt(rect.Area());
+    PrintLine("");
+    PrintLine("Perimeter = ");
+    PrintInt(rect.Perimeter());
+    PrintLine("");
+    
+    return 0;
+}

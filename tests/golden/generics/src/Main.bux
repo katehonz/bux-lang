@@ -1,0 +1,26 @@
+// Generics - Generic functions and structs
+import Std::Io::{PrintLine, PrintInt};
+
+
+func Max<T>(a: T, b: T) -> T {
+    if a > b {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+func Main() -> int {
+    let m1: int = Max<int>(10, 20);
+    let m2: int = Max<int>(5, 3);
+    
+    PrintLine("Max(10, 20) = ");
+    PrintInt(m1);
+    PrintLine("");
+    
+    PrintLine("Max(5, 3) = ");
+    PrintInt(m2);
+    PrintLine("");
+    
+    return 0;
+}

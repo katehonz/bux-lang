@@ -1,0 +1,34 @@
+// Strings - String manipulation with Std::String
+import Std::Io::{PrintLine, PrintInt};
+import Std::String::{String_Len, String_Eq, String_Concat};
+
+func Main() -> int {
+    let hello: String = "Hello";
+    let world: String = "World";
+    
+    PrintLine("String operations:");
+    
+    // Length
+    PrintLine("Length of 'Hello':");
+    PrintInt(String_Len(hello));
+    PrintLine("");
+    
+    // Concatenation
+    let greeting: String = String_Concat(hello, ", ");
+    let greeting2: String = String_Concat(greeting, world);
+    let full: String = String_Concat(greeting2, "!");
+    
+    PrintLine("Concatenated:");
+    PrintLine(full);
+    
+    // Equality
+    if String_Eq(hello, "Hello") {
+        PrintLine("'Hello' equals 'Hello'");
+    }
+    
+    if !String_Eq(hello, world) {
+        PrintLine("'Hello' does not equal 'World'");
+    }
+    
+    return 0;
+}

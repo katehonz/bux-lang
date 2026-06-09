@@ -1,0 +1,34 @@
+// Enums - Enumeration types
+import Std::Io::{PrintLine, PrintInt};
+
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+func ColorName(c: Color) -> String {
+    if c == Color::Red {
+        return "Red";
+    }
+    if c == Color::Green {
+        return "Green";
+    }
+    if c == Color::Blue {
+        return "Blue";
+    }
+    return "Unknown";
+}
+
+func Main() -> int {
+    let myColor: Color = Color::Green;
+    
+    PrintLine("My color is:");
+    PrintLine(ColorName(myColor));
+    PrintLine("Color value:");
+    PrintInt(myColor as int);
+    PrintLine("");
+    
+    return 0;
+}

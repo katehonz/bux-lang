@@ -1,0 +1,7 @@
+[Package]
+Name    = "algebraic_enums"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
