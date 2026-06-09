@@ -323,6 +323,11 @@ func lexScanIdent(lex: *Lexer) {
         lex.tokens[lex.tokenCount] = tok;
         lex.tokenCount = lex.tokenCount + 1;
     }
+    if String_StartsWith(tok.text, "field") {
+        PrintLine(String_Concat("DEBUG lexer ident=", tok.text));
+        PrintLine(String_Concat("DEBUG lexer addr=", bux_int_to_str(tok.text as int64)));
+        PrintLine(String_Concat("DEBUG lexer pos=", bux_int_to_str(lex.tokenCount as int64)));
+    }
 }
 
 // ---------------------------------------------------------------------------

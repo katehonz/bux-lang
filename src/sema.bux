@@ -571,6 +571,7 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         loopSym.name = stmt.strValue;
         loopSym.typeKind = tyUnknown;
         loopSym.typeName = "";
+        loopSym.refType = null as *TypeExpr;
         loopSym.isMutable = true;
         loopSym.isPublic = false;
         loopSym.decl = null as *Decl;
@@ -678,6 +679,7 @@ func Sema_CollectGlobals(sema: *Sema) {
                 vSym.name = variantName2;
                 vSym.typeKind = tyNamed;
                 vSym.typeName = String_Concat(decl.strValue, "_Tag");
+                vSym.refType = null as *TypeExpr;
                 vSym.isMutable = false;
                 vSym.isPublic = decl.isPublic;
                 vSym.decl = decl;
@@ -734,6 +736,7 @@ func Sema_CollectGlobals(sema: *Sema) {
                                 sym.name = name;
                                 sym.typeKind = tyUnknown;
                                 sym.typeName = "";
+                                sym.refType = null as *TypeExpr;
                                 sym.isMutable = false;
                                 sym.isPublic = true;
                                 sym.decl = null as *Decl;
@@ -772,6 +775,7 @@ func Sema_CollectGlobals(sema: *Sema) {
                     sym.name = lastSeg;
                     sym.typeKind = tyUnknown;
                     sym.typeName = "";
+                    sym.refType = null as *TypeExpr;
                     sym.isMutable = false;
                     sym.isPublic = true;
                     sym.decl = null as *Decl;

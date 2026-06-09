@@ -712,6 +712,7 @@ func Lcx_LowerParam(out: *HirParam, p: *Param) {
 // ---------------------------------------------------------------------------
 
 func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
+    Print("[DEBUG Lcx_LowerFunc] name="); Print(decl.strValue); PrintLine("");
     let f: *HirFunc = bux_alloc(sizeof(HirFunc)) as *HirFunc;
     f.name = decl.strValue;
     f.isPublic = decl.isPublic;
@@ -764,6 +765,7 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
             sym.kind = skVar;
             sym.name = p.name;
             sym.typeKind = Lcx_ResolveTypeKind(p.refParamType);
+            sym.refType = p.refParamType;
             // Build typeName same as Lcx_LowerParam
             if p.refParamType.kind == tekFunc {
                 sym.typeName = Lcx_BuildFuncTypeName(p.refParamType);
@@ -826,6 +828,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     // Iterate declarations
     var decl: *Decl = mod.firstItem;
     while decl != null as *Decl {
+        Print("[DEBUG hir_lower] decl kind="); PrintInt(decl.kind as int64); Print(" name="); Print(decl.strValue); PrintLine("");
         if decl.kind == dkFunc && decl.refBody != null as *Block {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
             ctx.funcs[ctx.funcCount] = *f;
@@ -846,7 +849,9 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             }
         }
         if decl.kind == dkExternFunc {
+            Print("[DEBUG hir_lower] lowering extern func "); Print(decl.strValue); PrintLine("");
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
+            Print("[DEBUG hir_lower] extern func lowered ok"); PrintLine("");
             ctx.externFuncs[ctx.externCount] = *f;
             ctx.externCount = ctx.externCount + 1;
         }
@@ -856,266 +861,13 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             hm.structs[si].name = decl.strValue;
             hm.structs[si].fieldCount = decl.fieldCount;
             hm.structs[si].fields = bux_alloc(decl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
+            Print("[DEBUG hir struct] name="); Print(decl.strValue); Print(" fieldCount="); PrintInt(decl.fieldCount as int64); PrintLine("");
             var fi: int = 0;
             while fi < decl.fieldCount {
                 var fname: String = "";
                 var ftype: *TypeExpr = null as *TypeExpr;
-                if fi == 0 { fname = decl.field0.name; ftype = decl.field0.refFieldType; }
-                else if fi == 1 { fname = decl.field1.name; ftype = decl.field1.refFieldType; }
-                else if fi == 2 { fname = decl.field2.name; ftype = decl.field2.refFieldType; }
-                else if fi == 3 { fname = decl.field3.name; ftype = decl.field3.refFieldType; }
-                else if fi == 4 { fname = decl.field4.name; ftype = decl.field4.refFieldType; }
-                else if fi == 5 { fname = decl.field5.name; ftype = decl.field5.refFieldType; }
-                else if fi == 6 { fname = decl.field6.name; ftype = decl.field6.refFieldType; }
-                else if fi == 7 { fname = decl.field7.name; ftype = decl.field7.refFieldType; }
-                else if fi == 8 { fname = decl.field8.name; ftype = decl.field8.refFieldType; }
-                else if fi == 9 { fname = decl.field9.name; ftype = decl.field9.refFieldType; }
-                else if fi == 10 { fname = decl.field10.name; ftype = decl.field10.refFieldType; }
-                else if fi == 11 { fname = decl.field11.name; ftype = decl.field11.refFieldType; }
-                else if fi == 12 { fname = decl.field12.name; ftype = decl.field12.refFieldType; }
-                else if fi == 13 { fname = decl.field13.name; ftype = decl.field13.refFieldType; }
-                else if fi == 14 { fname = decl.field14.name; ftype = decl.field14.refFieldType; }
-                else if fi == 15 { fname = decl.field15.name; ftype = decl.field15.refFieldType; }
-                else if fi == 16 { fname = decl.field16.name; ftype = decl.field16.refFieldType; }
-                else if fi == 17 { fname = decl.field17.name; ftype = decl.field17.refFieldType; }
-                else if fi == 18 { fname = decl.field18.name; ftype = decl.field18.refFieldType; }
-                else if fi == 19 { fname = decl.field19.name; ftype = decl.field19.refFieldType; }
-                else if fi == 20 { fname = decl.field20.name; ftype = decl.field20.refFieldType; }
-                else if fi == 21 { fname = decl.field21.name; ftype = decl.field21.refFieldType; }
-                else if fi == 22 { fname = decl.field22.name; ftype = decl.field22.refFieldType; }
-                else if fi == 23 { fname = decl.field23.name; ftype = decl.field23.refFieldType; }
-                else if fi == 24 { fname = decl.field24.name; ftype = decl.field24.refFieldType; }
-                else if fi == 25 { fname = decl.field25.name; ftype = decl.field25.refFieldType; }
-                else if fi == 26 { fname = decl.field26.name; ftype = decl.field26.refFieldType; }
-                else if fi == 27 { fname = decl.field27.name; ftype = decl.field27.refFieldType; }
-                else if fi == 28 { fname = decl.field28.name; ftype = decl.field28.refFieldType; }
-                else if fi == 29 { fname = decl.field29.name; ftype = decl.field29.refFieldType; }
-                else if fi == 30 { fname = decl.field30.name; ftype = decl.field30.refFieldType; }
-                else if fi == 31 { fname = decl.field31.name; ftype = decl.field31.refFieldType; }
-                else if fi == 32 { fname = decl.field32.name; ftype = decl.field32.refFieldType; }
-                else if fi == 33 { fname = decl.field33.name; ftype = decl.field33.refFieldType; }
-                else if fi == 34 { fname = decl.field34.name; ftype = decl.field34.refFieldType; }
-                else if fi == 35 { fname = decl.field35.name; ftype = decl.field35.refFieldType; }
-                else if fi == 36 { fname = decl.field36.name; ftype = decl.field36.refFieldType; }
-                else if fi == 37 { fname = decl.field37.name; ftype = decl.field37.refFieldType; }
-                else if fi == 38 { fname = decl.field38.name; ftype = decl.field38.refFieldType; }
-                else if fi == 39 { fname = decl.field39.name; ftype = decl.field39.refFieldType; }
-                else if fi == 40 { fname = decl.field40.name; ftype = decl.field40.refFieldType; }
-                else if fi == 41 { fname = decl.field41.name; ftype = decl.field41.refFieldType; }
-                else if fi == 42 { fname = decl.field42.name; ftype = decl.field42.refFieldType; }
-                else if fi == 43 { fname = decl.field43.name; ftype = decl.field43.refFieldType; }
-                else if fi == 44 { fname = decl.field44.name; ftype = decl.field44.refFieldType; }
-                else if fi == 45 { fname = decl.field45.name; ftype = decl.field45.refFieldType; }
-                else if fi == 46 { fname = decl.field46.name; ftype = decl.field46.refFieldType; }
-                else if fi == 47 { fname = decl.field47.name; ftype = decl.field47.refFieldType; }
-                else if fi == 48 { fname = decl.field48.name; ftype = decl.field48.refFieldType; }
-                else if fi == 49 { fname = decl.field49.name; ftype = decl.field49.refFieldType; }
-                else if fi == 50 { fname = decl.field50.name; ftype = decl.field50.refFieldType; }
-                else if fi == 51 { fname = decl.field51.name; ftype = decl.field51.refFieldType; }
-                else if fi == 52 { fname = decl.field52.name; ftype = decl.field52.refFieldType; }
-                else if fi == 53 { fname = decl.field53.name; ftype = decl.field53.refFieldType; }
-                else if fi == 54 { fname = decl.field54.name; ftype = decl.field54.refFieldType; }
-                else if fi == 55 { fname = decl.field55.name; ftype = decl.field55.refFieldType; }
-                else if fi == 56 { fname = decl.field56.name; ftype = decl.field56.refFieldType; }
-                else if fi == 57 { fname = decl.field57.name; ftype = decl.field57.refFieldType; }
-                else if fi == 58 { fname = decl.field58.name; ftype = decl.field58.refFieldType; }
-                else if fi == 59 { fname = decl.field59.name; ftype = decl.field59.refFieldType; }
-                else if fi == 60 { fname = decl.field60.name; ftype = decl.field60.refFieldType; }
-                else if fi == 61 { fname = decl.field61.name; ftype = decl.field61.refFieldType; }
-                else if fi == 62 { fname = decl.field62.name; ftype = decl.field62.refFieldType; }
-                else if fi == 63 { fname = decl.field63.name; ftype = decl.field63.refFieldType; }
-                else if fi == 64 { fname = decl.field64.name; ftype = decl.field64.refFieldType; }
-                else if fi == 65 { fname = decl.field65.name; ftype = decl.field65.refFieldType; }
-                else if fi == 66 { fname = decl.field66.name; ftype = decl.field66.refFieldType; }
-                else if fi == 67 { fname = decl.field67.name; ftype = decl.field67.refFieldType; }
-                else if fi == 68 { fname = decl.field68.name; ftype = decl.field68.refFieldType; }
-                else if fi == 69 { fname = decl.field69.name; ftype = decl.field69.refFieldType; }
-                else if fi == 70 { fname = decl.field70.name; ftype = decl.field70.refFieldType; }
-                else if fi == 71 { fname = decl.field71.name; ftype = decl.field71.refFieldType; }
-                else if fi == 72 { fname = decl.field72.name; ftype = decl.field72.refFieldType; }
-                else if fi == 73 { fname = decl.field73.name; ftype = decl.field73.refFieldType; }
-                else if fi == 74 { fname = decl.field74.name; ftype = decl.field74.refFieldType; }
-                else if fi == 75 { fname = decl.field75.name; ftype = decl.field75.refFieldType; }
-                else if fi == 76 { fname = decl.field76.name; ftype = decl.field76.refFieldType; }
-                else if fi == 77 { fname = decl.field77.name; ftype = decl.field77.refFieldType; }
-                else if fi == 78 { fname = decl.field78.name; ftype = decl.field78.refFieldType; }
-                else if fi == 79 { fname = decl.field79.name; ftype = decl.field79.refFieldType; }
-                else if fi == 80 { fname = decl.field80.name; ftype = decl.field80.refFieldType; }
-                else if fi == 81 { fname = decl.field81.name; ftype = decl.field81.refFieldType; }
-                else if fi == 82 { fname = decl.field82.name; ftype = decl.field82.refFieldType; }
-                else if fi == 83 { fname = decl.field83.name; ftype = decl.field83.refFieldType; }
-                else if fi == 84 { fname = decl.field84.name; ftype = decl.field84.refFieldType; }
-                else if fi == 85 { fname = decl.field85.name; ftype = decl.field85.refFieldType; }
-                else if fi == 86 { fname = decl.field86.name; ftype = decl.field86.refFieldType; }
-                else if fi == 87 { fname = decl.field87.name; ftype = decl.field87.refFieldType; }
-                else if fi == 88 { fname = decl.field88.name; ftype = decl.field88.refFieldType; }
-                else if fi == 89 { fname = decl.field89.name; ftype = decl.field89.refFieldType; }
-                else if fi == 90 { fname = decl.field90.name; ftype = decl.field90.refFieldType; }
-                else if fi == 91 { fname = decl.field91.name; ftype = decl.field91.refFieldType; }
-                else if fi == 92 { fname = decl.field92.name; ftype = decl.field92.refFieldType; }
-                else if fi == 93 { fname = decl.field93.name; ftype = decl.field93.refFieldType; }
-                else if fi == 94 { fname = decl.field94.name; ftype = decl.field94.refFieldType; }
-                else if fi == 95 { fname = decl.field95.name; ftype = decl.field95.refFieldType; }
-                else if fi == 96 { fname = decl.field96.name; ftype = decl.field96.refFieldType; }
-                else if fi == 97 { fname = decl.field97.name; ftype = decl.field97.refFieldType; }
-                else if fi == 98 { fname = decl.field98.name; ftype = decl.field98.refFieldType; }
-                else if fi == 99 { fname = decl.field99.name; ftype = decl.field99.refFieldType; }
-                else if fi == 100 { fname = decl.field100.name; ftype = decl.field100.refFieldType; }
-                else if fi == 101 { fname = decl.field101.name; ftype = decl.field101.refFieldType; }
-                else if fi == 102 { fname = decl.field102.name; ftype = decl.field102.refFieldType; }
-                else if fi == 103 { fname = decl.field103.name; ftype = decl.field103.refFieldType; }
-                else if fi == 104 { fname = decl.field104.name; ftype = decl.field104.refFieldType; }
-                else if fi == 105 { fname = decl.field105.name; ftype = decl.field105.refFieldType; }
-                else if fi == 106 { fname = decl.field106.name; ftype = decl.field106.refFieldType; }
-                else if fi == 107 { fname = decl.field107.name; ftype = decl.field107.refFieldType; }
-                else if fi == 108 { fname = decl.field108.name; ftype = decl.field108.refFieldType; }
-                else if fi == 109 { fname = decl.field109.name; ftype = decl.field109.refFieldType; }
-                else if fi == 110 { fname = decl.field110.name; ftype = decl.field110.refFieldType; }
-                else if fi == 111 { fname = decl.field111.name; ftype = decl.field111.refFieldType; }
-                else if fi == 112 { fname = decl.field112.name; ftype = decl.field112.refFieldType; }
-                else if fi == 113 { fname = decl.field113.name; ftype = decl.field113.refFieldType; }
-                else if fi == 114 { fname = decl.field114.name; ftype = decl.field114.refFieldType; }
-                else if fi == 115 { fname = decl.field115.name; ftype = decl.field115.refFieldType; }
-                else if fi == 116 { fname = decl.field116.name; ftype = decl.field116.refFieldType; }
-                else if fi == 117 { fname = decl.field117.name; ftype = decl.field117.refFieldType; }
-                else if fi == 118 { fname = decl.field118.name; ftype = decl.field118.refFieldType; }
-                else if fi == 119 { fname = decl.field119.name; ftype = decl.field119.refFieldType; }
-                else if fi == 120 { fname = decl.field120.name; ftype = decl.field120.refFieldType; }
-                else if fi == 121 { fname = decl.field121.name; ftype = decl.field121.refFieldType; }
-                else if fi == 122 { fname = decl.field122.name; ftype = decl.field122.refFieldType; }
-                else if fi == 123 { fname = decl.field123.name; ftype = decl.field123.refFieldType; }
-                else if fi == 124 { fname = decl.field124.name; ftype = decl.field124.refFieldType; }
-                else if fi == 125 { fname = decl.field125.name; ftype = decl.field125.refFieldType; }
-                else if fi == 126 { fname = decl.field126.name; ftype = decl.field126.refFieldType; }
-                else if fi == 127 { fname = decl.field127.name; ftype = decl.field127.refFieldType; }
-                else if fi == 128 { fname = decl.field128.name; ftype = decl.field128.refFieldType; }
-                else if fi == 129 { fname = decl.field129.name; ftype = decl.field129.refFieldType; }
-                else if fi == 130 { fname = decl.field130.name; ftype = decl.field130.refFieldType; }
-                else if fi == 131 { fname = decl.field131.name; ftype = decl.field131.refFieldType; }
-                else if fi == 132 { fname = decl.field132.name; ftype = decl.field132.refFieldType; }
-                else if fi == 133 { fname = decl.field133.name; ftype = decl.field133.refFieldType; }
-                else if fi == 134 { fname = decl.field134.name; ftype = decl.field134.refFieldType; }
-                else if fi == 135 { fname = decl.field135.name; ftype = decl.field135.refFieldType; }
-                else if fi == 136 { fname = decl.field136.name; ftype = decl.field136.refFieldType; }
-                else if fi == 137 { fname = decl.field137.name; ftype = decl.field137.refFieldType; }
-                else if fi == 138 { fname = decl.field138.name; ftype = decl.field138.refFieldType; }
-                else if fi == 139 { fname = decl.field139.name; ftype = decl.field139.refFieldType; }
-                else if fi == 140 { fname = decl.field140.name; ftype = decl.field140.refFieldType; }
-                else if fi == 141 { fname = decl.field141.name; ftype = decl.field141.refFieldType; }
-                else if fi == 142 { fname = decl.field142.name; ftype = decl.field142.refFieldType; }
-                else if fi == 143 { fname = decl.field143.name; ftype = decl.field143.refFieldType; }
-                else if fi == 144 { fname = decl.field144.name; ftype = decl.field144.refFieldType; }
-                else if fi == 145 { fname = decl.field145.name; ftype = decl.field145.refFieldType; }
-                else if fi == 146 { fname = decl.field146.name; ftype = decl.field146.refFieldType; }
-                else if fi == 147 { fname = decl.field147.name; ftype = decl.field147.refFieldType; }
-                else if fi == 148 { fname = decl.field148.name; ftype = decl.field148.refFieldType; }
-                else if fi == 149 { fname = decl.field149.name; ftype = decl.field149.refFieldType; }
-                else if fi == 150 { fname = decl.field150.name; ftype = decl.field150.refFieldType; }
-                else if fi == 151 { fname = decl.field151.name; ftype = decl.field151.refFieldType; }
-                else if fi == 152 { fname = decl.field152.name; ftype = decl.field152.refFieldType; }
-                else if fi == 153 { fname = decl.field153.name; ftype = decl.field153.refFieldType; }
-                else if fi == 154 { fname = decl.field154.name; ftype = decl.field154.refFieldType; }
-                else if fi == 155 { fname = decl.field155.name; ftype = decl.field155.refFieldType; }
-                else if fi == 156 { fname = decl.field156.name; ftype = decl.field156.refFieldType; }
-                else if fi == 157 { fname = decl.field157.name; ftype = decl.field157.refFieldType; }
-                else if fi == 158 { fname = decl.field158.name; ftype = decl.field158.refFieldType; }
-                else if fi == 159 { fname = decl.field159.name; ftype = decl.field159.refFieldType; }
-                else if fi == 160 { fname = decl.field160.name; ftype = decl.field160.refFieldType; }
-                else if fi == 161 { fname = decl.field161.name; ftype = decl.field161.refFieldType; }
-                else if fi == 162 { fname = decl.field162.name; ftype = decl.field162.refFieldType; }
-                else if fi == 163 { fname = decl.field163.name; ftype = decl.field163.refFieldType; }
-                else if fi == 164 { fname = decl.field164.name; ftype = decl.field164.refFieldType; }
-                else if fi == 165 { fname = decl.field165.name; ftype = decl.field165.refFieldType; }
-                else if fi == 166 { fname = decl.field166.name; ftype = decl.field166.refFieldType; }
-                else if fi == 167 { fname = decl.field167.name; ftype = decl.field167.refFieldType; }
-                else if fi == 168 { fname = decl.field168.name; ftype = decl.field168.refFieldType; }
-                else if fi == 169 { fname = decl.field169.name; ftype = decl.field169.refFieldType; }
-                else if fi == 170 { fname = decl.field170.name; ftype = decl.field170.refFieldType; }
-                else if fi == 171 { fname = decl.field171.name; ftype = decl.field171.refFieldType; }
-                else if fi == 172 { fname = decl.field172.name; ftype = decl.field172.refFieldType; }
-                else if fi == 173 { fname = decl.field173.name; ftype = decl.field173.refFieldType; }
-                else if fi == 174 { fname = decl.field174.name; ftype = decl.field174.refFieldType; }
-                else if fi == 175 { fname = decl.field175.name; ftype = decl.field175.refFieldType; }
-                else if fi == 176 { fname = decl.field176.name; ftype = decl.field176.refFieldType; }
-                else if fi == 177 { fname = decl.field177.name; ftype = decl.field177.refFieldType; }
-                else if fi == 178 { fname = decl.field178.name; ftype = decl.field178.refFieldType; }
-                else if fi == 179 { fname = decl.field179.name; ftype = decl.field179.refFieldType; }
-                else if fi == 180 { fname = decl.field180.name; ftype = decl.field180.refFieldType; }
-                else if fi == 181 { fname = decl.field181.name; ftype = decl.field181.refFieldType; }
-                else if fi == 182 { fname = decl.field182.name; ftype = decl.field182.refFieldType; }
-                else if fi == 183 { fname = decl.field183.name; ftype = decl.field183.refFieldType; }
-                else if fi == 184 { fname = decl.field184.name; ftype = decl.field184.refFieldType; }
-                else if fi == 185 { fname = decl.field185.name; ftype = decl.field185.refFieldType; }
-                else if fi == 186 { fname = decl.field186.name; ftype = decl.field186.refFieldType; }
-                else if fi == 187 { fname = decl.field187.name; ftype = decl.field187.refFieldType; }
-                else if fi == 188 { fname = decl.field188.name; ftype = decl.field188.refFieldType; }
-                else if fi == 189 { fname = decl.field189.name; ftype = decl.field189.refFieldType; }
-                else if fi == 190 { fname = decl.field190.name; ftype = decl.field190.refFieldType; }
-                else if fi == 191 { fname = decl.field191.name; ftype = decl.field191.refFieldType; }
-                else if fi == 192 { fname = decl.field192.name; ftype = decl.field192.refFieldType; }
-                else if fi == 193 { fname = decl.field193.name; ftype = decl.field193.refFieldType; }
-                else if fi == 194 { fname = decl.field194.name; ftype = decl.field194.refFieldType; }
-                else if fi == 195 { fname = decl.field195.name; ftype = decl.field195.refFieldType; }
-                else if fi == 196 { fname = decl.field196.name; ftype = decl.field196.refFieldType; }
-                else if fi == 197 { fname = decl.field197.name; ftype = decl.field197.refFieldType; }
-                else if fi == 198 { fname = decl.field198.name; ftype = decl.field198.refFieldType; }
-                else if fi == 199 { fname = decl.field199.name; ftype = decl.field199.refFieldType; }
-                else if fi == 200 { fname = decl.field200.name; ftype = decl.field200.refFieldType; }
-                else if fi == 201 { fname = decl.field201.name; ftype = decl.field201.refFieldType; }
-                else if fi == 202 { fname = decl.field202.name; ftype = decl.field202.refFieldType; }
-                else if fi == 203 { fname = decl.field203.name; ftype = decl.field203.refFieldType; }
-                else if fi == 204 { fname = decl.field204.name; ftype = decl.field204.refFieldType; }
-                else if fi == 205 { fname = decl.field205.name; ftype = decl.field205.refFieldType; }
-                else if fi == 206 { fname = decl.field206.name; ftype = decl.field206.refFieldType; }
-                else if fi == 207 { fname = decl.field207.name; ftype = decl.field207.refFieldType; }
-                else if fi == 208 { fname = decl.field208.name; ftype = decl.field208.refFieldType; }
-                else if fi == 209 { fname = decl.field209.name; ftype = decl.field209.refFieldType; }
-                else if fi == 210 { fname = decl.field210.name; ftype = decl.field210.refFieldType; }
-                else if fi == 211 { fname = decl.field211.name; ftype = decl.field211.refFieldType; }
-                else if fi == 212 { fname = decl.field212.name; ftype = decl.field212.refFieldType; }
-                else if fi == 213 { fname = decl.field213.name; ftype = decl.field213.refFieldType; }
-                else if fi == 214 { fname = decl.field214.name; ftype = decl.field214.refFieldType; }
-                else if fi == 215 { fname = decl.field215.name; ftype = decl.field215.refFieldType; }
-                else if fi == 216 { fname = decl.field216.name; ftype = decl.field216.refFieldType; }
-                else if fi == 217 { fname = decl.field217.name; ftype = decl.field217.refFieldType; }
-                else if fi == 218 { fname = decl.field218.name; ftype = decl.field218.refFieldType; }
-                else if fi == 219 { fname = decl.field219.name; ftype = decl.field219.refFieldType; }
-                else if fi == 220 { fname = decl.field220.name; ftype = decl.field220.refFieldType; }
-                else if fi == 221 { fname = decl.field221.name; ftype = decl.field221.refFieldType; }
-                else if fi == 222 { fname = decl.field222.name; ftype = decl.field222.refFieldType; }
-                else if fi == 223 { fname = decl.field223.name; ftype = decl.field223.refFieldType; }
-                else if fi == 224 { fname = decl.field224.name; ftype = decl.field224.refFieldType; }
-                else if fi == 225 { fname = decl.field225.name; ftype = decl.field225.refFieldType; }
-                else if fi == 226 { fname = decl.field226.name; ftype = decl.field226.refFieldType; }
-                else if fi == 227 { fname = decl.field227.name; ftype = decl.field227.refFieldType; }
-                else if fi == 228 { fname = decl.field228.name; ftype = decl.field228.refFieldType; }
-                else if fi == 229 { fname = decl.field229.name; ftype = decl.field229.refFieldType; }
-                else if fi == 230 { fname = decl.field230.name; ftype = decl.field230.refFieldType; }
-                else if fi == 231 { fname = decl.field231.name; ftype = decl.field231.refFieldType; }
-                else if fi == 232 { fname = decl.field232.name; ftype = decl.field232.refFieldType; }
-                else if fi == 233 { fname = decl.field233.name; ftype = decl.field233.refFieldType; }
-                else if fi == 234 { fname = decl.field234.name; ftype = decl.field234.refFieldType; }
-                else if fi == 235 { fname = decl.field235.name; ftype = decl.field235.refFieldType; }
-                else if fi == 236 { fname = decl.field236.name; ftype = decl.field236.refFieldType; }
-                else if fi == 237 { fname = decl.field237.name; ftype = decl.field237.refFieldType; }
-                else if fi == 238 { fname = decl.field238.name; ftype = decl.field238.refFieldType; }
-                else if fi == 239 { fname = decl.field239.name; ftype = decl.field239.refFieldType; }
-                else if fi == 240 { fname = decl.field240.name; ftype = decl.field240.refFieldType; }
-                else if fi == 241 { fname = decl.field241.name; ftype = decl.field241.refFieldType; }
-                else if fi == 242 { fname = decl.field242.name; ftype = decl.field242.refFieldType; }
-                else if fi == 243 { fname = decl.field243.name; ftype = decl.field243.refFieldType; }
-                else if fi == 244 { fname = decl.field244.name; ftype = decl.field244.refFieldType; }
-                else if fi == 245 { fname = decl.field245.name; ftype = decl.field245.refFieldType; }
-                else if fi == 246 { fname = decl.field246.name; ftype = decl.field246.refFieldType; }
-                else if fi == 247 { fname = decl.field247.name; ftype = decl.field247.refFieldType; }
-                else if fi == 248 { fname = decl.field248.name; ftype = decl.field248.refFieldType; }
-                else if fi == 249 { fname = decl.field249.name; ftype = decl.field249.refFieldType; }
-                else if fi == 250 { fname = decl.field250.name; ftype = decl.field250.refFieldType; }
-                else if fi == 251 { fname = decl.field251.name; ftype = decl.field251.refFieldType; }
-                else if fi == 252 { fname = decl.field252.name; ftype = decl.field252.refFieldType; }
-                else if fi == 253 { fname = decl.field253.name; ftype = decl.field253.refFieldType; }
-                else if fi == 254 { fname = decl.field254.name; ftype = decl.field254.refFieldType; }
-                else if fi == 255 { fname = decl.field255.name; ftype = decl.field255.refFieldType; }
+                fname = decl.fields[fi].name;
+                ftype = decl.fields[fi].refFieldType;
                 // Skip empty field names
                 if String_Eq(fname, "") {
                     fi = fi + 1;
