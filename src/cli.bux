@@ -8,7 +8,9 @@ extern func bux_read_file(path: String) -> String;
 extern func bux_write_file(path: String, content: String) -> bool;
 extern func bux_file_exists(path: String) -> int;
 extern func bux_dir_exists(path: String) -> int;
+extern func bux_getcwd() -> String;
 extern func bux_path_join(a: String, b: String) -> String;
+extern func bux_path_parent(path: String) -> String;
 extern func bux_mkdir_if_needed(path: String) -> int;
 extern func bux_run_nim(nim_file: String, out_bin: String) -> int;
 extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
@@ -495,6 +497,114 @@ func Cli_CopyModuleDecls(target: *Module, source: *Module) {
     source.itemCount = 0;
 }
 
+// ---------------------------------------------------------------------------
+// New — create a new Bux project
+// ---------------------------------------------------------------------------
+
+func Cli_New(name: String) -> int {
+    var root: String = name;
+    // If name starts with /, use as absolute path; otherwise join with cwd
+    if !String_StartsWith(name, "/") {
+        let cwd: String = bux_getcwd();
+        root = bux_path_join(cwd, name);
+    }
+    // Extract package name from path (last component)
+    var pkgName: String = name;
+    if String_StartsWith(name, "/") {
+        var i: int = 0;
+        while i < 256 {
+            let c: int = name[i] as int;
+            if c == 0 { break; }
+            i = i + 1;
+        }
+        var j: int = i - 1;
+        while j >= 0 {
+            let c: int = name[j] as int;
+            if c == 47 {
+                pkgName = "";
+                var k: int = j + 1;
+                while k < i {
+                    pkgName = String_Concat(pkgName, String_FromChar(name[k] as int));
+                    k = k + 1;
+                }
+                break;
+            }
+            j = j - 1;
+        }
+    }
+    if DirExists(root) {
+        Print("Error: directory '"); Print(pkgName); PrintLine("' already exists");
+        return 1;
+    }
+    let srcDir: String = bux_path_join(root, "src");
+    let mk1: int = bux_mkdir_if_needed(root);
+    let mk2: int = bux_mkdir_if_needed(srcDir);
+    let tomlPath: String = bux_path_join(root, "bux.toml");
+    let tomlContent: String = "[Package]\nName    = \"";
+    tomlContent = String_Concat(tomlContent, pkgName);
+    tomlContent = String_Concat(tomlContent, "\"\nVersion = \"0.1.0\"\nType    = \"bin\"\n\n[Build]\nOutput = \"Bin\"\n");
+    let w1: bool = WriteFile(tomlPath, tomlContent);
+    let mainPath: String = bux_path_join(srcDir, "Main.bux");
+    let mainContent: String = "import Std::Io::PrintLine;\n\nfunc Main() -> int {\n    PrintLine(\"Hello, Bux!\");\n    return 0;\n}\n";
+    let w2: bool = WriteFile(mainPath, mainContent);
+    if !w1 || !w2 || mk1 != 0 || mk2 != 0 {
+        Print("Error: could not create project '"); Print(pkgName); PrintLine("'");
+        return 1;
+    }
+    Print("Created Bux package '"); Print(pkgName); PrintLine("'");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Init — initialize a Bux project in the current directory
+// ---------------------------------------------------------------------------
+
+func Cli_Init() -> int {
+    let cwd: String = bux_getcwd();
+    let tomlPath: String = bux_path_join(cwd, "bux.toml");
+    if FileExists(tomlPath) {
+        PrintLine("Error: bux.toml already exists");
+        return 1;
+    }
+    let parent: String = bux_path_parent(cwd);
+    var name: String = "";
+    if !String_Eq(parent, "/") {
+        var i: int = 0;
+        while i < 256 {
+            let c: int = cwd[i] as int;
+            if c == 0 { break; }
+            i = i + 1;
+        }
+        // Extract last path component
+        var j: int = i - 1;
+        while j >= 0 {
+            let c: int = cwd[j] as int;
+            if c == 47 { // '/'
+                var k: int = j + 1;
+                while k < i {
+                    name = String_Concat(name, String_FromChar(cwd[k] as int));
+                    k = k + 1;
+                }
+                break;
+            }
+            j = j - 1;
+        }
+        if String_Eq(name, "") { name = "untitled"; }
+    } else {
+        name = "untitled";
+    }
+    let tomlContent: String = "[Package]\nName    = \"";
+    tomlContent = String_Concat(tomlContent, name);
+    tomlContent = String_Concat(tomlContent, "\"\nVersion = \"0.1.0\"\nType    = \"bin\"\n\n[Build]\nOutput = \"Bin\"\n");
+    discard WriteFile(tomlPath, tomlContent);
+    let srcDir: String = bux_path_join(cwd, "src");
+    if !DirExists(srcDir) {
+        discard bux_mkdir_if_needed(srcDir);
+    }
+    Print("Initialized Bux package '"); Print(name); PrintLine("'");
+    return 0;
+}
+
 func Cli_BuildProject(projectDir: String) -> int {
     let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
     var outName: String = man.name;
@@ -762,7 +872,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, run, project, help, version");
         return 0;
     }
 
@@ -775,7 +885,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, run, project, help, version");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅  695 lines");
         PrintLine("  Parser     ✅ 1004 lines");
@@ -784,6 +894,18 @@ func Cli_Run(args: *String, argCount: int) -> int {
         PrintLine("  CBackend   ✅  585 lines");
         PrintLine("  Total: 3830 lines of Bux");
         return 0;
+    }
+
+    if String_Eq(cmd, "new") {
+        if argCount < 3 {
+            PrintLine("Usage: buxc new <name>");
+            return 1;
+        }
+        return Cli_New(args[2]);
+    }
+
+    if String_Eq(cmd, "init") {
+        return Cli_Init();
     }
 
     if String_Eq(cmd, "check") {
