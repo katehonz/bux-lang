@@ -184,6 +184,14 @@ func Vec2_operator_eq(self: *Vec2, other: Vec2) -> bool { ... }
 func Vec2_operator_lt(self: *Vec2, other: Vec2) -> bool { ... }
 func MyArray_operator_index_get(self: *MyArray, idx: int) -> int { ... }
 func MyArray_operator_index_set(self: *MyArray, idx: int, value: int) { ... }
+
+// Closures (capture-less for now)
+let add: func(int, int) -> int = |a: int, b: int| -> int { return a + b; };
+let sum: int = add(3, 4);  // 7
+
+// Closure passed to higher-order function
+func Apply(x: int, op: func(int) -> int) -> int { return op(x); }
+let doubled: int = Apply(5, |x: int| -> int { return x * 2; });  // 10
 ```
 
 ---

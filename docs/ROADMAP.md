@@ -236,6 +236,7 @@ Task::Spawn(Worker, rx);
 5. ✅ **Named/default parameters** — Done
 6. ✅ **Basic borrow checker (`@[Checked]`)** — Done (selfhost)
 7. ✅ **`bux fmt`, `bux test`, `bux new`, `bux init`** — Done (selfhost)
-8. **Closures** — High complexity, unlocks iterators and functional style. **← NEXT**
-9. **`for x in collection`** — Depends on closures or trait system.
-10. **Destructors / Drop** — High complexity, needs ownership + move semantics.
+8. ✅ **Closures (capture-less)** — Done. Enables callbacks and higher-order functions.
+9. **Closures with captures** — Needs capture analysis + environment struct. **← NEXT**
+10. **`for x in collection`** — Depends on closures with captures or trait system.
+11. **Destructors / Drop** — High complexity, needs ownership + move semantics.
