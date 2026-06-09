@@ -2,9 +2,6 @@
 // Validates types, resolves identifiers, checks function calls.
 module Sema {
 
-extern func Print(s: String);
-extern func PrintLine(s: String);
-
 // ---------------------------------------------------------------------------
 // Sema context
 // ---------------------------------------------------------------------------
@@ -294,9 +291,6 @@ func Sema_ResolveCallArgs(sema: *Sema, expr: *Expr) {
 func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if expr == null as *Expr { return tyUnknown; }
     let kind: int = expr.kind;
-    // Debug: print expr kind
-    // PrintInt(kind as int64);
-    // PrintLine("");
 
     // Literal
     if kind == ekLiteral {
