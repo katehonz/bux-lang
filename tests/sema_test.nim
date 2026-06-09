@@ -43,7 +43,7 @@ suite "Sema":
   test "wrong number of arguments":
     let res = checkSource("func Add(a: int32, b: int32) -> int32 { return a + b; } func Main() -> int { return Add(1); }")
     check res.hasErrors
-    check "expected 2 arguments" in res.diagnostics[0].message
+    check "missing argument for parameter 'b'" in res.diagnostics[0].message
 
   test "wrong argument type":
     let res = checkSource("func Add(a: int32, b: int32) -> int32 { return a + b; } func Main() -> int { return Add(c8\"a\", 2); }")
