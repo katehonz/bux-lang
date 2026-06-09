@@ -605,6 +605,40 @@ func Cli_Init() -> int {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Test command — build and run tests
+// ---------------------------------------------------------------------------
+
+func Cli_Test(projectDir: String) -> int {
+    Print("Testing project: ");
+    PrintLine(projectDir);
+    // Build the project first
+    let rc: int = Cli_BuildProject(projectDir);
+    if rc != 0 {
+        PrintLine("Test build failed");
+        return rc;
+    }
+    // Run the resulting binary
+    let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
+    var outName: String = man.name;
+    if String_Eq(outName, "") { outName = "bux_out"; }
+    let outBin: String = bux_path_join(bux_path_join(projectDir, "build"), outName);
+    if !FileExists(outBin) {
+        Print("Error: test binary not found: ");
+        PrintLine(outBin);
+        return 1;
+    }
+    let result: int = bux_system(outBin);
+    if result == 0 {
+        PrintLine("Tests passed");
+    } else {
+        Print("Tests failed (exit code ");
+        PrintInt(result as int64);
+        PrintLine(")");
+    }
+    return result;
+}
+
 func Cli_BuildProject(projectDir: String) -> int {
     let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
     var outName: String = man.name;
@@ -872,7 +906,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, test, run, project, help, version");
         return 0;
     }
 
@@ -885,7 +919,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, test, run, project, help, version");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅  695 lines");
         PrintLine("  Parser     ✅ 1004 lines");
@@ -928,6 +962,12 @@ func Cli_Run(args: *String, argCount: int) -> int {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
         return Cli_BuildProject(dir);
+    }
+
+    if String_Eq(cmd, "test") {
+        let dir: String = ".";
+        if argCount >= 3 { dir = args[2]; }
+        return Cli_Test(dir);
     }
 
     if String_Eq(cmd, "run") {
