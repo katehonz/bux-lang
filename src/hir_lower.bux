@@ -245,6 +245,7 @@ func Lcx_MangleName(base: String, typeArg0: String, typeArg1: String, typeArgCou
 }
 
 func Lcx_GenerateStructInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int) -> String {
+    if String_Eq(genDecl.strValue, "") { return ""; }
     let mangled: String = Lcx_MangleName(genDecl.strValue, typeArg0, typeArg1, typeArgCount);
 
     // Check if already generated (linear search in hm.structs)
@@ -268,7 +269,10 @@ func Lcx_GenerateStructInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String
     ctx.substArg1 = typeArg1;
 
     // Generate concrete HirStruct with substituted field types
+    // Reserve the slot BEFORE processing fields so nested generic instantiations
+    // get their own distinct indices and cannot overwrite our slot.
     let si: int = ctx.hm.structCount;
+    ctx.hm.structCount = ctx.hm.structCount + 1;
     ctx.hm.structs[si].name = mangled;
     ctx.hm.structs[si].fieldCount = genDecl.fieldCount;
     ctx.hm.structs[si].fields = bux_alloc(genDecl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
@@ -289,7 +293,6 @@ func Lcx_GenerateStructInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String
         }
         fi = fi + 1;
     }
-    ctx.hm.structCount = ctx.hm.structCount + 1;
 
     // Restore old substitution
     ctx.substParam0 = oldParam0;
@@ -1651,9 +1654,42 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             ctx.genFuncs[ctx.genFuncCount] = *decl;
             ctx.genFuncCount = ctx.genFuncCount + 1;
         }
-        if decl.kind == dkStruct && decl.typeParamCount > 0 {
-            ctx.genStructs[ctx.genStructCount] = *decl;
-            ctx.genStructCount = ctx.genStructCount + 1;
+        if decl.kind == dkStruct {
+            if decl.typeParamCount > 0 {
+                ctx.genStructs[ctx.genStructCount] = *decl;
+                ctx.genStructCount = ctx.genStructCount + 1;
+            } else if !String_Eq(decl.strValue, "") {
+                // Collect struct definition for C codegen
+                let si: int = hm.structCount;
+                hm.structs[si].name = decl.strValue;
+                hm.structs[si].fieldCount = decl.fieldCount;
+                hm.structs[si].fields = bux_alloc(decl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
+                var fi: int = 0;
+                while fi < decl.fieldCount {
+                    var fname: String = "";
+                    var ftype: *TypeExpr = null as *TypeExpr;
+                    fname = decl.fields[fi].name;
+                    ftype = decl.fields[fi].refFieldType;
+                    // Skip empty field names
+                    if String_Eq(fname, "") {
+                        fi = fi + 1;
+                        continue;
+                    }
+                    hm.structs[si].fields[fi].name = fname;
+                    if ftype != null as *TypeExpr {
+                        if ftype.kind == tekPointer && ftype.pointerPointee != null as *TypeExpr {
+                            // Pointer type: emit "TypeName*"
+                            if !String_Eq(ftype.pointerPointee.typeName, "") {
+                                hm.structs[si].fields[fi].typeName = String_Concat(ftype.pointerPointee.typeName, "*");
+                            }
+                        } else if !String_Eq(ftype.typeName, "") {
+                            hm.structs[si].fields[fi].typeName = ftype.typeName;
+                        }
+                    }
+                    fi = fi + 1;
+                }
+                hm.structCount = hm.structCount + 1;
+            }
         }
         if decl.kind == dkFunc && decl.refBody != null as *Block {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
@@ -1678,38 +1714,6 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
             ctx.externFuncs[ctx.externCount] = *f;
             ctx.externCount = ctx.externCount + 1;
-        }
-        if decl.kind == dkStruct {
-            // Collect struct definition for C codegen
-            let si: int = hm.structCount;
-            hm.structs[si].name = decl.strValue;
-            hm.structs[si].fieldCount = decl.fieldCount;
-            hm.structs[si].fields = bux_alloc(decl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
-            var fi: int = 0;
-            while fi < decl.fieldCount {
-                var fname: String = "";
-                var ftype: *TypeExpr = null as *TypeExpr;
-                fname = decl.fields[fi].name;
-                ftype = decl.fields[fi].refFieldType;
-                // Skip empty field names
-                if String_Eq(fname, "") {
-                    fi = fi + 1;
-                    continue;
-                }
-                hm.structs[si].fields[fi].name = fname;
-                if ftype != null as *TypeExpr {
-                    if ftype.kind == tekPointer && ftype.pointerPointee != null as *TypeExpr {
-                        // Pointer type: emit "TypeName*"
-                        if !String_Eq(ftype.pointerPointee.typeName, "") {
-                            hm.structs[si].fields[fi].typeName = String_Concat(ftype.pointerPointee.typeName, "*");
-                        }
-                    } else if !String_Eq(ftype.typeName, "") {
-                        hm.structs[si].fields[fi].typeName = ftype.typeName;
-                    }
-                }
-                fi = fi + 1;
-            }
-            hm.structCount = hm.structCount + 1;
         }
         if decl.kind == dkConst && hm.constCount < 512 {
             let ci: int = hm.constCount;

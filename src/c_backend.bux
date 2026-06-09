@@ -747,6 +747,7 @@ func CBE_StructHasValueStructField(st: *HirStruct) -> bool {
 }
 
 func CBE_EmitStructDef(cbe: *CEmitter, st: *HirStruct) {
+    if String_Eq(st.name, "") { return; }
     StringBuilder_Append(&cbe.sb, "struct ");
     StringBuilder_Append(&cbe.sb, st.name);
     StringBuilder_Append(&cbe.sb, " {\n");
@@ -848,10 +849,10 @@ func CBackend_Generate(mod: *HirModule) -> String {
     StringBuilder_Append(&cbe.sb, "void* bux_alloc(unsigned int size);\n");
     StringBuilder_Append(&cbe.sb, "void bux_free(void* ptr);\n\n");
 
-    // Forward declare all struct types (skip generics)
+    // Forward declare all struct types (skip empty names)
     var si: int = 0;
     while si < mod.structCount {
-        if !CBE_StructHasGeneric(&mod.structs[si]) {
+        if !String_Eq(mod.structs[si].name, "") {
             StringBuilder_Append(&cbe.sb, "typedef struct ");
             StringBuilder_Append(&cbe.sb, mod.structs[si].name);
             StringBuilder_Append(&cbe.sb, " ");
@@ -972,7 +973,7 @@ func CBackend_Generate(mod: *HirModule) -> String {
     // Pass 1: emit structs with no value-typed struct fields (leaf structs)
     si = 0;
     while si < mod.structCount {
-        if CBE_StructHasGeneric(&mod.structs[si]) {
+        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
             si = si + 1;
             continue;
         }
@@ -986,7 +987,7 @@ func CBackend_Generate(mod: *HirModule) -> String {
     // Pass 2: emit structs that contain value-typed struct fields
     si = 0;
     while si < mod.structCount {
-        if CBE_StructHasGeneric(&mod.structs[si]) {
+        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
             si = si + 1;
             continue;
         }
@@ -996,22 +997,6 @@ func CBackend_Generate(mod: *HirModule) -> String {
         }
         CBE_EmitStructDef(cbe, &mod.structs[si]);
         si = si + 1;
-    }
-
-    // Opaque forward declarations for generic structs (used only by pointer)
-    si = 0;
-    while si < mod.structCount {
-        if CBE_StructHasGeneric(&mod.structs[si]) {
-            StringBuilder_Append(&cbe.sb, "typedef struct ");
-            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-            StringBuilder_Append(&cbe.sb, " ");
-            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-            StringBuilder_Append(&cbe.sb, ";\n");
-        }
-        si = si + 1;
-    }
-    if mod.structCount > 0 {
-        StringBuilder_Append(&cbe.sb, "\n");
     }
 
     // Forward declarations for all functions (skip generics)

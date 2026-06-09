@@ -1434,25 +1434,32 @@ func parserParseImportDecl(p: *Parser, isPublic: bool) -> *Decl {
     }
     d.usePath = pathStr;
 
-    // Optional ::{name1, name2}
-    if parserMatch(p, tkColonColon) && parserCheck(p, tkLBrace) {
-        discard parserAdvance(p); // {
-        var names: String = "";
-        while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
-            while parserCheck(p, tkNewLine) {
-                discard parserAdvance(p);
+    // Optional ::{name1, name2} or ::*
+    if parserMatch(p, tkColonColon) {
+        if parserCheck(p, tkLBrace) {
+            discard parserAdvance(p); // {
+            var names: String = "";
+            while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+                while parserCheck(p, tkNewLine) {
+                    discard parserAdvance(p);
+                }
+                if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile {
+                    break;
+                }
+                let n: LexToken = parserExpect(p, tkIdent, "expected import name");
+                names = String_Concat(names, n.text);
+                names = String_Concat(names, ",");
+                if !parserMatch(p, tkComma) { break; }
             }
-            if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile {
-                break;
-            }
-            let n: LexToken = parserExpect(p, tkIdent, "expected import name");
-            names = String_Concat(names, n.text);
-            names = String_Concat(names, ",");
-            if !parserMatch(p, tkComma) { break; }
+            discard parserExpect(p, tkRBrace, "expected '}'");
+            d.useNames = names;
+            d.useKind = 2; // ukMulti
+        } else if parserCheck(p, tkStar) {
+            discard parserAdvance(p); // *
+            d.useKind = 1; // ukGlob
+        } else {
+            d.useKind = 0; // ukSingle
         }
-        discard parserExpect(p, tkRBrace, "expected '}'");
-        d.useNames = names;
-        d.useKind = 2; // ukMulti
     } else {
         d.useKind = 0; // ukSingle
     }

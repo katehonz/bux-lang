@@ -997,98 +997,6 @@ func Sema_CollectGlobals(sema: *Sema) {
             discard Scope_Define(sema.scope, sym);
         }
 
-        // Use (import)
-        if dk == dkUse {
-            if decl.useKind == 2 {
-                // Multi-import: names are comma-separated in useNames
-                // For now, register the whole useNames string as a single func name
-                // (permissive fallback — real fix needs string split)
-                let namesStr: String = decl.useNames;
-                if !String_Eq(namesStr, "") {
-                    // Simple split by comma using available string functions
-                    var start: uint = 0;
-                    var pos: uint = 0;
-                    let totalLen: uint = String_Len(namesStr);
-                    while pos <= totalLen {
-                        let atEnd: bool = pos == totalLen;
-                        let isComma: bool = false;
-                        if pos < totalLen {
-                            // Check if character at pos is comma
-                            let chStr: String = bux_str_slice(namesStr, pos, 1);
-                            isComma = String_Eq(chStr, ",");
-                        }
-                        if atEnd || isComma {
-                            let nameLen: uint = pos - start;
-                            if nameLen > 0 {
-                                let name: String = bux_str_slice(namesStr, start, nameLen);
-                                var sym: Symbol;
-                                sym.kind = skFunc;
-                                sym.name = name;
-                                sym.typeKind = tyUnknown;
-                                sym.typeName = "";
-                                sym.refType = null as *TypeExpr;
-                                sym.isMutable = false;
-                                sym.isPublic = true;
-                                sym.decl = null as *Decl;
-                                let existing: Symbol = Scope_LookupLocal(sema.scope, name);
-                                if !String_Eq(existing.name, name) {
-                                    discard Scope_Define(sema.scope, sym);
-                                }
-                            }
-                            start = pos + 1;
-                        }
-                        pos = pos + 1;
-                    }
-                }
-            } else {
-                // Single import or glob — add last path segment
-                let path: String = decl.usePath;
-                if !String_Eq(path, "") {
-                    // Find last :: segment
-                    var lastSeg: String = path;
-                    let containsColons: int = bux_str_contains(path, "::");
-                    if containsColons != 0 {
-                        // Try to get last segment by finding last ::
-                        // Use a simple heuristic: slice from various positions
-                        let pathLen: uint = String_Len(path);
-                        var tryPos: uint = 0;
-                        while tryPos < pathLen {
-                            let slice: String = bux_str_slice(path, tryPos, pathLen - tryPos);
-                            if String_StartsWith(slice, "::") {
-                                lastSeg = bux_str_slice(slice, 2, String_Len(slice) - 2);
-                            }
-                            tryPos = tryPos + 1;
-                        }
-                    }
-                    var sym: Symbol;
-                    sym.kind = skFunc;
-                    sym.name = lastSeg;
-                    sym.typeKind = tyUnknown;
-                    sym.typeName = "";
-                    sym.refType = null as *TypeExpr;
-                    sym.isMutable = false;
-                    sym.isPublic = true;
-                    sym.decl = null as *Decl;
-                    let existing: Symbol = Scope_LookupLocal(sema.scope, lastSeg);
-                    if !String_Eq(existing.name, lastSeg) {
-                        discard Scope_Define(sema.scope, sym);
-                    }
-                }
-            }
-        }
-
-        // Const
-        if dk == dkConst {
-            var sym: Symbol;
-            Sema_ZeroInitSymbol(&sym);
-            sym.kind = skConst;
-            sym.name = decl.strValue;
-            sym.typeKind = tyUnknown;
-            sym.isPublic = decl.isPublic;
-            sym.decl = decl;
-            discard Scope_Define(sema.scope, sym);
-        }
-
         // Extern function
         if dk == dkExternFunc {
             var sym: Symbol;
@@ -1099,6 +1007,91 @@ func Sema_CollectGlobals(sema: *Sema) {
             sym.isPublic = true;
             sym.decl = decl;
             discard Scope_Define(sema.scope, sym);
+        }
+
+        decl = decl.childDecl2;
+    }
+
+    // Pass 2: resolve imports by looking up actual symbols
+    decl = sema.module.firstItem;
+    while decl != null as *Decl {
+        let dk: int = decl.kind;
+
+        if dk == dkUse {
+            if decl.useKind == 1 {
+                // Glob import: add all public symbols from scope
+                var scope: *Scope = sema.scope;
+                while scope != null as *Scope {
+                    var i: int = 0;
+                    while i < scope.count {
+                        let sym: Symbol = scope.symbols[i];
+                        if sym.isPublic {
+                            let existing: Symbol = Scope_LookupLocal(sema.scope, sym.name);
+                            if String_Eq(existing.name, "") {
+                                discard Scope_Define(sema.scope, sym);
+                            }
+                        }
+                        i = i + 1;
+                    }
+                    scope = scope.parent;
+                }
+            } else if decl.useKind == 2 {
+                // Multi-import: resolve each name
+                let namesStr: String = decl.useNames;
+                if !String_Eq(namesStr, "") {
+                    var start: uint = 0;
+                    var pos: uint = 0;
+                    let totalLen: uint = String_Len(namesStr);
+                    while pos <= totalLen {
+                        let atEnd: bool = pos == totalLen;
+                        let isComma: bool = false;
+                        if pos < totalLen {
+                            let chStr: String = bux_str_slice(namesStr, pos, 1);
+                            isComma = String_Eq(chStr, ",");
+                        }
+                        if atEnd || isComma {
+                            let nameLen: uint = pos - start;
+                            if nameLen > 0 {
+                                let name: String = bux_str_slice(namesStr, start, nameLen);
+                                let found: Symbol = Scope_Lookup(sema.scope, name);
+                                if !String_Eq(found.name, "") && found.isPublic {
+                                    let existing: Symbol = Scope_LookupLocal(sema.scope, name);
+                                    if String_Eq(existing.name, "") {
+                                        discard Scope_Define(sema.scope, found);
+                                    }
+                                }
+                            }
+                            start = pos + 1;
+                        }
+                        pos = pos + 1;
+                    }
+                }
+            } else {
+                // Single import: resolve last path segment
+                let path: String = decl.usePath;
+                if !String_Eq(path, "") {
+                    var lastSeg: String = path;
+                    let containsColons: int = bux_str_contains(path, "::");
+                    if containsColons != 0 {
+                        let pathLen: uint = String_Len(path);
+                        var tryPos: uint = 0;
+                        while tryPos < pathLen {
+                            let slice: String = bux_str_slice(path, tryPos, pathLen - tryPos);
+                            if String_StartsWith(slice, "::") {
+                                lastSeg = bux_str_slice(slice, 2, String_Len(slice) - 2);
+                            }
+                            tryPos = tryPos + 1;
+                        }
+                    }
+                    let found: Symbol = Scope_Lookup(sema.scope, lastSeg);
+                    if !String_Eq(found.name, "") && found.isPublic {
+                        let existing: Symbol = Scope_LookupLocal(sema.scope, lastSeg);
+                        if String_Eq(existing.name, "") {
+                            discard Scope_Define(sema.scope, found);
+                        }
+                    }
+                }
+            }
         }
 
         decl = decl.childDecl2;
