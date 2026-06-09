@@ -233,6 +233,9 @@ type
       exprClosureParams*: seq[Param]
       exprClosureBody*: Block
       exprClosureReturnType*: TypeExpr
+      captureCount*: int
+      captureNames*: seq[string]
+      captureTypeKinds*: seq[int]
 
   # ---------------------------------------------------------------------------
   # Statements

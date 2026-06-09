@@ -44,3 +44,13 @@ proc lookupLocal*(scope: Scope, name: string): Symbol =
   if scope.table.hasKey(name):
     return scope.table[name]
   return nil
+
+proc lookupUpTo*(scope: Scope, name: string, limit: Scope): Symbol =
+  var cur = scope
+  while cur != nil:
+    if cur.table.hasKey(name):
+      return cur.table[name]
+    if cur == limit:
+      break
+    cur = cur.parent
+  return nil

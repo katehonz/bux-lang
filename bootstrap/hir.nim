@@ -23,6 +23,7 @@ type
     hLoad
     hStore
     hFieldPtr
+    hFieldAccess
     hArrowField
     hIndexPtr
     hSliceIndex
@@ -98,6 +99,9 @@ type
     of hFieldPtr:
       fieldPtrBase*: HirNode
       fieldName*: string
+    of hFieldAccess:
+      fieldAccessBase*: HirNode
+      fieldAccessName*: string
     of hArrowField:
       arrowFieldBase*: HirNode
       arrowFieldName*: string
@@ -166,6 +170,11 @@ type
     retType*: Type
     body*: HirNode
     isPublic*: bool
+    # Closure capture metadata
+    captureNames*: seq[string]
+    captureTypes*: seq[Type]
+    envStructName*: string
+    envInstanceName*: string
 
   HirEnumVariant* = object
     name*: string
@@ -218,6 +227,9 @@ proc hirAlloca*(name: string, typ: Type, loc: SourceLocation): HirNode =
 
 proc hirStore*(ptrNode, value: HirNode, loc: SourceLocation): HirNode =
   HirNode(kind: hStore, storePtr: ptrNode, storeValue: value, typ: makeVoid(), loc: loc)
+
+proc hirAssign*(target, value: HirNode, loc: SourceLocation): HirNode =
+  HirNode(kind: hAssign, assignOp: tkAssign, assignTarget: target, assignValue: value, typ: makeVoid(), loc: loc)
 
 proc hirLoad*(ptrNode: HirNode, typ: Type, loc: SourceLocation): HirNode =
   HirNode(kind: hLoad, loadPtr: ptrNode, typ: typ, loc: loc)

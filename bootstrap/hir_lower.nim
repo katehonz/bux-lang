@@ -22,6 +22,9 @@ type
     generatedFuncInsts*: Table[string, bool]  # Track generated function instantiations
     extraFuncs*: seq[HirFunc]  # Monomorphized generic methods
     varTypeExprs*: Table[string, TypeExpr]  # Track variable names -> type expr for generic method inference
+    closureDepth*: int
+    currentClosureExpr*: Expr
+    envInstanceName*: string
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -648,6 +651,13 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
 
   of ekIdent:
     let name = expr.exprIdent
+    # Capture rewriting: if inside closure and ident is captured
+    if ctx.closureDepth > 0 and ctx.currentClosureExpr != nil and ctx.envInstanceName != "":
+      let idx = ctx.currentClosureExpr.captureNames.find(name)
+      if idx >= 0:
+        let capType = if idx < ctx.currentClosureExpr.captureTypeKinds.len: Type(kind: TypeKind(ctx.currentClosureExpr.captureTypeKinds[idx])) else: makeInt()
+        let base = hirVar(ctx.envInstanceName, makeNamed(""), loc)
+        return HirNode(kind: hFieldAccess, fieldAccessName: name, fieldAccessBase: base, typ: capType, loc: loc)
     if ctx.importTable.hasKey(name):
       return hirVar(ctx.importTable[name], typ, loc)
     return hirVar(name, typ, loc)
@@ -1202,6 +1212,22 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     if initHir != nil:
       let store = hirStore(varNode, initHir, loc)
       stmts.add(store)
+    # If init is a closure with captures, emit capture assignments
+    if stmt.stmtLetInit != nil and stmt.stmtLetInit.kind == ekClosure and stmt.stmtLetInit.captureCount > 0:
+      let closureIdx = ctx.varCounter - 1
+      let envInst = "__closure_env_instance_" & $closureIdx
+      var capStmts: seq[HirNode] = @[]
+      for i in 0 ..< stmt.stmtLetInit.captureCount:
+        let capName = stmt.stmtLetInit.captureNames[i]
+        let capType = if i < stmt.stmtLetInit.captureTypeKinds.len: Type(kind: TypeKind(stmt.stmtLetInit.captureTypeKinds[i])) else: makeInt()
+        let base = hirVar(envInst, makeNamed(""), loc)
+        let field = HirNode(kind: hFieldAccess, fieldAccessName: capName, fieldAccessBase: base, typ: capType, loc: loc)
+        let val = hirVar(capName, capType, loc)
+        capStmts.add(hirAssign(field, val, loc))
+      # Prepend capture assignments before the let
+      var allStmts = capStmts
+      allStmts.add(stmts)
+      return hirBlock(allStmts, nil, makeVoid(), loc)
     return hirBlock(stmts, nil, makeVoid(), loc)
 
   of skReturn:
@@ -1491,6 +1517,13 @@ proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc =
   let name = "__closure_" & $ctx.varCounter
   inc ctx.varCounter
   var f = HirFunc(name: name, isPublic: false)
+  # Copy capture metadata
+  if expr.captureCount > 0:
+    f.captureNames = expr.captureNames
+    for tk in expr.captureTypeKinds:
+      f.captureTypes.add(Type(kind: TypeKind(tk)))
+    f.envStructName = "__closure_env_" & $(ctx.varCounter - 1)
+    f.envInstanceName = "__closure_env_instance_" & $(ctx.varCounter - 1)
   # Params
   for p in expr.exprClosureParams:
     f.params.add((name: p.name, typ: if p.ptype != nil: ctx.resolveTypeExpr(p.ptype) else: makeUnknown()))
@@ -1499,9 +1532,18 @@ proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc =
     f.retType = ctx.resolveTypeExpr(expr.exprClosureReturnType)
   else:
     f.retType = makeVoid()
-  # Body
+  # Body with closure rewriting
+  let savedDepth = ctx.closureDepth
+  let savedExpr = ctx.currentClosureExpr
+  let savedEnv = ctx.envInstanceName
+  ctx.closureDepth = ctx.closureDepth + 1
+  ctx.currentClosureExpr = expr
+  ctx.envInstanceName = f.envInstanceName
   if expr.exprClosureBody != nil:
     f.body = ctx.lowerBlock(expr.exprClosureBody)
+  ctx.closureDepth = savedDepth
+  ctx.currentClosureExpr = savedExpr
+  ctx.envInstanceName = savedEnv
   ctx.extraFuncs.add(f)
   return f
 

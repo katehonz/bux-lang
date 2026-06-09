@@ -45,6 +45,9 @@ type
     currentFuncIsAsync*: bool  ## true inside async func
     movedVars*: seq[string]  ## variables moved in current checked function
     currentRetType*: Type    ## return type of the function being checked
+    closureDepth*: int       ## nesting depth inside closures
+    currentClosureExpr*: Expr  ## current closure being analyzed
+    closureScope*: Scope     ## scope at which the current closure was entered
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -816,6 +819,14 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       return makeUnknown()
     if sym.typ == nil:
       return makeUnknown()
+    # Capture tracking
+    if sema.closureDepth > 0 and sema.currentClosureExpr != nil and sema.closureScope != nil:
+      let localSym = scope.lookupUpTo(expr.exprIdent, sema.closureScope)
+      if localSym == nil and sym.kind == skVar:
+        if expr.exprIdent notin sema.currentClosureExpr.captureNames:
+          sema.currentClosureExpr.captureNames.add(expr.exprIdent)
+          sema.currentClosureExpr.captureTypeKinds.add(sym.typ.kind.int)
+          sema.currentClosureExpr.captureCount = sema.currentClosureExpr.captureNames.len
     return sym.typ
   of ekSelf:
     let sym = scope.lookup("self")
@@ -1340,7 +1351,16 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     return makeStr()
   of ekClosure:
     let savedRetType = sema.currentRetType
+    let savedClosureDepth = sema.closureDepth
+    let savedClosureExpr = sema.currentClosureExpr
+    let savedClosureScope = sema.closureScope
     let childScope = Scope(parent: scope)
+    sema.closureDepth = sema.closureDepth + 1
+    sema.currentClosureExpr = expr
+    sema.closureScope = childScope
+    expr.captureCount = 0
+    expr.captureNames = @[]
+    expr.captureTypeKinds = @[]
     sema.currentRetType = if expr.exprClosureReturnType != nil: sema.resolveType(expr.exprClosureReturnType) else: makeUnknown()
     # Register params
     for p in expr.exprClosureParams:
@@ -1351,6 +1371,9 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       for stmt in expr.exprClosureBody.stmts:
         discard sema.checkStmt(stmt, childScope)
     sema.currentRetType = savedRetType
+    sema.closureDepth = savedClosureDepth
+    sema.currentClosureExpr = savedClosureExpr
+    sema.closureScope = savedClosureScope
     # Build function type
     var params: seq[Type] = @[]
     for p in expr.exprClosureParams:

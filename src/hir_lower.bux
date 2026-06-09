@@ -15,6 +15,10 @@ struct LowerCtx {
     externCount: int,
     varCounter: int,
     tryCounter: int,
+    closureDepth: int,
+    currentClosureExpr: *Expr,
+    envInstanceName: String,
+    hm: *HirModule,
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +52,29 @@ func Lcx_ResolveTypeKindFromName(name: String) -> int {
     if String_Eq(name, "float64") { return tyFloat64; }
     if String_Eq(name, "float") { return tyFloat64; }
     return tyNamed;
+}
+
+func Lcx_TypeKindToName(kind: int) -> String {
+    if kind == tyVoid { return "void"; }
+    if kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32 { return "bool"; }
+    if kind == tyChar8 { return "char"; }
+    if kind == tyChar16 { return "uint16"; }
+    if kind == tyChar32 { return "uint32"; }
+    if kind == tyStr { return "String"; }
+    if kind == tyInt8 { return "int8"; }
+    if kind == tyInt16 { return "int16"; }
+    if kind == tyInt32 { return "int32"; }
+    if kind == tyInt64 { return "int64"; }
+    if kind == tyInt { return "int"; }
+    if kind == tyUInt8 { return "uint8"; }
+    if kind == tyUInt16 { return "uint16"; }
+    if kind == tyUInt32 { return "uint32"; }
+    if kind == tyUInt64 { return "uint64"; }
+    if kind == tyUInt { return "uint"; }
+    if kind == tyFloat32 { return "float32"; }
+    if kind == tyFloat64 { return "float64"; }
+    if kind == tyPointer { return "void*"; }
+    return "int";
 }
 
 func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
@@ -122,6 +149,40 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Identifier → variable reference
     if kind == ekIdent {
+        // Capture rewriting: if inside closure body and this ident is captured,
+        // emit field access on env instance instead of bare variable
+        if ctx.closureDepth > 0 && ctx.currentClosureExpr != null as *Expr && !String_Eq(ctx.envInstanceName, "") {
+            let capCount: int = ctx.currentClosureExpr.captureCount;
+            var ci: int = 0;
+            var isCaptured: bool = false;
+            var capType: int = 0;
+            while ci < capCount {
+                var capName: String = "";
+                if ci == 0 { capName = ctx.currentClosureExpr.captureName0; capType = ctx.currentClosureExpr.captureType0; }
+                else if ci == 1 { capName = ctx.currentClosureExpr.captureName1; capType = ctx.currentClosureExpr.captureType1; }
+                else if ci == 2 { capName = ctx.currentClosureExpr.captureName2; capType = ctx.currentClosureExpr.captureType2; }
+                else if ci == 3 { capName = ctx.currentClosureExpr.captureName3; capType = ctx.currentClosureExpr.captureType3; }
+                else if ci == 4 { capName = ctx.currentClosureExpr.captureName4; capType = ctx.currentClosureExpr.captureType4; }
+                else if ci == 5 { capName = ctx.currentClosureExpr.captureName5; capType = ctx.currentClosureExpr.captureType5; }
+                else if ci == 6 { capName = ctx.currentClosureExpr.captureName6; capType = ctx.currentClosureExpr.captureType6; }
+                else if ci == 7 { capName = ctx.currentClosureExpr.captureName7; capType = ctx.currentClosureExpr.captureType7; }
+                if String_Eq(capName, expr.strValue) {
+                    isCaptured = true;
+                }
+                ci = ci + 1;
+            }
+            if isCaptured {
+                n.kind = hFieldAccess;
+                n.strValue = expr.strValue;
+                let baseNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                baseNode.kind = hVar;
+                baseNode.strValue = ctx.envInstanceName;
+                n.child1 = baseNode;
+                n.typeKind = capType;
+                n.typeName = Lcx_TypeKindToName(capType);
+                return n;
+            }
+        }
         n.kind = hVar;
         n.strValue = expr.strValue;
         let sym: Symbol = Scope_Lookup(ctx.scope, expr.strValue);
@@ -500,10 +561,71 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         sym.decl = null as *Decl;
         discard Scope_Define(ctx.scope, sym);
         // store the init value
-        n.kind = hStore;
-        n.child1 = alloca;
-        n.child2 = init;
-        return n;
+        let storeNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        storeNode.kind = hStore;
+        storeNode.child1 = alloca;
+        storeNode.child2 = init;
+
+        // If init is a closure with captures, emit capture assignments before the let
+        if stmt.child1 != null as *Expr && stmt.child1.kind == ekClosure && stmt.child1.captureCount > 0 {
+            let closureIdx: int = ctx.funcCount - 1;
+            let envInst: String = String_Concat("__closure_env_instance_", String_FromInt(closureIdx));
+            // Build a block: capture assignments + let store
+            let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            blockNode.kind = hBlock;
+            blockNode.line = line;
+            blockNode.column = col;
+            var firstStmt: *HirNode = null as *HirNode;
+            var lastStmt: *HirNode = null as *HirNode;
+            var ci: int = 0;
+            while ci < stmt.child1.captureCount {
+                var capName: String = "";
+                if ci == 0 { capName = stmt.child1.captureName0; }
+                else if ci == 1 { capName = stmt.child1.captureName1; }
+                else if ci == 2 { capName = stmt.child1.captureName2; }
+                else if ci == 3 { capName = stmt.child1.captureName3; }
+                else if ci == 4 { capName = stmt.child1.captureName4; }
+                else if ci == 5 { capName = stmt.child1.captureName5; }
+                else if ci == 6 { capName = stmt.child1.captureName6; }
+                else if ci == 7 { capName = stmt.child1.captureName7; }
+                // Build: envInst.capName = capName;
+                let assignNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                assignNode.kind = hAssign;
+                assignNode.line = line;
+                assignNode.column = col;
+                let fieldNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                fieldNode.kind = hFieldAccess;
+                fieldNode.strValue = capName;
+                let baseNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                baseNode.kind = hVar;
+                baseNode.strValue = envInst;
+                fieldNode.child1 = baseNode;
+                let valNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                valNode.kind = hVar;
+                valNode.strValue = capName;
+                assignNode.child1 = fieldNode;
+                assignNode.child2 = valNode;
+                if firstStmt == null as *HirNode {
+                    firstStmt = assignNode;
+                    lastStmt = assignNode;
+                } else {
+                    lastStmt.child3 = assignNode;
+                    lastStmt = assignNode;
+                }
+                ci = ci + 1;
+            }
+            // Append the let store
+            if firstStmt == null as *HirNode {
+                firstStmt = storeNode;
+                lastStmt = storeNode;
+            } else {
+                lastStmt.child3 = storeNode;
+                lastStmt = storeNode;
+            }
+            blockNode.child1 = firstStmt;
+            return blockNode;
+        }
+        return storeNode;
     }
 
     // Return
@@ -830,6 +952,37 @@ func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
         f.retTypeKind = 0;
     }
 
+    // Copy capture metadata from AST
+    f.captureCount = expr.captureCount;
+    f.captureName0 = expr.captureName0;
+    f.captureName1 = expr.captureName1;
+    f.captureName2 = expr.captureName2;
+    f.captureName3 = expr.captureName3;
+    f.captureName4 = expr.captureName4;
+    f.captureName5 = expr.captureName5;
+    f.captureName6 = expr.captureName6;
+    f.captureName7 = expr.captureName7;
+    f.captureType0 = expr.captureType0;
+    f.captureType1 = expr.captureType1;
+    f.captureType2 = expr.captureType2;
+    f.captureType3 = expr.captureType3;
+    f.captureType4 = expr.captureType4;
+    f.captureType5 = expr.captureType5;
+    f.captureType6 = expr.captureType6;
+    f.captureType7 = expr.captureType7;
+
+    // Generate env struct and instance names if there are captures
+    var envStructName: String = "";
+    var envInstanceName: String = "";
+    if f.captureCount > 0 {
+        envStructName = String_Concat("__closure_env_", numStr);
+        envInstanceName = String_Concat("__closure_env_instance_", numStr);
+        f.envStructName = envStructName;
+        f.envInstanceName = envInstanceName;
+
+        // Env struct is emitted directly by C backend from func capture metadata
+    }
+
     // Create function scope
     var funcScope: Scope = Scope_NewChild(ctx.scope);
     var pi: int = 0;
@@ -868,13 +1021,22 @@ func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
     }
 
     let prevScope: *Scope = ctx.scope;
+    let prevClosureDepth: int = ctx.closureDepth;
+    let prevClosureExpr: *Expr = ctx.currentClosureExpr;
+    let prevEnvInstanceName: String = ctx.envInstanceName;
     ctx.scope = &funcScope;
+    ctx.closureDepth = ctx.closureDepth + 1;
+    ctx.currentClosureExpr = expr;
+    ctx.envInstanceName = envInstanceName;
     if expr.refBlock != null as *Block {
         f.body = Lcx_LowerBlock(ctx, expr.refBlock, -1);
     } else {
         f.body = null as *HirNode;
     }
     ctx.scope = prevScope;
+    ctx.closureDepth = prevClosureDepth;
+    ctx.currentClosureExpr = prevClosureExpr;
+    ctx.envInstanceName = prevEnvInstanceName;
 
     // Add to module functions
     ctx.funcs[ctx.funcCount] = *f;
@@ -906,6 +1068,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     hm.enums = bux_alloc(64 as uint * sizeof(HirEnum)) as *HirEnum;
     hm.constCount = 0;
     hm.consts = bux_alloc(512 as uint * sizeof(HirConst)) as *HirConst;
+    ctx.hm = hm;
 
     // First pass: count structs (to allocate field arrays later)
     // Second pass: actually collect them

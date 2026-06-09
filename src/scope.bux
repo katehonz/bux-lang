@@ -89,6 +89,25 @@ func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
     return empty;
 }
 
+func Scope_LookupUpTo(scope: *Scope, name: String, limit: *Scope) -> Symbol {
+    var cur: *Scope = scope;
+    while cur != null as *Scope {
+        var i: int = 0;
+        while i < cur.count {
+            if String_Eq(cur.symbols[i].name, name) {
+                return cur.symbols[i];
+            }
+            i = i + 1;
+        }
+        if cur == limit {
+            break;
+        }
+        cur = cur.parent;
+    }
+    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
+    return empty;
+}
+
 func Scope_Free(scope: *Scope) {
     bux_free(scope.symbols as *void);
 }

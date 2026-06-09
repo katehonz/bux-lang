@@ -24,6 +24,9 @@ struct Sema {
     movedName5: String;
     movedName6: String;
     movedName7: String;
+    closureDepth: int;      // nesting depth inside closures
+    currentClosureExpr: *Expr; // current closure being analyzed (for capture tracking)
+    closureScope: *Scope;   // scope at which the current closure was entered
 }
 
 struct SemaDiag {
@@ -338,6 +341,42 @@ func Sema_RemoveMoved(sema: *Sema, name: String) {
 }
 
 // ---------------------------------------------------------------------------
+// Capture tracking for closures
+// ---------------------------------------------------------------------------
+
+func Sema_AddCapture(closureExpr: *Expr, name: String, typeKind: int) {
+    if closureExpr == null as *Expr { return; }
+    // Check if already captured
+    var i: int = 0;
+    while i < closureExpr.captureCount {
+        var capName: String = "";
+        if i == 0 { capName = closureExpr.captureName0; }
+        else if i == 1 { capName = closureExpr.captureName1; }
+        else if i == 2 { capName = closureExpr.captureName2; }
+        else if i == 3 { capName = closureExpr.captureName3; }
+        else if i == 4 { capName = closureExpr.captureName4; }
+        else if i == 5 { capName = closureExpr.captureName5; }
+        else if i == 6 { capName = closureExpr.captureName6; }
+        else if i == 7 { capName = closureExpr.captureName7; }
+        if String_Eq(capName, name) { return; }
+        i = i + 1;
+    }
+    // Add new capture (up to 8)
+    if closureExpr.captureCount < 8 {
+        let idx: int = closureExpr.captureCount;
+        if idx == 0 { closureExpr.captureName0 = name; closureExpr.captureType0 = typeKind; }
+        else if idx == 1 { closureExpr.captureName1 = name; closureExpr.captureType1 = typeKind; }
+        else if idx == 2 { closureExpr.captureName2 = name; closureExpr.captureType2 = typeKind; }
+        else if idx == 3 { closureExpr.captureName3 = name; closureExpr.captureType3 = typeKind; }
+        else if idx == 4 { closureExpr.captureName4 = name; closureExpr.captureType4 = typeKind; }
+        else if idx == 5 { closureExpr.captureName5 = name; closureExpr.captureType5 = typeKind; }
+        else if idx == 6 { closureExpr.captureName6 = name; closureExpr.captureType6 = typeKind; }
+        else if idx == 7 { closureExpr.captureName7 = name; closureExpr.captureType7 = typeKind; }
+        closureExpr.captureCount = closureExpr.captureCount + 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Expression type checking
 // ---------------------------------------------------------------------------
 
@@ -378,6 +417,16 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             te.kind = tekNamed;
             te.typeName = sym.typeName;
             expr.refType = te;
+        }
+        // Capture tracking: if inside closure and identifier is not local but from parent scope
+        if sema.closureDepth > 0 && sema.currentClosureExpr != null as *Expr && sema.closureScope != null as *Scope {
+            let localSym: Symbol = Scope_LookupUpTo(sema.scope, expr.strValue, sema.closureScope);
+            if localSym.kind == 0 && !String_Eq(localSym.name, expr.strValue) {
+                // Not local to closure scope — check if it's a variable from outer scope
+                if sym.kind == skVar {
+                    Sema_AddCapture(sema.currentClosureExpr, expr.strValue, sym.typeKind);
+                }
+            }
         }
         return sym.typeKind;
     }
@@ -568,8 +617,17 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if kind == ekClosure {
         let savedRetType: int = sema.currentRetType;
         let savedScope: *Scope = sema.scope;
+        let savedClosureDepth: int = sema.closureDepth;
+        let savedClosureExpr: *Expr = sema.currentClosureExpr;
+        let savedClosureScope: *Scope = sema.closureScope;
         let childScope: Scope = Scope_NewChild(sema.scope);
         sema.scope = &childScope;
+
+        // Set up closure tracking
+        sema.closureDepth = sema.closureDepth + 1;
+        sema.currentClosureExpr = expr;
+        sema.closureScope = &childScope;
+        expr.captureCount = 0;
 
         // Set return type from annotation, or unknown for inference
         var closureRetType: int = tyUnknown;
@@ -621,6 +679,9 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         // Restore
         sema.scope = savedScope;
         sema.currentRetType = savedRetType;
+        sema.closureDepth = savedClosureDepth;
+        sema.currentClosureExpr = savedClosureExpr;
+        sema.closureScope = savedClosureScope;
 
         // Build function type expression for later use
         let funcType: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;

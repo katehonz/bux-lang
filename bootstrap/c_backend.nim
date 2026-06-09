@@ -272,6 +272,10 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     let base = be.emitExpr(node.fieldPtrBase)
     return &"(&({base}.{node.fieldName}))"
 
+  of hFieldAccess:
+    let base = be.emitExpr(node.fieldAccessBase)
+    return &"({base}.{node.fieldAccessName})"
+
   of hArrowField:
     let base = be.emitExpr(node.arrowFieldBase)
     return &"(&({base}->{node.arrowFieldName}))"
@@ -476,6 +480,18 @@ proc emitStmt(be: var CBackend, node: HirNode) =
     be.emitLine(&"{expr};")
 
 proc emitFunc*(be: var CBackend, hfunc: HirFunc) =
+  # Emit env struct and global instance for closures with captures
+  if hfunc.captureNames.len > 0 and hfunc.envStructName != "":
+    be.emitLine(&"struct {hfunc.envStructName} {{")
+    inc be.indent
+    for i in 0 ..< hfunc.captureNames.len:
+      let capName = hfunc.captureNames[i]
+      let capType = if i < hfunc.captureTypes.len: typeToC(be, hfunc.captureTypes[i]) else: "int"
+      be.emitLine(&"{capType} {capName};")
+    dec be.indent
+    be.emitLine("};")
+    be.emitLine(&"static struct {hfunc.envStructName} {hfunc.envInstanceName};")
+    be.emitLine("")
   let retType = typeToC(be, hfunc.retType)
   var params: seq[string] = @[]
   for p in hfunc.params:

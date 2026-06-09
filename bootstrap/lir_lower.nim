@@ -345,6 +345,14 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
       b.emitRawC(&"{t.strVal} = (void*)&({lirValToC(base)}.{node.fieldName});")
     return t
 
+  of hFieldAccess:
+    let base = lowerExpr(ctx, node.fieldAccessBase)
+    let cType = hirTypeToC(ctx, node)
+    let t = b.freshTemp()
+    b.emitAlloca(t.strVal, cType)
+    b.emitRawC(&"{t.strVal} = {lirValToC(base)}.{node.fieldAccessName};")
+    return t
+
   of hArrowField:
     let base = lowerExpr(ctx, node.arrowFieldBase)
     let t = b.freshTemp()
@@ -549,6 +557,9 @@ proc buildLval(ctx: var LowerToLirCtx, n: HirNode): string =
   of hArrowField:
     let baseStr = buildLval(ctx, n.arrowFieldBase)
     return baseStr & "->" & n.arrowFieldName
+  of hFieldAccess:
+    let baseStr = buildLval(ctx, n.fieldAccessBase)
+    return baseStr & "." & n.fieldAccessName
   of hIndexPtr:
     let baseStr = buildLval(ctx, n.indexPtrBase)
     let idx = lowerExpr(ctx, n.indexPtrIndex)
@@ -667,6 +678,9 @@ proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode) =
     of tkAssign:
       case node.assignTarget.kind
       of hFieldPtr:
+        let lval = buildLval(ctx, node.assignTarget)
+        b.emitRawC(&"{lval} = {lirValToC(value)};")
+      of hFieldAccess:
         let lval = buildLval(ctx, node.assignTarget)
         b.emitRawC(&"{lval} = {lirValToC(value)};")
       of hArrowField:

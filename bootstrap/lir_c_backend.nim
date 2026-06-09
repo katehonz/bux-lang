@@ -626,6 +626,20 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
     be.emitLine("};")
     be.emitLine("")
 
+  # Emit env structs for closures with captures
+  for f in module.funcs:
+    if f.captureNames.len > 0 and f.envStructName != "":
+      be.emitLine(&"struct {f.envStructName} {{")
+      be.indent += 1
+      for i in 0 ..< f.captureNames.len:
+        let capName = f.captureNames[i]
+        let capType = if i < f.captureTypes.len: typeToCStr(f.captureTypes[i]) else: "int"
+        be.emitLine(&"{capType} {capName};")
+      be.indent -= 1
+      be.emitLine("};")
+      be.emitLine(&"static struct {f.envStructName} {f.envInstanceName};")
+      be.emitLine("")
+
   # Emit all LIR functions
   for f in builder.funcs:
     be.emitFunc(f, funcRetTypes, funcPtrTypes)

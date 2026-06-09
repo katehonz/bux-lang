@@ -445,6 +445,14 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
+    // Field access on value (direct dot): obj.field
+    if kind == hFieldAccess {
+        CBE_EmitExpr(cbe, node.child1);
+        StringBuilder_Append(&cbe.sb, ".");
+        StringBuilder_Append(&cbe.sb, node.strValue);
+        return;
+    }
+
     // Field access: obj.field — use -> if base is pointer, else .
     if kind == hFieldPtr {
         CBE_EmitExpr(cbe, node.child1);
@@ -1041,6 +1049,43 @@ func CBackend_Generate(mod: *HirModule) -> String {
         if body == null as *HirNode {
             i = i + 1;
             continue;
+        }
+        // Emit env struct and global instance for closures with captures
+        if mod.funcs[i].captureCount > 0 {
+            let envName: String = mod.funcs[i].envStructName;
+            let instName: String = mod.funcs[i].envInstanceName;
+            if !String_Eq(envName, "") {
+                // Emit struct definition
+                StringBuilder_Append(&cbe.sb, "struct ");
+                StringBuilder_Append(&cbe.sb, envName);
+                StringBuilder_Append(&cbe.sb, " {\n");
+                var ci: int = 0;
+                while ci < mod.funcs[i].captureCount {
+                    var capName: String = "";
+                    var capType: String = "int";
+                    if ci == 0 { capName = mod.funcs[i].captureName0; capType = CBackend_TypeToC(mod.funcs[i].captureType0); }
+                    else if ci == 1 { capName = mod.funcs[i].captureName1; capType = CBackend_TypeToC(mod.funcs[i].captureType1); }
+                    else if ci == 2 { capName = mod.funcs[i].captureName2; capType = CBackend_TypeToC(mod.funcs[i].captureType2); }
+                    else if ci == 3 { capName = mod.funcs[i].captureName3; capType = CBackend_TypeToC(mod.funcs[i].captureType3); }
+                    else if ci == 4 { capName = mod.funcs[i].captureName4; capType = CBackend_TypeToC(mod.funcs[i].captureType4); }
+                    else if ci == 5 { capName = mod.funcs[i].captureName5; capType = CBackend_TypeToC(mod.funcs[i].captureType5); }
+                    else if ci == 6 { capName = mod.funcs[i].captureName6; capType = CBackend_TypeToC(mod.funcs[i].captureType6); }
+                    else if ci == 7 { capName = mod.funcs[i].captureName7; capType = CBackend_TypeToC(mod.funcs[i].captureType7); }
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    StringBuilder_Append(&cbe.sb, capType);
+                    StringBuilder_Append(&cbe.sb, " ");
+                    StringBuilder_Append(&cbe.sb, capName);
+                    StringBuilder_Append(&cbe.sb, ";\n");
+                    ci = ci + 1;
+                }
+                StringBuilder_Append(&cbe.sb, "};\n");
+                // Emit global instance
+                StringBuilder_Append(&cbe.sb, "static struct ");
+                StringBuilder_Append(&cbe.sb, envName);
+                StringBuilder_Append(&cbe.sb, " ");
+                StringBuilder_Append(&cbe.sb, instName);
+                StringBuilder_Append(&cbe.sb, ";\n\n");
+            }
         }
         CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
         StringBuilder_Append(&cbe.sb, " {\n");
