@@ -1172,11 +1172,6 @@ func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool, isAsync: bo
     // Body
     if !isExtern && parserCheck(p, tkLBrace) {
         d.refBody = parserParseBlock(p);
-        // HACK: if parserParseBlock left a stray } at current position,
-        // consume it. Without this, the module handler exits early.
-        if parserCheck(p, tkRBrace) {
-            discard parserAdvance(p);
-        }
     } else {
         d.refBody = null as *Block;
     }
@@ -1242,7 +1237,6 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
         fieldCount = fieldCount + 1;
     }
     d.fieldCount = fieldCount;
-    PrintLine(String_Concat("DEBUG parser endStruct fieldCount=", bux_int_to_str(fieldCount as int64)));
     discard parserExpect(p, tkRBrace, "expected '}'");
     return d;
 }

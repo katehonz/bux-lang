@@ -712,7 +712,6 @@ func Lcx_LowerParam(out: *HirParam, p: *Param) {
 // ---------------------------------------------------------------------------
 
 func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
-    Print("[DEBUG Lcx_LowerFunc] name="); Print(decl.strValue); PrintLine("");
     let f: *HirFunc = bux_alloc(sizeof(HirFunc)) as *HirFunc;
     f.name = decl.strValue;
     f.isPublic = decl.isPublic;
@@ -828,7 +827,6 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     // Iterate declarations
     var decl: *Decl = mod.firstItem;
     while decl != null as *Decl {
-        Print("[DEBUG hir_lower] decl kind="); PrintInt(decl.kind as int64); Print(" name="); Print(decl.strValue); PrintLine("");
         if decl.kind == dkFunc && decl.refBody != null as *Block {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
             ctx.funcs[ctx.funcCount] = *f;
@@ -849,9 +847,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             }
         }
         if decl.kind == dkExternFunc {
-            Print("[DEBUG hir_lower] lowering extern func "); Print(decl.strValue); PrintLine("");
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
-            Print("[DEBUG hir_lower] extern func lowered ok"); PrintLine("");
             ctx.externFuncs[ctx.externCount] = *f;
             ctx.externCount = ctx.externCount + 1;
         }
@@ -861,7 +857,6 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             hm.structs[si].name = decl.strValue;
             hm.structs[si].fieldCount = decl.fieldCount;
             hm.structs[si].fields = bux_alloc(decl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
-            Print("[DEBUG hir struct] name="); Print(decl.strValue); Print(" fieldCount="); PrintInt(decl.fieldCount as int64); PrintLine("");
             var fi: int = 0;
             while fi < decl.fieldCount {
                 var fname: String = "";

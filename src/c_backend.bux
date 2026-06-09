@@ -748,9 +748,6 @@ func CBE_StructHasValueStructField(st: *HirStruct) -> bool {
     var fi: int = 0;
     while fi < st.fieldCount {
         let ft: String = st.fields[fi].typeName;
-        if String_Eq(st.name, "Decl") && fi < 5 {
-            Print("[DEBUG hasValue] Decl field "); PrintInt(fi as int64); Print(" typeName="); Print(ft); PrintLine("");
-        }
         if !CBE_IsPrimitiveTypeName(ft) && !String_EndsWith(ft, "*") {
             return true;
         }
@@ -760,16 +757,11 @@ func CBE_StructHasValueStructField(st: *HirStruct) -> bool {
 }
 
 func CBE_EmitStructDef(cbe: *CEmitter, st: *HirStruct) {
-    Print("[DEBUG c struct] name="); Print(st.name); Print(" fieldCount="); PrintInt(st.fieldCount as int64); PrintLine("");
     StringBuilder_Append(&cbe.sb, "struct ");
     StringBuilder_Append(&cbe.sb, st.name);
     StringBuilder_Append(&cbe.sb, " {\n");
     var fi: int = 0;
-    Print("[DEBUG c emit] "); Print(st.name); Print(" fieldCount="); PrintInt(st.fieldCount as int64); PrintLine("");
     while fi < st.fieldCount {
-        if String_Eq(st.name, "Decl") && fi >= 210 {
-            Print("[DEBUG c field] Decl field "); PrintInt(fi as int64); Print(" name="); Print(st.fields[fi].name); PrintLine("");
-        }
         StringBuilder_Append(&cbe.sb, "    ");
         var ft: String = st.fields[fi].typeName;
         if String_Eq(ft, "int") || String_Eq(ft, "") {
@@ -838,7 +830,6 @@ func CBE_GetExprTypeName(mod: *HirModule, node: *HirNode) -> String {
 // ---------------------------------------------------------------------------
 
 func CBackend_Generate(mod: *HirModule) -> String {
-    Print("[DEBUG CBackend_Generate] structCount="); PrintInt(mod.structCount as int64); PrintLine("");
     let cbe: *CEmitter = bux_alloc(sizeof(CEmitter)) as *CEmitter;
     cbe.sb = StringBuilder_NewCap(8192);
     cbe.indent = 0;
@@ -870,16 +861,12 @@ func CBackend_Generate(mod: *HirModule) -> String {
     // Forward declare all struct types (skip generics)
     var si: int = 0;
     while si < mod.structCount {
-        Print("[DEBUG c struct name] "); Print(mod.structs[si].name); Print(" fieldCount="); PrintInt(mod.structs[si].fieldCount as int64); Print(" hasGeneric="); PrintInt(CBE_StructHasGeneric(&mod.structs[si]) as int64); PrintLine("");
         if !CBE_StructHasGeneric(&mod.structs[si]) {
             StringBuilder_Append(&cbe.sb, "typedef struct ");
             StringBuilder_Append(&cbe.sb, mod.structs[si].name);
             StringBuilder_Append(&cbe.sb, " ");
             StringBuilder_Append(&cbe.sb, mod.structs[si].name);
             StringBuilder_Append(&cbe.sb, ";\n");
-        }
-        if String_Eq(mod.structs[si].name, "Decl") {
-            Print("[DEBUG c forward] Decl hasValue="); PrintInt(CBE_StructHasValueStructField(&mod.structs[si]) as int64); PrintLine("");
         }
         si = si + 1;
     }
@@ -1000,14 +987,8 @@ func CBackend_Generate(mod: *HirModule) -> String {
             continue;
         }
         if CBE_StructHasValueStructField(&mod.structs[si]) {
-            if String_Eq(mod.structs[si].name, "Decl") {
-                Print("[DEBUG c pass1] Decl skipped (has value struct field)\n");
-            }
             si = si + 1;
             continue;
-        }
-        if String_Eq(mod.structs[si].name, "Decl") {
-            Print("[DEBUG c pass1] Decl emitting\n");
         }
         CBE_EmitStructDef(cbe, &mod.structs[si]);
         si = si + 1;
@@ -1020,16 +1001,8 @@ func CBackend_Generate(mod: *HirModule) -> String {
             continue;
         }
         if !CBE_StructHasValueStructField(&mod.structs[si]) {
-            if String_Eq(mod.structs[si].name, "Decl") {
-                Print("[DEBUG c pass2] Decl skipped (no value struct field)\n");
-            }
             si = si + 1;
             continue;
-        }
-        if String_Eq(mod.structs[si].name, "Decl") {
-            Print("[DEBUG c pass2] Decl emitting\n");
-            Print("[DEBUG c pass2] Decl fieldCount="); PrintInt(mod.structs[si].fieldCount as int64); PrintLine("");
-            Print("[DEBUG c pass2] Decl name="); Print(mod.structs[si].name); PrintLine("");
         }
         CBE_EmitStructDef(cbe, &mod.structs[si]);
         si = si + 1;
