@@ -97,15 +97,6 @@ func parserMatch(p: *Parser, kind: int) -> bool {
     return false;
 }
 
-func parserPrevious(p: *Parser) -> LexToken {
-    if p.pos > 0 && p.pos <= p.tokenCount {
-        return p.tokens[p.pos - 1];
-    }
-    var eof: LexToken;
-    eof.kind = tkEndOfFile;
-    return eof;
-}
-
 func parserExpect(p: *Parser, kind: int, msg: String) -> LexToken {
     if parserCheck(p, kind) {
         return parserAdvance(p);
@@ -597,17 +588,6 @@ func parserParsePostfixExpr(p: *Parser) -> *Expr {
 // Binary expression (precedence climbing)
 // All binary operators: arithmetic, comparison, logical, bitwise, assignment
 // ---------------------------------------------------------------------------
-
-func parserIsBinaryOp(kind: int) -> bool {
-    if kind >= tkPlus && kind <= tkStarStar { return true; }           // arithmetic
-    if kind == tkAmp || kind == tkPipe || kind == tkCaret { return true; } // bitwise (no &|)
-    if kind >= tkShl && kind <= tkShrAssign { return true; }           // shift + assign
-    if kind >= tkEq && kind <= tkGe { return true; }                   // comparison
-    if kind == tkAmpAmp || kind == tkPipePipe { return true; }         // logical
-    if kind >= tkAssign && kind <= tkShrAssign { return true; }        // all assigns
-    if kind == tkDotDot || kind == tkDotDotEqual { return true; }      // range
-    return false;
-}
 
 func parserPrecedence(op: int) -> int {
     if op == tkAssign || op == tkPlusAssign || op == tkMinusAssign || op == tkStarAssign || op == tkSlashAssign || op == tkPercentAssign || op == tkAmpAssign || op == tkPipeAssign || op == tkCaretAssign || op == tkShlAssign || op == tkShrAssign { return 1; }
@@ -1547,47 +1527,4 @@ func Parser_Parse(tokens: *LexToken, tokenCount: int) -> *Module {
     return mod;
 }
 
-func Parser_DiagCount(p: *Parser) -> int {
-    return p.diagCount;
-}
-
-func Parser_Free(p: *Parser) {
-    bux_free(p.diags as *void);
-    bux_free(p as *void);
-}
-
-// ---------------------------------------------------------------------------
-// Module merging — merge multiple parsed modules into one
-// ---------------------------------------------------------------------------
-
-// Add a single declaration to the merged module (push front to linked list)
-func parserMergeAddDecl(mod: *Module, decl: *Decl) {
-    if decl == null as *Decl { return; }
-    // Flatten module declarations: extract inner items
-    if decl.kind == dkModule {
-        var inner: *Decl = decl.childDecl1;
-        while inner != null as *Decl {
-            let next: *Decl = inner.childDecl2;
-            inner.childDecl2 = mod.firstItem;
-            mod.firstItem = inner;
-            mod.itemCount = mod.itemCount + 1;
-            inner = next;
-        }
-    } else {
-        decl.childDecl2 = mod.firstItem;
-        mod.firstItem = decl;
-        mod.itemCount = mod.itemCount + 1;
-    }
-}
-
-func Parser_MergeModules(modules: *void, count: int) -> *Module {
-    // This function is kept for future use but not called by Cli_BuildProject
-    // which does inline merging for simplicity
-    let merged: *Module = bux_alloc(sizeof(Module)) as *Module;
-    merged.name = "main";
-    merged.path = "";
-    merged.itemCount = 0;
-    merged.firstItem = null as *Decl;
-    return merged;
-}
 }

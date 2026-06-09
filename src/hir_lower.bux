@@ -97,23 +97,6 @@ func Lcx_BuildFuncTypeName(te: *TypeExpr) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Fresh name generation
-// ---------------------------------------------------------------------------
-
-func Lcx_FreshName(ctx: *LowerCtx) -> String {
-    ctx.varCounter = ctx.varCounter + 1;
-    return String_FromInt(ctx.varCounter as int64);
-}
-
-// ---------------------------------------------------------------------------
-// Type → HIR type
-// ---------------------------------------------------------------------------
-
-func Lcx_LowerType(typeKind: int, typeName: String) -> int {
-    return typeKind;
-}
-
-// ---------------------------------------------------------------------------
 // Expression lowering
 // ---------------------------------------------------------------------------
 
@@ -944,9 +927,4 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     return hm;
 }
 
-func HirLower_Free(ctx: *LowerCtx) {
-    bux_free(ctx.funcs as *void);
-    bux_free(ctx.externFuncs as *void);
-    bux_free(ctx as *void);
-}
 }

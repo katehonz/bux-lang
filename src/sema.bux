@@ -152,21 +152,6 @@ func Sema_IsBool(kind: int) -> bool {
     return kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32;
 }
 
-func Sema_TypeName(kind: int) -> String {
-    if kind == tyUnknown { return "?"; }
-    if kind == tyVoid { return "void"; }
-    if kind == tyBool { return "bool"; }
-    if kind == tyInt{ return "int"; }
-    if kind == tyInt64 { return "int64"; }
-    if kind == tyUInt { return "uint"; }
-    if kind == tyFloat64 { return "float64"; }
-    if kind == tyStr { return "String"; }
-    if kind == tyPointer { return "*ptr"; }
-    if kind == tyNamed { return "user-type"; }
-    if kind == tyTypeParam { return "type-param"; }
-    return "?";
-}
-
 // ---------------------------------------------------------------------------
 // Block checking helper
 // ---------------------------------------------------------------------------

@@ -74,23 +74,6 @@ struct LexToken {
 }
 
 // ---------------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------------
-
-func Lexer_Init(source: String) -> Lexer {
-    let len: uint = bux_strlen(source);
-    let tokBuf: *LexToken = bux_alloc(maxTokens as uint * sizeof(LexToken)) as *LexToken;
-    let diagBuf: *LexerDiag = bux_alloc(maxDiags as uint * sizeof(LexerDiag)) as *LexerDiag;
-    return Lexer {
-        source: source, sourceLen: len as int,
-        pos: 0, line: 1, column: 1,
-        startLine: 0, startColumn: 0, startPos: 0,
-        tokenCount: 0, tokens: tokBuf,
-        diagCount: 0, diags: diagBuf
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Core primitives
 // ---------------------------------------------------------------------------
 
@@ -254,17 +237,6 @@ func lexSkipWhitespace(lex: *Lexer) {
 // ---------------------------------------------------------------------------
 // Identifiers
 // ---------------------------------------------------------------------------
-
-func lexIsIdentKind(tok: int) -> bool {
-    return tok == tkFunc || tok == tkLet || tok == tkVar || tok == tkConst
-        || tok == tkType || tok == tkStruct || tok == tkEnum || tok == tkUnion
-        || tok == tkInterface || tok == tkExtend || tok == tkModule || tok == tkImport
-        || tok == tkPub || tok == tkExtern || tok == tkIf || tok == tkElse
-        || tok == tkWhile || tok == tkDo || tok == tkLoop || tok == tkFor
-        || tok == tkIn || tok == tkBreak || tok == tkContinue || tok == tkReturn
-        || tok == tkMatch || tok == tkAs || tok == tkIs || tok == tkNull
-        || tok == tkSelf || tok == tkSuper;
-}
 
 func lexKeywordKind(text: String) -> int {
     if String_Eq(text, "true") { return tkBoolLiteral; }
@@ -799,18 +771,6 @@ func Lexer_Tokenize(source: String) -> *Lexer {
         }
     }
     return lex;
-}
-
-func Lexer_TokenCount(lex: *Lexer) -> int {
-    return lex.tokenCount;
-}
-
-func Lexer_GetToken(lex: *Lexer, index: int) -> LexToken {
-    if index >= 0 && index < lex.tokenCount {
-        return lex.tokens[index];
-    }
-    var empty: LexToken = LexToken { kind: tkEndOfFile, text: "", line: 0, column: 0 };
-    return empty;
 }
 
 func Lexer_DiagCount(lex: *Lexer) -> int {

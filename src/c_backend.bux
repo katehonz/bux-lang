@@ -87,11 +87,6 @@ struct CEmitter {
     defer7: *HirNode,
 }
 
-func CBE_Init() -> CEmitter {
-    var sb: StringBuilder = StringBuilder_NewCap(4096);
-    return CEmitter { sb: sb, indent: 0, mod: null as *HirModule };
-}
-
 func CBE_PushDefer(cbe: *CEmitter, node: *HirNode) {
     if cbe.deferCount == 0 { cbe.defer0 = node; }
     if cbe.deferCount == 1 { cbe.defer1 = node; }
@@ -131,10 +126,6 @@ func CBE_EmitDefers(cbe: *CEmitter) -> int {
     return 1;
 }
 
-func CBE_ClearDefers(cbe: *CEmitter) {
-    cbe.deferCount = 0;
-}
-
 func CBE_Emit(cbe: *CEmitter, text: String) {
     var i: int = 0;
     while i < cbe.indent {
@@ -142,15 +133,6 @@ func CBE_Emit(cbe: *CEmitter, text: String) {
         i = i + 1;
     }
     StringBuilder_Append(&cbe.sb, text);
-}
-
-func CBE_EmitLine(cbe: *CEmitter, text: String) {
-    CBE_Emit(cbe, text);
-    StringBuilder_Append(&cbe.sb, "\n");
-}
-
-func CBE_Build(cbe: *CEmitter) -> String {
-    return StringBuilder_Build(&cbe.sb);
 }
 
 // ---------------------------------------------------------------------------
@@ -1096,8 +1078,4 @@ func CBackend_Generate(mod: *HirModule) -> String {
     return StringBuilder_Build(&cbe.sb);
 }
 
-func CBackend_Free(cbe: *CEmitter) {
-    StringBuilder_Free(&cbe.sb);
-    bux_free(cbe as *void);
-}
 }
