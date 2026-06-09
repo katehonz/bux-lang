@@ -128,23 +128,34 @@ let s = HttpResponse(404, body: "err");         // positional + named mixed
 ---
 
 ### 6. Closures / Anonymous Functions
-**Why:** Callbacks, iterators, functional APIs. Currently only named functions exist.
+**Status:** ✅ Implemented in both bootstrap and selfhost. Capture-less and with captures.
 
 **Syntax:**
 ```bux
+// Capture-less closure
 let add: func(int, int) -> int = |a, b| { return a + b; };
-let nums: Array<int> = Array_New<int>();
+
+// Closure with captures
+let base: int = 10;
+let adder: func(int) -> int = |a: int| -> int { return a + base; };
+let result: int = adder(5);  // 15
+
+// Pass closure to higher-order function
 Array_Filter(nums, |x| { return x > 10; });
 ```
 
-**Implementation Steps:**
-1. New AST node: `ClosureExpr` with `params`, `body`, `captures`
-2. Parser: parse `|param1, param2| -> Type { body }`
-3. Type system: closure type as `func(Args) -> Ret` + implicit capture struct
-4. C backend: generate struct with captured vars + function pointer
-5. Lifetime: ensure captures outlive closure usage
+**Implementation:**
+- Capture-less closures: generate global thunk function, return `&thunk` as function pointer.
+- Closures with captures:
+  1. Sema: `Scope_LookupUpTo` identifies captured variables from outer scope.
+  2. HIR Lower: generate `__closure_env_N` struct + global instance `__closure_env_instance_N`.
+  3. At closure creation site: emit capture assignments (`env_instance.x = x;`).
+  4. In thunk body: rewrite captured identifiers to `env_instance.x` via `hFieldAccess`.
+  5. C backend: emit env struct definition + global instance before thunk function.
 
-**Complexity:** High — touches parser, sema, type system, C backend.
+**Limitations:** One global instance per closure AST node (no multiple instances). No loop/return support in closures yet.
+
+**Complexity:** High — touches parser, sema, type system, HIR/LIR backend.
 
 ---
 
@@ -237,6 +248,6 @@ Task::Spawn(Worker, rx);
 6. ✅ **Basic borrow checker (`@[Checked]`)** — Done (selfhost)
 7. ✅ **`bux fmt`, `bux test`, `bux new`, `bux init`** — Done (selfhost)
 8. ✅ **Closures (capture-less)** — Done. Enables callbacks and higher-order functions.
-9. **Closures with captures** — Needs capture analysis + environment struct. **← NEXT**
-10. **`for x in collection`** — Depends on closures with captures or trait system.
+9. ✅ **Closures with captures** — Done. Global env struct per closure AST node.
+10. **`for x in collection`** — Depends on closures with captures or trait system. **← NEXT**
 11. **Destructors / Drop** — High complexity, needs ownership + move semantics.

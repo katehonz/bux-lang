@@ -295,6 +295,7 @@ Crates.io е непреодолимо предимство. Ние се конк
 - ✅ `bux new`, `bux init`, `bux test`, `bux fmt` — готово
 - ✅ Basic borrow checker (`@[Checked]`) — готово
 - ✅ Closures (capture-less anonymous functions) — готово
+- ✅ Closures with captures — готово
 - 🎯 Target: Можеш да напишеш `bux` package manager на Bux
 
 ### Milestone B: "Използваем за systems programming" (2 месеца)
