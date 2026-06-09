@@ -21,20 +21,20 @@ const hFieldPtr: int = 15;
 const hFieldAccess: int = 16;
 const hArrowField: int = 17;
 const hIndexPtr: int = 18;
-const hCall: int = 18;
-const hCallIndirect: int = 19;
-const hCast: int = 20;
-const hIs: int = 21;
-const hSizeOf: int = 22;
-const hBlock: int = 23;
-const hStructInit: int = 24;
-const hSliceInit: int = 25;
-const hRange: int = 26;
-const hTupleInit: int = 27;
-const hMatch: int = 28;
-const hSpawn: int = 29;
-const hAwait: int = 30;
-const hDefer: int = 31;
+const hCall: int = 32;
+const hCallIndirect: int = 33;
+const hCast: int = 34;
+const hIs: int = 35;
+const hSizeOf: int = 36;
+const hBlock: int = 37;
+const hStructInit: int = 38;
+const hSliceInit: int = 39;
+const hRange: int = 40;
+const hTupleInit: int = 41;
+const hMatch: int = 42;
+const hSpawn: int = 43;
+const hAwait: int = 44;
+const hDefer: int = 45;
 
 // ---------------------------------------------------------------------------
 // HirArgList — linked list for call arguments beyond 2

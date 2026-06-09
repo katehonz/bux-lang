@@ -678,6 +678,10 @@ func parserParsePostfixExpr(p: *Parser) -> *Expr {
                 e.structName = typeName;
                 e.structFieldCount = fieldCount;
                 e.child1 = firstField;
+                // Propagate generic type args from the identifier
+                e.genericTypeArg0 = left.genericTypeArg0;
+                e.genericTypeArg1 = left.genericTypeArg1;
+                e.genericTypeArgCount = left.genericTypeArgCount;
                 left = e;
                 continue;
             } else {

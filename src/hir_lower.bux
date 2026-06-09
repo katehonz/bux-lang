@@ -19,6 +19,16 @@ struct LowerCtx {
     currentClosureExpr: *Expr,
     envInstanceName: String,
     hm: *HirModule,
+    // Generic monomorphization
+    genFuncCount: int,
+    genFuncs: *Decl,
+    genStructCount: int,
+    genStructs: *Decl,
+    // Type substitution (active during generic instance lowering)
+    substParam0: String,
+    substArg0: String,
+    substParam1: String,
+    substArg1: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +98,81 @@ func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
     return Lcx_ResolveTypeKindFromName(te.typeName);
 }
 
+// ---------------------------------------------------------------------------
+// Type substitution for generic monomorphization
+// ---------------------------------------------------------------------------
+
+func Lcx_SubstituteType(ctx: *LowerCtx, te: *TypeExpr) -> *TypeExpr {
+    if te == null as *TypeExpr { return te; }
+
+    // Generic named type with type args: check if concrete or parametric
+    if te.kind == tekNamed && te.typeArgCount > 0 {
+        let genStruct: *Decl = Lcx_FindGenericStruct(ctx, te.typeName);
+        if genStruct != null as *Decl {
+            // Check if type args are the struct's own type params (parametric)
+            var isParametric: bool = false;
+            if te.typeArgCount > 0 && String_Eq(te.typeArgName0, genStruct.typeParam0) { isParametric = true; }
+            if te.typeArgCount > 1 && String_Eq(te.typeArgName1, genStruct.typeParam1) { isParametric = true; }
+
+            // If parametric and NOT inside a generic instantiation, keep as generic (don't mangle)
+            if isParametric && String_Eq(ctx.substParam0, "") && String_Eq(ctx.substParam1, "") {
+                return te;
+            }
+
+            // Otherwise: substitute active type params and mangle to concrete name
+            let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            r.kind = tekNamed;
+            r.line = te.line;
+            r.column = te.column;
+            r.typeArgCount = te.typeArgCount;
+            r.typeArgName0 = te.typeArgName0;
+            r.typeArgName1 = te.typeArgName1;
+            if String_Eq(r.typeArgName0, ctx.substParam0) { r.typeArgName0 = ctx.substArg0; }
+            if String_Eq(r.typeArgName0, ctx.substParam1) { r.typeArgName0 = ctx.substArg1; }
+            if String_Eq(r.typeArgName1, ctx.substParam0) { r.typeArgName1 = ctx.substArg0; }
+            if String_Eq(r.typeArgName1, ctx.substParam1) { r.typeArgName1 = ctx.substArg1; }
+            r.typeName = Lcx_MangleName(te.typeName, r.typeArgName0, r.typeArgName1, te.typeArgCount);
+            Lcx_GenerateStructInstance(ctx, genStruct, r.typeArgName0, r.typeArgName1, te.typeArgCount);
+            return r;
+        }
+    }
+
+    // Named type that is a type parameter (only when in instance mode)
+    if te.kind == tekNamed {
+        if String_Eq(te.typeName, ctx.substParam0) {
+            let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            r.kind = tekNamed;
+            r.typeName = ctx.substArg0;
+            r.line = te.line;
+            r.column = te.column;
+            return r;
+        }
+        if String_Eq(te.typeName, ctx.substParam1) {
+            let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            r.kind = tekNamed;
+            r.typeName = ctx.substArg1;
+            r.line = te.line;
+            r.column = te.column;
+            return r;
+        }
+    }
+
+    // Pointer type: substitute recursively
+    if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+        let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        r.kind = tekPointer;
+        r.pointerPointee = Lcx_SubstituteType(ctx, te.pointerPointee);
+        if r.pointerPointee != null as *TypeExpr && !String_Eq(r.pointerPointee.typeName, "") {
+            r.typeName = String_Concat(r.pointerPointee.typeName, "*");
+        }
+        r.line = te.line;
+        r.column = te.column;
+        return r;
+    }
+
+    return te;
+}
+
 // Build C function-pointer type string from a tekFunc TypeExpr, e.g. "int (*)(int)"
 func Lcx_BuildFuncTypeName(te: *TypeExpr) -> String {
     if te == null as *TypeExpr || te.kind != tekFunc { return "void (*)(void)"; }
@@ -121,6 +206,139 @@ func Lcx_BuildFuncTypeName(te: *TypeExpr) -> String {
     }
     result = String_Concat(result, ")");
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Generic monomorphization helpers
+// ---------------------------------------------------------------------------
+
+func Lcx_FindGenericFunc(ctx: *LowerCtx, name: String) -> *Decl {
+    var i: int = 0;
+    while i < ctx.genFuncCount {
+        if String_Eq(ctx.genFuncs[i].strValue, name) {
+            return &ctx.genFuncs[i];
+        }
+        i = i + 1;
+    }
+    return null as *Decl;
+}
+
+func Lcx_FindGenericStruct(ctx: *LowerCtx, name: String) -> *Decl {
+    var i: int = 0;
+    while i < ctx.genStructCount {
+        if String_Eq(ctx.genStructs[i].strValue, name) {
+            return &ctx.genStructs[i];
+        }
+        i = i + 1;
+    }
+    return null as *Decl;
+}
+
+func Lcx_MangleName(base: String, typeArg0: String, typeArg1: String, typeArgCount: int) -> String {
+    let r: String = String_Concat(base, "_");
+    r = String_Concat(r, typeArg0);
+    if typeArgCount > 1 && !String_Eq(typeArg1, "") {
+        r = String_Concat(r, "_");
+        r = String_Concat(r, typeArg1);
+    }
+    return r;
+}
+
+func Lcx_GenerateStructInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int) -> String {
+    let mangled: String = Lcx_MangleName(genDecl.strValue, typeArg0, typeArg1, typeArgCount);
+
+    // Check if already generated (linear search in hm.structs)
+    var i: int = 0;
+    while i < ctx.hm.structCount {
+        if String_Eq(ctx.hm.structs[i].name, mangled) {
+            return mangled;
+        }
+        i = i + 1;
+    }
+
+    // Save old substitution
+    let oldParam0: String = ctx.substParam0;
+    let oldArg0: String = ctx.substArg0;
+    let oldParam1: String = ctx.substParam1;
+    let oldArg1: String = ctx.substArg1;
+
+    ctx.substParam0 = genDecl.typeParam0;
+    ctx.substArg0 = typeArg0;
+    ctx.substParam1 = genDecl.typeParam1;
+    ctx.substArg1 = typeArg1;
+
+    // Generate concrete HirStruct with substituted field types
+    let si: int = ctx.hm.structCount;
+    ctx.hm.structs[si].name = mangled;
+    ctx.hm.structs[si].fieldCount = genDecl.fieldCount;
+    ctx.hm.structs[si].fields = bux_alloc(genDecl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
+    var fi: int = 0;
+    while fi < genDecl.fieldCount {
+        let fname: String = genDecl.fields[fi].name;
+        let ftype: *TypeExpr = genDecl.fields[fi].refFieldType;
+        ctx.hm.structs[si].fields[fi].name = fname;
+        if ftype != null as *TypeExpr {
+            let subTe: *TypeExpr = Lcx_SubstituteType(ctx, ftype);
+            if subTe.kind == tekPointer && subTe.pointerPointee != null as *TypeExpr {
+                if !String_Eq(subTe.pointerPointee.typeName, "") {
+                    ctx.hm.structs[si].fields[fi].typeName = String_Concat(subTe.pointerPointee.typeName, "*");
+                }
+            } else if !String_Eq(subTe.typeName, "") {
+                ctx.hm.structs[si].fields[fi].typeName = subTe.typeName;
+            }
+        }
+        fi = fi + 1;
+    }
+    ctx.hm.structCount = ctx.hm.structCount + 1;
+
+    // Restore old substitution
+    ctx.substParam0 = oldParam0;
+    ctx.substArg0 = oldArg0;
+    ctx.substParam1 = oldParam1;
+    ctx.substArg1 = oldArg1;
+
+    return mangled;
+}
+
+func Lcx_GenerateFuncInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int) -> String {
+    let mangled: String = Lcx_MangleName(genDecl.strValue, typeArg0, typeArg1, typeArgCount);
+
+    // Check if already generated (linear search in ctx.funcs)
+    var i: int = 0;
+    while i < ctx.funcCount {
+        if String_Eq(ctx.funcs[i].name, mangled) {
+            return mangled;
+        }
+        i = i + 1;
+    }
+
+    // Save old substitution
+    let oldParam0: String = ctx.substParam0;
+    let oldArg0: String = ctx.substArg0;
+    let oldParam1: String = ctx.substParam1;
+    let oldArg1: String = ctx.substArg1;
+
+    // Set up substitution
+    ctx.substParam0 = genDecl.typeParam0;
+    ctx.substArg0 = typeArg0;
+    ctx.substParam1 = genDecl.typeParam1;
+    ctx.substArg1 = typeArg1;
+
+    // Lower the generic function with substitution active
+    let f: *HirFunc = Lcx_LowerFunc(ctx, genDecl);
+    f.name = mangled;
+
+    // Add to module
+    ctx.funcs[ctx.funcCount] = *f;
+    ctx.funcCount = ctx.funcCount + 1;
+
+    // Restore old substitution
+    ctx.substParam0 = oldParam0;
+    ctx.substArg0 = oldArg0;
+    ctx.substParam1 = oldParam1;
+    ctx.substArg1 = oldArg1;
+
+    return mangled;
 }
 
 // ---------------------------------------------------------------------------
@@ -313,6 +531,22 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         if isDirectFunc {
             n.kind = hCall;
             n.strValue = expr.child1.strValue;
+
+            // Generic call monomorphization
+            if expr.child1 != null as *Expr && expr.child1.genericTypeArgCount > 0 {
+                let genDecl: *Decl = Lcx_FindGenericFunc(ctx, expr.child1.strValue);
+                if genDecl != null as *Decl {
+                    var typeArg0: String = expr.child1.genericTypeArg0;
+                    var typeArg1: String = expr.child1.genericTypeArg1;
+                    if String_Eq(typeArg0, ctx.substParam0) { typeArg0 = ctx.substArg0; }
+                    if String_Eq(typeArg0, ctx.substParam1) { typeArg0 = ctx.substArg1; }
+                    if String_Eq(typeArg1, ctx.substParam0) { typeArg1 = ctx.substArg0; }
+                    if String_Eq(typeArg1, ctx.substParam1) { typeArg1 = ctx.substArg1; }
+                    let mangled: String = Lcx_GenerateFuncInstance(ctx, genDecl, typeArg0, typeArg1, expr.child1.genericTypeArgCount);
+                    n.strValue = mangled;
+                }
+            }
+
             // Lower arguments into child1/child2/extraData
             var arg: *ExprList = expr.callArgs;
             var argIdx: int = 0;
@@ -482,7 +716,21 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     // Struct init: TypeName { field: value, ... }
     if kind == ekStructInit {
         n.kind = hStructInit;
-        n.strValue = expr.structName;
+        var structName: String = expr.structName;
+        // Generic struct monomorphization
+        if expr.genericTypeArgCount > 0 {
+            let genDecl: *Decl = Lcx_FindGenericStruct(ctx, expr.structName);
+            if genDecl != null as *Decl {
+                var typeArg0: String = expr.genericTypeArg0;
+                var typeArg1: String = expr.genericTypeArg1;
+                if String_Eq(typeArg0, ctx.substParam0) { typeArg0 = ctx.substArg0; }
+                if String_Eq(typeArg0, ctx.substParam1) { typeArg0 = ctx.substArg1; }
+                if String_Eq(typeArg1, ctx.substParam0) { typeArg1 = ctx.substArg0; }
+                if String_Eq(typeArg1, ctx.substParam1) { typeArg1 = ctx.substArg1; }
+                structName = Lcx_GenerateStructInstance(ctx, genDecl, typeArg0, typeArg1, expr.genericTypeArgCount);
+            }
+        }
+        n.strValue = structName;
         // Lower each field (fields are chained via child3 on synthetic ekField exprs)
         var field: *Expr = expr.child1;
         var firstField: *HirNode = null as *HirNode;
@@ -535,18 +783,19 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         alloca.line = line;
         alloca.column = col;
         alloca.strValue = stmt.strValue;
-        // Set type from the declared type expression
+        // Set type from the declared type expression (with generic substitution)
         alloca.typeName = "";
-        if stmt.refStmtType != null as *TypeExpr {
-            alloca.intValue = stmt.refStmtType.kind;
-            alloca.typeKind = Lcx_ResolveTypeKind(stmt.refStmtType);
+        let letTe: *TypeExpr = Lcx_SubstituteType(ctx, stmt.refStmtType);
+        if letTe != null as *TypeExpr {
+            alloca.intValue = letTe.kind;
+            alloca.typeKind = Lcx_ResolveTypeKind(letTe);
             // For function types, build C function-pointer syntax
-            if stmt.refStmtType.kind == tekFunc {
-                alloca.typeName = Lcx_BuildFuncTypeName(stmt.refStmtType);
-            } else if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
-                alloca.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
-            } else if !String_Eq(stmt.refStmtType.typeName, "") {
-                alloca.typeName = stmt.refStmtType.typeName;
+            if letTe.kind == tekFunc {
+                alloca.typeName = Lcx_BuildFuncTypeName(letTe);
+            } else if letTe.kind == tekPointer && letTe.pointerPointee != null as *TypeExpr {
+                alloca.typeName = String_Concat(letTe.pointerPointee.typeName, "*");
+            } else if !String_Eq(letTe.typeName, "") {
+                alloca.typeName = letTe.typeName;
             }
         }
         // Add to scope for field offset lookups (skip if already defined)
@@ -555,7 +804,7 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         sym.name = stmt.strValue;
         sym.typeKind = alloca.typeKind;
         sym.typeName = alloca.typeName;
-        sym.refType = stmt.refStmtType;
+        sym.refType = letTe;
         sym.isMutable = false;
         sym.isPublic = false;
         sym.decl = null as *Decl;
@@ -807,7 +1056,171 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
             return blockNode;
         }
 
-        // Collection-based for (placeholder - infinite loop for now)
+        // Collection-based for: for x in arr { body }
+        // Desugar to:
+        //   let __iter = Array_Iter_T(&arr);
+        //   while Iter_HasNext_T(&__iter) {
+        //       let x = Iter_Next_T(&__iter);
+        //       body
+        //   }
+        if iterExpr != null as *Expr && iterExpr.kind == ekIdent {
+            let collTypeExpr: *TypeExpr = iterExpr.refType;
+            if collTypeExpr == null as *TypeExpr {
+                // Fallback: try scope lookup (may have substituted type)
+                let collSym: Symbol = Scope_Lookup(ctx.scope, iterExpr.strValue);
+                collTypeExpr = collSym.refType;
+            }
+            if collTypeExpr != null as *TypeExpr && collTypeExpr.kind == tekNamed {
+                let collTypeName: String = collTypeExpr.typeName;
+                var elemTypeName: String = "";
+                var elemTypeKind: int = tyInt;
+                if collTypeExpr.typeArgCount > 0 {
+                    elemTypeName = collTypeExpr.typeArgName0;
+                    elemTypeKind = Lcx_ResolveTypeKindFromName(elemTypeName);
+                }
+
+                if !String_Eq(elemTypeName, "") {
+                    var isArray: bool = String_Eq(collTypeName, "Array");
+                    var isIter: bool = String_Eq(collTypeName, "Iter");
+
+                    if isArray || isIter {
+                        let iterVarName: String = String_Concat("__iter_", varName);
+                        let iterTypeName: String = Lcx_MangleName("Iter", elemTypeName, "", 1);
+
+                        // Ensure struct instances exist
+                        let iterGenStruct: *Decl = Lcx_FindGenericStruct(ctx, "Iter");
+                        if iterGenStruct != null as *Decl {
+                            Lcx_GenerateStructInstance(ctx, iterGenStruct, elemTypeName, "", 1);
+                        }
+
+                        // Ensure function instances exist
+                        let genIter: *Decl = Lcx_FindGenericFunc(ctx, "Array_Iter");
+                        let genHasNext: *Decl = Lcx_FindGenericFunc(ctx, "Iter_HasNext");
+                        let genNext: *Decl = Lcx_FindGenericFunc(ctx, "Iter_Next");
+                        let iterFuncName: String = Lcx_MangleName("Array_Iter", elemTypeName, "", 1);
+                        let hasNextFuncName: String = Lcx_MangleName("Iter_HasNext", elemTypeName, "", 1);
+                        let nextFuncName: String = Lcx_MangleName("Iter_Next", elemTypeName, "", 1);
+                        if genIter != null as *Decl {
+                            Lcx_GenerateFuncInstance(ctx, genIter, elemTypeName, "", 1);
+                        }
+                        if genHasNext != null as *Decl {
+                            Lcx_GenerateFuncInstance(ctx, genHasNext, elemTypeName, "", 1);
+                        }
+                        if genNext != null as *Decl {
+                            Lcx_GenerateFuncInstance(ctx, genNext, elemTypeName, "", 1);
+                        }
+
+                        // alloca for __iter
+                        let iterAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        iterAlloca.kind = hAlloca;
+                        iterAlloca.line = line;
+                        iterAlloca.column = col;
+                        iterAlloca.strValue = iterVarName;
+                        iterAlloca.typeName = iterTypeName;
+                        iterAlloca.typeKind = tyNamed;
+
+                        // __iter = Array_Iter_T(&arr)  or  just copy if already Iter
+                        var iterInit: *HirNode = null as *HirNode;
+                        if isArray {
+                            let callIter: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            callIter.kind = hCall;
+                            callIter.strValue = iterFuncName;
+                            let addrArr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            addrArr.kind = hUnary;
+                            addrArr.intValue = tkAmp;
+                            let arrVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            arrVar.kind = hVar;
+                            arrVar.strValue = iterExpr.strValue;
+                            addrArr.child1 = arrVar;
+                            callIter.child1 = addrArr;
+                            iterInit = callIter;
+                        } else {
+                            // Already an iterator: __iter = arr
+                            let arrVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            arrVar.kind = hVar;
+                            arrVar.strValue = iterExpr.strValue;
+                            iterInit = arrVar;
+                        }
+
+                        let iterStore: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        iterStore.kind = hStore;
+                        iterStore.child1 = iterAlloca;
+                        iterStore.child2 = iterInit;
+
+                        // condition: Iter_HasNext_T(&__iter)
+                        let condCall: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        condCall.kind = hCall;
+                        condCall.strValue = hasNextFuncName;
+                        let addrIter: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        addrIter.kind = hUnary;
+                        addrIter.intValue = tkAmp;
+                        let iterVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        iterVar.kind = hVar;
+                        iterVar.strValue = iterVarName;
+                        addrIter.child1 = iterVar;
+                        condCall.child1 = addrIter;
+
+                        // while body: alloca x + store x = Iter_Next_T(&__iter) + original body
+                        let bodyBlock: *HirNode = Lcx_LowerBlock(ctx, body, -1);
+
+                        // alloca for x
+                        let xAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        xAlloca.kind = hAlloca;
+                        xAlloca.line = line;
+                        xAlloca.column = col;
+                        xAlloca.strValue = varName;
+                        xAlloca.typeName = elemTypeName;
+                        xAlloca.typeKind = elemTypeKind;
+
+                        // x = Iter_Next_T(&__iter)
+                        let nextCall: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        nextCall.kind = hCall;
+                        nextCall.strValue = nextFuncName;
+                        let addrIter2: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        addrIter2.kind = hUnary;
+                        addrIter2.intValue = tkAmp;
+                        let iterVar2: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        iterVar2.kind = hVar;
+                        iterVar2.strValue = iterVarName;
+                        addrIter2.child1 = iterVar2;
+                        nextCall.child1 = addrIter2;
+
+                        let xStore: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        xStore.kind = hStore;
+                        xStore.child1 = xAlloca;
+                        xStore.child2 = nextCall;
+
+                        // Build while body block: xStore -> bodyBlock
+                        let whileBody: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        whileBody.kind = hBlock;
+                        whileBody.child1 = xStore;
+                        if bodyBlock != null as *HirNode && bodyBlock.kind == hBlock {
+                            xStore.child3 = bodyBlock.child1;
+                        } else if bodyBlock != null as *HirNode {
+                            xStore.child3 = bodyBlock;
+                        }
+
+                        // while node
+                        let whileNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        whileNode.kind = hWhile;
+                        whileNode.child1 = condCall;
+                        whileNode.child2 = whileBody;
+
+                        // Chain: iterStore -> whileNode
+                        iterStore.child3 = whileNode;
+
+                        let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        blockNode.kind = hBlock;
+                        blockNode.line = line;
+                        blockNode.column = col;
+                        blockNode.child1 = iterStore;
+                        return blockNode;
+                    }
+                }
+            }
+        }
+
+        // Fallback: infinite loop
         n.kind = hLoop;
         if stmt.refStmtBlock != null as *Block {
             n.child1 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
@@ -950,17 +1363,21 @@ func Lcx_LowerBlock(ctx: *LowerCtx, block: *Block, retTypeKind: int) -> *HirNode
 // Param → HirParam conversion
 // ---------------------------------------------------------------------------
 
-func Lcx_LowerParam(out: *HirParam, p: *Param) {
+func Lcx_LowerParam(out: *HirParam, p: *Param, ctx: *LowerCtx) {
     out.name = p.name;
-    if p.refParamType != null as *TypeExpr {
-        out.typeKind = Lcx_ResolveTypeKind(p.refParamType);
+    var te: *TypeExpr = p.refParamType;
+    if ctx != null as *LowerCtx {
+        te = Lcx_SubstituteType(ctx, te);
+    }
+    if te != null as *TypeExpr {
+        out.typeKind = Lcx_ResolveTypeKind(te);
         // Function type: build C function-pointer syntax
-        if p.refParamType.kind == tekFunc {
-            out.typeName = Lcx_BuildFuncTypeName(p.refParamType);
-        } else if !String_Eq(p.refParamType.typeName, "") {
-            out.typeName = p.refParamType.typeName;
-        } else if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
-            out.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+        if te.kind == tekFunc {
+            out.typeName = Lcx_BuildFuncTypeName(te);
+        } else if !String_Eq(te.typeName, "") {
+            out.typeName = te.typeName;
+        } else if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+            out.typeName = String_Concat(te.pointerPointee.typeName, "*");
         } else {
             out.typeName = "";
         }
@@ -980,27 +1397,28 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
     f.isPublic = decl.isPublic;
     f.paramCount = decl.paramCount;
     f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param0, &decl.param0);
+    Lcx_LowerParam(f.param0, &decl.param0, ctx);
     f.param1 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param1, &decl.param1);
+    Lcx_LowerParam(f.param1, &decl.param1, ctx);
     f.param2 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param2, &decl.param2);
+    Lcx_LowerParam(f.param2, &decl.param2, ctx);
     f.param3 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param3, &decl.param3);
+    Lcx_LowerParam(f.param3, &decl.param3, ctx);
     f.param4 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param4, &decl.param4);
+    Lcx_LowerParam(f.param4, &decl.param4, ctx);
     f.param5 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param5, &decl.param5);
+    Lcx_LowerParam(f.param5, &decl.param5, ctx);
     f.param6 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param6, &decl.param6);
+    Lcx_LowerParam(f.param6, &decl.param6, ctx);
     f.param7 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param7, &decl.param7);
+    Lcx_LowerParam(f.param7, &decl.param7, ctx);
     f.param8 = bux_alloc(sizeof(HirParam)) as *HirParam;
-    Lcx_LowerParam(f.param8, &decl.param8);
+    Lcx_LowerParam(f.param8, &decl.param8, ctx);
 
-    if decl.retType != null as *TypeExpr {
-        f.retTypeName = decl.retType.typeName;
-        f.retTypeKind = Lcx_ResolveTypeKind(decl.retType);
+    let retTe: *TypeExpr = Lcx_SubstituteType(ctx, decl.retType);
+    if retTe != null as *TypeExpr {
+        f.retTypeName = retTe.typeName;
+        f.retTypeKind = Lcx_ResolveTypeKind(retTe);
     } else {
         f.retTypeName = "";
         f.retTypeKind = 0;
@@ -1023,18 +1441,19 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
         else if pi == 7 { p = &decl.param7; }
         else if pi == 8 { p = &decl.param8; }
         if p != null as *Param && p.refParamType != null as *TypeExpr {
+            let pTe: *TypeExpr = Lcx_SubstituteType(ctx, p.refParamType);
             var sym: Symbol;
             sym.kind = skVar;
             sym.name = p.name;
-            sym.typeKind = Lcx_ResolveTypeKind(p.refParamType);
-            sym.refType = p.refParamType;
+            sym.typeKind = Lcx_ResolveTypeKind(pTe);
+            sym.refType = pTe;
             // Build typeName same as Lcx_LowerParam
-            if p.refParamType.kind == tekFunc {
-                sym.typeName = Lcx_BuildFuncTypeName(p.refParamType);
-            } else if !String_Eq(p.refParamType.typeName, "") {
-                sym.typeName = p.refParamType.typeName;
-            } else if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
-                sym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+            if pTe.kind == tekFunc {
+                sym.typeName = Lcx_BuildFuncTypeName(pTe);
+            } else if !String_Eq(pTe.typeName, "") {
+                sym.typeName = pTe.typeName;
+            } else if pTe.kind == tekPointer && pTe.pointerPointee != null as *TypeExpr {
+                sym.typeName = String_Concat(pTe.pointerPointee.typeName, "*");
             } else {
                 sym.typeName = "";
             }
@@ -1074,15 +1493,15 @@ func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
     let params: *Decl = expr.closureParams;
     if params != null as *Decl {
         f.paramCount = params.paramCount;
-        if params.paramCount > 0 { f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param0, &params.param0); }
-        if params.paramCount > 1 { f.param1 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param1, &params.param1); }
-        if params.paramCount > 2 { f.param2 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param2, &params.param2); }
-        if params.paramCount > 3 { f.param3 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param3, &params.param3); }
-        if params.paramCount > 4 { f.param4 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param4, &params.param4); }
-        if params.paramCount > 5 { f.param5 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param5, &params.param5); }
-        if params.paramCount > 6 { f.param6 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param6, &params.param6); }
-        if params.paramCount > 7 { f.param7 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param7, &params.param7); }
-        if params.paramCount > 8 { f.param8 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param8, &params.param8); }
+        if params.paramCount > 0 { f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param0, &params.param0, ctx); }
+        if params.paramCount > 1 { f.param1 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param1, &params.param1, ctx); }
+        if params.paramCount > 2 { f.param2 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param2, &params.param2, ctx); }
+        if params.paramCount > 3 { f.param3 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param3, &params.param3, ctx); }
+        if params.paramCount > 4 { f.param4 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param4, &params.param4, ctx); }
+        if params.paramCount > 5 { f.param5 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param5, &params.param5, ctx); }
+        if params.paramCount > 6 { f.param6 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param6, &params.param6, ctx); }
+        if params.paramCount > 7 { f.param7 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param7, &params.param7, ctx); }
+        if params.paramCount > 8 { f.param8 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param8, &params.param8, ctx); }
     }
 
     if expr.refType != null as *TypeExpr && expr.refType.kind == tekFunc && expr.refType.funcRet != null as *TypeExpr {
@@ -1139,17 +1558,18 @@ func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
         else if pi == 7 { p = &params.param7; }
         else if pi == 8 { p = &params.param8; }
         if p != null as *Param && p.refParamType != null as *TypeExpr {
+            let pTe: *TypeExpr = Lcx_SubstituteType(ctx, p.refParamType);
             var sym: Symbol;
             sym.kind = skVar;
             sym.name = p.name;
-            sym.typeKind = Lcx_ResolveTypeKind(p.refParamType);
-            sym.refType = p.refParamType;
-            if p.refParamType.kind == tekFunc {
-                sym.typeName = Lcx_BuildFuncTypeName(p.refParamType);
-            } else if !String_Eq(p.refParamType.typeName, "") {
-                sym.typeName = p.refParamType.typeName;
-            } else if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
-                sym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+            sym.typeKind = Lcx_ResolveTypeKind(pTe);
+            sym.refType = pTe;
+            if pTe.kind == tekFunc {
+                sym.typeName = Lcx_BuildFuncTypeName(pTe);
+            } else if !String_Eq(pTe.typeName, "") {
+                sym.typeName = pTe.typeName;
+            } else if pTe.kind == tekPointer && pTe.pointerPointee != null as *TypeExpr {
+                sym.typeName = String_Concat(pTe.pointerPointee.typeName, "*");
             } else {
                 sym.typeName = "";
             }
@@ -1199,6 +1619,14 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     ctx.externFuncs = bux_alloc(512 as uint * sizeof(HirFunc)) as *HirFunc;
     ctx.externCount = 0;
     ctx.varCounter = 0;
+    ctx.genFuncCount = 0;
+    ctx.genFuncs = bux_alloc(256 as uint * sizeof(Decl)) as *Decl;
+    ctx.genStructCount = 0;
+    ctx.genStructs = bux_alloc(256 as uint * sizeof(Decl)) as *Decl;
+    ctx.substParam0 = "";
+    ctx.substArg0 = "";
+    ctx.substParam1 = "";
+    ctx.substArg1 = "";
 
     let hm: *HirModule = bux_alloc(sizeof(HirModule)) as *HirModule;
     hm.funcCount = 0;
@@ -1218,6 +1646,15 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     // Iterate declarations
     var decl: *Decl = mod.firstItem;
     while decl != null as *Decl {
+        // Collect generic declarations for monomorphization
+        if decl.kind == dkFunc && decl.typeParamCount > 0 {
+            ctx.genFuncs[ctx.genFuncCount] = *decl;
+            ctx.genFuncCount = ctx.genFuncCount + 1;
+        }
+        if decl.kind == dkStruct && decl.typeParamCount > 0 {
+            ctx.genStructs[ctx.genStructCount] = *decl;
+            ctx.genStructCount = ctx.genStructCount + 1;
+        }
         if decl.kind == dkFunc && decl.refBody != null as *Block {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
             ctx.funcs[ctx.funcCount] = *f;
