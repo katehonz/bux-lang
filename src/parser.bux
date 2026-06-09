@@ -760,11 +760,30 @@ func parserParseBinary(p: *Parser) -> *Expr {
 }
 
 // ---------------------------------------------------------------------------
+// Range: lo .. hi  or  lo ..= hi
+// ---------------------------------------------------------------------------
+
+func parserParseRange(p: *Parser) -> *Expr {
+    var left: *Expr = parserParseBinary(p);
+    if parserCheck(p, tkDotDot) || parserCheck(p, tkDotDotEqual) {
+        let inclusive: bool = parserCheck(p, tkDotDotEqual);
+        let opTok: LexToken = parserAdvance(p);
+        let right: *Expr = parserParseBinary(p);
+        let e: *Expr = parserMakeExpr(ekRange, opTok.line, opTok.column);
+        e.child1 = left;
+        e.child2 = right;
+        e.boolValue = inclusive;
+        return e;
+    }
+    return left;
+}
+
+// ---------------------------------------------------------------------------
 // Ternary: cond ? then : else
 // ---------------------------------------------------------------------------
 
 func parserParseTernary(p: *Parser) -> *Expr {
-    var left: *Expr = parserParseBinary(p);
+    var left: *Expr = parserParseRange(p);
     if parserMatch(p, tkQuestion) {
         let thenExpr: *Expr = parserParseExpr(p);
         discard parserExpect(p, tkColon, "expected ':' in ternary");

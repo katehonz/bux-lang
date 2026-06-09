@@ -1440,9 +1440,13 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
     discard sema.checkStmt(Stmt(kind: skExpr, loc: stmt.stmtLoopBody.loc, stmtExpr: Expr(kind: ekBlock, loc: stmt.stmtLoopBody.loc, exprBlock: stmt.stmtLoopBody)), scope)
     return makeVoid()
   of skFor:
-    discard sema.checkExpr(stmt.stmtForIter, scope)
+    let iterExpr = stmt.stmtForIter
+    discard sema.checkExpr(iterExpr, scope)
     var forScope = newScope(scope)
-    let iterSym = Symbol(kind: skVar, name: stmt.stmtForVar, typ: makeUnknown(), isMutable: true)
+    var iterTyp = makeUnknown()
+    if iterExpr.kind == ekRange:
+      iterTyp = sema.checkExpr(iterExpr.exprRangeLo, scope)
+    let iterSym = Symbol(kind: skVar, name: stmt.stmtForVar, typ: iterTyp, isMutable: true)
     discard forScope.define(iterSym)
     discard sema.checkStmt(Stmt(kind: skExpr, loc: stmt.stmtForBody.loc, stmtExpr: Expr(kind: ekBlock, loc: stmt.stmtForBody.loc, exprBlock: stmt.stmtForBody)), forScope)
     return makeVoid()

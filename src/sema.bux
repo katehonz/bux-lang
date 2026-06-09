@@ -828,7 +828,7 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
 
     // For
     if kind == skFor {
-        discard Sema_CheckExpr(sema, stmt.child1);
+        let iterType: int = Sema_CheckExpr(sema, stmt.child1);
         var forScope: Scope = Scope_NewChild(sema.scope);
         var loopSym: Symbol;
         loopSym.kind = skVar;
@@ -839,6 +839,32 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         loopSym.isMutable = true;
         loopSym.isPublic = false;
         loopSym.decl = null as *Decl;
+
+        // Determine loop variable type from iterator expression
+        if stmt.child1 != null as *Expr {
+            // Range-based: type from lower bound (selfhost parses .. as ekBinary)
+            if stmt.child1.kind == ekRange || (stmt.child1.kind == ekBinary && (stmt.child1.intValue == tkDotDot || stmt.child1.intValue == tkDotDotEqual)) {
+                let boundType: int = Sema_CheckExpr(sema, stmt.child1.child1);
+                loopSym.typeKind = boundType;
+            }
+            // Array-based: extract element type from Array<T> annotation
+            if stmt.child1.kind == ekIdent {
+                let sym: Symbol = Scope_Lookup(sema.scope, stmt.child1.strValue);
+                if sym.refType != null as *TypeExpr {
+                    if String_Eq(sym.refType.typeName, "Array") && sym.refType.typeArgCount > 0 {
+                        let elemTe: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                        elemTe.kind = tekNamed;
+                        elemTe.typeName = sym.refType.typeArgName0;
+                        elemTe.line = stmt.line;
+                        elemTe.column = stmt.column;
+                        loopSym.typeKind = Sema_ResolveType(sema, elemTe);
+                        loopSym.typeName = sym.refType.typeArgName0;
+                        loopSym.refType = elemTe;
+                    }
+                }
+            }
+        }
+
         discard Scope_Define(&forScope, loopSym);
         let prevScope: *Scope = sema.scope;
         sema.scope = &forScope;

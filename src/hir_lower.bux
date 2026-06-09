@@ -674,6 +674,147 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         return n;
     }
 
+    // For
+    if kind == skFor {
+        let iterExpr: *Expr = stmt.child1;
+        let varName: String = stmt.strValue;
+        let body: *Block = stmt.refStmtBlock;
+
+        // Range-based for: for i in lo..hi { body }
+        // (selfhost parses .. as ekBinary; bootstrap parses as ekRange)
+        let isRangeExpr: bool = iterExpr != null as *Expr && (iterExpr.kind == ekRange || (iterExpr.kind == ekBinary && (iterExpr.intValue == tkDotDot || iterExpr.intValue == tkDotDotEqual)));
+        if isRangeExpr {
+            let lo: *HirNode = Lcx_LowerExpr(ctx, iterExpr.child1);
+            let hi: *HirNode = Lcx_LowerExpr(ctx, iterExpr.child2);
+            var inclusive: bool = iterExpr.boolValue;
+            if iterExpr.kind == ekBinary && iterExpr.intValue == tkDotDotEqual {
+                inclusive = true;
+            }
+
+            let varTypeKind: int = tyInt;
+            let varTypeName: String = "int";
+
+            // alloca for loop variable
+            let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            alloca.kind = hAlloca;
+            alloca.line = line;
+            alloca.column = col;
+            alloca.strValue = varName;
+            alloca.typeName = varTypeName;
+            alloca.typeKind = varTypeKind;
+
+            // store init value
+            let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            store.kind = hStore;
+            store.child1 = alloca;
+            store.child2 = lo;
+
+            // var node for reading in condition
+            let varRead: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            varRead.kind = hVar;
+            varRead.strValue = varName;
+            varRead.typeName = varTypeName;
+            varRead.typeKind = varTypeKind;
+
+            // condition: var < hi (or <=)
+            let cond: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            cond.kind = hBinary;
+            if inclusive {
+                cond.intValue = tkLe;
+            } else {
+                cond.intValue = tkLt;
+            }
+            cond.child1 = varRead;
+            cond.child2 = hi;
+
+            // Build while body: original body + increment
+            let bodyBlock: *HirNode = Lcx_LowerBlock(ctx, body, -1);
+
+            // increment: var = var + 1
+            let varRead2: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            varRead2.kind = hVar;
+            varRead2.strValue = varName;
+            varRead2.typeName = varTypeName;
+            varRead2.typeKind = varTypeKind;
+
+            let one: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            one.kind = hLit;
+            one.intValue = tkIntLiteral;
+            one.strValue = "1";
+            one.typeKind = varTypeKind;
+
+            let inc: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            inc.kind = hBinary;
+            inc.intValue = tkPlus;
+            inc.child1 = varRead2;
+            inc.child2 = one;
+
+            let storeInc: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            storeInc.kind = hStore;
+            // Use hVar (not alloca) for assignment to existing variable
+            let varForInc: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            varForInc.kind = hVar;
+            varForInc.strValue = varName;
+            varForInc.typeName = varTypeName;
+            varForInc.typeKind = varTypeKind;
+            storeInc.child1 = varForInc;
+            storeInc.child2 = inc;
+
+            // Append storeInc to body block chain
+            if bodyBlock != null as *HirNode && bodyBlock.kind == hBlock {
+                if bodyBlock.child1 != null as *HirNode {
+                    var last: *HirNode = bodyBlock.child1;
+                    while last.child3 != null as *HirNode {
+                        last = last.child3;
+                    }
+                    last.child3 = storeInc;
+                } else {
+                    bodyBlock.child1 = storeInc;
+                }
+            } else if bodyBlock != null as *HirNode {
+                // Wrap single node into a block
+                let wrapBlock: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                wrapBlock.kind = hBlock;
+                wrapBlock.child1 = bodyBlock;
+                var last: *HirNode = bodyBlock;
+                while last.child3 != null as *HirNode {
+                    last = last.child3;
+                }
+                last.child3 = storeInc;
+                bodyBlock = wrapBlock;
+            } else {
+                let wrapBlock: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                wrapBlock.kind = hBlock;
+                wrapBlock.child1 = storeInc;
+                bodyBlock = wrapBlock;
+            }
+
+            // while node
+            let whileNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            whileNode.kind = hWhile;
+            whileNode.child1 = cond;
+            whileNode.child2 = bodyBlock;
+
+            // Chain: store (contains alloca as child1) -> while
+            // C backend emits hStore with hAlloca child1 as "Type x = value;"
+            store.child3 = whileNode;
+
+            let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            blockNode.kind = hBlock;
+            blockNode.line = line;
+            blockNode.column = col;
+            blockNode.child1 = store;
+            return blockNode;
+        }
+
+        // Collection-based for (placeholder - infinite loop for now)
+        n.kind = hLoop;
+        if stmt.refStmtBlock != null as *Block {
+            n.child1 = Lcx_LowerBlock(ctx, stmt.refStmtBlock, -1);
+        }
+        return n;
+    }
+
     // Break
     if kind == skBreak {
         n.kind = hBreak;
