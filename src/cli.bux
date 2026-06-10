@@ -47,27 +47,8 @@ struct Diagnostic {
 func Diagnostic_GetLine(path: String, lineNum: uint32) -> String {
     let content: String = bux_read_file(path);
     if String_Eq(content, "") { return ""; }
-
-    var currentLine: uint32 = 1;
-    var pos: uint = 0;
-    let len: uint = String_Len(content);
-
-    /* Skip lines until we reach lineNum */
-    while currentLine < lineNum && pos < len {
-        if String_CharAt(content, pos) == 10 { /* '\n' */
-            currentLine = currentLine + 1;
-        }
-        pos = pos + 1;
-    }
-
-    /* Collect characters until newline or EOF */
-    var buf: String = "";
-    while pos < len && String_CharAt(content, pos) != 10 {
-        buf = String_Concat(buf, String_FromChar(String_CharAt(content, pos) as int));
-        pos = pos + 1;
-    }
-
-    return buf;
+    /* bux_str_split_part uses 0-based index */
+    return bux_str_split_part(content, "\n", lineNum - 1);
 }
 
 /* Print a diagnostic in Rust-style format:
@@ -344,7 +325,7 @@ func Cli_Check(srcPath: String) -> int {
                 column: sema.diags[i].column,
                 severity: 0,
             };
-            Diagnostic_Print(&diag, sourceName);
+            Diagnostic_Print(&diag, srcPath);
             i = i + 1;
         }
         return 1;
@@ -1096,7 +1077,7 @@ func Cli_BuildProject(projectDir: String) -> int {
                 column: sema.diags[i].column,
                 severity: 0,
             };
-            Diagnostic_Print(&diag, sourceName);
+            Diagnostic_Print(&diag, "<merged>");
             i = i + 1;
         }
         return 1;

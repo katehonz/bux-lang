@@ -1773,35 +1773,6 @@ func Parser_Parse(tokens: *LexToken, tokenCount: int) -> *Module {
         }
     }
 
-    /* Print parser diagnostics */
-    if p.diagCount > 0 {
-        var di: int = 0;
-        while di < p.diagCount {
-            let d: ParserDiag = p.diags[di];
-            Print("error: ");
-            PrintLine(d.message);
-            Print("  --> <input>:");
-            PrintInt(d.line as int64);
-            Print(":");
-            PrintInt(d.column as int64);
-            PrintLine("");
-            Print("   |");
-            PrintLine("");
-            Print(" ");
-            PrintInt(d.line as int64);
-            Print(" | <source unavailable>");
-            PrintLine("");
-            Print("   | ");
-            var sp: uint32 = 0;
-            while sp < d.column - 1 && sp < 120 {
-                Print(" ");
-                sp = sp + 1;
-            }
-            PrintLine("^");
-            di = di + 1;
-        }
-    }
-
     return mod;
 }
 
