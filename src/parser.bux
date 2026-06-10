@@ -1570,8 +1570,9 @@ func parserParseDecl(p: *Parser) -> *Decl {
     }
     let isPublic: bool = parserMatch(p, tkPub);
 
-    // Parse @[Checked] attribute
+    // Parse @[Checked] / @[Drop] attribute
     var isChecked: int = 0;
+    var isDrop: int = 0;
     if parserCheck(p, tkAt) {
         discard parserAdvance(p); // @
         if parserCheck(p, tkLBracket) {
@@ -1580,6 +1581,9 @@ func parserParseDecl(p: *Parser) -> *Decl {
                 let attrName: LexToken = parserCurToken(p);
                 if String_Eq(attrName.text, "Checked") {
                     isChecked = 1;
+                }
+                if String_Eq(attrName.text, "Drop") {
+                    isDrop = 1;
                 }
                 discard parserAdvance(p); // attribute name
             }
@@ -1606,7 +1610,11 @@ func parserParseDecl(p: *Parser) -> *Decl {
         d.isChecked = isChecked;
         return d;
     }
-    if kind == tkStruct { return parserParseStructDecl(p, isPublic); }
+    if kind == tkStruct {
+        let d: *Decl = parserParseStructDecl(p, isPublic);
+        d.isDrop = isDrop;
+        return d;
+    }
     if kind == tkEnum { return parserParseEnumDecl(p, isPublic); }
     if kind == tkImport { return parserParseImportDecl(p, isPublic); }
     if kind == tkExtern { return parserParseExternDecl(p, isPublic); }
