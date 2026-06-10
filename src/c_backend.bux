@@ -76,6 +76,7 @@ struct CEmitter {
     sb: StringBuilder,
     indent: int,
     mod: *HirModule,
+    checkedFunc: bool,
     deferCount: int,
     defer0: *HirNode,
     defer1: *HirNode,
@@ -1081,6 +1082,7 @@ func CBackend_Generate(mod: *HirModule) -> String {
         CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
         StringBuilder_Append(&cbe.sb, " {\n");
         // Body
+        cbe.checkedFunc = mod.funcs[i].checkedFunc;
         var hasReturn: bool = false;
         cbe.indent = 1;
         CBE_EmitExpr(cbe, body);

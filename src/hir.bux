@@ -114,6 +114,7 @@ struct HirFunc {
     captureType7: int;
     envStructName: String;
     envInstanceName: String;
+    checkedFunc: bool;
 }
 
 // ---------------------------------------------------------------------------

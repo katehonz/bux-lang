@@ -973,6 +973,34 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         storeNode.child1 = alloca;
         storeNode.child2 = init;
 
+        // Auto-Drop for Array<T> in @[Checked] functions
+        var deferNode: *HirNode = null as *HirNode;
+        if ctx.checkedFunc && !String_Eq(alloca.typeName, "") {
+            if String_StartsWith(alloca.typeName, "Array_") {
+                let elemType: String = bux_str_slice(alloca.typeName, 6, bux_strlen(alloca.typeName) - 6);
+                // Generate Array_Free instance
+                let genFree: *Decl = Lcx_FindGenericFunc(ctx, "Array_Free");
+                if genFree != null as *Decl {
+                    Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
+                }
+                // Build defer Array_Free_T(&var)
+                let varRef: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                varRef.kind = hVar;
+                varRef.strValue = stmt.strValue;
+                let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                addrNode.kind = hUnary;
+                addrNode.intValue = tkAmp;
+                addrNode.child1 = varRef;
+                let callNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                callNode.kind = hCall;
+                callNode.strValue = String_Concat("Array_Free_", elemType);
+                callNode.child1 = addrNode;
+                deferNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                deferNode.kind = hDefer;
+                deferNode.child1 = callNode;
+            }
+        }
+
         // If init is a closure with captures, emit capture assignments before the let
         if stmt.child1 != null as *Expr && stmt.child1.kind == ekClosure && stmt.child1.captureCount > 0 {
             let closureIdx: int = ctx.funcCount - 1;
@@ -1029,7 +1057,22 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                 lastStmt.child3 = storeNode;
                 lastStmt = storeNode;
             }
+            // Append auto-Drop defer if present
+            if deferNode != null as *HirNode {
+                lastStmt.child3 = deferNode;
+                lastStmt = deferNode;
+            }
             blockNode.child1 = firstStmt;
+            return blockNode;
+        }
+        // Non-closure: wrap with defer if present
+        if deferNode != null as *HirNode {
+            storeNode.child3 = deferNode;
+            let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            blockNode.kind = hBlock;
+            blockNode.line = line;
+            blockNode.column = col;
+            blockNode.child1 = storeNode;
             return blockNode;
         }
         return storeNode;
@@ -1625,6 +1668,7 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
     let f: *HirFunc = bux_alloc(sizeof(HirFunc)) as *HirFunc;
     f.name = decl.strValue;
     f.isPublic = decl.isPublic;
+    f.checkedFunc = ctx.checkedFunc;
     f.paramCount = decl.paramCount;
     f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam;
     Lcx_LowerParam(f.param0, &decl.param0, ctx);
