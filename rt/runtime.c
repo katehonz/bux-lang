@@ -1010,8 +1010,11 @@ void bux_task_join(void* handle) {
 void bux_task_sleep(int64_t ms) {
     if (ms <= 0) return;
     if (g_scheduler && g_scheduler->current) {
-        g_scheduler->current->wake_at = bux_now_ms() + ms;
-        g_scheduler->current->state = BUX_TASK_BLOCKED;
+        /* MVP: yield instead of real sleep. Real sleep requires a timer to
+         * requeue BLOCKED tasks, which is complex. For now, yield lets
+         * other tasks run. Main-thread sleep still uses nanosleep. */
+        (void)ms;  /* silence unused warning for MVP */
+        g_scheduler->current->state = BUX_TASK_READY;
         swapcontext(&g_scheduler->current->ctx, &g_scheduler_context);
     } else {
         struct timespec ts;
