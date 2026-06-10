@@ -133,11 +133,15 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     let lex: *Lexer = Lexer_Tokenize(source);
     PrintLine("  Lex done");
     if Lexer_DiagCount(lex) > 0 {
-        PrintLine("Lex errors:");
         var i: int = 0;
         while i < Lexer_DiagCount(lex) {
-            Print("  ");
-            PrintLine(lex.diags[i].message);
+            let diag: Diagnostic = Diagnostic {
+                message: lex.diags[i].message,
+                line: lex.diags[i].line,
+                column: lex.diags[i].column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, sourceName);
             i = i + 1;
         }
         return "";
@@ -166,11 +170,15 @@ func Cli_Compile(source: String, sourceName: String) -> String {
     PrintLine("  Sema...");
     let sema: *Sema = Sema_Analyze(mod);
     if Sema_HasError(sema) {
-        PrintLine("Sema errors:");
         var i: int = 0;
         while i < Sema_DiagCount(sema) {
-            Print("  ");
-            PrintLine(sema.diags[i].message);
+            let diag: Diagnostic = Diagnostic {
+                message: sema.diags[i].message,
+                line: sema.diags[i].line,
+                column: sema.diags[i].column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, sourceName);
             i = i + 1;
         }
         return "";
@@ -328,15 +336,15 @@ func Cli_Check(srcPath: String) -> int {
     // Phase 3: Sema
     let sema: *Sema = Sema_Analyze(mod);
     if Sema_HasError(sema) {
-        PrintLine("Sema errors found");
         var i: int = 0;
         while i < Sema_DiagCount(sema) {
-            Print("  line ");
-            PrintInt(sema.diags[i].line as int64);
-            Print(" col ");
-            PrintInt(sema.diags[i].column as int64);
-            Print(": ");
-            PrintLine(sema.diags[i].message);
+            let diag: Diagnostic = Diagnostic {
+                message: sema.diags[i].message,
+                line: sema.diags[i].line,
+                column: sema.diags[i].column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, sourceName);
             i = i + 1;
         }
         return 1;
@@ -1080,15 +1088,15 @@ func Cli_BuildProject(projectDir: String) -> int {
     PrintLine("Running sema...");
     let sema: *Sema = Sema_Analyze(merged);
     if Sema_HasError(sema) {
-        PrintLine("Sema errors found");
         var i: int = 0;
         while i < Sema_DiagCount(sema) {
-            Print("  line ");
-            PrintInt(sema.diags[i].line as int64);
-            Print(" col ");
-            PrintInt(sema.diags[i].column as int64);
-            Print(": ");
-            PrintLine(sema.diags[i].message);
+            let diag: Diagnostic = Diagnostic {
+                message: sema.diags[i].message,
+                line: sema.diags[i].line,
+                column: sema.diags[i].column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, sourceName);
             i = i + 1;
         }
         return 1;
