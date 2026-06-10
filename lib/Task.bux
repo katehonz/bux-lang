@@ -1,23 +1,43 @@
 module Std::Task {
 
+extern func bux_task_init(num_workers: int);
 extern func bux_task_spawn(fn: *void, arg: *void) -> *void;
 extern func bux_task_join(handle: *void);
 extern func bux_task_sleep(ms: int64);
+extern func bux_task_yield();
+extern func bux_task_current_id() -> int;
+extern func bux_task_shutdown();
 
 struct TaskHandle {
     handle: *void;
+}
+
+func Task_Init(num_workers: int) {
+    bux_task_init(num_workers);
 }
 
 func Task_Spawn(fn: *void, arg: *void) -> TaskHandle {
     return TaskHandle { handle: bux_task_spawn(fn, arg) };
 }
 
-func Task_Join(t: TaskHandle) {
+func Task_Wait(t: TaskHandle) {
     bux_task_join(t.handle);
 }
 
 func Task_Sleep(ms: int64) {
     bux_task_sleep(ms);
+}
+
+func Task_Yield() {
+    bux_task_yield();
+}
+
+func Task_CurrentId() -> int {
+    return bux_task_current_id();
+}
+
+func Task_Shutdown() {
+    bux_task_shutdown();
 }
 
 }
