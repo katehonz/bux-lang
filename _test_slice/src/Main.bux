@@ -1,0 +1,36 @@
+import Std::Io;
+import Std::Array;
+import Std::Slice;
+
+func Main() -> int {
+    // Test Array operator_index_get/set
+    let arr: Array<int> = Array_New<int>(10);
+    Array_Push<int>(&arr, 10);
+    Array_Push<int>(&arr, 20);
+    Array_Push<int>(&arr, 30);
+
+    // Use [] syntax (operator_index_get)
+    if arr[0] != 10 { return 1; }
+    if arr[1] != 20 { return 2; }
+    if arr[2] != 30 { return 3; }
+
+    // Use [] syntax (operator_index_set)
+    arr[1] = 99;
+    if arr[1] != 99 { return 4; }
+
+    // Test Slice operator_index_get/set
+    let s: Slice<int> = Slice_FromArray<int>(&arr);
+
+    if s[0] != 10 { return 5; }
+    if s[1] != 99 { return 6; }
+    if s[2] != 30 { return 7; }
+
+    s[2] = 42;
+    if s[2] != 42 { return 8; }
+
+    PrintInt(s[0]);
+    PrintLine("");
+    PrintInt(Slice_Len<int>(&s));
+    PrintLine("");
+    return 0;
+}
