@@ -204,8 +204,6 @@ extend Array<T> {
 
 ---
 
-## P1 — High Impact
-
 ### 9. Trait Bounds (`T: Comparable`)
 **Why:** Generic functions need constraints on type parameters.
 
@@ -234,27 +232,9 @@ const C: int = A + B;  // Evaluated at compile time
 
 ---
 
-### 11. Destructors / `Drop` Trait
-**Why:** `own T` exists but nothing cleans up automatically. Complements `defer`.
-
-**Syntax:**
-```bux
-extend Array<T> {
-    func Drop(self: own Array<T>) {
-        Array_Free(self);
-    }
-}
-```
-
-**Status:** ⏳ Not started.
-
-**Complexity:** High — needs ownership tracking + C backend scope emission.
-
----
-
 ## P2 — Nice to Have
 
-### 12. Concurrency
+### 11. Concurrency
 **Why:** Go-style goroutines + channels, but without GC.
 
 **Syntax:**

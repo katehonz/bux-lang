@@ -132,6 +132,7 @@ extern const char* bux_str_join2(const char* a, const char* b, const char* sep);
 extern const char* bux_float_to_string(double f);
 extern const char* bux_str_format(const char* pattern, const char* a0, const char* a1, const char* a2, const char* a3, const char* a4, const char* a5, const char* a6, const char* a7);
 extern double bux_str_to_float(const char* s);
+extern void bux_bounds_check(unsigned int index, unsigned int len);
 extern void bux_sha1(const char* data, int len, void* out);
 extern void bux_sha256(const char* data, int len, void* out);
 extern void bux_sha384(const char* data, int len, void* out);
