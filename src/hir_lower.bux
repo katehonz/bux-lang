@@ -2264,10 +2264,13 @@ func Lcx_BuildAutoDropFree(ctx: *LowerCtx, typeName: String) -> String {
         }
     }
     // User-defined types with @[Drop]: look for TypeName_Drop function
-    let dropName: String = String_Concat(typeName, "_Drop");
-    let dropSym: Symbol = Scope_Lookup(ctx.scope, dropName);
-    if dropSym.decl != null as *Decl {
-        return dropName;
+    let typeSym: Symbol = Scope_Lookup(ctx.scope, typeName);
+    if typeSym.kind == skType && typeSym.decl != null as *Decl && typeSym.decl.isDrop != 0 {
+        let dropName: String = String_Concat(typeName, "_Drop");
+        let dropSym: Symbol = Scope_Lookup(ctx.scope, dropName);
+        if dropSym.decl != null as *Decl {
+            return dropName;
+        }
     }
     return "";
 }
