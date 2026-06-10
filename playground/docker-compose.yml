@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - USE_DOCKER=1
+      - SANDBOX_IMAGE=bux-playground-sandbox
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - sandbox
+    restart: unless-stopped
+
+  # Sandbox image is built separately and used by backend
+  sandbox:
+    build:
+      context: ..
+      dockerfile: playground/sandbox/Dockerfile
+    image: bux-playground-sandbox
+    # This container is not run directly — backend spawns it per-request
+    command: ["echo", "sandbox image ready"]
