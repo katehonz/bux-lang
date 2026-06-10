@@ -1635,21 +1635,25 @@ func parserParseDecl(p: *Parser) -> *Decl {
         }
 
         discard parserExpect(p, tkLBrace, "expected '{'");
+        var methods: *Decl = null as *Decl;
+        var lastMethod: *Decl = null as *Decl;
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkFunc) {
                 let m: *Decl = parserParseFuncDecl(p, false, false, false);
-                // Store method in linked list
-                if d.methodCount == 0 {
-                    d.childDecl1 = m;
-                } else if d.methodCount == 1 {
-                    d.childDecl1.childDecl2 = m;
+                if methods == null as *Decl {
+                    methods = m;
+                    lastMethod = m;
+                } else {
+                    lastMethod.childDecl2 = m;
+                    lastMethod = m;
                 }
                 d.methodCount = d.methodCount + 1;
             } else {
                 break;
             }
         }
+        d.childDecl1 = methods;
         discard parserExpect(p, tkRBrace, "expected '}'");
         return d;
     }

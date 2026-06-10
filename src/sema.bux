@@ -565,6 +565,16 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
                 ai = ai + 1;
             }
         }
+        // Trait bounds checking for explicit generic calls: Max<Circle>(...)
+        // Must happen before indirect/direct call returns
+        if expr.child1.kind == ekIdent {
+            let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
+            if sym.kind == skFunc && sym.decl != null as *Decl {
+                if expr.child1.genericTypeArgCount > 0 {
+                    Sema_CheckTraitBounds(sema, sym.decl, expr.child1.genericTypeArg0, expr.child1.genericTypeArg1, expr.child1.genericTypeArgCount, expr.line, expr.column);
+                }
+            }
+        }
         // Indirect call through function-typed value
         if calleeType == tyFunc {
             if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekFunc {
@@ -577,16 +587,10 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         // Direct call to named function
         if expr.child1.kind == ekIdent {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
-            if sym.kind == skFunc {
-            if sym.decl != null as *Decl {
-                // Trait bounds checking for explicit generic calls: Max<Circle>(...)
-                if expr.child1.genericTypeArgCount > 0 {
-                    Sema_CheckTraitBounds(sema, sym.decl, expr.child1.genericTypeArg0, expr.child1.genericTypeArg1, expr.child1.genericTypeArgCount, expr.line, expr.column);
-                }
+            if sym.kind == skFunc && sym.decl != null as *Decl {
                 if sym.decl.retType != null as *TypeExpr {
                     return Sema_ResolveType(sema, sym.decl.retType);
                 }
-            }
             }
         }
         return tyUnknown;
