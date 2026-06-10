@@ -1221,9 +1221,9 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         //       let x = Iter_Next_T(&__iter);
         //       body
         //   }
-        if iterExpr != null as *Expr && iterExpr.kind == ekIdent {
+        if iterExpr != null as *Expr {
             let collTypeExpr: *TypeExpr = iterExpr.refType;
-            if collTypeExpr == null as *TypeExpr {
+            if collTypeExpr == null as *TypeExpr && iterExpr.kind == ekIdent {
                 // Fallback: try scope lookup (may have substituted type)
                 let collSym: Symbol = Scope_Lookup(ctx.scope, iterExpr.strValue);
                 collTypeExpr = collSym.refType;
@@ -1309,6 +1309,7 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
 
                         // __iter = Array_Iter_T(&arr)  or  just copy if already Iter
                         var iterInit: *HirNode = null as *HirNode;
+                        var collStore: *HirNode = null as *HirNode;
                         if isArray {
                             let callIter: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                             callIter.kind = hCall;
@@ -1316,24 +1317,58 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                             let addrArr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                             addrArr.kind = hUnary;
                             addrArr.intValue = tkAmp;
-                            let arrVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                            arrVar.kind = hVar;
-                            arrVar.strValue = iterExpr.strValue;
-                            addrArr.child1 = arrVar;
+                            if iterExpr.kind == ekIdent {
+                                let arrVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                arrVar.kind = hVar;
+                                arrVar.strValue = iterExpr.strValue;
+                                addrArr.child1 = arrVar;
+                            } else {
+                                // Non-identifier: create temp variable for collection
+                                ctx.varCounter = ctx.varCounter + 1;
+                                let tmpName: String = String_Concat("__tmp_coll_", String_FromInt(ctx.varCounter));
+                                // Ensure Array<T> struct instance exists and get mangled name
+                                let arrayGenStruct: *Decl = Lcx_FindGenericStruct(ctx, "Array");
+                                var arrayMangledName: String = collTypeName;
+                                if arrayGenStruct != null as *Decl {
+                                    arrayMangledName = Lcx_GenerateStructInstance(ctx, arrayGenStruct, elemTypeName, "", 1);
+                                }
+                                let collAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                collAlloca.kind = hAlloca;
+                                collAlloca.strValue = tmpName;
+                                collAlloca.typeName = arrayMangledName;
+                                collAlloca.typeKind = tyNamed;
+                                collStore = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                collStore.kind = hStore;
+                                collStore.child1 = collAlloca;
+                                collStore.child2 = Lcx_LowerExpr(ctx, iterExpr);
+                                let collVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                collVar.kind = hVar;
+                                collVar.strValue = tmpName;
+                                addrArr.child1 = collVar;
+                            }
                             callIter.child1 = addrArr;
                             iterInit = callIter;
                         } else {
                             // Already an iterator: __iter = arr
-                            let arrVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                            arrVar.kind = hVar;
-                            arrVar.strValue = iterExpr.strValue;
-                            iterInit = arrVar;
+                            if iterExpr.kind == ekIdent {
+                                let arrVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                arrVar.kind = hVar;
+                                arrVar.strValue = iterExpr.strValue;
+                                iterInit = arrVar;
+                            } else {
+                                iterInit = Lcx_LowerExpr(ctx, iterExpr);
+                            }
                         }
 
                         let iterStore: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                         iterStore.kind = hStore;
                         iterStore.child1 = iterAlloca;
                         iterStore.child2 = iterInit;
+
+                        // Chain collStore -> iterStore if temp was created
+                        if collStore != null as *HirNode {
+                            collStore.child3 = iterStore;
+                        }
 
                         // condition: Iter_HasNext_T(&__iter)
                         let condCall: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
@@ -1401,7 +1436,11 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                         blockNode.kind = hBlock;
                         blockNode.line = line;
                         blockNode.column = col;
-                        blockNode.child1 = iterStore;
+                        if collStore != null as *HirNode {
+                            blockNode.child1 = collStore;
+                        } else {
+                            blockNode.child1 = iterStore;
+                        }
                         return blockNode;
                     }
                 }

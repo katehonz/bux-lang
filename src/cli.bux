@@ -114,6 +114,17 @@ func Cli_Compile(source: String, sourceName: String) -> String {
 // ---------------------------------------------------------------------------
 
 func Cli_Build(srcPath: String, outPath: String) -> int {
+    // If building the standard project entry point, use full project build
+    // which merges stdlib and supports multi-file projects
+    if String_Eq(srcPath, "src/Main.bux") || String_Eq(srcPath, "src/main.bux") {
+        let rc: int = Cli_BuildProject(".");
+        if rc == 0 && !String_Eq(outPath, "build/main") {
+            // Rename output if custom path was requested
+            bux_system(String_Concat(String_Concat("mv build/main ", outPath), " 2>/dev/null || true"));
+        }
+        return rc;
+    }
+
     let source: String = ReadFile(srcPath);
     if source == null as String || String_Eq(source, "") || !FileExists(srcPath) {
         Print("Error: cannot read source file: ");

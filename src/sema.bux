@@ -579,6 +579,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         if calleeType == tyFunc {
             if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekFunc {
                 if expr.child1.refType.funcRet != null as *TypeExpr {
+                    expr.refType = expr.child1.refType.funcRet;
                     return Sema_ResolveType(sema, expr.child1.refType.funcRet);
                 }
                 return tyVoid;
@@ -589,6 +590,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
             if sym.kind == skFunc && sym.decl != null as *Decl {
                 if sym.decl.retType != null as *TypeExpr {
+                    expr.refType = sym.decl.retType;
                     return Sema_ResolveType(sema, sym.decl.retType);
                 }
             }
