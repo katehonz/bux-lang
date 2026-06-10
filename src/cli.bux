@@ -621,6 +621,115 @@ func Cli_Init() -> int {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Add — add a dependency to bux.toml
+// ---------------------------------------------------------------------------
+
+func Cli_Add(pkgName: String, url: String) -> int {
+    let cwd: String = bux_getcwd();
+    let tomlPath: String = bux_path_join(cwd, "bux.toml");
+    if !FileExists(tomlPath) {
+        PrintLine("Error: no bux.toml found");
+        return 1;
+    }
+    var man: Manifest = Manifest_Load(tomlPath);
+    if Manifest_HasDep(man, pkgName) {
+        Print("Error: dependency '"); Print(pkgName); PrintLine("' already exists");
+        return 1;
+    }
+    let added: bool = Manifest_AddDep(&man, pkgName, url);
+    if !added {
+        PrintLine("Error: cannot add dependency (max 8)");
+        return 1;
+    }
+    let tomlContent: String = Manifest_ToString(man);
+    if !WriteFile(tomlPath, tomlContent) {
+        PrintLine("Error: cannot write bux.toml");
+        return 1;
+    }
+    Print("Added dependency: "); Print(pkgName); Print(" = "); PrintLine(url);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Remove — remove a dependency from bux.toml
+// ---------------------------------------------------------------------------
+
+func Cli_Remove(pkgName: String) -> int {
+    let cwd: String = bux_getcwd();
+    let tomlPath: String = bux_path_join(cwd, "bux.toml");
+    if !FileExists(tomlPath) {
+        PrintLine("Error: no bux.toml found");
+        return 1;
+    }
+    var man: Manifest = Manifest_Load(tomlPath);
+    if !Manifest_HasDep(man, pkgName) {
+        Print("Error: dependency '"); Print(pkgName); PrintLine("' not found");
+        return 1;
+    }
+    let removed: bool = Manifest_RemoveDep(&man, pkgName);
+    if !removed {
+        PrintLine("Error: cannot remove dependency");
+        return 1;
+    }
+    let tomlContent: String = Manifest_ToString(man);
+    if !WriteFile(tomlPath, tomlContent) {
+        PrintLine("Error: cannot write bux.toml");
+        return 1;
+    }
+    Print("Removed dependency: "); PrintLine(pkgName);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Fetch — download dependencies into deps/
+// ---------------------------------------------------------------------------
+
+func Cli_Fetch() -> int {
+    let cwd: String = bux_getcwd();
+    let tomlPath: String = bux_path_join(cwd, "bux.toml");
+    if !FileExists(tomlPath) {
+        PrintLine("Error: no bux.toml found");
+        return 1;
+    }
+    let man: Manifest = Manifest_Load(tomlPath);
+    if man.depCount == 0 {
+        PrintLine("No dependencies to fetch");
+        return 0;
+    }
+    let depsDir: String = bux_path_join(cwd, "deps");
+    discard bux_mkdir_if_needed(depsDir);
+    var i: int = 0;
+    while i < man.depCount {
+        var depName: String = "";
+        var depUrl: String = "";
+        if i == 0 { depName = man.depName0; depUrl = man.depUrl0; }
+        else if i == 1 { depName = man.depName1; depUrl = man.depUrl1; }
+        else if i == 2 { depName = man.depName2; depUrl = man.depUrl2; }
+        else if i == 3 { depName = man.depName3; depUrl = man.depUrl3; }
+        else if i == 4 { depName = man.depName4; depUrl = man.depUrl4; }
+        else if i == 5 { depName = man.depName5; depUrl = man.depUrl5; }
+        else if i == 6 { depName = man.depName6; depUrl = man.depUrl6; }
+        else if i == 7 { depName = man.depName7; depUrl = man.depUrl7; }
+        let depPath: String = bux_path_join(depsDir, depName);
+        if DirExists(depPath) {
+            Print("Updating "); PrintLine(depName);
+            let cmd: String = String_Concat("cd \"", String_Concat(depPath, "\" && git pull --quiet 2>/dev/null"));
+            discard bux_system(cmd);
+        } else {
+            Print("Fetching "); Print(depName); Print(" from "); PrintLine(depUrl);
+            let cmd: String = String_Concat("git clone --quiet \"", String_Concat(depUrl, String_Concat("\" \"", String_Concat(depPath, "\""))));
+            let rc: int = bux_system(cmd);
+            if rc != 0 {
+                Print("Error: failed to fetch "); PrintLine(depName);
+            }
+        }
+        i = i + 1;
+    }
+    PrintLine("Fetch complete");
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Fmt command — format source files
 // ---------------------------------------------------------------------------
 
@@ -835,6 +944,43 @@ func Cli_BuildProject(projectDir: String) -> int {
         PrintLine("");
     }
 
+    // Merge dependency declarations (deps shadow stdlib, user shadows deps)
+    if man.depCount > 0 {
+        let depsDir: String = bux_path_join(projectDir, "deps");
+        var di: int = 0;
+        while di < man.depCount {
+            var depName: String = "";
+            if di == 0 { depName = man.depName0; }
+            else if di == 1 { depName = man.depName1; }
+            else if di == 2 { depName = man.depName2; }
+            else if di == 3 { depName = man.depName3; }
+            else if di == 4 { depName = man.depName4; }
+            else if di == 5 { depName = man.depName5; }
+            else if di == 6 { depName = man.depName6; }
+            else if di == 7 { depName = man.depName7; }
+            let depSrcDir: String = bux_path_join(bux_path_join(depsDir, depName), "src");
+            if DirExists(depSrcDir) {
+                var depFileCount: int = 0;
+                let depFiles: *String = bux_list_dir(depSrcDir, ".bux", &depFileCount);
+                if depFileCount > 0 {
+                    Print("Merging dependency: ");
+                    PrintLine(depName);
+                    var dfi: int = 0;
+                    while dfi < depFileCount {
+                        Print("  Merging ");
+                        PrintLine(depFiles[dfi]);
+                        let added: int = Cli_MergeFileInto(merged, depFiles[dfi], userNames, userNameCount);
+                        Print("    -> ");
+                        PrintInt(added as int64);
+                        PrintLine(" decls added");
+                        dfi = dfi + 1;
+                    }
+                }
+            }
+            di = di + 1;
+        }
+    }
+
     // Copy user declarations into merged (user shadows stdlib)
     Cli_CopyModuleDecls(merged, userMerged);
 
@@ -955,7 +1101,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, fmt, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, test, run, project, help, version");
         return 0;
     }
 
@@ -968,7 +1114,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, fmt, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, test, run, project, help, version");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅  695 lines");
         PrintLine("  Parser     ✅ 1004 lines");
@@ -989,6 +1135,26 @@ func Cli_Run(args: *String, argCount: int) -> int {
 
     if String_Eq(cmd, "init") {
         return Cli_Init();
+    }
+
+    if String_Eq(cmd, "add") {
+        if argCount < 4 {
+            PrintLine("Usage: buxc add <name> <url>");
+            return 1;
+        }
+        return Cli_Add(args[2], args[3]);
+    }
+
+    if String_Eq(cmd, "remove") {
+        if argCount < 3 {
+            PrintLine("Usage: buxc remove <name>");
+            return 1;
+        }
+        return Cli_Remove(args[2]);
+    }
+
+    if String_Eq(cmd, "fetch") {
+        return Cli_Fetch();
     }
 
     if String_Eq(cmd, "fmt") {

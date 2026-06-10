@@ -12,6 +12,23 @@ struct Manifest {
     version: String;
     pkgType: String;
     output: String;
+    depCount: int;
+    depName0: String;
+    depUrl0: String;
+    depName1: String;
+    depUrl1: String;
+    depName2: String;
+    depUrl2: String;
+    depName3: String;
+    depUrl3: String;
+    depName4: String;
+    depUrl4: String;
+    depName5: String;
+    depUrl5: String;
+    depName6: String;
+    depUrl6: String;
+    depName7: String;
+    depUrl7: String;
 }
 
 // ---------------------------------------------------------------------------
@@ -24,6 +41,7 @@ func Manifest_Parse(content: String) -> Manifest {
     m.version = "0.1.0";
     m.pkgType = "bin";
     m.output = "Bin";
+    m.depCount = 0;
 
     if String_Eq(content, "") { return m; }
 
@@ -43,6 +61,8 @@ func Manifest_Parse(content: String) -> Manifest {
                 currentSection = "Package";
             } else if String_StartsWith(line, "[Build]") {
                 currentSection = "Build";
+            } else if String_StartsWith(line, "[dependencies]") {
+                currentSection = "dependencies";
             } else {
                 currentSection = "";
             }
@@ -70,12 +90,156 @@ func Manifest_Parse(content: String) -> Manifest {
                 if String_Eq(key, "Type") { m.pkgType = val; }
             } else if String_Eq(currentSection, "Build") {
                 if String_Eq(key, "Output") { m.output = val; }
+            } else if String_Eq(currentSection, "dependencies") {
+                if m.depCount < 8 {
+                    if m.depCount == 0 { m.depName0 = key; m.depUrl0 = val; }
+                    else if m.depCount == 1 { m.depName1 = key; m.depUrl1 = val; }
+                    else if m.depCount == 2 { m.depName2 = key; m.depUrl2 = val; }
+                    else if m.depCount == 3 { m.depName3 = key; m.depUrl3 = val; }
+                    else if m.depCount == 4 { m.depName4 = key; m.depUrl4 = val; }
+                    else if m.depCount == 5 { m.depName5 = key; m.depUrl5 = val; }
+                    else if m.depCount == 6 { m.depName6 = key; m.depUrl6 = val; }
+                    else if m.depCount == 7 { m.depName7 = key; m.depUrl7 = val; }
+                    m.depCount = m.depCount + 1;
+                }
             }
         }
         i = i + 1;
     }
 
     return m;
+}
+
+// ---------------------------------------------------------------------------
+// Dependency helpers
+// ---------------------------------------------------------------------------
+
+func Manifest_HasDep(m: Manifest, name: String) -> bool {
+    var i: int = 0;
+    while i < m.depCount {
+        var depName: String = "";
+        if i == 0 { depName = m.depName0; }
+        else if i == 1 { depName = m.depName1; }
+        else if i == 2 { depName = m.depName2; }
+        else if i == 3 { depName = m.depName3; }
+        else if i == 4 { depName = m.depName4; }
+        else if i == 5 { depName = m.depName5; }
+        else if i == 6 { depName = m.depName6; }
+        else if i == 7 { depName = m.depName7; }
+        if String_Eq(depName, name) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+func Manifest_GetDepUrl(m: Manifest, name: String) -> String {
+    var i: int = 0;
+    while i < m.depCount {
+        var depName: String = "";
+        var depUrl: String = "";
+        if i == 0 { depName = m.depName0; depUrl = m.depUrl0; }
+        else if i == 1 { depName = m.depName1; depUrl = m.depUrl1; }
+        else if i == 2 { depName = m.depName2; depUrl = m.depUrl2; }
+        else if i == 3 { depName = m.depName3; depUrl = m.depUrl3; }
+        else if i == 4 { depName = m.depName4; depUrl = m.depUrl4; }
+        else if i == 5 { depName = m.depName5; depUrl = m.depUrl5; }
+        else if i == 6 { depName = m.depName6; depUrl = m.depUrl6; }
+        else if i == 7 { depName = m.depName7; depUrl = m.depUrl7; }
+        if String_Eq(depName, name) { return depUrl; }
+        i = i + 1;
+    }
+    return "";
+}
+
+func Manifest_AddDep(m: *Manifest, name: String, url: String) -> bool {
+    if Manifest_HasDep(*m, name) { return false; }
+    if m.depCount >= 8 { return false; }
+    if m.depCount == 0 { m.depName0 = name; m.depUrl0 = url; }
+    else if m.depCount == 1 { m.depName1 = name; m.depUrl1 = url; }
+    else if m.depCount == 2 { m.depName2 = name; m.depUrl2 = url; }
+    else if m.depCount == 3 { m.depName3 = name; m.depUrl3 = url; }
+    else if m.depCount == 4 { m.depName4 = name; m.depUrl4 = url; }
+    else if m.depCount == 5 { m.depName5 = name; m.depUrl5 = url; }
+    else if m.depCount == 6 { m.depName6 = name; m.depUrl6 = url; }
+    else if m.depCount == 7 { m.depName7 = name; m.depUrl7 = url; }
+    m.depCount = m.depCount + 1;
+    return true;
+}
+
+func Manifest_RemoveDep(m: *Manifest, name: String) -> bool {
+    var found: int = -1;
+    var i: int = 0;
+    while i < m.depCount {
+        var depName: String = "";
+        if i == 0 { depName = m.depName0; }
+        else if i == 1 { depName = m.depName1; }
+        else if i == 2 { depName = m.depName2; }
+        else if i == 3 { depName = m.depName3; }
+        else if i == 4 { depName = m.depName4; }
+        else if i == 5 { depName = m.depName5; }
+        else if i == 6 { depName = m.depName6; }
+        else if i == 7 { depName = m.depName7; }
+        if String_Eq(depName, name) { found = i; break; }
+        i = i + 1;
+    }
+    if found < 0 { return false; }
+    i = found;
+    while i < m.depCount - 1 {
+        if i == 0 { m.depName0 = m.depName1; m.depUrl0 = m.depUrl1; }
+        else if i == 1 { m.depName1 = m.depName2; m.depUrl1 = m.depUrl2; }
+        else if i == 2 { m.depName2 = m.depName3; m.depUrl2 = m.depUrl3; }
+        else if i == 3 { m.depName3 = m.depName4; m.depUrl3 = m.depUrl4; }
+        else if i == 4 { m.depName4 = m.depName5; m.depUrl4 = m.depUrl5; }
+        else if i == 5 { m.depName5 = m.depName6; m.depUrl5 = m.depUrl6; }
+        else if i == 6 { m.depName6 = m.depName7; m.depUrl6 = m.depUrl7; }
+        i = i + 1;
+    }
+    m.depCount = m.depCount - 1;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Serialize manifest back to TOML
+// ---------------------------------------------------------------------------
+
+func Manifest_ToString(m: Manifest) -> String {
+    let sb: StringBuilder = StringBuilder_New();
+    StringBuilder_Append(&sb, "[Package]\n");
+    StringBuilder_Append(&sb, "Name    = \"");
+    StringBuilder_Append(&sb, m.name);
+    StringBuilder_Append(&sb, "\"\n");
+    StringBuilder_Append(&sb, "Version = \"");
+    StringBuilder_Append(&sb, m.version);
+    StringBuilder_Append(&sb, "\"\n");
+    StringBuilder_Append(&sb, "Type    = \"");
+    StringBuilder_Append(&sb, m.pkgType);
+    StringBuilder_Append(&sb, "\"\n\n");
+    StringBuilder_Append(&sb, "[Build]\n");
+    StringBuilder_Append(&sb, "Output = \"");
+    StringBuilder_Append(&sb, m.output);
+    StringBuilder_Append(&sb, "\"\n");
+    if m.depCount > 0 {
+        StringBuilder_Append(&sb, "\n[dependencies]\n");
+        var i: int = 0;
+        while i < m.depCount {
+            var depName: String = "";
+            var depUrl: String = "";
+            if i == 0 { depName = m.depName0; depUrl = m.depUrl0; }
+            else if i == 1 { depName = m.depName1; depUrl = m.depUrl1; }
+            else if i == 2 { depName = m.depName2; depUrl = m.depUrl2; }
+            else if i == 3 { depName = m.depName3; depUrl = m.depUrl3; }
+            else if i == 4 { depName = m.depName4; depUrl = m.depUrl4; }
+            else if i == 5 { depName = m.depName5; depUrl = m.depUrl5; }
+            else if i == 6 { depName = m.depName6; depUrl = m.depUrl6; }
+            else if i == 7 { depName = m.depName7; depUrl = m.depUrl7; }
+            StringBuilder_Append(&sb, depName);
+            StringBuilder_Append(&sb, " = \"");
+            StringBuilder_Append(&sb, depUrl);
+            StringBuilder_Append(&sb, "\"\n");
+            i = i + 1;
+        }
+    }
+    return StringBuilder_Build(&sb);
 }
 
 // ---------------------------------------------------------------------------
