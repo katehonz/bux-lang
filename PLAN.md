@@ -520,6 +520,34 @@ const TABLE_SIZE = Factorial(10);  // Computed at compile time
 | `8.6.2` Procedural macros | `#[derive(Clone)]`, `#[derive(Debug)]` |
 | `8.6.3` Reflection | Compile-time type introspection for serialization |
 
+### 8.7 — Optimization & Release Mode
+
+**Goal:** C-speed for hot paths. `@[Release]` disables all runtime checks and inlines auto-drop.
+
+| Task | Status | Details |
+|------|--------|---------|
+| `8.7.1` `@[Release]` attribute | ⏳ | Disables bounds checking, borrow checking, null checks inside the function |
+| `8.7.2` Auto-drop inline | ⏳ | Emit `free`/`close` directly instead of `Type_Drop(&var)` call |
+| `8.7.3` Dead-store elimination | ⏳ | C backend removes redundant temp variables (`_t1`, `_t2`) |
+| `8.7.4` `-O3` by default | ⏳ | `bux build --release` passes `-O3 -flto` to C compiler |
+| `8.7.5` Profile-guided optimization | ⏳ | `bux profile` + `bux build --pgo` for guided inlining |
+
+```bux
+// Default: safe but slower — bounds checks + borrow checks
+@[Checked]
+func SafeSum(arr: Array<int>) -> int { ... }
+
+// Hot path: zero-cost — straight C
+@[Release]
+func HotLoop(data: *float64, n: int) {
+    for i in 0..n {
+        data[i] = data[i] * 2.0;  // no bounds check, inlined
+    }
+}
+```
+
+**Why this matters:** Nim compiles to C but has ARC/ORC overhead. Crystal has Boehm GC. Bux with `@[Release]` has **literally zero overhead** — the generated C is hand-written quality.
+
 ---
 
 ## Phase 9 — Ecosystem & Tooling (Week 35+)
@@ -830,6 +858,7 @@ func Main() -> int {
 | **M12** | 11.3 | ⏳ | `@[Checked]` borrow checker works on real code |
 | **M13** | 11.4 | ⏳ | `bux test`, `bux fmt`, `bux doc` shipped |
 | **M14** | 11.5 | ⏳ | Native x86-64 backend (no C transpiler) |
+| **M15** | 8.7 | ⏳ | `@[Release]` mode — zero-cost abstractions; C-speed benchmarks vs Nim/Crystal |
 
 ---
 
