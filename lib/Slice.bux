@@ -1,0 +1,31 @@
+module Std::Slice {
+
+extern func bux_bounds_check(index: uint, len: uint);
+
+struct Slice<T> {
+    data: *T,
+    len: uint,
+}
+
+func Slice_FromArray<T>(arr: *Array<T>) -> Slice<T> {
+    var s: Slice<T>;
+    s.data = arr.data;
+    s.len = arr.len;
+    return s;
+}
+
+func Slice_Get<T>(self: *Slice<T>, idx: uint) -> T {
+    bux_bounds_check(idx, self.len);
+    return self.data[idx];
+}
+
+func Slice_Set<T>(self: *Slice<T>, idx: uint, value: T) {
+    bux_bounds_check(idx, self.len);
+    self.data[idx] = value;
+}
+
+func Slice_Len<T>(self: *Slice<T>) -> uint {
+    return self.len;
+}
+
+}

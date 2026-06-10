@@ -683,6 +683,7 @@ func CBE_IsGenericTypeName(name: String) -> bool {
     if String_Eq(name, "MapEntry") || String_Eq(name, "MapEntry*") { return true; }
     if String_Eq(name, "StringMap") || String_Eq(name, "StringMap*") { return true; }
     if String_Eq(name, "StringMapEntry") || String_Eq(name, "StringMapEntry*") { return true; }
+    if String_Eq(name, "Slice") || String_Eq(name, "Slice*") { return true; }
     return false;
 }
 
