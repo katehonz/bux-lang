@@ -24,6 +24,9 @@ cd hello
 
 # Build and run
 bux run
+
+# Cross-compile for ARM Linux (requires clang)
+bux build --target aarch64-linux-gnu
 ```
 
 ---
@@ -201,6 +204,7 @@ func Main() -> int {
 | **CTFE** | `const func` — compile-time function execution |
 | **Trait Bounds** | `func Max<T: Comparable>(a: T, b: T) -> T` |
 | **Package Manager** | `bux add`, `bux install`, `bux.lock`, path + git deps |
+| **Cross-Compilation** | `--target <triple>` via clang (e.g. `aarch64-linux-gnu`) |
 | **Tooling** | `bux new`, `bux build`, `bux run`, `bux test`, `bux check` |
 
 ---

@@ -107,6 +107,24 @@ Output = "Bin"
 
 Build output goes to `build/` by default.
 
+### Cross-Compilation
+
+Use `--target <triple>` to cross-compile for a different platform. Bux generates C code and uses `clang` with the `-target` flag for cross-compilation.
+
+```bash
+# Cross-compile for ARM Linux
+./buxc build --target aarch64-linux-gnu
+
+# Cross-compile for x86_64 Linux (explicit)
+./buxc build --target x86_64-linux-gnu
+
+# Cross-compile and run project build
+./buxc project --target x86_64-linux-gnu
+./buxc run --target aarch64-linux-gnu
+```
+
+> **Note:** `clang` must be installed for cross-compilation. Without `--target`, Bux uses the system `cc` compiler.
+
 ---
 
 ## Running Tests
