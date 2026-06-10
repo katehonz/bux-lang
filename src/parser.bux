@@ -232,6 +232,15 @@ func parserParseType(p: *Parser) -> *TypeExpr {
 
     // name
     let nameTok: LexToken = parserExpect(p, tkIdent, "expected type name");
+    // self / Self -> tekSelf
+    if String_Eq(nameTok.text, "self") || String_Eq(nameTok.text, "Self") {
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekSelf;
+        te.line = nameTok.line;
+        te.column = nameTok.column;
+        te.typeName = "Self";
+        return te;
+    }
     let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
     te.kind = tekNamed;
     te.line = nameTok.line;
@@ -473,7 +482,6 @@ func parserParseClosure(p: *Parser) -> *Expr {
 
 func parserParsePostfixExpr(p: *Parser) -> *Expr {
     var left: *Expr = parserParsePrimary(p);
-
     while true {
         let kind: int = parserPeek(p, 0);
 
@@ -700,7 +708,7 @@ func parserParsePostfixExpr(p: *Parser) -> *Expr {
 // ---------------------------------------------------------------------------
 
 func parserPrecedence(op: int) -> int {
-    if op == tkAssign || op == tkPlusAssign || op == tkMinusAssign || op == tkStarAssign || op == tkSlashAssign || op == tkPercentAssign || op == tkAmpAssign || op == tkPipeAssign || op == tkCaretAssign || op == tkShlAssign || op == tkShrAssign { return 1; }
+    // Assignment operators are parsed by parserParseAssign, not here
     if op == tkPipePipe { return 2; }
     if op == tkAmpAmp { return 3; }
     if op == tkPipe { return 4; }
@@ -802,11 +810,30 @@ func parserParseTernary(p: *Parser) -> *Expr {
 }
 
 // ---------------------------------------------------------------------------
+// Assignment: target = value (right-associative)
+// ---------------------------------------------------------------------------
+
+func parserParseAssign(p: *Parser) -> *Expr {
+    let left: *Expr = parserParseTernary(p);
+    let op: int = parserPeek(p, 0);
+    if op == tkAssign || op == tkPlusAssign || op == tkMinusAssign || op == tkStarAssign || op == tkSlashAssign || op == tkPercentAssign || op == tkAmpAssign || op == tkPipeAssign || op == tkCaretAssign || op == tkShlAssign || op == tkShrAssign {
+        let opTok: LexToken = parserAdvance(p);
+        let right: *Expr = parserParseAssign(p);
+        let e: *Expr = parserMakeExpr(ekAssign, opTok.line, opTok.column);
+        e.intValue = opTok.kind;
+        e.child1 = left;
+        e.child2 = right;
+        return e;
+    }
+    return left;
+}
+
+// ---------------------------------------------------------------------------
 // Top-level expression
 // ---------------------------------------------------------------------------
 
 func parserParseExpr(p: *Parser) -> *Expr {
-    return parserParseTernary(p);
+    return parserParseAssign(p);
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,6 +1255,32 @@ func parserParseParamList(p: *Parser) -> *Decl {
 }
 
 // ---------------------------------------------------------------------------
+// Type parameters: <T: Bound, U: Bound2>
+// ---------------------------------------------------------------------------
+
+func parserParseTypeParams(p: *Parser, d: *Decl) {
+    if !parserCheck(p, tkLt) { return; }
+    discard parserAdvance(p);
+    let tp0: LexToken = parserExpect(p, tkIdent, "expected type param");
+    d.typeParam0 = tp0.text;
+    d.typeParamCount = 1;
+    if parserMatch(p, tkColon) {
+        let bound0: LexToken = parserExpect(p, tkIdent, "expected trait bound name");
+        d.typeParam0Bound = bound0.text;
+    }
+    if parserMatch(p, tkComma) {
+        let tp1: LexToken = parserExpect(p, tkIdent, "expected type param");
+        d.typeParam1 = tp1.text;
+        d.typeParamCount = 2;
+        if parserMatch(p, tkColon) {
+            let bound1: LexToken = parserExpect(p, tkIdent, "expected trait bound name");
+            d.typeParam1Bound = bound1.text;
+        }
+    }
+    discard parserExpect(p, tkGt, "expected '>'");
+}
+
+// ---------------------------------------------------------------------------
 // Declarations
 // ---------------------------------------------------------------------------
 
@@ -1245,19 +1298,8 @@ func parserParseFuncDecl(p: *Parser, isPublic: bool, isExtern: bool, isAsync: bo
     d.isAsync = isAsync;
     d.strValue = nameTok.text;
 
-    // Type params <T, U>
-    if parserCheck(p, tkLt) {
-        discard parserAdvance(p);
-        let tp0: LexToken = parserExpect(p, tkIdent, "expected type param");
-        d.typeParam0 = tp0.text;
-        d.typeParamCount = 1;
-        if parserMatch(p, tkComma) {
-            let tp1: LexToken = parserExpect(p, tkIdent, "expected type param");
-            d.typeParam1 = tp1.text;
-            d.typeParamCount = 2;
-        }
-        discard parserExpect(p, tkGt, "expected '>'");
-    }
+    // Type params <T: Bound, U: Bound2>
+    parserParseTypeParams(p, d);
 
     // Params
     let params: *Decl = parserParseParamList(p);
@@ -1305,19 +1347,8 @@ func parserParseStructDecl(p: *Parser, isPublic: bool) -> *Decl {
     d.strValue = nameTok.text;
     var fieldCount: int = 0;
 
-    // Type params
-    if parserCheck(p, tkLt) {
-        discard parserAdvance(p);
-        let tp0: LexToken = parserExpect(p, tkIdent, "expected type param");
-        d.typeParam0 = tp0.text;
-        d.typeParamCount = 1;
-        if parserMatch(p, tkComma) {
-            let tp1: LexToken = parserExpect(p, tkIdent, "expected type param");
-            d.typeParam1 = tp1.text;
-            d.typeParamCount = 2;
-        }
-        discard parserExpect(p, tkGt, "expected '>'");
-    }
+    // Type params <T: Bound, U: Bound2>
+    parserParseTypeParams(p, d);
 
     discard parserExpect(p, tkLBrace, "expected '{'");
     while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
@@ -1488,6 +1519,47 @@ func parserParseExternDecl(p: *Parser, isPublic: bool) -> *Decl {
 }
 
 // ---------------------------------------------------------------------------
+// Interface declaration
+// ---------------------------------------------------------------------------
+
+func parserParseInterfaceDecl(p: *Parser, isPublic: bool) -> *Decl {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserExpect(p, tkInterface, "expected 'interface'");
+    let nameTok: LexToken = parserExpect(p, tkIdent, "expected interface name");
+    discard parserExpect(p, tkLBrace, "expected '{' to start interface body");
+
+    let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    d.kind = dkInterface;
+    d.line = line;
+    d.column = col;
+    d.isPublic = isPublic;
+    d.strValue = nameTok.text;
+
+    var methods: *Decl = null as *Decl;
+    var lastMethod: *Decl = null as *Decl;
+    while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+        if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+        if parserCheck(p, tkFunc) {
+            let m: *Decl = parserParseFuncDecl(p, false, false, false);
+            if methods == null as *Decl {
+                methods = m;
+                lastMethod = m;
+            } else {
+                lastMethod.childDecl2 = m;
+                lastMethod = m;
+            }
+            d.methodCount = d.methodCount + 1;
+        } else {
+            break;
+        }
+    }
+    d.childDecl1 = methods;
+    discard parserExpect(p, tkRBrace, "expected '}' to close interface");
+    return d;
+}
+
+// ---------------------------------------------------------------------------
 // Top-level declaration
 // ---------------------------------------------------------------------------
 
@@ -1538,6 +1610,7 @@ func parserParseDecl(p: *Parser) -> *Decl {
     if kind == tkEnum { return parserParseEnumDecl(p, isPublic); }
     if kind == tkImport { return parserParseImportDecl(p, isPublic); }
     if kind == tkExtern { return parserParseExternDecl(p, isPublic); }
+    if kind == tkInterface { return parserParseInterfaceDecl(p, isPublic); }
 
     if kind == tkExtend {
         discard parserAdvance(p);
@@ -1552,13 +1625,13 @@ func parserParseDecl(p: *Parser) -> *Decl {
         d.isPublic = isPublic;
         d.strValue = typeName.text;
 
-        // Optional <T>
-        if parserCheck(p, tkLt) {
-            discard parserAdvance(p);
-            let tp0: LexToken = parserExpect(p, tkIdent, "expected type param");
-            d.typeParam0 = tp0.text;
-            d.typeParamCount = 1;
-            discard parserExpect(p, tkGt, "expected '>'");
+        // Optional <T: Bound>
+        parserParseTypeParams(p, d);
+
+        // Optional 'for InterfaceName'
+        if parserMatch(p, tkFor) {
+            let ifaceName: LexToken = parserExpect(p, tkIdent, "expected interface name");
+            d.strValue2 = ifaceName.text;
         }
 
         discard parserExpect(p, tkLBrace, "expected '{'");

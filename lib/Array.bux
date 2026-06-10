@@ -30,6 +30,11 @@ func Array_Get<T>(self: *Array<T>, index: uint) -> T {
     return self.data[index];
 }
 
+func Array_Set<T>(self: *Array<T>, index: uint, value: T) {
+    bux_bounds_check(index, self.len);
+    self.data[index] = value;
+}
+
 func Array_Len<T>(self: *Array<T>) -> uint {
     return self.len;
 }

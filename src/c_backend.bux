@@ -714,6 +714,12 @@ func CBE_FuncHasGeneric(f: *HirFunc) -> bool {
     return false;
 }
 
+func CBE_IsArrayTypeName(name: String) -> bool {
+    if String_Eq(name, "") { return false; }
+    if String_StartsWith(name, "Array") { return true; }
+    return false;
+}
+
 func CBE_IsPrimitiveTypeName(name: String) -> bool {
     if String_Eq(name, "int") || String_Eq(name, "") { return true; }
     if String_Eq(name, "String") { return true; }

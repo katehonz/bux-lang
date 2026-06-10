@@ -31,6 +31,8 @@ struct LowerCtx {
     substArg0: String,
     substParam1: String,
     substArg1: String,
+    // Borrow checker state
+    checkedFunc: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +346,46 @@ func Lcx_GenerateFuncInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String, 
     ctx.substArg1 = oldArg1;
 
     return mangled;
+}
+
+// ---------------------------------------------------------------------------
+// Array type helpers for bounds-checking desugaring
+// ---------------------------------------------------------------------------
+
+func Lcx_IsArrayTypeExpr(te: *TypeExpr) -> bool {
+    if te == null as *TypeExpr { return false; }
+    if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+        te = te.pointerPointee;
+    }
+    if te.kind == tekNamed {
+        if String_Eq(te.typeName, "Array") { return true; }
+        let name: String = te.typeName;
+        if name[0] as int == 65 && name[1] as int == 114 && name[2] as int == 114 && name[3] as int == 97 && name[4] as int == 121 && name[5] as int == 95 {
+            return true;
+        }
+    }
+    return false;
+}
+
+func Lcx_GetArrayElemType(te: *TypeExpr) -> String {
+    if te == null as *TypeExpr { return ""; }
+    if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+        te = te.pointerPointee;
+    }
+    if te.kind == tekNamed {
+        if String_Eq(te.typeName, "Array") && te.typeArgCount > 0 {
+            return te.typeArgName0;
+        }
+        let name: String = te.typeName;
+        if name[0] as int == 65 && name[1] as int == 114 && name[2] as int == 114 && name[3] as int == 97 && name[4] as int == 121 && name[5] as int == 95 {
+            let prefixLen: uint = 6;
+            let totalLen: uint = bux_strlen(name);
+            if totalLen > prefixLen {
+                return bux_str_slice(name, prefixLen, totalLen - prefixLen);
+            }
+        }
+    }
+    return "";
 }
 
 // ---------------------------------------------------------------------------
@@ -675,6 +717,64 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Index: arr[idx]
     if kind == ekIndex {
+        // In @[Checked] functions, Array access goes through Array_Get with bounds check
+        if ctx.checkedFunc && expr.child1 != null as *Expr && Lcx_IsArrayTypeExpr(expr.child1.refType) {
+            let elemType: String = Lcx_GetArrayElemType(expr.child1.refType);
+            if !String_Eq(elemType, "") {
+                let baseNode: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
+                let idxNode: *HirNode = Lcx_LowerExpr(ctx, expr.child2);
+
+                var isPtr: bool = false;
+                if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekPointer {
+                    isPtr = true;
+                }
+
+                let callNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                callNode.kind = hCall;
+                callNode.strValue = Lcx_MangleName("Array_Get", elemType, "", 1);
+                callNode.line = line;
+                callNode.column = col;
+
+                let genGet: *Decl = Lcx_FindGenericFunc(ctx, "Array_Get");
+                if genGet != null as *Decl {
+                    Lcx_GenerateFuncInstance(ctx, genGet, elemType, "", 1);
+                }
+
+                if isPtr {
+                    callNode.child1 = baseNode;
+                } else {
+                    let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    addrNode.kind = hUnary;
+                    addrNode.intValue = tkAmp;
+                    addrNode.child1 = baseNode;
+                    callNode.child1 = addrNode;
+                }
+                callNode.child2 = idxNode;
+                callNode.extraCount = 0;
+                callNode.extraData = null as *void;
+
+                return callNode;
+            }
+        }
+
+        // For Array<T> or *Array<T>, desugar arr[idx] → arr.data[idx]
+        if expr.child1 != null as *Expr && Lcx_IsArrayTypeExpr(expr.child1.refType) {
+            let baseNode: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
+            let idxNode: *HirNode = Lcx_LowerExpr(ctx, expr.child2);
+
+            let fieldPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            fieldPtr.kind = hFieldPtr;
+            fieldPtr.line = line;
+            fieldPtr.column = col;
+            fieldPtr.strValue = "data";
+            fieldPtr.child1 = baseNode;
+
+            n.kind = hIndexPtr;
+            n.child1 = fieldPtr;
+            n.child2 = idxNode;
+            return n;
+        }
+
         n.kind = hIndexPtr;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         n.child2 = Lcx_LowerExpr(ctx, expr.child2);
@@ -683,6 +783,52 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Assign: target = value
     if kind == ekAssign {
+        // Array bounds-checking for write in @[Checked]: arr[idx] = val → Array_Set_T(&arr, idx, val)
+        // Only for plain assignment (=), not compound operators (+=, -=, etc.)
+        if expr.intValue == tkAssign && ctx.checkedFunc && expr.child1 != null as *Expr && expr.child1.kind == ekIndex && expr.child1.child1 != null as *Expr && Lcx_IsArrayTypeExpr(expr.child1.child1.refType) {
+            let elemType: String = Lcx_GetArrayElemType(expr.child1.child1.refType);
+            if !String_Eq(elemType, "") {
+                let baseNode: *HirNode = Lcx_LowerExpr(ctx, expr.child1.child1);
+                let idxNode: *HirNode = Lcx_LowerExpr(ctx, expr.child1.child2);
+                let valNode: *HirNode = Lcx_LowerExpr(ctx, expr.child2);
+
+                var isPtr: bool = false;
+                if expr.child1.child1.refType != null as *TypeExpr && expr.child1.child1.refType.kind == tekPointer {
+                    isPtr = true;
+                }
+
+                let callNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                callNode.kind = hCall;
+                callNode.strValue = Lcx_MangleName("Array_Set", elemType, "", 1);
+                callNode.line = line;
+                callNode.column = col;
+
+                let genSet: *Decl = Lcx_FindGenericFunc(ctx, "Array_Set");
+                if genSet != null as *Decl {
+                    Lcx_GenerateFuncInstance(ctx, genSet, elemType, "", 1);
+                }
+
+                if isPtr {
+                    callNode.child1 = baseNode;
+                } else {
+                    let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    addrNode.kind = hUnary;
+                    addrNode.intValue = tkAmp;
+                    addrNode.child1 = baseNode;
+                    callNode.child1 = addrNode;
+                }
+                callNode.child2 = idxNode;
+
+                let extra: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                extra.node = valNode;
+                extra.next = null as *HirArgList;
+                callNode.extraData = extra as *void;
+                callNode.extraCount = 1;
+
+                return callNode;
+            }
+        }
+
         n.kind = hAssign;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1); // target
         n.child2 = Lcx_LowerExpr(ctx, expr.child2); // value
@@ -1434,6 +1580,9 @@ func Lcx_LowerParam(out: *HirParam, p: *Param, ctx: *LowerCtx) {
 // ---------------------------------------------------------------------------
 
 func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
+    let oldChecked: bool = ctx.checkedFunc;
+    ctx.checkedFunc = decl.isChecked != 0;
+
     let f: *HirFunc = bux_alloc(sizeof(HirFunc)) as *HirFunc;
     f.name = decl.strValue;
     f.isPublic = decl.isPublic;
@@ -1516,6 +1665,7 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
         f.body = null as *HirNode;
     }
     ctx.scope = prevScope;
+    ctx.checkedFunc = oldChecked;
 
     return f;
 }
@@ -1685,50 +1835,54 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
     // Second pass: actually collect them
     // For simplicity, do single pass with pre-allocated field arrays
 
-    // Iterate declarations
+    // Pass 1: collect generic declarations for monomorphization
     var decl: *Decl = mod.firstItem;
     while decl != null as *Decl {
-        // Collect generic declarations for monomorphization
         if decl.kind == dkFunc && decl.typeParamCount > 0 {
             ctx.genFuncs[ctx.genFuncCount] = *decl;
             ctx.genFuncCount = ctx.genFuncCount + 1;
         }
-        if decl.kind == dkStruct {
-            if decl.typeParamCount > 0 {
-                ctx.genStructs[ctx.genStructCount] = *decl;
-                ctx.genStructCount = ctx.genStructCount + 1;
-            } else if !String_Eq(decl.strValue, "") {
-                // Collect struct definition for C codegen
-                let si: int = hm.structCount;
-                hm.structs[si].name = decl.strValue;
-                hm.structs[si].fieldCount = decl.fieldCount;
-                hm.structs[si].fields = bux_alloc(decl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
-                var fi: int = 0;
-                while fi < decl.fieldCount {
-                    var fname: String = "";
-                    var ftype: *TypeExpr = null as *TypeExpr;
-                    fname = decl.fields[fi].name;
-                    ftype = decl.fields[fi].refFieldType;
-                    // Skip empty field names
-                    if String_Eq(fname, "") {
-                        fi = fi + 1;
-                        continue;
-                    }
-                    hm.structs[si].fields[fi].name = fname;
-                    if ftype != null as *TypeExpr {
-                        if ftype.kind == tekPointer && ftype.pointerPointee != null as *TypeExpr {
-                            // Pointer type: emit "TypeName*"
-                            if !String_Eq(ftype.pointerPointee.typeName, "") {
-                                hm.structs[si].fields[fi].typeName = String_Concat(ftype.pointerPointee.typeName, "*");
-                            }
-                        } else if !String_Eq(ftype.typeName, "") {
-                            hm.structs[si].fields[fi].typeName = ftype.typeName;
-                        }
-                    }
+        if decl.kind == dkStruct && decl.typeParamCount > 0 {
+            ctx.genStructs[ctx.genStructCount] = *decl;
+            ctx.genStructCount = ctx.genStructCount + 1;
+        }
+        decl = decl.childDecl2;
+    }
+
+    // Pass 2: lower all declarations
+    decl = mod.firstItem;
+    while decl != null as *Decl {
+        if decl.kind == dkStruct && decl.typeParamCount == 0 && !String_Eq(decl.strValue, "") {
+            // Collect struct definition for C codegen
+            let si: int = hm.structCount;
+            hm.structs[si].name = decl.strValue;
+            hm.structs[si].fieldCount = decl.fieldCount;
+            hm.structs[si].fields = bux_alloc(decl.fieldCount as uint * sizeof(HirStructField)) as *HirStructField;
+            var fi: int = 0;
+            while fi < decl.fieldCount {
+                var fname: String = "";
+                var ftype: *TypeExpr = null as *TypeExpr;
+                fname = decl.fields[fi].name;
+                ftype = decl.fields[fi].refFieldType;
+                // Skip empty field names
+                if String_Eq(fname, "") {
                     fi = fi + 1;
+                    continue;
                 }
-                hm.structCount = hm.structCount + 1;
+                hm.structs[si].fields[fi].name = fname;
+                if ftype != null as *TypeExpr {
+                    if ftype.kind == tekPointer && ftype.pointerPointee != null as *TypeExpr {
+                        // Pointer type: emit "TypeName*"
+                        if !String_Eq(ftype.pointerPointee.typeName, "") {
+                            hm.structs[si].fields[fi].typeName = String_Concat(ftype.pointerPointee.typeName, "*");
+                        }
+                    } else if !String_Eq(ftype.typeName, "") {
+                        hm.structs[si].fields[fi].typeName = ftype.typeName;
+                    }
+                }
+                fi = fi + 1;
             }
+            hm.structCount = hm.structCount + 1;
         }
         if decl.kind == dkFunc && decl.refBody != null as *Block {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);

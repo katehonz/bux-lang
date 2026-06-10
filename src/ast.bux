@@ -281,6 +281,9 @@ struct Decl {
     typeParam0: String,
     typeParam1: String,
     typeParamCount: int,
+    // Trait bounds for type params (e.g. <T: Comparable>)
+    typeParam0Bound: String,
+    typeParam1Bound: String,
     // Params (for functions)
     paramCount: int,
     param0: Param,
@@ -392,6 +395,8 @@ func Ast_MakeDecl(kind: int, line: uint32, col: uint32) -> Decl {
     return Decl { kind: kind, line: line, column: col, isPublic: false,
         strValue: "", strValue2: "",
         typeParam0: "", typeParam1: "", typeParamCount: 0,
+        typeParam0Bound: "", typeParam1Bound: ""
+        ,
         paramCount: 0,
         retType: null as *TypeExpr,
         refBody: null as *Block,

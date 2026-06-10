@@ -2,6 +2,9 @@
 // Validates types, resolves identifiers, checks function calls.
 module Sema {
 
+extern func bux_string_concat(a: String, b: String) -> String;
+extern func bux_int_to_str(n: int64) -> String;
+
 // ---------------------------------------------------------------------------
 // Sema context
 // ---------------------------------------------------------------------------
@@ -27,12 +30,32 @@ struct Sema {
     closureDepth: int;      // nesting depth inside closures
     currentClosureExpr: *Expr; // current closure being analyzed (for capture tracking)
     closureScope: *Scope;   // scope at which the current closure was entered
+    // Trait bounds tables
+    interfaceTable: *InterfaceEntry;
+    interfaceCount: int;
+    methodEntries: *MethodEntry;
+    methodCount: int;
 }
 
 struct SemaDiag {
     line: uint32;
     column: uint32;
     message: String;
+}
+
+// ---------------------------------------------------------------------------
+// Interface / Method tables for trait bounds checking
+// ---------------------------------------------------------------------------
+
+struct InterfaceEntry {
+    name: String,
+    decl: *Decl,
+}
+
+struct MethodEntry {
+    typeName: String,
+    methodName: String,
+    decl: *Decl,
 }
 
 // ---------------------------------------------------------------------------
@@ -556,9 +579,13 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
             if sym.kind == skFunc {
             if sym.decl != null as *Decl {
-            if sym.decl.retType != null as *TypeExpr {
-                return Sema_ResolveType(sema, sym.decl.retType);
-            }
+                // Trait bounds checking for explicit generic calls: Max<Circle>(...)
+                if expr.child1.genericTypeArgCount > 0 {
+                    Sema_CheckTraitBounds(sema, sym.decl, expr.child1.genericTypeArg0, expr.child1.genericTypeArg1, expr.child1.genericTypeArgCount, expr.line, expr.column);
+                }
+                if sym.decl.retType != null as *TypeExpr {
+                    return Sema_ResolveType(sema, sym.decl.retType);
+                }
             }
             }
         }
@@ -915,7 +942,9 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
 func Sema_CollectGlobals(sema: *Sema) {
     var decl: *Decl = sema.module.firstItem;
     var funcCount: int = 0;
+    var lastDecl: *Decl = null as *Decl;
     while decl != null as *Decl {
+        lastDecl = decl;
         let dk: int = decl.kind;
 
         // Function
@@ -1018,6 +1047,30 @@ func Sema_CollectGlobals(sema: *Sema) {
             discard Scope_Define(sema.scope, sym);
         }
 
+        // Interface
+        if dk == dkInterface {
+            if sema.interfaceCount < 64 {
+                sema.interfaceTable[sema.interfaceCount].name = decl.strValue;
+                sema.interfaceTable[sema.interfaceCount].decl = decl;
+                sema.interfaceCount = sema.interfaceCount + 1;
+            }
+        }
+
+        // Impl block (inherent methods or trait implementations)
+        if dk == dkImpl {
+            let implTypeName: String = decl.strValue;
+            var m: *Decl = decl.childDecl1;
+            while m != null as *Decl {
+                if m.kind == dkFunc && sema.methodCount < 256 {
+                    sema.methodEntries[sema.methodCount].typeName = implTypeName;
+                    sema.methodEntries[sema.methodCount].methodName = m.strValue;
+                    sema.methodEntries[sema.methodCount].decl = m;
+                    sema.methodCount = sema.methodCount + 1;
+                }
+                m = m.childDecl2;
+            }
+        }
+
         decl = decl.childDecl2;
     }
 
@@ -1108,6 +1161,67 @@ func Sema_CollectGlobals(sema: *Sema) {
 }
 
 // ---------------------------------------------------------------------------
+// Trait bounds checking
+// ---------------------------------------------------------------------------
+
+func Sema_FindInterface(sema: *Sema, name: String) -> *Decl {
+    var i: int = 0;
+    while i < sema.interfaceCount {
+        if String_Eq(sema.interfaceTable[i].name, name) {
+            return sema.interfaceTable[i].decl;
+        }
+        i = i + 1;
+    }
+    return null as *Decl;
+}
+
+func Sema_TypeHasMethod(sema: *Sema, typeName: String, methodName: String) -> bool {
+    var i: int = 0;
+    while i < sema.methodCount {
+        if String_Eq(sema.methodEntries[i].typeName, typeName) && String_Eq(sema.methodEntries[i].methodName, methodName) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+func Sema_TypeImplements(sema: *Sema, typeName: String, interfaceName: String) -> bool {
+    let iface: *Decl = Sema_FindInterface(sema, interfaceName);
+    if iface == null as *Decl {
+        return true; // Unknown interface — be permissive
+    }
+    var req: *Decl = iface.childDecl1;
+    while req != null as *Decl {
+        if req.kind == dkFunc {
+            if !Sema_TypeHasMethod(sema, typeName, req.strValue) {
+                return false;
+            }
+        }
+        req = req.childDecl2;
+    }
+    return true;
+}
+
+func Sema_CheckTraitBounds(sema: *Sema, funcDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int, line: uint32, col: uint32) {
+    // Trait bounds checking
+    if funcDecl.typeParamCount >= 1 && typeArgCount >= 1 && !String_Eq(funcDecl.typeParam0Bound, "") {
+        if !Sema_TypeImplements(sema, typeArg0, funcDecl.typeParam0Bound) {
+            let errMsg: String = String_Concat("type '", String_Concat(typeArg0, "' does not implement trait '"));
+            let errMsg2: String = String_Concat(errMsg, String_Concat(funcDecl.typeParam0Bound, "'"));
+            Sema_EmitError(sema, line, col, errMsg2);
+        }
+    }
+    if funcDecl.typeParamCount >= 2 && typeArgCount >= 2 && !String_Eq(funcDecl.typeParam1Bound, "") {
+        if !Sema_TypeImplements(sema, typeArg1, funcDecl.typeParam1Bound) {
+            let errMsg: String = String_Concat("type '", String_Concat(typeArg1, "' does not implement trait '"));
+            let errMsg2: String = String_Concat(errMsg, String_Concat(funcDecl.typeParam1Bound, "'"));
+            Sema_EmitError(sema, line, col, errMsg2);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Analyze — main entry point
 // ---------------------------------------------------------------------------
 
@@ -1124,6 +1238,10 @@ func Sema_Analyze(mod: *Module) -> *Sema {
     s.typeTable = null as *void;
     s.methodTable = null as *void;
     s.currentRetType = tyVoid;
+    s.interfaceTable = bux_alloc(64 as uint * sizeof(InterfaceEntry)) as *InterfaceEntry;
+    s.interfaceCount = 0;
+    s.methodEntries = bux_alloc(256 as uint * sizeof(MethodEntry)) as *MethodEntry;
+    s.methodCount = 0;
 
     // First pass: collect globals
     Sema_CollectGlobals(s);
