@@ -108,7 +108,7 @@ func Diagnostic_Print(diag: *Diagnostic, sourcePath: String) {
 // Compile a single .bux source file
 // ---------------------------------------------------------------------------
 
-func Cli_Compile(source: String, sourceName: String) -> String {
+func Cli_Compile(source: String, sourceName: String, targetTriple: String) -> String {
     // Phase 1: Lex
     PrintLine("  Lexing...");
     let lex: *Lexer = Lexer_Tokenize(source);
@@ -190,11 +190,11 @@ func Cli_Compile(source: String, sourceName: String) -> String {
 // Build command
 // ---------------------------------------------------------------------------
 
-func Cli_Build(srcPath: String, outPath: String) -> int {
+func Cli_Build(srcPath: String, outPath: String, targetTriple: String) -> int {
     // If building the standard project entry point, use full project build
     // which merges stdlib and supports multi-file projects
     if String_Eq(srcPath, "src/Main.bux") || String_Eq(srcPath, "src/main.bux") {
-        let rc: int = Cli_BuildProject(".");
+        let rc: int = Cli_BuildProject(".", targetTriple);
         if rc == 0 && !String_Eq(outPath, "build/main") {
             // Rename output if custom path was requested
             bux_system(String_Concat(String_Concat("mv build/main ", outPath), " 2>/dev/null || true"));
@@ -212,7 +212,7 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
     Print("Compiling ");
     PrintLine(srcPath);
 
-    let cCode: String = Cli_Compile(source, srcPath);
+    let cCode: String = Cli_Compile(source, srcPath, targetTriple);
 
     if String_Eq(cCode, "") {
         PrintLine("Compilation failed");
@@ -245,10 +245,17 @@ func Cli_Build(srcPath: String, outPath: String) -> int {
         ioPath = "../../rt/io.c";
     }
 
-    // Compile with cc
+    // Compile with cc or clang for cross-compilation
     PrintLine("Compiling C...");
     var cmdBuf: StringBuilder = StringBuilder_NewCap(512);
-    StringBuilder_Append(&cmdBuf, "cc -O2 -pthread -o ");
+    if !String_Eq(targetTriple, "") {
+        StringBuilder_Append(&cmdBuf, "clang -O2 -pthread -target ");
+        StringBuilder_Append(&cmdBuf, targetTriple);
+        StringBuilder_Append(&cmdBuf, " ");
+    } else {
+        StringBuilder_Append(&cmdBuf, "cc -O2 -pthread ");
+    }
+    StringBuilder_Append(&cmdBuf, "-o ");
     StringBuilder_Append(&cmdBuf, outPath);
     StringBuilder_Append(&cmdBuf, " ");
     StringBuilder_Append(&cmdBuf, cFile);
@@ -853,7 +860,7 @@ func Cli_Test(projectDir: String) -> int {
     Print("Testing project: ");
     PrintLine(projectDir);
     // Build the project first
-    let rc: int = Cli_BuildProject(projectDir);
+    let rc: int = Cli_BuildProject(projectDir, "");
     if rc != 0 {
         PrintLine("Test build failed");
         return rc;
@@ -879,7 +886,7 @@ func Cli_Test(projectDir: String) -> int {
     return result;
 }
 
-func Cli_BuildProject(projectDir: String) -> int {
+func Cli_BuildProject(projectDir: String, targetTriple: String) -> int {
     let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
     var outName: String = man.name;
     if String_Eq(outName, "") {
@@ -1140,7 +1147,14 @@ func Cli_BuildProject(projectDir: String) -> int {
     PrintLine("Compiling C...");
     let outBin: String = bux_path_join(buildDir, outName);
     var ccBuf: StringBuilder = StringBuilder_NewCap(512);
-    StringBuilder_Append(&ccBuf, "cc -O2 -pthread -o ");
+    if !String_Eq(targetTriple, "") {
+        StringBuilder_Append(&ccBuf, "clang -O2 -pthread -target ");
+        StringBuilder_Append(&ccBuf, targetTriple);
+        StringBuilder_Append(&ccBuf, " ");
+    } else {
+        StringBuilder_Append(&ccBuf, "cc -O2 -pthread ");
+    }
+    StringBuilder_Append(&ccBuf, "-o ");
     StringBuilder_Append(&ccBuf, outBin);
     StringBuilder_Append(&ccBuf, " ");
     StringBuilder_Append(&ccBuf, cFile);
@@ -1170,8 +1184,8 @@ func Cli_BuildProject(projectDir: String) -> int {
 // Run command — build project and execute
 // ---------------------------------------------------------------------------
 
-func Cli_RunProject(projectDir: String) -> int {
-    let rc: int = Cli_BuildProject(projectDir);
+func Cli_RunProject(projectDir: String, targetTriple: String) -> int {
+    let rc: int = Cli_BuildProject(projectDir, targetTriple);
     if rc != 0 {
         return rc;
     }
@@ -1191,6 +1205,24 @@ func Cli_RunProject(projectDir: String) -> int {
 // ---------------------------------------------------------------------------
 
 func Cli_Run(args: *String, argCount: int) -> int {
+    /* Scan for --target flag before processing command */
+    var targetTriple: String = "";
+    var ai: int = 1;
+    while ai < argCount {
+        if String_Eq(args[ai], "--target") && ai + 1 < argCount {
+            targetTriple = args[ai + 1];
+            /* Remove --target and its value from args by shifting */
+            var j: int = ai;
+            while j + 2 < argCount {
+                args[j] = args[j + 2];
+                j = j + 1;
+            }
+            argCount = argCount - 2;
+            break;
+        }
+        ai = ai + 1;
+    }
+
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
@@ -1269,13 +1301,13 @@ func Cli_Run(args: *String, argCount: int) -> int {
         let out: String = "build/main";
         if argCount >= 3 { src = args[2]; }
         if argCount >= 4 { out = args[3]; }
-        return Cli_Build(src, out);
+        return Cli_Build(src, out, targetTriple);
     }
 
     if String_Eq(cmd, "project") {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
-        return Cli_BuildProject(dir);
+        return Cli_BuildProject(dir, targetTriple);
     }
 
     if String_Eq(cmd, "test") {
@@ -1287,7 +1319,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "run") {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
-        return Cli_RunProject(dir);
+        return Cli_RunProject(dir, targetTriple);
     }
 
     Print("Unknown command: ");
