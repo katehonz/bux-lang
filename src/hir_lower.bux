@@ -973,17 +973,12 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         storeNode.child1 = alloca;
         storeNode.child2 = init;
 
-        // Auto-Drop for Array<T> in @[Checked] functions
+        // Auto-Drop for heap-allocated stdlib types in @[Checked] functions
         var deferNode: *HirNode = null as *HirNode;
         if ctx.checkedFunc && !String_Eq(alloca.typeName, "") {
-            if String_StartsWith(alloca.typeName, "Array_") {
-                let elemType: String = bux_str_slice(alloca.typeName, 6, bux_strlen(alloca.typeName) - 6);
-                // Generate Array_Free instance
-                let genFree: *Decl = Lcx_FindGenericFunc(ctx, "Array_Free");
-                if genFree != null as *Decl {
-                    Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
-                }
-                // Build defer Array_Free_T(&var)
+            let typeName: String = alloca.typeName;
+            let freeName: String = Lcx_BuildAutoDropFree(ctx, typeName);
+            if !String_Eq(freeName, "") {
                 let varRef: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                 varRef.kind = hVar;
                 varRef.strValue = stmt.strValue;
@@ -993,7 +988,7 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                 addrNode.child1 = varRef;
                 let callNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                 callNode.kind = hCall;
-                callNode.strValue = String_Concat("Array_Free_", elemType);
+                callNode.strValue = freeName;
                 callNode.child1 = addrNode;
                 deferNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                 deferNode.kind = hDefer;
@@ -1966,6 +1961,59 @@ func Lcx_EvalConstExpr(ctx: *LowerCtx, expr: *Expr) -> int {
     }
 
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-Drop: build the Free function name for a given type
+// ---------------------------------------------------------------------------
+
+func Lcx_BuildAutoDropFree(ctx: *LowerCtx, typeName: String) -> String {
+    if String_StartsWith(typeName, "Array_") {
+        let elemType: String = bux_str_slice(typeName, 6, bux_strlen(typeName) - 6);
+        let genFree: *Decl = Lcx_FindGenericFunc(ctx, "Array_Free");
+        if genFree != null as *Decl {
+            Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
+        }
+        return String_Concat("Array_Free_", elemType);
+    }
+    if String_StartsWith(typeName, "Channel_") {
+        let elemType: String = bux_str_slice(typeName, 8, bux_strlen(typeName) - 8);
+        let genFree: *Decl = Lcx_FindGenericFunc(ctx, "Channel_Free");
+        if genFree != null as *Decl {
+            Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
+        }
+        return String_Concat("Channel_Free_", elemType);
+    }
+    if String_StartsWith(typeName, "Set_") {
+        let elemType: String = bux_str_slice(typeName, 4, bux_strlen(typeName) - 4);
+        let genFree: *Decl = Lcx_FindGenericFunc(ctx, "Set_Free");
+        if genFree != null as *Decl {
+            Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
+        }
+        return String_Concat("Set_Free_", elemType);
+    }
+    if String_StartsWith(typeName, "Map_") {
+        let rest: String = bux_str_slice(typeName, 4, bux_strlen(typeName) - 4);
+        // Find underscore separator between K and V
+        var ki: int = 0;
+        var klen: int = bux_strlen(rest) as int;
+        while ki < klen {
+            if (rest[ki] as int) == ('_' as int) {
+                break;
+            }
+            ki = ki + 1;
+        }
+        if ki < klen {
+            let kType: String = bux_str_slice(rest, 0, ki);
+            let vType: String = bux_str_slice(rest, ki + 1, klen - ki - 1);
+            let genFree: *Decl = Lcx_FindGenericFunc(ctx, "Map_Free");
+            if genFree != null as *Decl {
+                Lcx_GenerateFuncInstance(ctx, genFree, kType, vType, 2);
+            }
+            return String_Concat(String_Concat("Map_Free_", kType), String_Concat("_", vType));
+        }
+    }
+    return "";
 }
 
 // ---------------------------------------------------------------------------
