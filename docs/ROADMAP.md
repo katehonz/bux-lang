@@ -1,6 +1,6 @@
 # Bux Language Roadmap — New Constructs
 
-> **Updated:** 2026-06-08 | **Status:** In Progress
+> **Updated:** 2026-06-09 | **Status:** In Progress
 
 This document tracks planned language constructs beyond Phase 8 strategy.
 
@@ -123,7 +123,7 @@ let s = HttpResponse(404, body: "err");         // positional + named mixed
 ### 8. Full Selfhost Bootstrap Loop
 **Why:** The selfhost compiler must compile itself deterministically.
 
-**Status:** 🔄 In progress — borrow checker works, but some features still missing in selfhost vs bootstrap.
+**Status:** ✅ Done — selfhost-loop produces identical C output on every iteration.
 
 ---
 
@@ -175,11 +175,9 @@ for msg in channel {
 **Implementation Steps:**
 1. ✅ Parser: extend `for` to accept `for <ident> in <expr> { ... }`
 2. ✅ Range-based: `for i in lo..hi` and `for i in lo..=hi` — desugared to `while` loop with counter
-3. 🔄 Collection-based: `for x in arr` — needs `Iter<T>` desugaring or trait-based iterator
-   - Blocked by: generic monomorphization in selfhost C backend
-   - Once unblocked: desugar to `let __iter = Array_Iter(&arr); while Iter_HasNext(&__iter) { let x = Iter_Next(&__iter); body }`
+3. ✅ Collection-based: `for x in arr` — desugared to `Array_Iter_T` + `Iter_HasNext_T` + `Iter_Next_T`
 
-**Complexity:** Medium — range-based done; collection-based needs generic monomorphization first.
+**Complexity:** Medium — done.
 
 ---
 
@@ -206,15 +204,17 @@ extend Array<T> {
 
 ---
 
-## P2 — Nice to Have
+## P1 — High Impact
 
-### 9. Trait System Enhancement
-**Why:** Currently have `interface` + `extend` (basic). Need trait bounds, associated types.
+### 9. Trait Bounds (`T: Comparable`)
+**Why:** Generic functions need constraints on type parameters.
 
 **Syntax:**
 ```bux
 func Sort<T: Comparable>(arr: &mut Array<T>) { ... }
 ```
+
+**Status:** ✅ Implemented — `@[Comparable]` attribute + `Sema_CheckTraitBounds` in selfhost.
 
 ---
 
@@ -223,13 +223,38 @@ func Sort<T: Comparable>(arr: &mut Array<T>) { ... }
 
 **Syntax:**
 ```bux
-const func Fib(n: int) -> int { ... }
-const TABLE_SIZE = Fib(20);
+const A: int = 10;
+const B: int = 20;
+const C: int = A + B;  // Evaluated at compile time
 ```
+
+**Status:** ✅ Implemented — multi-pass expression evaluator in HIR lowering.
+
+**Supported:** literals, binary/unary/ternary ops, casts, cross-const references.
 
 ---
 
-### 11. Concurrency
+### 11. Destructors / `Drop` Trait
+**Why:** `own T` exists but nothing cleans up automatically. Complements `defer`.
+
+**Syntax:**
+```bux
+extend Array<T> {
+    func Drop(self: own Array<T>) {
+        Array_Free(self);
+    }
+}
+```
+
+**Status:** ⏳ Not started.
+
+**Complexity:** High — needs ownership tracking + C backend scope emission.
+
+---
+
+## P2 — Nice to Have
+
+### 12. Concurrency
 **Why:** Go-style goroutines + channels, but without GC.
 
 **Syntax:**
@@ -249,7 +274,12 @@ Task::Spawn(Worker, rx);
 5. ✅ **Named/default parameters** — Done
 6. ✅ **Basic borrow checker (`@[Checked]`)** — Done (selfhost)
 7. ✅ **`bux fmt`, `bux test`, `bux new`, `bux init`** — Done (selfhost)
-8. ✅ **Closures (capture-less)** — Done. Enables callbacks and higher-order functions.
-9. ✅ **Closures with captures** — Done. Global env struct per closure AST node.
-10. **`for x in collection`** — Depends on closures with captures or trait system. **← NEXT**
-11. **Destructors / Drop** — High complexity, needs ownership + move semantics.
+8. ✅ **Closures (capture-less)** — Done
+9. ✅ **Closures with captures** — Done
+10. ✅ **`for x in collection`** — Done
+11. ✅ **Trait bounds (`T: Comparable`)** — Done
+12. ✅ **CTFE** — Done
+13. ✅ **Selfhost bootstrap loop** — Done
+14. **Destructors / Drop** — High complexity, needs ownership + C backend scope emission. **← NEXT**
+15. **Bounds checking on slices** — Add `Slice<T>` type with bounds-checked indexing.
+16. **Concurrency** — Green threads + channels.

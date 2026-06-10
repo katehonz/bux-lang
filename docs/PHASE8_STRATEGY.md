@@ -1,6 +1,6 @@
 # Фаза 8 — Стратегия: Как Bux печели, без да бие пряко Rust/Nim/Zig
 
-> **Дата:** 2026-06-09 | **Статус:** Фаза 8.1 ✅, 8.2 ✅ (basic), 8.3-8.6 🔄
+> **Дата:** 2026-06-09 | **Статус:** Фаза 8.1 ✅, 8.2 ✅ (basic + CTFE), 8.3-8.6 🔄
 > **Последни постижения:** defer ✅, switch/case ✅, operator overloading ✅, string interpolation ✅, named/default params ✅, basic borrow checker ✅, `bux fmt` ✅, `bux test` ✅, `bux new`/`init` ✅, selfhost-loop deterministic ✅
 > **Правило #1:** Не се биеш с някого там, където той е най-силен.
 
@@ -81,9 +81,10 @@ func MergeSorted(a: &[int], b: &[int]) -> Vec<int> { ... }
 | 8.2.1 | `@[Checked]` атрибут — вкл/изкл на checker | Да знаем кога да проверяваме | **P0 — критично** | ✅ |
 | 8.2.2 | `&T` shared reference + lifetime elision | Basic borrow без annotations | **P0** | ✅ |
 | 8.2.3 | `&mut T` exclusive mutable | Да няма data races | **P0** | ✅ |
-| 8.2.4 | Bounds checking на slices | Да няма buffer overflows | **P1** | 🔄 |
+| 8.2.4 | Bounds checking на slices (`Array_Get`/`Array_Set`) | Да няма buffer overflows | **P1** | ✅ |
 | 8.2.5 | Explicit lifetimes `'a` | Само за сложни случаи | **P2** | ⏳ |
 | 8.2.6 | `own T` + move semantics | RAII без GC | **P2** | ✅ (basic) |
+| 8.2.7 | CTFE — compile-time const evaluation | Precomputed tables | **P1** | ✅ |
 
 **Какво ПРОПУСКАМЕ (за да не стане Rust #2):**
 - ❌ Няма да правим lifetime annotations задължителни
@@ -297,14 +298,17 @@ Crates.io е непреодолимо предимство. Ние се конк
 - ✅ Closures (capture-less anonymous functions) — готово
 - ✅ Closures with captures — готово
 - ✅ `for i in lo..hi` / `for i in lo..=hi` range loops — готово
-- 🔄 `for x in collection` (Array/Map/Channel) — чака generic monomorphization
+- ✅ `for x in collection` (Array/Map/Channel) — готово
+- ✅ Trait bounds (`T: Comparable`) — готово
+- ✅ Implicit generic inference (`Array_Push(&arr, 10)`) — готово
 - 🎯 Target: Можеш да напишеш `bux` package manager на Bux
 
 ### Milestone B: "Използваем за systems programming" (2 месеца)
 - ✅ Working `@[Checked]` с basic borrow checking
 - ✅ CTFE за precomputed tables
-- 🔄 Trait bounds (`T: Comparable`)
-- 🔄 Bounds checking на slices
+- ✅ Trait bounds (`T: Comparable`)
+- ✅ Bounds checking на slices (`Array_Get`/`Array_Set`)
+- 🔄 Destructors / `Drop` trait
 - 🎯 Target: Можеш да напишеш game engine или embedded firmware
 
 ### Milestone C: "Екосистема" (6 месеца)
