@@ -844,14 +844,40 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                 }
             }
             if !String_Eq(receiverTypeName, "") {
-                let funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_get");
+                var funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_get");
                 let sym: Symbol = Scope_Lookup(ctx.scope, funcName);
-                if sym.kind == skFunc && sym.decl != null as *Decl {
+                var didMono: bool = false;
+                // Generic monomorphization: if not found or is generic, monomorphize
+                if sym.kind != skFunc || sym.decl == null as *Decl || sym.decl.typeParamCount > 0 {
+                    var typeArg0: String = "";
+                    if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+                        let refTe2: *TypeExpr = expr.child1.refType;
+                        if refTe2.kind == tekNamed && refTe2.typeArgCount > 0 {
+                            typeArg0 = refTe2.typeArgName0;
+                        } else if refTe2.kind == tekPointer && refTe2.pointerPointee != null as *TypeExpr && refTe2.pointerPointee.typeArgCount > 0 {
+                            typeArg0 = refTe2.pointerPointee.typeArgName0;
+                        }
+                    }
+                    if !String_Eq(typeArg0, "") {
+                        let genericFuncName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_get");
+                        let genDecl: *Decl = Lcx_FindGenericFunc(ctx, genericFuncName);
+                        if genDecl != null as *Decl {
+                            funcName = Lcx_GenerateFuncInstance(ctx, genDecl, typeArg0, "", 1);
+                            didMono = true;
+                        }
+                    }
+                }
+                let sym2: Symbol = Scope_Lookup(ctx.scope, funcName);
+                let targetDecl: *Decl = sym2.decl;
+                if didMono {
+                    targetDecl = sym.decl;
+                }
+                if sym2.kind == skFunc && sym2.decl != null as *Decl || didMono {
                     n.kind = hCall;
                     n.strValue = funcName;
                     let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
                     // If method expects pointer but receiver is not pointer, add &
-                    if sym.decl.paramCount > 0 && sym.decl.param0.refParamType != null as *TypeExpr && sym.decl.param0.refParamType.kind == tekPointer {
+                    if targetDecl != null as *Decl && targetDecl.paramCount > 0 && targetDecl.param0.refParamType != null as *TypeExpr && targetDecl.param0.refParamType.kind == tekPointer {
                         if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind != tekPointer {
                             let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                             addrNode.kind = hUnary;
@@ -937,9 +963,35 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                 }
             }
             if !String_Eq(receiverTypeName, "") {
-                let funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_set");
+                var funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_set");
                 let sym: Symbol = Scope_Lookup(ctx.scope, funcName);
-                if sym.kind == skFunc && sym.decl != null as *Decl {
+                var didMono: bool = false;
+                // Generic monomorphization: if not found or is generic, monomorphize
+                if sym.kind != skFunc || sym.decl == null as *Decl || sym.decl.typeParamCount > 0 {
+                    var typeArg0: String = "";
+                    if objExpr != null as *Expr && objExpr.refType != null as *TypeExpr {
+                        let refTe2: *TypeExpr = objExpr.refType;
+                        if refTe2.kind == tekNamed && refTe2.typeArgCount > 0 {
+                            typeArg0 = refTe2.typeArgName0;
+                        } else if refTe2.kind == tekPointer && refTe2.pointerPointee != null as *TypeExpr && refTe2.pointerPointee.typeArgCount > 0 {
+                            typeArg0 = refTe2.pointerPointee.typeArgName0;
+                        }
+                    }
+                    if !String_Eq(typeArg0, "") {
+                        let genericFuncName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_set");
+                        let genDecl: *Decl = Lcx_FindGenericFunc(ctx, genericFuncName);
+                        if genDecl != null as *Decl {
+                            funcName = Lcx_GenerateFuncInstance(ctx, genDecl, typeArg0, "", 1);
+                            didMono = true;
+                        }
+                    }
+                }
+                let sym2: Symbol = Scope_Lookup(ctx.scope, funcName);
+                let targetDecl: *Decl = sym2.decl;
+                if didMono {
+                    targetDecl = sym.decl;
+                }
+                if sym2.kind == skFunc && sym2.decl != null as *Decl || didMono {
                     let callNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                     callNode.kind = hCall;
                     callNode.strValue = funcName;
@@ -947,7 +999,7 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                     callNode.column = col;
                     let recv: *HirNode = Lcx_LowerExpr(ctx, objExpr);
                     // If method expects pointer but receiver is not pointer, add &
-                    if sym.decl.paramCount > 0 && sym.decl.param0.refParamType != null as *TypeExpr && sym.decl.param0.refParamType.kind == tekPointer {
+                    if targetDecl != null as *Decl && targetDecl.paramCount > 0 && targetDecl.param0.refParamType != null as *TypeExpr && targetDecl.param0.refParamType.kind == tekPointer {
                         if objExpr.refType != null as *TypeExpr && objExpr.refType.kind != tekPointer {
                             let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                             addrNode.kind = hUnary;

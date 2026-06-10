@@ -50,4 +50,12 @@ func Array_Drop<T>(self: *Array<T>) {
     Array_Free<T>(self);
 }
 
+func Array_operator_index_get<T>(self: *Array<T>, idx: uint) -> T {
+    return Array_Get<T>(self, idx);
+}
+
+func Array_operator_index_set<T>(self: *Array<T>, idx: uint, value: T) {
+    Array_Set<T>(self, idx, value);
+}
+
 }

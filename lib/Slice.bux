@@ -28,4 +28,12 @@ func Slice_Len<T>(self: *Slice<T>) -> uint {
     return self.len;
 }
 
+func Slice_operator_index_get<T>(self: *Slice<T>, idx: uint) -> T {
+    return Slice_Get<T>(self, idx);
+}
+
+func Slice_operator_index_set<T>(self: *Slice<T>, idx: uint, value: T) {
+    Slice_Set<T>(self, idx, value);
+}
+
 }
