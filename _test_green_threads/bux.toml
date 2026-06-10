@@ -1,0 +1,4 @@
+[package]
+name = "green_threads_test"
+version = "0.1.0"
+pkgType = "bin"

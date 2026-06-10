@@ -1,0 +1,29 @@
+import Std::Task;
+import Std::String;
+
+func Worker(id: int) {
+    PrintLine(String_Concat(String_Concat("Worker ", String_FromInt(id)), " starting"));
+    Task_Sleep(50);
+    PrintLine(String_Concat(String_Concat("Worker ", String_FromInt(id)), " done"));
+}
+
+func Main() -> int {
+    PrintLine("=== Green Thread Test ===");
+
+    Task_Init(4);
+
+    let h1: TaskHandle = Task_Spawn(Worker as *void, 1 as *void);
+    let h2: TaskHandle = Task_Spawn(Worker as *void, 2 as *void);
+    let h3: TaskHandle = Task_Spawn(Worker as *void, 3 as *void);
+
+    PrintLine("Waiting for tasks...");
+
+    Task_Wait(h1);
+    Task_Wait(h2);
+    Task_Wait(h3);
+
+    Task_Shutdown();
+
+    PrintLine("=== All tasks complete ===");
+    return 0;
+}

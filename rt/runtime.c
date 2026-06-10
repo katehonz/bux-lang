@@ -829,8 +829,7 @@ typedef struct {
 
 static BuxTaskPool g_task_pool = {0};
 static __thread BuxScheduler *g_scheduler = NULL;
-static __thread BuxTask *g_task_creating = NULL;
-static ucontext_t g_scheduler_context;
+static __thread ucontext_t g_scheduler_context;
 static volatile int g_scheduler_active = 0;
 
 static int64_t bux_now_ms(void);
@@ -901,7 +900,11 @@ static BuxTask* bux_find_task(BuxScheduler *sched) {
 }
 
 static void bux_task_entry(void) {
-    BuxTask *t = g_task_creating;
+    BuxTask *t = g_scheduler->current;
+    if (!t) {
+        fprintf(stderr, "bux runtime: task entry with NULL task\n");
+        abort();
+    }
     t->func(t->arg);
     t->state = BUX_TASK_FINISHED;
     swapcontext(&t->ctx, &g_scheduler_context);
@@ -987,9 +990,7 @@ void* bux_task_spawn(void* (*func)(void*), void* arg) {
     task->ctx.uc_stack.ss_sp = task->stack;
     task->ctx.uc_stack.ss_size = task->stack_size;
     task->ctx.uc_link = &g_scheduler_context;
-    g_task_creating = task;
     makecontext(&task->ctx, bux_task_entry, 0);
-    g_task_creating = NULL;
     int worker = rand() % g_task_pool.num_workers;
     bux_queue_push(g_task_pool.schedulers[worker], task);
     return task;
