@@ -1115,9 +1115,9 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         storeNode.child1 = alloca;
         storeNode.child2 = init;
 
-        // Auto-Drop for heap-allocated stdlib types in @[Checked] functions
+        // Auto-Drop for @[Drop] types and heap-allocated stdlib types
         var deferNode: *HirNode = null as *HirNode;
-        if ctx.checkedFunc && !String_Eq(alloca.typeName, "") {
+        if !String_Eq(alloca.typeName, "") {
             let typeName: String = alloca.typeName;
             let freeName: String = Lcx_BuildAutoDropFree(ctx, typeName);
             if !String_Eq(freeName, "") {
