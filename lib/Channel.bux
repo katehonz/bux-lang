@@ -24,6 +24,10 @@ func Channel_Recv<T>(ch: *Channel<T>) -> T {
     return result;
 }
 
+func Channel_Recv_Ok<T>(ch: *Channel<T>, out: *T) -> bool {
+    return bux_channel_recv(ch.handle, out as *void) != 0;
+}
+
 func Channel_Close<T>(ch: *Channel<T>) {
     bux_channel_close(ch.handle);
 }

@@ -1420,9 +1420,10 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                 // Handle already-monomorphized types like Array_int, Iter_string
                 var isArray: bool = String_Eq(collTypeName, "Array");
                 var isIter: bool = String_Eq(collTypeName, "Iter");
+                var isChannel: bool = String_Eq(collTypeName, "Channel");
 
                 // Also check for mangled names like Array_int, Iter_string
-                if !isArray && !isIter {
+                if !isArray && !isIter && !isChannel {
                     if String_StartsWith(collTypeName, "Array_") {
                         isArray = true;
                         let prefixLen: uint = 6; // len("Array_")
@@ -1439,10 +1440,108 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
                             elemTypeName = bux_str_slice(collTypeName, prefixLen, totalLen - prefixLen);
                             elemTypeKind = Lcx_ResolveTypeKindFromName(elemTypeName);
                         }
+                    } else if String_StartsWith(collTypeName, "Channel_") {
+                        isChannel = true;
+                        let prefixLen: uint = 8; // len("Channel_")
+                        let totalLen: uint = bux_strlen(collTypeName);
+                        if totalLen > prefixLen {
+                            elemTypeName = bux_str_slice(collTypeName, prefixLen, totalLen - prefixLen);
+                            elemTypeKind = Lcx_ResolveTypeKindFromName(elemTypeName);
+                        }
                     }
                 }
 
                 if !String_Eq(elemTypeName, "") {
+                    if isChannel {
+                        // Channel-based for: for x in ch { body }
+                        // Desugar to:
+                        //   while true {
+                        //       let x: T;
+                        //       if !Channel_Recv_Ok_T(&ch, &x) { break; }
+                        //       body
+                        //   }
+                        let recvOkFuncName: String = Lcx_MangleName("Channel_Recv_Ok", elemTypeName, "", 1);
+                        let genRecvOk: *Decl = Lcx_FindGenericFunc(ctx, "Channel_Recv_Ok");
+                        if genRecvOk != null as *Decl {
+                            Lcx_GenerateFuncInstance(ctx, genRecvOk, elemTypeName, "", 1);
+                        }
+
+                        let bodyBlock: *HirNode = Lcx_LowerBlock(ctx, body, -1);
+
+                        // alloca for x
+                        let xAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        xAlloca.kind = hAlloca;
+                        xAlloca.line = line;
+                        xAlloca.column = col;
+                        xAlloca.strValue = varName;
+                        xAlloca.typeName = elemTypeName;
+                        xAlloca.typeKind = elemTypeKind;
+
+                        // call Channel_Recv_Ok_T(&ch, &x)
+                        let recvOkCall: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        recvOkCall.kind = hCall;
+                        recvOkCall.strValue = recvOkFuncName;
+                        let addrCh: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        addrCh.kind = hUnary;
+                        addrCh.intValue = tkAmp;
+                        if iterExpr.kind == ekIdent {
+                            let chVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            chVar.kind = hVar;
+                            chVar.strValue = iterExpr.strValue;
+                            addrCh.child1 = chVar;
+                        } else {
+                            addrCh.child1 = Lcx_LowerExpr(ctx, iterExpr);
+                        }
+                        let addrX: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        addrX.kind = hUnary;
+                        addrX.intValue = tkAmp;
+                        let xVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        xVar.kind = hVar;
+                        xVar.strValue = varName;
+                        addrX.child1 = xVar;
+                        recvOkCall.child1 = addrCh;
+                        recvOkCall.child2 = addrX;
+
+                        // if !recvOk { break; }
+                        let notRecvOk: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        notRecvOk.kind = hUnary;
+                        notRecvOk.intValue = tkBang;
+                        notRecvOk.child1 = recvOkCall;
+                        let breakNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        breakNode.kind = hBreak;
+                        let ifNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        ifNode.kind = hIf;
+                        ifNode.child1 = notRecvOk;
+                        ifNode.child2 = breakNode;
+
+                        // Build while body block: ifNode -> bodyBlock
+                        let whileBody: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        whileBody.kind = hBlock;
+                        whileBody.child1 = xAlloca;
+                        xAlloca.child3 = ifNode;
+                        if bodyBlock != null as *HirNode && bodyBlock.kind == hBlock {
+                            ifNode.child3 = bodyBlock.child1;
+                        } else if bodyBlock != null as *HirNode {
+                            ifNode.child3 = bodyBlock;
+                        }
+
+                        // while true
+                        let trueLit: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        trueLit.kind = hLit;
+                        trueLit.intValue = tkBoolLiteral;
+                        trueLit.strValue = "true";
+                        let whileNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        whileNode.kind = hWhile;
+                        whileNode.child1 = trueLit;
+                        whileNode.child2 = whileBody;
+
+                        let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        blockNode.kind = hBlock;
+                        blockNode.line = line;
+                        blockNode.column = col;
+                        blockNode.child1 = whileNode;
+                        return blockNode;
+                    }
                     if isArray || isIter {
                         let iterVarName: String = String_Concat("__iter_", varName);
                         let iterTypeName: String = Lcx_MangleName("Iter", elemTypeName, "", 1);

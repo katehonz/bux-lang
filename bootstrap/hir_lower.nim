@@ -1717,6 +1717,9 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
         var found = false
         for avail in methods:
           if avail.name == req.declFuncName:
+            # Skip generic methods — they have no concrete C function to put in vtable
+            if avail.decl.declFuncTypeParams.len > 0:
+              break
             found = true
             methodNames.add(req.declFuncName)
             break

@@ -438,11 +438,11 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
 
     // Break / Continue
     if kind == hBreak {
-        StringBuilder_Append(&cbe.sb, "break");
+        StringBuilder_Append(&cbe.sb, "break;");
         return;
     }
     if kind == hContinue {
-        StringBuilder_Append(&cbe.sb, "continue");
+        StringBuilder_Append(&cbe.sb, "continue;");
         return;
     }
 
@@ -609,7 +609,7 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
             }
             CBE_EmitExpr(cbe, child);
             // Add semicolon for statements that need it
-            if child.kind != hBlock && child.kind != hIf && child.kind != hWhile && child.kind != hLoop {
+            if child.kind != hBlock && child.kind != hIf && child.kind != hWhile && child.kind != hLoop && child.kind != hBreak && child.kind != hContinue {
                 StringBuilder_Append(&cbe.sb, ";");
             }
             StringBuilder_Append(&cbe.sb, "\n");
