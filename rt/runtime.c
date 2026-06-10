@@ -763,11 +763,33 @@ int bux_dir_exists(const char* path) {
 }
 
 /* ============================================================================
- * Concurrency primitives (Phase 8.3)
+ * Green Thread Scheduler (M:N, cooperative, work-stealing)
  * ============================================================================ */
 
-typedef struct {
-    pthread_t thread;
+#include <signal.h>
+#include <sys/time.h>
+
+#define BUX_TASK_STACK_SIZE (256 * 1024)
+#define BUX_TASK_QUANTUM_US 10000
+
+typedef enum {
+    BUX_TASK_READY,
+    BUX_TASK_RUNNING,
+    BUX_TASK_BLOCKED,
+    BUX_TASK_FINISHED,
+} BuxTaskState;
+
+typedef struct BuxTask {
+    ucontext_t ctx;
+    void *stack;
+    size_t stack_size;
+    void (*func)(void*);
+    void *arg;
+    BuxTaskState state;
+    int id;
+    struct BuxTask *next;
+    void *waiting_on;
+    int64_t wake_at;
 } BuxTask;
 
 typedef struct {
@@ -783,35 +805,242 @@ typedef struct {
     int closed;
 } BuxChannel;
 
+typedef struct BuxScheduler {
+    BuxTask *queue_head;
+    BuxTask *queue_tail;
+    int queue_count;
+    BuxTask *current;
+    pthread_t os_thread;
+    int worker_id;
+    struct BuxScheduler **all_schedulers;
+    int num_workers;
+    pthread_mutex_t lock;
+    pthread_cond_t has_work;
+} BuxScheduler;
+
+typedef struct {
+    BuxScheduler **schedulers;
+    int num_workers;
+    pthread_mutex_t spawn_lock;
+    int next_task_id;
+    int shutdown;
+    int initialized;
+} BuxTaskPool;
+
+static BuxTaskPool g_task_pool = {0};
+static __thread BuxScheduler *g_scheduler = NULL;
+static __thread BuxTask *g_task_creating = NULL;
+static ucontext_t g_scheduler_context;
+static volatile int g_scheduler_active = 0;
+
+static int64_t bux_now_ms(void);
+
+static void bux_queue_push(BuxScheduler *sched, BuxTask *task) {
+    pthread_mutex_lock(&sched->lock);
+    task->next = sched->queue_head;
+    sched->queue_head = task;
+    if (!sched->queue_tail) sched->queue_tail = task;
+    sched->queue_count++;
+    pthread_cond_signal(&sched->has_work);
+    pthread_mutex_unlock(&sched->lock);
+}
+
+static BuxTask* bux_queue_pop(BuxScheduler *sched) {
+    pthread_mutex_lock(&sched->lock);
+    BuxTask *task = sched->queue_head;
+    if (task) {
+        sched->queue_head = task->next;
+        if (!sched->queue_head) sched->queue_tail = NULL;
+        task->next = NULL;
+        sched->queue_count--;
+    }
+    pthread_mutex_unlock(&sched->lock);
+    return task;
+}
+
+static BuxTask* bux_queue_steal(BuxScheduler *victim) {
+    pthread_mutex_lock(&victim->lock);
+    BuxTask *task = NULL;
+    if (victim->queue_tail && victim->queue_tail != victim->queue_head) {
+        BuxTask *prev = victim->queue_head;
+        while (prev->next && prev->next != victim->queue_tail) {
+            prev = prev->next;
+        }
+        task = victim->queue_tail;
+        victim->queue_tail = prev;
+        prev->next = NULL;
+        victim->queue_count--;
+    } else if (victim->queue_tail) {
+        task = victim->queue_head;
+        victim->queue_head = NULL;
+        victim->queue_tail = NULL;
+        victim->queue_count--;
+    }
+    pthread_mutex_unlock(&victim->lock);
+    return task;
+}
+
+static BuxScheduler* bux_pick_victim(BuxScheduler *self) {
+    if (g_task_pool.num_workers <= 1) return NULL;
+    int victim_id = rand() % g_task_pool.num_workers;
+    if (victim_id == self->worker_id) {
+        victim_id = (victim_id + 1) % g_task_pool.num_workers;
+    }
+    return g_task_pool.schedulers[victim_id];
+}
+
+static BuxTask* bux_find_task(BuxScheduler *sched) {
+    BuxTask *task = bux_queue_pop(sched);
+    if (task) return task;
+    BuxScheduler *victim = bux_pick_victim(sched);
+    if (victim) {
+        task = bux_queue_steal(victim);
+        if (task) return task;
+    }
+    return NULL;
+}
+
+static void bux_task_entry(void) {
+    BuxTask *t = g_task_creating;
+    t->func(t->arg);
+    t->state = BUX_TASK_FINISHED;
+    swapcontext(&t->ctx, &g_scheduler_context);
+}
+
+static void bux_task_switch(BuxTask *from, BuxTask *to) {
+    if (from) from->state = BUX_TASK_READY;
+    to->state = BUX_TASK_RUNNING;
+    g_scheduler->current = to;
+    swapcontext(from ? &from->ctx : &g_scheduler_context, &to->ctx);
+}
+
+static void bux_scheduler_run(BuxScheduler *sched) {
+    g_scheduler = sched;
+    while (!g_task_pool.shutdown) {
+        BuxTask *task = bux_find_task(sched);
+        if (task) {
+            bux_task_switch(NULL, task);
+            if (sched->current && sched->current->state == BUX_TASK_FINISHED) {
+                sched->current = NULL;
+            } else if (sched->current && sched->current->state == BUX_TASK_READY) {
+                bux_queue_push(sched, sched->current);
+                sched->current = NULL;
+            }
+        } else {
+            struct timespec ts = {0, 1000000};
+            nanosleep(&ts, NULL);
+        }
+    }
+}
+
+static void bux_scheduler_init(int num_workers) {
+    if (g_task_pool.initialized) return;
+    if (num_workers <= 0) num_workers = 4;
+    pthread_mutex_init(&g_task_pool.spawn_lock, NULL);
+    g_task_pool.num_workers = num_workers;
+    g_task_pool.schedulers = (BuxScheduler**)calloc(num_workers, sizeof(BuxScheduler*));
+    for (int i = 0; i < num_workers; i++) {
+        BuxScheduler *sched = (BuxScheduler*)calloc(1, sizeof(BuxScheduler));
+        pthread_mutex_init(&sched->lock, NULL);
+        pthread_cond_init(&sched->has_work, NULL);
+        sched->worker_id = i;
+        sched->all_schedulers = g_task_pool.schedulers;
+        sched->num_workers = num_workers;
+        g_task_pool.schedulers[i] = sched;
+    }
+    for (int i = 0; i < num_workers; i++) {
+        pthread_create(&g_task_pool.schedulers[i]->os_thread, NULL,
+                       (void*(*)(void*))bux_scheduler_run,
+                       g_task_pool.schedulers[i]);
+    }
+    g_task_pool.initialized = 1;
+    g_scheduler_active = 1;
+}
+
+static void bux_scheduler_shutdown(void) {
+    if (!g_task_pool.initialized) return;
+    g_task_pool.shutdown = 1;
+    for (int i = 0; i < g_task_pool.num_workers; i++) {
+        pthread_join(g_task_pool.schedulers[i]->os_thread, NULL);
+    }
+}
+
 /* Task / thread spawning */
 void* bux_task_spawn(void* (*func)(void*), void* arg) {
-    BuxTask* task = (BuxTask*)malloc(sizeof(BuxTask));
+    if (!g_task_pool.initialized) {
+        bux_scheduler_init(4);
+    }
+    BuxTask *task = (BuxTask*)calloc(1, sizeof(BuxTask));
     if (!task) {
         fprintf(stderr, "bux runtime: out of memory (task spawn)\n");
         abort();
     }
-    int rc = pthread_create(&task->thread, NULL, func, arg);
-    if (rc != 0) {
-        fprintf(stderr, "bux runtime: pthread_create failed (%d)\n", rc);
-        free(task);
-        return NULL;
-    }
+    task->stack = malloc(BUX_TASK_STACK_SIZE);
+    task->stack_size = BUX_TASK_STACK_SIZE;
+    task->func = (void(*)(void*))func;
+    task->arg = arg;
+    task->state = BUX_TASK_READY;
+    pthread_mutex_lock(&g_task_pool.spawn_lock);
+    task->id = g_task_pool.next_task_id++;
+    pthread_mutex_unlock(&g_task_pool.spawn_lock);
+    getcontext(&task->ctx);
+    task->ctx.uc_stack.ss_sp = task->stack;
+    task->ctx.uc_stack.ss_size = task->stack_size;
+    task->ctx.uc_link = &g_scheduler_context;
+    g_task_creating = task;
+    makecontext(&task->ctx, bux_task_entry, 0);
+    g_task_creating = NULL;
+    int worker = rand() % g_task_pool.num_workers;
+    bux_queue_push(g_task_pool.schedulers[worker], task);
     return task;
 }
 
+void bux_task_sleep(int64_t ms);
+
 void bux_task_join(void* handle) {
     if (!handle) return;
-    BuxTask* task = (BuxTask*)handle;
-    pthread_join(task->thread, NULL);
+    BuxTask *task = (BuxTask*)handle;
+    while (task->state != BUX_TASK_FINISHED) {
+        bux_task_sleep(1);
+    }
+    free(task->stack);
     free(task);
 }
 
 void bux_task_sleep(int64_t ms) {
     if (ms <= 0) return;
-    struct timespec ts;
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (ms % 1000) * 1000000;
-    nanosleep(&ts, NULL);
+    if (g_scheduler && g_scheduler->current) {
+        g_scheduler->current->wake_at = bux_now_ms() + ms;
+        g_scheduler->current->state = BUX_TASK_BLOCKED;
+        swapcontext(&g_scheduler->current->ctx, &g_scheduler_context);
+    } else {
+        struct timespec ts;
+        ts.tv_sec = ms / 1000;
+        ts.tv_nsec = (ms % 1000) * 1000000;
+        nanosleep(&ts, NULL);
+    }
+}
+
+void bux_task_yield(void) {
+    if (g_scheduler && g_scheduler->current) {
+        g_scheduler->current->state = BUX_TASK_READY;
+        swapcontext(&g_scheduler->current->ctx, &g_scheduler_context);
+    }
+}
+
+int bux_task_current_id(void) {
+    if (g_scheduler && g_scheduler->current) {
+        return g_scheduler->current->id;
+    }
+    return -1;
+}
+
+void bux_task_init(int num_workers) {
+    bux_scheduler_init(num_workers);
+}
+
+void bux_task_shutdown(void) {
+    bux_scheduler_shutdown();
 }
 
 /* Channel implementation */
