@@ -46,4 +46,8 @@ func Array_Free<T>(self: *Array<T>) {
     self.cap = 0;
 }
 
+func Array_Drop<T>(self: *Array<T>) {
+    Array_Free<T>(self);
+}
+
 }

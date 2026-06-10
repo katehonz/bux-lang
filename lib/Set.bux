@@ -68,4 +68,8 @@ func Set_Free<T>(s: *Set<T>) {
     s.len = 0;
 }
 
+func Set_Drop<T>(s: *Set<T>) {
+    Set_Free<T>(s);
+}
+
 }

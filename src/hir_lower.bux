@@ -2104,11 +2104,16 @@ func Lcx_EvalConstExpr(ctx: *LowerCtx, expr: *Expr) -> int {
 func Lcx_BuildAutoDropFree(ctx: *LowerCtx, typeName: String) -> String {
     if String_StartsWith(typeName, "Array_") {
         let elemType: String = bux_str_slice(typeName, 6, bux_strlen(typeName) - 6);
+        // Ensure inner free is also monomorphized since Drop calls Free
         let genFree: *Decl = Lcx_FindGenericFunc(ctx, "Array_Free");
         if genFree != null as *Decl {
             Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
         }
-        return String_Concat("Array_Free_", elemType);
+        let genDrop: *Decl = Lcx_FindGenericFunc(ctx, "Array_Drop");
+        if genDrop != null as *Decl {
+            Lcx_GenerateFuncInstance(ctx, genDrop, elemType, "", 1);
+        }
+        return String_Concat("Array_Drop_", elemType);
     }
     if String_StartsWith(typeName, "Channel_") {
         let elemType: String = bux_str_slice(typeName, 8, bux_strlen(typeName) - 8);
@@ -2116,7 +2121,11 @@ func Lcx_BuildAutoDropFree(ctx: *LowerCtx, typeName: String) -> String {
         if genFree != null as *Decl {
             Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
         }
-        return String_Concat("Channel_Free_", elemType);
+        let genDrop: *Decl = Lcx_FindGenericFunc(ctx, "Channel_Drop");
+        if genDrop != null as *Decl {
+            Lcx_GenerateFuncInstance(ctx, genDrop, elemType, "", 1);
+        }
+        return String_Concat("Channel_Drop_", elemType);
     }
     if String_StartsWith(typeName, "Set_") {
         let elemType: String = bux_str_slice(typeName, 4, bux_strlen(typeName) - 4);
@@ -2124,7 +2133,11 @@ func Lcx_BuildAutoDropFree(ctx: *LowerCtx, typeName: String) -> String {
         if genFree != null as *Decl {
             Lcx_GenerateFuncInstance(ctx, genFree, elemType, "", 1);
         }
-        return String_Concat("Set_Free_", elemType);
+        let genDrop: *Decl = Lcx_FindGenericFunc(ctx, "Set_Drop");
+        if genDrop != null as *Decl {
+            Lcx_GenerateFuncInstance(ctx, genDrop, elemType, "", 1);
+        }
+        return String_Concat("Set_Drop_", elemType);
     }
     if String_StartsWith(typeName, "Map_") {
         let rest: String = bux_str_slice(typeName, 4, bux_strlen(typeName) - 4);
@@ -2144,7 +2157,11 @@ func Lcx_BuildAutoDropFree(ctx: *LowerCtx, typeName: String) -> String {
             if genFree != null as *Decl {
                 Lcx_GenerateFuncInstance(ctx, genFree, kType, vType, 2);
             }
-            return String_Concat(String_Concat("Map_Free_", kType), String_Concat("_", vType));
+            let genDrop: *Decl = Lcx_FindGenericFunc(ctx, "Map_Drop");
+            if genDrop != null as *Decl {
+                Lcx_GenerateFuncInstance(ctx, genDrop, kType, vType, 2);
+            }
+            return String_Concat(String_Concat("Map_Drop_", kType), String_Concat("_", vType));
         }
     }
     return "";
@@ -2236,7 +2253,7 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             }
             hm.structCount = hm.structCount + 1;
         }
-        if decl.kind == dkFunc && decl.refBody != null as *Block {
+        if decl.kind == dkFunc && decl.refBody != null as *Block && decl.typeParamCount == 0 {
             let f: *HirFunc = Lcx_LowerFunc(ctx, decl);
             ctx.funcs[ctx.funcCount] = *f;
             ctx.funcCount = ctx.funcCount + 1;

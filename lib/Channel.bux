@@ -32,6 +32,10 @@ func Channel_Free<T>(ch: *Channel<T>) {
     bux_channel_free(ch.handle);
 }
 
+func Channel_Drop<T>(ch: *Channel<T>) {
+    Channel_Free<T>(ch);
+}
+
 /* Convenience wrappers for common types */
 func Channel_SendInt(ch: *Channel<int>, value: int) {
     bux_channel_send(ch.handle, (&value) as *void);

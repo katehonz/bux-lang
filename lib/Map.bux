@@ -87,6 +87,10 @@ func Map_Free<K, V>(m: *Map<K, V>) {
     m.len = 0;
 }
 
+func Map_Drop<K, V>(m: *Map<K, V>) {
+    Map_Free<K, V>(m);
+}
+
 // ---------------------------------------------------------------------------
 // StringMap<V> — specialized Map for String keys, using strcmp
 // ---------------------------------------------------------------------------
