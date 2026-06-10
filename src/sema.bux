@@ -491,6 +491,50 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         if op == tkAssign || (op >= tkPlusAssign && op <= tkShrAssign) {
             return left;
         }
+
+        // Operator overloading: check method table
+        var opMethodName: String = "";
+        if op == tkPlus { opMethodName = "operator_add"; }
+        else if op == tkMinus { opMethodName = "operator_sub"; }
+        else if op == tkStar { opMethodName = "operator_mul"; }
+        else if op == tkSlash { opMethodName = "operator_div"; }
+        else if op == tkPercent { opMethodName = "operator_mod"; }
+        else if op == tkEq { opMethodName = "operator_eq"; }
+        else if op == tkNe { opMethodName = "operator_ne"; }
+        else if op == tkLt { opMethodName = "operator_lt"; }
+        else if op == tkLe { opMethodName = "operator_le"; }
+        else if op == tkGt { opMethodName = "operator_gt"; }
+        else if op == tkGe { opMethodName = "operator_ge"; }
+        else if op == tkAmp { opMethodName = "operator_bitand"; }
+        else if op == tkPipe { opMethodName = "operator_bitor"; }
+        else if op == tkCaret { opMethodName = "operator_xor"; }
+        else if op == tkShl { opMethodName = "operator_shl"; }
+        else if op == tkShr { opMethodName = "operator_shr"; }
+
+        if !String_Eq(opMethodName, "") && left == tyNamed {
+            var receiverTypeName: String = "";
+            if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+                receiverTypeName = expr.child1.refType.typeName;
+            }
+            if !String_Eq(receiverTypeName, "") {
+                var i: int = 0;
+                while i < sema.methodCount {
+                    if String_Eq(sema.methodEntries[i].typeName, receiverTypeName) &&
+                       String_Eq(sema.methodEntries[i].methodName, opMethodName) {
+                        let methodDecl: *Decl = sema.methodEntries[i].decl;
+                        if methodDecl != null as *Decl && methodDecl.paramCount == 2 {
+                            if methodDecl.retType != null as *TypeExpr {
+                                expr.refType = methodDecl.retType;
+                                return Sema_ResolveType(sema, methodDecl.retType);
+                            }
+                            return tyUnknown;
+                        }
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+
         // Comparison operators return bool
         if op >= tkEq && op <= tkGe { return tyBool; }
         // Logical operators return bool
@@ -644,6 +688,33 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         let idx: int = Sema_CheckExpr(sema, expr.child2);
         if !Sema_IsNumeric(idx) && idx != tyUnknown {
             Sema_EmitError(sema, expr.line, expr.column, "index must be integer");
+        }
+        // Operator overloading: check method table for operator_index_get
+        var receiverTypeName: String = "";
+        if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+            let refTe: *TypeExpr = expr.child1.refType;
+            if refTe.kind == tekNamed {
+                receiverTypeName = refTe.typeName;
+            } else if refTe.kind == tekPointer && refTe.pointerPointee != null as *TypeExpr && refTe.pointerPointee.kind == tekNamed {
+                receiverTypeName = refTe.pointerPointee.typeName;
+            }
+        }
+        if !String_Eq(receiverTypeName, "") {
+            var i: int = 0;
+            while i < sema.methodCount {
+                if String_Eq(sema.methodEntries[i].typeName, receiverTypeName) &&
+                   String_Eq(sema.methodEntries[i].methodName, "operator_index_get") {
+                    let methodDecl: *Decl = sema.methodEntries[i].decl;
+                    if methodDecl != null as *Decl && methodDecl.paramCount == 2 {
+                        if methodDecl.retType != null as *TypeExpr {
+                            expr.refType = methodDecl.retType;
+                            return Sema_ResolveType(sema, methodDecl.retType);
+                        }
+                        return tyUnknown;
+                    }
+                }
+                i = i + 1;
+            }
         }
         return tyUnknown;
     }
@@ -1172,6 +1243,39 @@ func Sema_CollectGlobals(sema: *Sema) {
             }
         }
 
+        decl = decl.childDecl2;
+    }
+
+    // Pass 3: auto-register func Type_Method(self: Type, ...) as methods
+    decl = sema.module.firstItem;
+    while decl != null as *Decl {
+        if decl.kind == dkFunc && decl.paramCount > 0 {
+            let selfParam: Param = decl.param0;
+            if String_Eq(selfParam.name, "self") {
+                var typeName: String = "";
+                var i: int = bux_strlen(decl.strValue) as int - 1;
+                while i > 0 {
+                    if decl.strValue[i] as int == 95 { // '_'
+                        let prefix: String = bux_str_slice(decl.strValue, 0, i as uint);
+                        let typeSym: Symbol = Scope_Lookup(sema.scope, prefix);
+                        if typeSym.kind == skType && typeSym.decl != null as *Decl && typeSym.decl.kind == dkStruct {
+                            typeName = prefix;
+                            break;
+                        }
+                    }
+                    i = i - 1;
+                }
+                if !String_Eq(typeName, "") {
+                    let methodName: String = bux_str_slice(decl.strValue, (i + 1) as uint, bux_strlen(decl.strValue) - (i + 1) as uint);
+                    if sema.methodCount < 256 {
+                        sema.methodEntries[sema.methodCount].typeName = typeName;
+                        sema.methodEntries[sema.methodCount].methodName = methodName;
+                        sema.methodEntries[sema.methodCount].decl = decl;
+                        sema.methodCount = sema.methodCount + 1;
+                    }
+                }
+            }
+        }
         decl = decl.childDecl2;
     }
 }

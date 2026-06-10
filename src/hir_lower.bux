@@ -483,6 +483,63 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             n.child2 = Lcx_LowerExpr(ctx, expr.child2);
             return n;
         }
+
+        // Operator overloading: try method call
+        var opMethodName: String = "";
+        if expr.intValue == tkPlus { opMethodName = "operator_add"; }
+        else if expr.intValue == tkMinus { opMethodName = "operator_sub"; }
+        else if expr.intValue == tkStar { opMethodName = "operator_mul"; }
+        else if expr.intValue == tkSlash { opMethodName = "operator_div"; }
+        else if expr.intValue == tkPercent { opMethodName = "operator_mod"; }
+        else if expr.intValue == tkEq { opMethodName = "operator_eq"; }
+        else if expr.intValue == tkNe { opMethodName = "operator_ne"; }
+        else if expr.intValue == tkLt { opMethodName = "operator_lt"; }
+        else if expr.intValue == tkLe { opMethodName = "operator_le"; }
+        else if expr.intValue == tkGt { opMethodName = "operator_gt"; }
+        else if expr.intValue == tkGe { opMethodName = "operator_ge"; }
+        else if expr.intValue == tkAmp { opMethodName = "operator_bitand"; }
+        else if expr.intValue == tkPipe { opMethodName = "operator_bitor"; }
+        else if expr.intValue == tkCaret { opMethodName = "operator_xor"; }
+        else if expr.intValue == tkShl { opMethodName = "operator_shl"; }
+        else if expr.intValue == tkShr { opMethodName = "operator_shr"; }
+
+        if !String_Eq(opMethodName, "") {
+            var receiverTypeName: String = "";
+            if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+                let refTe: *TypeExpr = expr.child1.refType;
+                if refTe.kind == tekNamed {
+                    receiverTypeName = refTe.typeName;
+                } else if refTe.kind == tekPointer && refTe.pointerPointee != null as *TypeExpr && refTe.pointerPointee.kind == tekNamed {
+                    receiverTypeName = refTe.pointerPointee.typeName;
+                }
+            }
+            if !String_Eq(receiverTypeName, "") {
+                let funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), opMethodName);
+                let sym: Symbol = Scope_Lookup(ctx.scope, funcName);
+                if sym.kind == skFunc && sym.decl != null as *Decl {
+                    n.kind = hCall;
+                    n.strValue = funcName;
+                    let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
+                    // If method expects pointer but receiver is not pointer, add &
+                    if sym.decl.paramCount > 0 && sym.decl.param0.refParamType != null as *TypeExpr && sym.decl.param0.refParamType.kind == tekPointer {
+                        if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind != tekPointer {
+                            let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            addrNode.kind = hUnary;
+                            addrNode.intValue = tkAmp;
+                            addrNode.child1 = recv;
+                            n.child1 = addrNode;
+                        } else {
+                            n.child1 = recv;
+                        }
+                    } else {
+                        n.child1 = recv;
+                    }
+                    n.child2 = Lcx_LowerExpr(ctx, expr.child2);
+                    return n;
+                }
+            }
+        }
+
         n.kind = hBinary;
         n.intValue = expr.intValue; // operator
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
@@ -775,6 +832,44 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             return n;
         }
 
+        // Operator overloading: try operator_index_get
+        if expr.child1 != null as *Expr {
+            var receiverTypeName: String = "";
+            if expr.child1.refType != null as *TypeExpr {
+                let refTe: *TypeExpr = expr.child1.refType;
+                if refTe.kind == tekNamed {
+                    receiverTypeName = refTe.typeName;
+                } else if refTe.kind == tekPointer && refTe.pointerPointee != null as *TypeExpr && refTe.pointerPointee.kind == tekNamed {
+                    receiverTypeName = refTe.pointerPointee.typeName;
+                }
+            }
+            if !String_Eq(receiverTypeName, "") {
+                let funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_get");
+                let sym: Symbol = Scope_Lookup(ctx.scope, funcName);
+                if sym.kind == skFunc && sym.decl != null as *Decl {
+                    n.kind = hCall;
+                    n.strValue = funcName;
+                    let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
+                    // If method expects pointer but receiver is not pointer, add &
+                    if sym.decl.paramCount > 0 && sym.decl.param0.refParamType != null as *TypeExpr && sym.decl.param0.refParamType.kind == tekPointer {
+                        if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind != tekPointer {
+                            let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            addrNode.kind = hUnary;
+                            addrNode.intValue = tkAmp;
+                            addrNode.child1 = recv;
+                            n.child1 = addrNode;
+                        } else {
+                            n.child1 = recv;
+                        }
+                    } else {
+                        n.child1 = recv;
+                    }
+                    n.child2 = Lcx_LowerExpr(ctx, expr.child2);
+                    return n;
+                }
+            }
+        }
+
         n.kind = hIndexPtr;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         n.child2 = Lcx_LowerExpr(ctx, expr.child2);
@@ -826,6 +921,53 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                 callNode.extraCount = 1;
 
                 return callNode;
+            }
+        }
+
+        // Operator overloading: try operator_index_set
+        if expr.intValue == tkAssign && expr.child1 != null as *Expr && expr.child1.kind == ekIndex && expr.child1.child1 != null as *Expr {
+            var receiverTypeName: String = "";
+            let objExpr: *Expr = expr.child1.child1;
+            if objExpr.refType != null as *TypeExpr {
+                let refTe: *TypeExpr = objExpr.refType;
+                if refTe.kind == tekNamed {
+                    receiverTypeName = refTe.typeName;
+                } else if refTe.kind == tekPointer && refTe.pointerPointee != null as *TypeExpr && refTe.pointerPointee.kind == tekNamed {
+                    receiverTypeName = refTe.pointerPointee.typeName;
+                }
+            }
+            if !String_Eq(receiverTypeName, "") {
+                let funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), "operator_index_set");
+                let sym: Symbol = Scope_Lookup(ctx.scope, funcName);
+                if sym.kind == skFunc && sym.decl != null as *Decl {
+                    let callNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    callNode.kind = hCall;
+                    callNode.strValue = funcName;
+                    callNode.line = line;
+                    callNode.column = col;
+                    let recv: *HirNode = Lcx_LowerExpr(ctx, objExpr);
+                    // If method expects pointer but receiver is not pointer, add &
+                    if sym.decl.paramCount > 0 && sym.decl.param0.refParamType != null as *TypeExpr && sym.decl.param0.refParamType.kind == tekPointer {
+                        if objExpr.refType != null as *TypeExpr && objExpr.refType.kind != tekPointer {
+                            let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                            addrNode.kind = hUnary;
+                            addrNode.intValue = tkAmp;
+                            addrNode.child1 = recv;
+                            callNode.child1 = addrNode;
+                        } else {
+                            callNode.child1 = recv;
+                        }
+                    } else {
+                        callNode.child1 = recv;
+                    }
+                    callNode.child2 = Lcx_LowerExpr(ctx, expr.child1.child2);
+                    let extra: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                    extra.node = Lcx_LowerExpr(ctx, expr.child2);
+                    extra.next = null as *HirArgList;
+                    callNode.extraData = extra as *void;
+                    callNode.extraCount = 1;
+                    return callNode;
+                }
             }
         }
 
