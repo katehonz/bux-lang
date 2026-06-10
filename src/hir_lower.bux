@@ -1838,6 +1838,93 @@ func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
 }
 
 // ---------------------------------------------------------------------------
+// Compile-Time Function Execution (CTFE) — constant expression evaluator
+// ---------------------------------------------------------------------------
+
+func Lcx_EvalConstExpr(ctx: *LowerCtx, expr: *Expr) -> int {
+    if expr == null as *Expr {
+        return 0;
+    }
+
+    // Literal integer
+    if expr.kind == ekLiteral {
+        return expr.intValue;
+    }
+
+    // Reference to another constant
+    if expr.kind == ekIdent {
+        let name: String = expr.strValue;
+        let i: int = 0;
+        while i < ctx.hm.constCount {
+            if String_Eq(ctx.hm.consts[i].name, name) {
+                return ctx.hm.consts[i].value;
+            }
+            i = i + 1;
+        }
+        return 0;
+    }
+
+    // Unary operators
+    if expr.kind == ekUnary {
+        let operand: int = Lcx_EvalConstExpr(ctx, expr.child1);
+        let op: int = expr.intValue;
+        if op == tkMinus { return -operand; }
+        if op == tkBang { return (operand == 0) as int; }
+        if op == tkTilde { return ~operand; }
+        return operand;
+    }
+
+    // Binary operators
+    if expr.kind == ekBinary {
+        let left: int = Lcx_EvalConstExpr(ctx, expr.child1);
+        let right: int = Lcx_EvalConstExpr(ctx, expr.child2);
+        let op: int = expr.intValue;
+        if op == tkPlus { return left + right; }
+        if op == tkMinus { return left - right; }
+        if op == tkStar { return left * right; }
+        if op == tkSlash {
+            if right == 0 { return 0; }
+            return left / right;
+        }
+        if op == tkPercent {
+            if right == 0 { return 0; }
+            return left % right;
+        }
+        if op == tkLt { return (left < right) as int; }
+        if op == tkLe { return (left <= right) as int; }
+        if op == tkGt { return (left > right) as int; }
+        if op == tkGe { return (left >= right) as int; }
+        if op == tkEq { return (left == right) as int; }
+        if op == tkNe { return (left != right) as int; }
+        if op == tkAmp { return left & right; }
+        if op == tkPipe { return left | right; }
+        if op == tkCaret { return left ^ right; }
+        if op == tkShl { return left << right; }
+        if op == tkShr { return left >> right; }
+        if op == tkAmpAmp { return (left != 0 && right != 0) as int; }
+        if op == tkPipePipe { return (left != 0 || right != 0) as int; }
+        return 0;
+    }
+
+    // Ternary operator
+    if expr.kind == ekTernary {
+        let cond: int = Lcx_EvalConstExpr(ctx, expr.child1);
+        if cond != 0 {
+            return Lcx_EvalConstExpr(ctx, expr.child2);
+        } else {
+            return Lcx_EvalConstExpr(ctx, expr.child3);
+        }
+    }
+
+    // Cast — evaluate operand (types don't affect integer values)
+    if expr.kind == ekCast {
+        return Lcx_EvalConstExpr(ctx, expr.child1);
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Module lowering — main entry point
 // ---------------------------------------------------------------------------
 
@@ -1947,16 +2034,11 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             ctx.externFuncs[ctx.externCount] = *f;
             ctx.externCount = ctx.externCount + 1;
         }
+        // Pass 1: collect const names (expressions evaluated in Pass 2)
         if decl.kind == dkConst && hm.constCount < 512 {
             let ci: int = hm.constCount;
             hm.consts[ci].name = decl.strValue;
-            var val: int = 0;
-            if decl.constValue != null as *Expr {
-                if decl.constValue.kind == ekLiteral {
-                    val = decl.constValue.intValue;
-                }
-            }
-            hm.consts[ci].value = val;
+            hm.consts[ci].value = 0;
             hm.constCount = hm.constCount + 1;
         }
         if decl.kind == dkEnum {
@@ -1998,6 +2080,30 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
         decl = decl.childDecl2;
     }
 
+
+    // Pass 2: evaluate all const expressions (multiple passes for forward refs)
+    var changed: bool = true;
+    var maxPasses: int = 10;
+    var pass: int = 0;
+    while changed && pass < maxPasses {
+        changed = false;
+        decl = mod.firstItem;
+        var ci2: int = 0;
+        while decl != null as *Decl && ci2 < hm.constCount {
+            if decl.kind == dkConst {
+                if decl.constValue != null as *Expr {
+                    let newVal: int = Lcx_EvalConstExpr(ctx, decl.constValue);
+                    if newVal != hm.consts[ci2].value {
+                        hm.consts[ci2].value = newVal;
+                        changed = true;
+                    }
+                }
+                ci2 = ci2 + 1;
+            }
+            decl = decl.childDecl2;
+        }
+        pass = pass + 1;
+    }
 
     hm.funcCount = ctx.funcCount;
     hm.funcs = ctx.funcs;
