@@ -32,6 +32,94 @@ func DirExists(path: String) -> bool {
     return bux_dir_exists(path) != 0;
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostic formatting (Rust-style errors with snippets)
+// ---------------------------------------------------------------------------
+
+struct Diagnostic {
+    message: String;
+    line: uint32;
+    column: uint32;
+    severity: int;
+}
+
+/* Read a single line from a file (1-based). Returns "" on error or EOF. */
+func Diagnostic_GetLine(path: String, lineNum: uint32) -> String {
+    let content: String = bux_read_file(path);
+    if String_Eq(content, "") { return ""; }
+
+    var currentLine: uint32 = 1;
+    var pos: uint = 0;
+    let len: uint = String_Len(content);
+
+    /* Skip lines until we reach lineNum */
+    while currentLine < lineNum && pos < len {
+        if String_CharAt(content, pos) == 10 { /* '\n' */
+            currentLine = currentLine + 1;
+        }
+        pos = pos + 1;
+    }
+
+    /* Collect characters until newline or EOF */
+    var buf: String = "";
+    while pos < len && String_CharAt(content, pos) != 10 {
+        buf = String_Concat(buf, String_FromChar(String_CharAt(content, pos) as int));
+        pos = pos + 1;
+    }
+
+    return buf;
+}
+
+/* Print a diagnostic in Rust-style format:
+ *   error: <message>
+ *     --> <path>:<line>:<col>
+ *      |
+ *   42 | <source_line>
+ *      | <spaces>^
+ */
+func Diagnostic_Print(diag: *Diagnostic, sourcePath: String) {
+    /* Severity prefix */
+    if diag.severity == 0 {
+        Print("error: ");
+    } else if diag.severity == 1 {
+        Print("warning: ");
+    } else {
+        Print("note: ");
+    }
+    PrintLine(diag.message);
+
+    /* Location header */
+    Print("  --> ");
+    Print(sourcePath);
+    Print(":");
+    PrintInt(diag.line as int64);
+    Print(":");
+    PrintInt(diag.column as int64);
+    PrintLine("");
+
+    /* Source snippet */
+    let lineText: String = Diagnostic_GetLine(sourcePath, diag.line);
+    if !String_Eq(lineText, "") {
+        let lineNumStr: String = String_FromInt(diag.line as int64);
+
+        Print("   |");
+        PrintLine("");
+        Print(" ");
+        Print(lineNumStr);
+        Print(" | ");
+        PrintLine(lineText);
+
+        /* Underline */
+        Print("   | ");
+        var i: uint32 = 0;
+        while i < diag.column - 1 && i < 120 {
+            Print(" ");
+            i = i + 1;
+        }
+        PrintLine("^");
+    }
+}
+
 // Import the compiler pipeline
 // In self-hosting mode, these are compiled together from src/
 
