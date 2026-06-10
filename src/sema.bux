@@ -4,6 +4,8 @@ module Sema {
 
 extern func bux_string_concat(a: String, b: String) -> String;
 extern func bux_int_to_str(n: int64) -> String;
+extern func bux_strlen(s: String) -> uint;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
 
 // ---------------------------------------------------------------------------
 // Sema context
@@ -570,6 +572,14 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         if expr.child1.kind == ekIdent {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
             if sym.kind == skFunc && sym.decl != null as *Decl {
+                // Implicit generic type argument inference
+                if expr.child1.genericTypeArgCount == 0 && sym.decl.typeParamCount > 0 {
+                    let inferred: String = Sema_InferGenericArg(sema, sym.decl, expr);
+                    if !String_Eq(inferred, "") {
+                        expr.child1.genericTypeArgCount = 1;
+                        expr.child1.genericTypeArg0 = inferred;
+                    }
+                }
                 if expr.child1.genericTypeArgCount > 0 {
                     Sema_CheckTraitBounds(sema, sym.decl, expr.child1.genericTypeArg0, expr.child1.genericTypeArg1, expr.child1.genericTypeArgCount, expr.line, expr.column);
                 }
@@ -1207,6 +1217,55 @@ func Sema_TypeImplements(sema: *Sema, typeName: String, interfaceName: String) -
         req = req.childDecl2;
     }
     return true;
+}
+
+// Extract element type name from a collection TypeExpr.
+// Handles both explicit generic types (Array<int>) and mangled types (Array_int).
+func Sema_ExtractElemType(te: *TypeExpr) -> String {
+    if te == null as *TypeExpr { return ""; }
+    // Pointer: unwrap and recurse
+    if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+        return Sema_ExtractElemType(te.pointerPointee);
+    }
+    if te.kind == tekNamed {
+        // Explicit generic: Array<int>
+        if String_Eq(te.typeName, "Array") || String_Eq(te.typeName, "Iter") {
+            if te.typeArgCount > 0 {
+                return te.typeArgName0;
+            }
+        }
+        // Mangled: Array_int, Iter_string
+        let name: String = te.typeName;
+        let len: uint = bux_strlen(name);
+        // Check for "Array_" prefix
+        if len > 6 && name[0] as int == 65 && name[1] as int == 114 && name[2] as int == 114 && name[3] as int == 97 && name[4] as int == 121 && name[5] as int == 95 {
+            return bux_str_slice(name, 6, len - 6);
+        }
+        // Check for "Iter_" prefix
+        if len > 5 && name[0] as int == 73 && name[1] as int == 116 && name[2] as int == 101 && name[3] as int == 114 && name[4] as int == 95 {
+            return bux_str_slice(name, 5, len - 5);
+        }
+    }
+    return "";
+}
+
+// Infer generic type argument from call arguments.
+// Supports Array_* and Iter_* stdlib functions.
+func Sema_InferGenericArg(sema: *Sema, funcDecl: *Decl, expr: *Expr) -> String {
+    if expr.callArgs == null as *ExprList { return ""; }
+    let firstArg: *Expr = expr.callArgs.expr;
+    if firstArg == null as *Expr { return ""; }
+    // Check first argument's type
+    let argType: *TypeExpr = firstArg.refType;
+    if argType == null as *TypeExpr && firstArg.kind == ekUnary && firstArg.intValue == tkAmp {
+        // &x: use x's type
+        argType = firstArg.child1.refType;
+    }
+    let elemType: String = Sema_ExtractElemType(argType);
+    if !String_Eq(elemType, "") {
+        return elemType;
+    }
+    return "";
 }
 
 func Sema_CheckTraitBounds(sema: *Sema, funcDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int, line: uint32, col: uint32) {
