@@ -449,6 +449,11 @@ func String_FromChar(c: int) -> String {
     return buf as String;
 }
 
+/* Count lines in a string (split by newline) */
+func Cli_CountLines(content: String) -> uint {
+    return bux_str_split_count(content, "\n");
+}
+
 // Collect stdlib module paths imported by user code.
 // Returns number of unique stdlib files to merge (paths written into outPaths).
 func Cli_CollectStdlibImports(mod: *Module, outPaths: *String, maxCount: int, stdlibDir: String) -> int {
@@ -1077,7 +1082,18 @@ func Cli_BuildProject(projectDir: String) -> int {
                 column: sema.diags[i].column,
                 severity: 0,
             };
-            Diagnostic_Print(&diag, "<merged>");
+            /* Try to guess which source file has this line */
+            let errLine: uint32 = sema.diags[i].line;
+            let mainSrc: String = bux_path_join(projectDir, "src/Main.bux");
+            let mainContent: String = bux_read_file(mainSrc);
+            var sourcePath: String = "<merged>";
+            if !String_Eq(mainContent, "") {
+                let mainLines: uint = Cli_CountLines(mainContent);
+                if errLine <= mainLines {
+                    sourcePath = mainSrc;
+                }
+            }
+            Diagnostic_Print(&diag, sourcePath);
             i = i + 1;
         }
         return 1;

@@ -30,6 +30,7 @@ struct ParserDiag {
     line: uint32,
     column: uint32,
     message: String,
+    severity: int,  /* 0=error (fatal), 1=warning (recoverable) */
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ func parserExpect(p: *Parser, kind: int, msg: String) -> LexToken {
     let tok: LexToken = parserCurToken(p);
     if p.diagCount < 256 {
         p.diags[p.diagCount] = ParserDiag {
-            line: tok.line, column: tok.column, message: msg
+            line: tok.line, column: tok.column, message: msg, severity: 1
         };
         p.diagCount = p.diagCount + 1;
     }
@@ -114,7 +115,7 @@ func parserExpect(p: *Parser, kind: int, msg: String) -> LexToken {
 func parserEmitDiag(p: *Parser, line: uint32, col: uint32, msg: String) {
     if p.diagCount < 256 {
         p.diags[p.diagCount] = ParserDiag {
-            line: line, column: col, message: msg
+            line: line, column: col, message: msg, severity: 1
         };
         p.diagCount = p.diagCount + 1;
     }
@@ -133,7 +134,7 @@ func parserExpectIdentOrKeyword(p: *Parser, msg: String) -> LexToken {
     }
     if p.diagCount < 256 {
         p.diags[p.diagCount] = ParserDiag {
-            line: tok.line, column: tok.column, message: msg
+            line: tok.line, column: tok.column, message: msg, severity: 1
         };
         p.diagCount = p.diagCount + 1;
     }
@@ -1770,6 +1771,35 @@ func Parser_Parse(tokens: *LexToken, tokenCount: int) -> *Module {
         // Infinite-loop safeguard: if no progress, skip token
         if p.pos == beforePos {
             discard parserAdvance(p);
+        }
+    }
+
+    /* Print fatal parser diagnostics (severity == 0) or if nothing valid was parsed */
+    if p.diagCount > 0 && mod.itemCount == 0 {
+        var di: int = 0;
+        while di < p.diagCount {
+            let d: ParserDiag = p.diags[di];
+            Print("error: ");
+            PrintLine(d.message);
+            Print("  --> <input>:");
+            PrintInt(d.line as int64);
+            Print(":");
+            PrintInt(d.column as int64);
+            PrintLine("");
+            Print("   |");
+            PrintLine("");
+            Print(" ");
+            PrintInt(d.line as int64);
+            Print(" | <source unavailable>");
+            PrintLine("");
+            Print("   | ");
+            var sp: uint32 = 0;
+            while sp < d.column - 1 && sp < 120 {
+                Print(" ");
+                sp = sp + 1;
+            }
+            PrintLine("^");
+            di = di + 1;
         }
     }
 
