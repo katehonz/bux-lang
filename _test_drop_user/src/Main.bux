@@ -1,0 +1,15 @@
+@[Drop]
+struct Buffer {
+    ptr: *int
+}
+
+func Buffer_Drop(self: *Buffer) {
+    bux_free(self.ptr as *void);
+}
+
+func main() -> int {
+    let buf: Buffer = Buffer { ptr: bux_alloc(10 as uint * sizeof(int)) as *int };
+
+    // Buffer should be auto-dropped here via Buffer_Drop(&buf)
+    return 0;
+}
