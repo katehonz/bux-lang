@@ -1,0 +1,4 @@
+// Drop trait — automatic cleanup for heap-allocated or resource-holding types
+interface Drop {
+    func Drop(self: *Self);
+}

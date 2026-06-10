@@ -1148,11 +1148,24 @@ func Sema_CollectGlobals(sema: *Sema) {
             let implTypeName: String = decl.strValue;
             var m: *Decl = decl.childDecl1;
             while m != null as *Decl {
-                if m.kind == dkFunc && sema.methodCount < 256 {
-                    sema.methodEntries[sema.methodCount].typeName = implTypeName;
-                    sema.methodEntries[sema.methodCount].methodName = m.strValue;
-                    sema.methodEntries[sema.methodCount].decl = m;
-                    sema.methodCount = sema.methodCount + 1;
+                if m.kind == dkFunc {
+                    if sema.methodCount < 256 {
+                        sema.methodEntries[sema.methodCount].typeName = implTypeName;
+                        sema.methodEntries[sema.methodCount].methodName = m.strValue;
+                        sema.methodEntries[sema.methodCount].decl = m;
+                        sema.methodCount = sema.methodCount + 1;
+                    }
+                    // Also define TypeName_MethodName in scope so auto-drop can find it
+                    let methodSymName: String = String_Concat(implTypeName, "_");
+                    let methodSymName2: String = String_Concat(methodSymName, m.strValue);
+                    var methodSym: Symbol;
+                    Sema_ZeroInitSymbol(&methodSym);
+                    methodSym.kind = skFunc;
+                    methodSym.name = methodSymName2;
+                    methodSym.typeKind = tyFunc;
+                    methodSym.isPublic = decl.isPublic;
+                    methodSym.decl = m;
+                    discard Scope_Define(sema.scope, methodSym);
                 }
                 m = m.childDecl2;
             }
