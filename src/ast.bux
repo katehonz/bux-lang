@@ -275,6 +275,7 @@ struct Decl {
     isAsync: bool,
     isChecked: int,          // @[Checked] attribute (0/1)
     isDrop: int,             // @[Drop] attribute (0/1)
+    isRelease: int,          // @[Release] attribute (0/1)
     // Names
     strValue: String,        // decl name
     strValue2: String,       // interface name, dll name, module path

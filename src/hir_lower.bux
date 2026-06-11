@@ -33,6 +33,7 @@ struct LowerCtx {
     substArg1: String,
     // Borrow checker state
     checkedFunc: bool,
+    releaseFunc: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -775,7 +776,7 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     // Index: arr[idx]
     if kind == ekIndex {
         // In @[Checked] functions, Array access goes through Array_Get with bounds check
-        if ctx.checkedFunc && expr.child1 != null as *Expr && Lcx_IsArrayTypeExpr(expr.child1.refType) {
+        if ctx.checkedFunc && !ctx.releaseFunc && expr.child1 != null as *Expr && Lcx_IsArrayTypeExpr(expr.child1.refType) {
             let elemType: String = Lcx_GetArrayElemType(expr.child1.refType);
             if !String_Eq(elemType, "") {
                 let baseNode: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
@@ -906,7 +907,7 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     if kind == ekAssign {
         // Array bounds-checking for write in @[Checked]: arr[idx] = val → Array_Set_T(&arr, idx, val)
         // Only for plain assignment (=), not compound operators (+=, -=, etc.)
-        if expr.intValue == tkAssign && ctx.checkedFunc && expr.child1 != null as *Expr && expr.child1.kind == ekIndex && expr.child1.child1 != null as *Expr && Lcx_IsArrayTypeExpr(expr.child1.child1.refType) {
+        if expr.intValue == tkAssign && ctx.checkedFunc && !ctx.releaseFunc && expr.child1 != null as *Expr && expr.child1.kind == ekIndex && expr.child1.child1 != null as *Expr && Lcx_IsArrayTypeExpr(expr.child1.child1.refType) {
             let elemType: String = Lcx_GetArrayElemType(expr.child1.child1.refType);
             if !String_Eq(elemType, "") {
                 let baseNode: *HirNode = Lcx_LowerExpr(ctx, expr.child1.child1);
@@ -1944,6 +1945,8 @@ func Lcx_LowerParam(out: *HirParam, p: *Param, ctx: *LowerCtx) {
 func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
     let oldChecked: bool = ctx.checkedFunc;
     ctx.checkedFunc = decl.isChecked != 0;
+    let oldRelease: bool = ctx.releaseFunc;
+    ctx.releaseFunc = decl.isRelease != 0;
 
     let f: *HirFunc = bux_alloc(sizeof(HirFunc)) as *HirFunc;
     f.name = decl.strValue;
@@ -2029,6 +2032,7 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
     }
     ctx.scope = prevScope;
     ctx.checkedFunc = oldChecked;
+    ctx.releaseFunc = oldRelease;
 
     return f;
 }

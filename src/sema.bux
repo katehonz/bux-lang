@@ -20,6 +20,7 @@ struct Sema {
     hasError: bool;
     currentRetType: int;    // return type of the function being checked
     checkedFunc: bool;      // true inside @[Checked] function
+    releaseFunc: bool;      // true inside @[Release] function
     movedCount: int;        // number of moved variables
     movedName0: String;     // inline moved var names (up to 8)
     movedName1: String;
@@ -424,7 +425,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     // Identifier — look up in scope
     if kind == ekIdent {
         // Borrow check: use-after-move in @[Checked] functions
-        if sema.checkedFunc && Sema_IsMoved(sema, expr.strValue) {
+        if sema.checkedFunc && !sema.releaseFunc && Sema_IsMoved(sema, expr.strValue) {
             Sema_EmitError(sema, expr.line, expr.column,
                 String_Concat("use of moved value '", String_Concat(expr.strValue, "'")));
         }
@@ -473,7 +474,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         let op: int = expr.intValue;
 
         // Borrow check: reject assignment through deref in @[Checked] functions
-        if sema.checkedFunc && op == tkAssign {
+        if sema.checkedFunc && !sema.releaseFunc && op == tkAssign {
             if expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
                 Sema_EmitError(sema, expr.line, expr.column,
                     "cannot assign through raw pointer in checked function — use '&mut T' instead");
@@ -481,7 +482,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         }
 
         // Borrow check: reinitialization after move
-        if sema.checkedFunc && op == tkAssign {
+        if sema.checkedFunc && !sema.releaseFunc && op == tkAssign {
             if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
                 Sema_RemoveMoved(sema, expr.child1.strValue);
             }
@@ -567,7 +568,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         let target: int = Sema_CheckExpr(sema, expr.child1);
         let value: int = Sema_CheckExpr(sema, expr.child2);
         // Borrow check: reject assignment through deref in @[Checked] functions
-        if sema.checkedFunc && expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
+        if sema.checkedFunc && !sema.releaseFunc && expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
             Sema_EmitError(sema, expr.line, expr.column,
                 "cannot assign through raw pointer in checked function — use '&mut T' instead");
         }
@@ -584,7 +585,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             arg = arg.next;
         }
         // Borrow check: reject double mutable borrow in @[Checked] functions
-        if sema.checkedFunc {
+        if sema.checkedFunc && !sema.releaseFunc {
             var a: *ExprList = expr.callArgs;
             var ai: int = 0;
             while a != null as *ExprList {
@@ -853,7 +854,7 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
     if kind == skLet {
         let initType: int = Sema_CheckExpr(sema, stmt.child1);
         // Borrow check: move tracking
-        if sema.checkedFunc && stmt.child1 != null as *Expr && stmt.child1.kind == ekIdent {
+        if sema.checkedFunc && !sema.releaseFunc && stmt.child1 != null as *Expr && stmt.child1.kind == ekIdent {
             Sema_AddMoved(sema, stmt.child1.strValue);
         }
         // Register variable in scope
@@ -1515,6 +1516,8 @@ func Sema_Analyze(mod: *Module) -> *Sema {
             // Enable borrow checking for @[Checked] functions
             let wasChecked: bool = s.checkedFunc;
             s.checkedFunc = decl.isChecked != 0;
+            let wasRelease: bool = s.releaseFunc;
+            s.releaseFunc = decl.isRelease != 0;
 
             // Check body statements
             var stmt: *Stmt = decl.refBody.firstStmt;
@@ -1524,6 +1527,7 @@ func Sema_Analyze(mod: *Module) -> *Sema {
             }
 
             s.checkedFunc = wasChecked;
+            s.releaseFunc = wasRelease;
             s.scope = prevScope;
         }
         decl = decl.childDecl2;

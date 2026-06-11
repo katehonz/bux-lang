@@ -190,11 +190,11 @@ func Cli_Compile(source: String, sourceName: String, targetTriple: String) -> St
 // Build command
 // ---------------------------------------------------------------------------
 
-func Cli_Build(srcPath: String, outPath: String, targetTriple: String) -> int {
+func Cli_Build(srcPath: String, outPath: String, targetTriple: String, isRelease: bool) -> int {
     // If building the standard project entry point, use full project build
     // which merges stdlib and supports multi-file projects
     if String_Eq(srcPath, "src/Main.bux") || String_Eq(srcPath, "src/main.bux") {
-        let rc: int = Cli_BuildProject(".", targetTriple);
+        let rc: int = Cli_BuildProject(".", targetTriple, isRelease);
         if rc == 0 && !String_Eq(outPath, "build/main") {
             // Rename output if custom path was requested
             bux_system(String_Concat(String_Concat("mv build/main ", outPath), " 2>/dev/null || true"));
@@ -248,12 +248,20 @@ func Cli_Build(srcPath: String, outPath: String, targetTriple: String) -> int {
     // Compile with cc or clang for cross-compilation
     PrintLine("Compiling C...");
     var cmdBuf: StringBuilder = StringBuilder_NewCap(512);
+    var optFlags: String = "-O2";
+    if isRelease {
+        optFlags = "-O3 -flto";
+    }
     if !String_Eq(targetTriple, "") {
-        StringBuilder_Append(&cmdBuf, "clang -O2 -pthread -target ");
+        StringBuilder_Append(&cmdBuf, "clang ");
+        StringBuilder_Append(&cmdBuf, optFlags);
+        StringBuilder_Append(&cmdBuf, " -pthread -target ");
         StringBuilder_Append(&cmdBuf, targetTriple);
         StringBuilder_Append(&cmdBuf, " ");
     } else {
-        StringBuilder_Append(&cmdBuf, "cc -O2 -pthread ");
+        StringBuilder_Append(&cmdBuf, "cc ");
+        StringBuilder_Append(&cmdBuf, optFlags);
+        StringBuilder_Append(&cmdBuf, " -pthread ");
     }
     StringBuilder_Append(&cmdBuf, "-o ");
     StringBuilder_Append(&cmdBuf, outPath);
@@ -860,7 +868,7 @@ func Cli_Test(projectDir: String) -> int {
     Print("Testing project: ");
     PrintLine(projectDir);
     // Build the project first
-    let rc: int = Cli_BuildProject(projectDir, "");
+    let rc: int = Cli_BuildProject(projectDir, "", false);
     if rc != 0 {
         PrintLine("Test build failed");
         return rc;
@@ -886,7 +894,7 @@ func Cli_Test(projectDir: String) -> int {
     return result;
 }
 
-func Cli_BuildProject(projectDir: String, targetTriple: String) -> int {
+func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool) -> int {
     let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
     var outName: String = man.name;
     if String_Eq(outName, "") {
@@ -1147,12 +1155,20 @@ func Cli_BuildProject(projectDir: String, targetTriple: String) -> int {
     PrintLine("Compiling C...");
     let outBin: String = bux_path_join(buildDir, outName);
     var ccBuf: StringBuilder = StringBuilder_NewCap(512);
+    var optFlags2: String = "-O2";
+    if isRelease {
+        optFlags2 = "-O3 -flto";
+    }
     if !String_Eq(targetTriple, "") {
-        StringBuilder_Append(&ccBuf, "clang -O2 -pthread -target ");
+        StringBuilder_Append(&ccBuf, "clang ");
+        StringBuilder_Append(&ccBuf, optFlags2);
+        StringBuilder_Append(&ccBuf, " -pthread -target ");
         StringBuilder_Append(&ccBuf, targetTriple);
         StringBuilder_Append(&ccBuf, " ");
     } else {
-        StringBuilder_Append(&ccBuf, "cc -O2 -pthread ");
+        StringBuilder_Append(&ccBuf, "cc ");
+        StringBuilder_Append(&ccBuf, optFlags2);
+        StringBuilder_Append(&ccBuf, " -pthread ");
     }
     StringBuilder_Append(&ccBuf, "-o ");
     StringBuilder_Append(&ccBuf, outBin);
@@ -1184,8 +1200,8 @@ func Cli_BuildProject(projectDir: String, targetTriple: String) -> int {
 // Run command — build project and execute
 // ---------------------------------------------------------------------------
 
-func Cli_RunProject(projectDir: String, targetTriple: String) -> int {
-    let rc: int = Cli_BuildProject(projectDir, targetTriple);
+func Cli_RunProject(projectDir: String, targetTriple: String, isRelease: bool) -> int {
+    let rc: int = Cli_BuildProject(projectDir, targetTriple, isRelease);
     if rc != 0 {
         return rc;
     }
@@ -1205,8 +1221,9 @@ func Cli_RunProject(projectDir: String, targetTriple: String) -> int {
 // ---------------------------------------------------------------------------
 
 func Cli_Run(args: *String, argCount: int) -> int {
-    /* Scan for --target flag before processing command */
+    /* Scan for --target and --release flags before processing command */
     var targetTriple: String = "";
+    var isRelease: bool = false;
     var ai: int = 1;
     while ai < argCount {
         if String_Eq(args[ai], "--target") && ai + 1 < argCount {
@@ -1218,7 +1235,17 @@ func Cli_Run(args: *String, argCount: int) -> int {
                 j = j + 1;
             }
             argCount = argCount - 2;
-            break;
+            ai = ai - 1;
+        } else if String_Eq(args[ai], "--release") {
+            isRelease = true;
+            /* Remove --release from args by shifting */
+            var j: int = ai;
+            while j + 1 < argCount {
+                args[j] = args[j + 1];
+                j = j + 1;
+            }
+            argCount = argCount - 1;
+            ai = ai - 1;
         }
         ai = ai + 1;
     }
@@ -1301,13 +1328,13 @@ func Cli_Run(args: *String, argCount: int) -> int {
         let out: String = "build/main";
         if argCount >= 3 { src = args[2]; }
         if argCount >= 4 { out = args[3]; }
-        return Cli_Build(src, out, targetTriple);
+        return Cli_Build(src, out, targetTriple, isRelease);
     }
 
     if String_Eq(cmd, "project") {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
-        return Cli_BuildProject(dir, targetTriple);
+        return Cli_BuildProject(dir, targetTriple, isRelease);
     }
 
     if String_Eq(cmd, "test") {
@@ -1319,7 +1346,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "run") {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
-        return Cli_RunProject(dir, targetTriple);
+        return Cli_RunProject(dir, targetTriple, isRelease);
     }
 
     Print("Unknown command: ");
