@@ -2,11 +2,11 @@
 
 ![Bux Language](bux-lang-01.jpeg)
 
-> **Status:** v0.4.0 — Bootstrap compiler (`buxc`, Nim) and self-hosted compiler (`buxc2`, Bux) both compile `.bux` → C → native binary.
-> **Selfhost loop:** `buxc2` can compile itself — deterministic C codegen verified.
-> **LIR backend** produces clean 3-address C code. All 26 examples pass.
-> **Gradual Ownership:** `@[Checked]` borrow checker, `borrow &mut` expressions, `@[Shared]` attribute.
-> **Apps tested:** compiler successfully parses all 3 real-world apps (`apps/boko-framework`, `apps/jwt-pitbul`, `apps/nexus`) — no hangs, no crashes.
+> **Status:** v0.5.0 — Bootstrap compiler (`buxc`, Nim) and self-hosted compiler (`buxc2`, Bux) both compile `.bux` → C → native binary.
+> **Selfhost loop:** `buxc2` compiles itself → binary-identical `buxc3` ✅ Deterministic C codegen + ELF verified.
+> **Gradual Ownership:** `@[Checked]` borrow checker, `@[Release]` zero-cost mode, `borrow &mut` expressions.
+> **Green Threads:** M:N scheduler with channels (Go-style goroutines without GC).
+> **All 26 examples pass.** Compiler successfully parses all 3 real-world apps (`apps/boko-framework`, `apps/jwt-pitbul`, `apps/nexus`).
 
 Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership (opt-in borrow checking), async/await, generics, algebraic enums, and a package manager.
 
@@ -24,6 +24,9 @@ cd hello
 
 # Build and run
 bux run
+
+# Build optimized release binary
+bux build --release
 
 # Cross-compile for ARM Linux (requires clang)
 bux build --target aarch64-linux-gnu
@@ -134,7 +137,7 @@ func Main() -> int {
 ### Channels (Producer/Consumer)
 ```bux
 import Std::Io::{PrintLine, PrintInt};
-import Std::Task::{Task_Join, TaskHandle};
+import Std::Task::{Task_Wait, TaskHandle};
 import Std::Channel::{Channel, Channel_New, Channel_SendInt, Channel_RecvInt, Channel_Close};
 
 func Producer(chPtr: *Channel<int>) {
@@ -164,8 +167,8 @@ func Main() -> int {
     let ch: Channel<int> = Channel_New<int>(3);
     let p: *void = spawn Producer(&ch);
     let c: *void = spawn Consumer(&ch);
-    Task_Join(TaskHandle { handle: p });
-    Task_Join(TaskHandle { handle: c });
+    Task_Wait(TaskHandle { handle: p });
+    Task_Wait(TaskHandle { handle: c });
     return 0;
 }
 ```
@@ -198,7 +201,9 @@ func Main() -> int {
 | **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel`, `Sync`, `Os`, `Time`, `Process` |
 | **Backend** | LIR → C transpiler (clean 3-address code, then gcc/clang) |
 | **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
-| **Gradual Ownership** | `@[Checked]` + `@[Shared]` + `borrow &mut` / `borrow &` expressions |
+| **Gradual Ownership** | `@[Checked]` + `@[Release]` + `@[Shared]` + `borrow &mut` / `borrow &` |
+| **Drop Trait** | Auto-drop for `@[Drop]` types (Array, Map, user-defined structs) |
+| **Green Threads** | M:N scheduler (ucontext + SIGVTALRM), work-stealing queues |
 | **Async/Await** | `async func`, `spawn`, `.await` with stackful coroutines |
 | **Concurrency** | `Task`/`Channel`/`Sync` (pthread-based), `bux_async_yield`/`spawn` |
 | **CTFE** | `const func` — compile-time function execution |
@@ -213,24 +218,38 @@ func Main() -> int {
 
 ```
 bux/
-├── compiler/         # Compiler source code
-│   ├── bootstrap/    # Bootstrap compiler (Nim)
-│   ├── selfhost/     # Self-hosting compiler source (Bux)
-│   └── tests/        # Compiler unit tests (Nim)
-├── library/          # Standard library
-│   ├── std/          # Standard library modules (.bux)
-│   │   ├── Io.bux, String.bux, Array.bux, Map.bux
-│   │   ├── Fs.bux, Mem.bux, Set.bux
-│   │   ├── Path.bux, Math.bux
-│   │   └── Task.bux, Channel.bux
-│   └── runtime/      # C runtime files (runtime.c, io.c)
-├── tests/            # Language integration tests
+├── src/              # 🎯 Self-hosting compiler source (Bux)
+│   ├── main.bux      # Entry point
+│   ├── lexer.bux     # Tokenizer
+│   ├── parser.bux    # Pratt parser
+│   ├── ast.bux       # AST node types
+│   ├── sema.bux      # Type checker
+│   ├── hir_lower.bux # AST → HIR lowering
+│   ├── c_backend.bux # HIR → C code generator
+│   └── cli.bux       # CLI driver
+├── bootstrap/        # 🔧 Bootstrap compiler (Nim)
+│   ├── main.nim      # Entry point
+│   ├── cli.nim       # CLI commands + build driver
+│   └── ...           # (mirrors src/ structure)
+├── lib/              # 📦 Standard library (23 modules)
+│   ├── Io.bux        # Print, ReadFile, WriteFile
+│   ├── String.bux    # Full string API
+│   ├── Array.bux     # Generic Array<T>
+│   ├── Map.bux       # Generic Map<K,V> + StringMap
+│   ├── Set.bux       # Generic Set<T>
+│   ├── Task.bux      # Green threads (spawn/await)
+│   ├── Channel.bux   # Producer/consumer channels
+│   ├── Drop.bux      # Drop trait interface
+│   └── ...           # Math, Fs, Path, Sync, Result, ...
+├── rt/               # ⚙️ C runtime
+│   ├── runtime.c     # Memory, scheduler, channels
+│   └── io.c          # File I/O wrappers
+├── tests/            # 🧪 Unit tests (Nim)
 ├── examples/         # Example programs
-├── tools/            # Additional tooling
+├── apps/             # Real-world applications
 ├── docs/             # Documentation
-├── buxs/             # Windows-compatible project root
 ├── README.md
-├── PLAN.md           # Roadmap to self-hosting
+├── PLAN.md           # Roadmap to v1.0.0
 └── Makefile
 ```
 
@@ -250,6 +269,9 @@ make test
 
 # Run example programs
 make test-examples
+
+# Verify selfhost binary parity (buxc2 → buxc3, identical)
+make selfhost-loop
 
 # Clean build artifacts
 make clean

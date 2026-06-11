@@ -652,36 +652,37 @@ bux/
 | Selfhost fix | ✅ | Build via `build/selfhost/` (project wrapper) |
 | Push to GitHub | ✅ | `ac969b3` — v0.3.0 restructure |
 
-### 10.1 — Selfhost Loop 🔄 (v0.4.0 target)
+### 10.1 — Selfhost Loop ✅ (v0.5.0 target)
 
 **Goal:** `buxc2` can compile itself producing a binary-identical `buxc3`.
 
 ```
-buxc (Nim) → src/*.bux → buxc2 ✅ (already works)
-buxc2       → src/*.bux → buxc3 🔄 (needs verification)
-buxc2 == buxc3            🔄 (deterministic codegen)
+buxc (Nim) → src/*.bux → buxc2 ✅
+buxc2       → src/*.bux → buxc3 ✅
+buxc2 == buxc3            ✅ (binary-identical)
 ```
 
 | Task | Status | Details |
 |------|--------|---------|
-| `10.1.1` Verify buxc2 can build src/ | 🔄 | Run `buxc2 build` on the selfhost project |
-| `10.1.2` Deterministic C codegen | ⏳ | Remove timestamps, random IDs, non-deterministic ordering |
-| `10.1.3` Binary-identical loop | ⏳ | `make selfhost-loop` — 2-pass bootstrap verification |
-| `10.1.4` Remove hardcoded paths | ⏳ | No `/home/ziko/...` paths in cli.bux |
+| `10.1.1` Verify buxc2 can build src/ | ✅ | `buxc2 build` works on selfhost project |
+| `10.1.2` Deterministic C codegen | ✅ | C output identical on every iteration |
+| `10.1.3` Binary-identical loop | ✅ | `make selfhost-loop` passes (C + ELF parity) |
+| `10.1.4` Remove hardcoded paths | ✅ | Paths resolved via `bux_getcwd()` / `bux_path_join()` |
 | `10.1.5` Selfhost test in CI | ⏳ | Add to `make test` |
 
-### 10.2 — Gradual Ownership 🔄 (v0.5.0 target) ⭐ Killer Feature
+### 10.2 — Gradual Ownership ✅ (v0.5.0 target) ⭐ Killer Feature
 
-**Goal:** `@[Checked]` functions get full borrow checking. Without this, Bux is "C with modern syntax."
+**Goal:** `@[Checked]` functions get full borrow checking. `@[Release]` disables checks for zero-cost hot paths.
 
 | Task | Status | Details |
 |------|--------|---------|
-| `10.2.1` `@[Checked]` attribute gate | ⏳ | Enable/disable borrow checker per function |
-| `10.2.2` `&T` shared reference check | ⏳ | No mutation through shared refs |
-| `10.2.3` `&mut T` exclusive mutable check | ⏳ | No aliasing of mutable refs |
-| `10.2.4` Bounds checking on slices | ⏳ | Buffer overflow prevention |
-| `10.2.5` Lifetime elision (simple rules) | ⏳ | 80% of cases without annotations |
-| `10.2.6` Explicit lifetimes `'a` | ⏳ | Only for complex cases |
+| `10.2.1` `@[Checked]` attribute gate | ✅ | Enable/disable borrow checker per function |
+| `10.2.2` `&T` shared reference check | ✅ | No mutation through shared refs |
+| `10.2.3` `&mut T` exclusive mutable check | ✅ | No aliasing of mutable refs |
+| `10.2.4` Bounds checking on slices | ✅ | `Slice_Get` / `Array_Get` with `bux_bounds_check` |
+| `10.2.5` `@[Release]` zero-cost mode | ✅ | Disables borrow + bounds checks, passes `-O3 -flto` |
+| `10.2.6` Lifetime elision (simple rules) | ⏳ | 80% of cases without annotations |
+| `10.2.7` Explicit lifetimes `'a` | ⏳ | Only for complex cases |
 
 ### 10.3 — Compiler Architecture Upgrade (v0.6.0 target)
 
@@ -854,11 +855,12 @@ func Main() -> int {
 | **M8** | 8-9 | ✅ | **Borrow checker**, **CTFE**, **Package manager** working |
 | **M9** | 8.5 | ✅ | **Trait bounds** (`<T: Comparable>`) — semantic checking implemented |
 | **M10** | 10 | ✅ | **LIR backend** replaces HIR→C; 26/26 examples pass; selfhost builds |
-| **M11** | 11 | 🔄 | Selfhost loop: `buxc2` compiles itself → binary-identical `buxc3` |
-| **M12** | 11.3 | ⏳ | `@[Checked]` borrow checker works on real code |
-| **M13** | 11.4 | ⏳ | `bux test`, `bux fmt`, `bux doc` shipped |
-| **M14** | 11.5 | ⏳ | Native x86-64 backend (no C transpiler) |
-| **M15** | 8.7 | ⏳ | `@[Release]` mode — zero-cost abstractions; C-speed benchmarks vs Nim/Crystal |
+| **M11** | 11 | ✅ | **Selfhost loop**: `buxc2` compiles itself → binary-identical `buxc3` |
+| **M12** | 11.3 | ✅ | `@[Checked]` borrow checker works on real code |
+| **M13** | 11.4 | ✅ | `@[Release]` zero-cost mode; Rust-style error snippets |
+| **M14** | 8.3 | ✅ | **Green threads** — M:N scheduler with channels |
+| **M15** | 11.5 | ⏳ | Native x86-64 backend (no C transpiler) |
+| **M16** | 11.4 | ⏳ | `bux test`, `bux fmt`, `bux doc` shipped |
 
 ---
 
