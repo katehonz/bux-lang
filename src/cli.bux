@@ -307,7 +307,17 @@ func Cli_Check(srcPath: String) -> int {
     let lex: *Lexer = Lexer_Tokenize(source);
     PrintLine("  Lex done");
     if Lexer_DiagCount(lex) > 0 {
-        PrintLine("Lex errors found");
+        var i: int = 0;
+        while i < Lexer_DiagCount(lex) {
+            let diag: Diagnostic = Diagnostic {
+                message: lex.diags[i].message,
+                line: lex.diags[i].line,
+                column: lex.diags[i].column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, srcPath);
+            i = i + 1;
+        }
         return 1;
     }
 
@@ -943,8 +953,17 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
         }
         let lex: *Lexer = Lexer_Tokenize(source);
         if Lexer_DiagCount(lex) > 0 {
-            Print("  Lex errors in ");
-            PrintLine(path);
+            var li: int = 0;
+            while li < Lexer_DiagCount(lex) {
+                let diag: Diagnostic = Diagnostic {
+                    message: lex.diags[li].message,
+                    line: lex.diags[li].line,
+                    column: lex.diags[li].column,
+                    severity: 0,
+                };
+                Diagnostic_Print(&diag, path);
+                li = li + 1;
+            }
             return 1;
         }
         let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
