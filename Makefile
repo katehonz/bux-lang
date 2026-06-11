@@ -123,14 +123,16 @@ selfhost-loop: build
 	else \
 		echo "  C output: DIFFERENT ✗"; \
 	fi
-	@echo "Comparing ELF binaries..."
-	@if diff build/selfhost-loop-a/build/buxc2 build/selfhost-loop-b/build/buxc2 > /dev/null 2>&1; then \
+	@echo "Comparing ELF binaries (stripped)..."
+	@cp build/selfhost-loop-a/build/buxc2 /tmp/buxc2_a && strip -d /tmp/buxc2_a
+	@cp build/selfhost-loop-b/build/buxc2 /tmp/buxc2_b && strip -d /tmp/buxc2_b
+	@if diff /tmp/buxc2_a /tmp/buxc2_b > /dev/null 2>&1; then \
 		echo "  ELF binary: IDENTICAL ✓"; \
 		echo "=== Selfhost loop PASSED ==="; \
 	else \
-		echo "  ELF binary: DIFFERENT ✗ (may be due to timestamps)"; \
-		echo "  C output was identical — ELF difference is likely linker non-determinism"; \
-		echo "=== Selfhost loop: C codegen deterministic ✓, ELF non-deterministic (expected) ==="; \
+		echo "  ELF binary: DIFFERENT ✗"; \
+		echo "=== Selfhost loop FAILED ==="; \
+		exit 1; \
 	fi
 
 lsp: tools/bux-lsp

@@ -255,13 +255,13 @@ func Cli_Build(srcPath: String, outPath: String, targetTriple: String, isRelease
     if !String_Eq(targetTriple, "") {
         StringBuilder_Append(&cmdBuf, "clang ");
         StringBuilder_Append(&cmdBuf, optFlags);
-        StringBuilder_Append(&cmdBuf, " -pthread -target ");
+        StringBuilder_Append(&cmdBuf, " -pthread -Wl,--build-id=none -target ");
         StringBuilder_Append(&cmdBuf, targetTriple);
         StringBuilder_Append(&cmdBuf, " ");
     } else {
         StringBuilder_Append(&cmdBuf, "cc ");
         StringBuilder_Append(&cmdBuf, optFlags);
-        StringBuilder_Append(&cmdBuf, " -pthread ");
+        StringBuilder_Append(&cmdBuf, " -pthread -Wl,--build-id=none ");
     }
     StringBuilder_Append(&cmdBuf, "-o ");
     StringBuilder_Append(&cmdBuf, outPath);
@@ -1181,13 +1181,13 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
     if !String_Eq(targetTriple, "") {
         StringBuilder_Append(&ccBuf, "clang ");
         StringBuilder_Append(&ccBuf, optFlags2);
-        StringBuilder_Append(&ccBuf, " -pthread -target ");
+        StringBuilder_Append(&ccBuf, " -pthread -Wl,--build-id=none -target ");
         StringBuilder_Append(&ccBuf, targetTriple);
         StringBuilder_Append(&ccBuf, " ");
     } else {
         StringBuilder_Append(&ccBuf, "cc ");
         StringBuilder_Append(&ccBuf, optFlags2);
-        StringBuilder_Append(&ccBuf, " -pthread ");
+        StringBuilder_Append(&ccBuf, " -pthread -Wl,--build-id=none ");
     }
     StringBuilder_Append(&ccBuf, "-o ");
     StringBuilder_Append(&ccBuf, outBin);
