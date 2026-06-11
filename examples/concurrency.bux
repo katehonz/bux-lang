@@ -1,6 +1,6 @@
 import Std::Io::{PrintLine, PrintInt};
 import Std::Task::TaskHandle;
-import Std::Task::Task_Join;
+import Std::Task::Task_Wait;
 import Std::Channel::Channel;
 
 func Worker(arg: *void) -> *void {
@@ -10,7 +10,7 @@ func Worker(arg: *void) -> *void {
 
 func Main() -> int {
     let handle: *void = spawn Worker();
-    Task_Join(TaskHandle { handle: handle });
+    Task_Wait(TaskHandle { handle: handle });
     PrintLine("Thread finished");
     return 0;
 }

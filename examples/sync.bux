@@ -1,5 +1,5 @@
 import Std::Io::{PrintLine, PrintInt};
-import Std::Task::{Task_Join, TaskHandle};
+import Std::Task::{Task_Wait, TaskHandle};
 import Std::Sync::{Mutex, Mutex_New, Mutex_Lock, Mutex_Unlock};
 
 struct Counter {
@@ -25,8 +25,8 @@ func Main() -> int {
     let a: *void = spawn Incrementer(&counter);
     let b: *void = spawn Incrementer(&counter);
 
-    Task_Join(TaskHandle { handle: a });
-    Task_Join(TaskHandle { handle: b });
+    Task_Wait(TaskHandle { handle: a });
+    Task_Wait(TaskHandle { handle: b });
 
     PrintLine("Counter:");
     PrintInt(counter.value);

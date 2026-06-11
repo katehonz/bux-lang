@@ -1,5 +1,5 @@
 import Std::Io::{PrintLine, PrintInt};
-import Std::Task::{Task_Join, TaskHandle};
+import Std::Task::{Task_Wait, TaskHandle};
 import Std::Channel::{Channel, Channel_New, Channel_SendInt, Channel_RecvInt, Channel_Close};
 
 func Producer(chPtr: *Channel<int>) {
@@ -31,7 +31,7 @@ func Main() -> int {
     let ch: Channel<int> = Channel_New<int>(3);
     let p: *void = spawn Producer(&ch);
     let c: *void = spawn Consumer(&ch);
-    Task_Join(TaskHandle { handle: p });
-    Task_Join(TaskHandle { handle: c });
+    Task_Wait(TaskHandle { handle: p });
+    Task_Wait(TaskHandle { handle: c });
     return 0;
 }
