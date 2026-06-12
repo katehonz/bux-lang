@@ -276,6 +276,7 @@ struct Decl {
     isChecked: int,          // @[Checked] attribute (0/1)
     isDrop: int,             // @[Drop] attribute (0/1)
     isRelease: int,          // @[Release] attribute (0/1)
+    isConst: int,            // const func (0/1)
     // Names
     strValue: String,        // decl name
     strValue2: String,       // interface name, dll name, module path
@@ -395,6 +396,7 @@ func Ast_MakeStmt(kind: int, line: uint32, col: uint32) -> Stmt {
 
 func Ast_MakeDecl(kind: int, line: uint32, col: uint32) -> Decl {
     return Decl { kind: kind, line: line, column: col, isPublic: false,
+        isAsync: false, isChecked: 0, isDrop: 0, isRelease: 0, isConst: 0,
         strValue: "", strValue2: "",
         typeParam0: "", typeParam1: "", typeParamCount: 0,
         typeParam0Bound: "", typeParam1Bound: ""

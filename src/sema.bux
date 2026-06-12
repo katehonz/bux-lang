@@ -406,6 +406,16 @@ func Sema_AddCapture(closureExpr: *Expr, name: String, typeKind: int) {
 // Expression type checking
 // ---------------------------------------------------------------------------
 
+func Sema_IsMutRefDeref(target: *Expr) -> bool {
+    if target == null as *Expr { return false; }
+    if target.kind != ekUnary { return false; }
+    if target.intValue != tkStar { return false; }
+    let operand: *Expr = target.child1;
+    if operand == null as *Expr { return false; }
+    if operand.refType == null as *TypeExpr { return false; }
+    return operand.refType.kind == tekMutRef;
+}
+
 func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if expr == null as *Expr { return tyUnknown; }
     let kind: int = expr.kind;
@@ -413,12 +423,18 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     // Literal
     if kind == ekLiteral {
         let tk: int = expr.tokKind;
-        if tk == tkIntLiteral { return tyInt; }
-        if tk == tkFloatLiteral { return tyFloat64; }
-        if tk == tkStringLiteral { return tyStr; }
-        if tk == tkBoolLiteral { return tyBool; }
-        if tk == tkCharLiteral { return tyChar32; }
-        if tk == tkNull { return tyPointer; }
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekNamed;
+        if tk == tkIntLiteral { te.typeName = "int"; expr.refType = te; return tyInt; }
+        if tk == tkFloatLiteral { te.typeName = "float64"; expr.refType = te; return tyFloat64; }
+        if tk == tkStringLiteral { te.typeName = "String"; expr.refType = te; return tyStr; }
+        if tk == tkBoolLiteral { te.typeName = "bool"; expr.refType = te; return tyBool; }
+        if tk == tkCharLiteral { te.typeName = "char32"; expr.refType = te; return tyChar32; }
+        if tk == tkNull {
+            te.typeName = "*void";
+            expr.refType = te;
+            return tyPointer;
+        }
         return tyUnknown;
     }
 
@@ -473,12 +489,13 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         let right: int = Sema_CheckExpr(sema, expr.child2);
         let op: int = expr.intValue;
 
-        // Borrow check: reject assignment through deref in @[Checked] functions
-        if sema.checkedFunc && !sema.releaseFunc && op == tkAssign {
-            if expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
-                Sema_EmitError(sema, expr.line, expr.column,
-                    "cannot assign through raw pointer in checked function — use '&mut T' instead");
-            }
+        // Borrow check: reject assignment through raw pointer in @[Checked] functions.
+        // Allow writes through &mut T references.
+        if sema.checkedFunc && !sema.releaseFunc && op == tkAssign &&
+           expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar &&
+           !Sema_IsMutRefDeref(expr.child1) {
+            Sema_EmitError(sema, expr.line, expr.column,
+                "cannot assign through raw pointer in checked function — use '&mut T' instead");
         }
 
         // Borrow check: reinitialization after move
@@ -552,8 +569,10 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if kind == ekUnary {
         let operand: int = Sema_CheckExpr(sema, expr.child1);
         let op: int = expr.intValue;
+        if op == tkStar {
+            return tyUnknown;
+        }
         if op == tkBang { return tyBool; }
-        if op == tkStar { return tyUnknown; } // dereference — resolve pointee
         if op == tkAmp {
             if expr.child1.refType != null as *TypeExpr {
                 expr.refType = expr.child1.refType;
@@ -567,8 +586,11 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if kind == ekAssign {
         let target: int = Sema_CheckExpr(sema, expr.child1);
         let value: int = Sema_CheckExpr(sema, expr.child2);
-        // Borrow check: reject assignment through deref in @[Checked] functions
-        if sema.checkedFunc && !sema.releaseFunc && expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar {
+        // Borrow check: reject assignment through raw pointer in @[Checked] functions.
+        // Allow writes through &mut T references.
+        if sema.checkedFunc && !sema.releaseFunc &&
+           expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar &&
+           !Sema_IsMutRefDeref(expr.child1) {
             Sema_EmitError(sema, expr.line, expr.column,
                 "cannot assign through raw pointer in checked function — use '&mut T' instead");
         }
@@ -619,11 +641,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             if sym.kind == skFunc && sym.decl != null as *Decl {
                 // Implicit generic type argument inference
                 if expr.child1.genericTypeArgCount == 0 && sym.decl.typeParamCount > 0 {
-                    let inferred: String = Sema_InferGenericArg(sema, sym.decl, expr);
-                    if !String_Eq(inferred, "") {
-                        expr.child1.genericTypeArgCount = 1;
-                        expr.child1.genericTypeArg0 = inferred;
-                    }
+                    Sema_InferGenericArgs(sema, sym.decl, expr);
                 }
                 if expr.child1.genericTypeArgCount > 0 {
                     Sema_CheckTraitBounds(sema, sym.decl, expr.child1.genericTypeArg0, expr.child1.genericTypeArg1, expr.child1.genericTypeArgCount, expr.line, expr.column);
@@ -670,6 +688,26 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
     if kind == ekTry {
         let inner: int = Sema_CheckExpr(sema, expr.child1);
         return inner; // simplified
+    }
+
+    // spawn Callee(args)
+    if kind == ekSpawn {
+        discard Sema_CheckExpr(sema, expr.child1);
+        if expr.child2 != null as *Expr {
+            discard Sema_CheckExpr(sema, expr.child2);
+        }
+        // Determine if callee is async
+        var calleeName: String = "";
+        if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+            calleeName = expr.child1.strValue;
+        }
+        if !String_Eq(calleeName, "") {
+            let sym: Symbol = Scope_Lookup(sema.scope, calleeName);
+            if sym.decl != null as *Decl && sym.decl.kind == dkFunc && sym.decl.isAsync {
+                expr.boolValue = true;
+            }
+        }
+        return tyPointer;
     }
 
     // Struct init: TypeName { field: value, ... }
@@ -1369,21 +1407,48 @@ func Sema_ExtractElemType(te: *TypeExpr) -> String {
 
 // Infer generic type argument from call arguments.
 // Supports Array_* and Iter_* stdlib functions.
-func Sema_InferGenericArg(sema: *Sema, funcDecl: *Decl, expr: *Expr) -> String {
-    if expr.callArgs == null as *ExprList { return ""; }
-    let firstArg: *Expr = expr.callArgs.expr;
-    if firstArg == null as *Expr { return ""; }
-    // Check first argument's type
-    let argType: *TypeExpr = firstArg.refType;
-    if argType == null as *TypeExpr && firstArg.kind == ekUnary && firstArg.intValue == tkAmp {
-        // &x: use x's type
-        argType = firstArg.child1.refType;
+func Sema_InferGenericArgs(sema: *Sema, funcDecl: *Decl, expr: *Expr) {
+    if expr.callArgs == null as *ExprList { return; }
+    var argList: *ExprList = expr.callArgs;
+    var pi: int = 0;
+    while argList != null as *ExprList && pi < funcDecl.paramCount {
+        let argExpr: *Expr = argList.expr;
+        if argExpr == null as *Expr { argList = argList.next; pi = pi + 1; continue; }
+        var argType: *TypeExpr = argExpr.refType;
+        if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
+            argType = argExpr.child1.refType;
+        }
+        var paramType: *TypeExpr = null as *TypeExpr;
+        if pi == 0 { paramType = funcDecl.param0.refParamType; }
+        else if pi == 1 { paramType = funcDecl.param1.refParamType; }
+        else if pi == 2 { paramType = funcDecl.param2.refParamType; }
+        else if pi == 3 { paramType = funcDecl.param3.refParamType; }
+        else if pi == 4 { paramType = funcDecl.param4.refParamType; }
+        else if pi == 5 { paramType = funcDecl.param5.refParamType; }
+        else if pi == 6 { paramType = funcDecl.param6.refParamType; }
+        else if pi == 7 { paramType = funcDecl.param7.refParamType; }
+        else if pi == 8 { paramType = funcDecl.param8.refParamType; }
+
+        if paramType != null as *TypeExpr && paramType.kind == tekNamed && argType != null as *TypeExpr {
+            let inferred: String = Sema_ExtractElemType(argType);
+            var typeName: String = inferred;
+            if String_Eq(typeName, "") && argType.kind == tekNamed {
+                typeName = argType.typeName;
+            }
+            if !String_Eq(typeName, "") {
+                if funcDecl.typeParamCount >= 1 && String_Eq(paramType.typeName, funcDecl.typeParam0) && String_Eq(expr.child1.genericTypeArg0, "") {
+                    expr.child1.genericTypeArg0 = typeName;
+                    if expr.child1.genericTypeArgCount < 1 { expr.child1.genericTypeArgCount = 1; }
+                }
+                if funcDecl.typeParamCount >= 2 && String_Eq(paramType.typeName, funcDecl.typeParam1) && String_Eq(expr.child1.genericTypeArg1, "") {
+                    expr.child1.genericTypeArg1 = typeName;
+                    if expr.child1.genericTypeArgCount < 2 { expr.child1.genericTypeArgCount = 2; }
+                }
+            }
+        }
+        argList = argList.next;
+        pi = pi + 1;
     }
-    let elemType: String = Sema_ExtractElemType(argType);
-    if !String_Eq(elemType, "") {
-        return elemType;
-    }
-    return "";
 }
 
 func Sema_CheckTraitBounds(sema: *Sema, funcDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int, line: uint32, col: uint32) {

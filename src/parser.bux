@@ -733,8 +733,8 @@ func parserParseUnary(p: *Parser) -> *Expr {
     let col: uint32 = tok.column;
     let kind: int = tok.kind;
 
-    // -expr, !expr, *expr, &expr
-    if kind == tkMinus || kind == tkBang || kind == tkStar || kind == tkAmp {
+    // -expr, !expr, ~expr, *expr, &expr
+    if kind == tkMinus || kind == tkBang || kind == tkTilde || kind == tkStar || kind == tkAmp {
         discard parserAdvance(p);
         let e: *Expr = parserMakeExpr(ekUnary, line, col);
         e.intValue = kind;
@@ -1607,6 +1607,14 @@ func parserParseDecl(p: *Parser) -> *Decl {
     if kind == tkAsync && parserPeek(p, 1) == tkFunc {
         discard parserAdvance(p); // async
         let d: *Decl = parserParseFuncDecl(p, isPublic, false, true);
+        d.isChecked = isChecked;
+        d.isRelease = isRelease;
+        return d;
+    }
+    if kind == tkConst && parserPeek(p, 1) == tkFunc {
+        discard parserAdvance(p); // const
+        let d: *Decl = parserParseFuncDecl(p, isPublic, false, false);
+        d.isConst = 1;
         d.isChecked = isChecked;
         d.isRelease = isRelease;
         return d;

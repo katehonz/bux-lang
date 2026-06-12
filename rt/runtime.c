@@ -675,7 +675,7 @@ static int bux_count_files_recursive(const char* dir, const char* ext, size_t ex
         if (!path) continue;
         snprintf(path, path_len, "%s/%s", dir, entry->d_name);
         struct stat st;
-        if (stat(path, &st) == 0) {
+        if (lstat(path, &st) == 0) {
             if (S_ISDIR(st.st_mode)) {
                 count += bux_count_files_recursive(path, ext, ext_len);
             } else {
@@ -702,7 +702,7 @@ static int bux_collect_files_recursive(const char* dir, const char* ext, size_t 
         if (!path) continue;
         snprintf(path, path_len, "%s/%s", dir, entry->d_name);
         struct stat st;
-        if (stat(path, &st) == 0) {
+        if (lstat(path, &st) == 0) {
             if (S_ISDIR(st.st_mode)) {
                 idx = bux_collect_files_recursive(path, ext, ext_len, result, idx);
                 free(path);

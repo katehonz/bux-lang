@@ -59,6 +59,7 @@ func CBackend_OpToC(op: int) -> String {
     if op == tkAmpAmp { return "&&"; }
     if op == tkPipePipe { return "||"; }
     if op == tkBang { return "!"; }
+    if op == tkTilde { return "~"; }
     if op == tkAmp { return "&"; }
     if op == tkPipe { return "|"; }
     if op == tkCaret { return "^"; }
@@ -371,13 +372,23 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
 
     // spawn Callee(args)
     if kind == hSpawn {
-        StringBuilder_Append(&cbe.sb, "bux_async_spawn(");
-        StringBuilder_Append(&cbe.sb, node.strValue);
-        if node.child1 != null as *HirNode {
-            StringBuilder_Append(&cbe.sb, ", (void*)");
-            CBE_EmitExpr(cbe, node.child1);
+        if node.boolValue {
+            // Async spawn: callee is an async function
+            StringBuilder_Append(&cbe.sb, "bux_async_spawn(");
+            StringBuilder_Append(&cbe.sb, node.strValue);
+            StringBuilder_Append(&cbe.sb, ")");
+        } else {
+            // Green-thread spawn: callee is a regular task function
+            StringBuilder_Append(&cbe.sb, "bux_task_spawn(");
+            StringBuilder_Append(&cbe.sb, node.strValue);
+            if node.child1 != null as *HirNode {
+                StringBuilder_Append(&cbe.sb, ", (void*)");
+                CBE_EmitExpr(cbe, node.child1);
+            } else {
+                StringBuilder_Append(&cbe.sb, ", NULL");
+            }
+            StringBuilder_Append(&cbe.sb, ")");
         }
-        StringBuilder_Append(&cbe.sb, ")");
         return;
     }
 
@@ -978,36 +989,44 @@ func CBackend_Generate(mod: *HirModule) -> String {
             }
             vi = vi + 1;
         }
-        // Emit tag enum for all enums (simple and algebraic)
-        StringBuilder_Append(&cbe.sb, "typedef enum {\n");
-        vi = 0;
-        while vi < en.variantCount {
-            StringBuilder_Append(&cbe.sb, "    ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, "_");
-            StringBuilder_Append(&cbe.sb, en.variants[vi].name);
-            if vi < en.variantCount - 1 {
-                StringBuilder_Append(&cbe.sb, ",");
-            }
-            StringBuilder_Append(&cbe.sb, "\n");
-            vi = vi + 1;
-        }
-        StringBuilder_Append(&cbe.sb, "} ");
-        StringBuilder_Append(&cbe.sb, en.name);
-        StringBuilder_Append(&cbe.sb, "_Tag;\n\n");
-
         if !hasData {
-            // Simple enum: struct wrapper with only tag
-            StringBuilder_Append(&cbe.sb, "typedef struct {\n");
-            StringBuilder_Append(&cbe.sb, "    ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, "_Tag tag;\n");
+            // Simple enum: emit as plain C enum (no struct wrapper)
+            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
+            vi = 0;
+            while vi < en.variantCount {
+                StringBuilder_Append(&cbe.sb, "    ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_");
+                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
+                if vi < en.variantCount - 1 {
+                    StringBuilder_Append(&cbe.sb, ",");
+                }
+                StringBuilder_Append(&cbe.sb, "\n");
+                vi = vi + 1;
+            }
             StringBuilder_Append(&cbe.sb, "} ");
             StringBuilder_Append(&cbe.sb, en.name);
             StringBuilder_Append(&cbe.sb, ";\n\n");
         } else {
-            // Algebraic enum: data union + struct (tag enum already emitted above)
-            // 1. Data union
+            // Algebraic enum: tag enum + data union + struct
+            // 1. Tag enum
+            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
+            vi = 0;
+            while vi < en.variantCount {
+                StringBuilder_Append(&cbe.sb, "    ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_");
+                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
+                if vi < en.variantCount - 1 {
+                    StringBuilder_Append(&cbe.sb, ",");
+                }
+                StringBuilder_Append(&cbe.sb, "\n");
+                vi = vi + 1;
+            }
+            StringBuilder_Append(&cbe.sb, "} ");
+            StringBuilder_Append(&cbe.sb, en.name);
+            StringBuilder_Append(&cbe.sb, "_Tag;\n\n");
+            // 2. Data union
             StringBuilder_Append(&cbe.sb, "typedef union {\n");
             vi = 0;
             while vi < en.variantCount {

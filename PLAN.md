@@ -919,10 +919,11 @@ func Main() -> int {
 ### Next Actions (Priority Order)
 
 1. ✅ **Fix LIR backend type inference** — struct temps, undeclared vars, break/continue, duplicate declarations
-2. ✅ **All 26 examples passing** — bootstrap compiler builds and runs every example
+2. ✅ **All 30 examples passing** — bootstrap and self-host compilers build and run every example
 3. ✅ **Selfhost build working** — `make selfhost` produces working `buxc2`
-4. 🔄 **Selfhost loop verification** — `buxc2` compiles `src/` → `buxc3`
-5. 🔄 **Golden tests for C codegen** — Prevent future regressions in LIR → C
+4. ✅ **Selfhost loop verification** — `buxc2` compiles `src/` → `buxc3`; C output and stripped binary identical
+5. ✅ **Golden tests for C codegen** — `make test-golden` passes for 8 critical examples
+6. ✅ **`bux test` runner** — discovers `tests/*.bux`, builds each as a temp package, and reports PASS/FAIL
 
 ---
 
@@ -941,9 +942,9 @@ func Main() -> int {
 
 | Task | Status | Priority | Details |
 |------|--------|----------|---------|
-| `11.2.1` `buxc2 build` on `src/` | ⏳ | P0 | Verify selfhost compiler can build itself |
-| `11.2.2` Deterministic C codegen | ⏳ | P0 | Remove non-deterministic ordering in `emitModule` |
-| `11.2.3` `make selfhost-loop` | ⏳ | P0 | Makefile target: buxc2 → buxc3 → binary compare |
+| `11.2.1` `buxc2 build` on `src/` | ✅ | P0 | Verify selfhost compiler can build itself |
+| `11.2.2` Deterministic C codegen | ✅ | P0 | Remove non-deterministic ordering in `emitModule` |
+| `11.2.3` `make selfhost-loop` | ✅ | P0 | Makefile target: buxc2 → buxc3 → binary compare |
 | `11.2.4` Cross-module generics in selfhost | ⏳ | P1 | `Map<K,V>` and `Array<T>` from stdlib in selfhost context |
 
 ### 11.3 — Gradual Ownership (v0.5.0) ⭐⭐
@@ -958,7 +959,7 @@ func Main() -> int {
 
 | Task | Status | Priority | Details |
 |------|--------|----------|---------|
-| `11.4.1` `bux test` runner | ⏳ | P0 | Built-in test framework with assertions |
+| `11.4.1` `bux test` runner | ✅ | P0 | Built-in test framework with assertions |
 | `11.4.2` `bux fmt` formatter | ⏳ | P1 | Auto-format Bux source |
 | `11.4.3` LSP prototype | ⏳ | P2 | Autocomplete, hover types, go-to-definition |
 | `11.4.4` `bux doc` generator | ⏳ | P2 | HTML from `///` doc comments |

@@ -349,6 +349,26 @@ func Lcx_GenerateFuncInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String, 
     return mangled;
 }
 
+// Strip type-arg suffix from a mangled generic instance name.
+// E.g. ("Box_int", "int", "", 1) -> "Box"; ("Pair_int_String", "int", "String", 2) -> "Pair".
+func Lcx_StripTypeArgs(typeName: String, typeArg0: String, typeArg1: String, typeArgCount: int) -> String {
+    var suffix: String = "_";
+    suffix = String_Concat(suffix, typeArg0);
+    if typeArgCount > 1 && !String_Eq(typeArg1, "") {
+        suffix = String_Concat(suffix, "_");
+        suffix = String_Concat(suffix, typeArg1);
+    }
+    let fullLen: int = bux_strlen(typeName) as int;
+    let suffixLen: int = bux_strlen(suffix) as int;
+    if fullLen > suffixLen {
+        let endPart: String = bux_str_slice(typeName, (fullLen - suffixLen) as uint, suffixLen as uint);
+        if String_Eq(endPart, suffix) {
+            return bux_str_slice(typeName, 0, (fullLen - suffixLen) as uint);
+        }
+    }
+    return typeName;
+}
+
 // ---------------------------------------------------------------------------
 // Array type helpers for bounds-checking desugaring
 // ---------------------------------------------------------------------------
@@ -521,14 +541,19 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                     n.kind = hCall;
                     n.strValue = funcName;
                     let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
-                    // If method expects pointer but receiver is not pointer, add &
-                    if sym.decl.paramCount > 0 && sym.decl.param0.refParamType != null as *TypeExpr && sym.decl.param0.refParamType.kind == tekPointer {
-                        if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind != tekPointer {
-                            let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                            addrNode.kind = hUnary;
-                            addrNode.intValue = tkAmp;
-                            addrNode.child1 = recv;
-                            n.child1 = addrNode;
+                    // If method expects pointer/reference but receiver is a value, add &
+                    if sym.decl.paramCount > 0 && sym.decl.param0.refParamType != null as *TypeExpr {
+                        let paramKind: int = sym.decl.param0.refParamType.kind;
+                        if paramKind == tekPointer || paramKind == tekRef || paramKind == tekMutRef {
+                            if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind != tekPointer && expr.child1.refType.kind != tekRef && expr.child1.refType.kind != tekMutRef {
+                                let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                addrNode.kind = hUnary;
+                                addrNode.intValue = tkAmp;
+                                addrNode.child1 = recv;
+                                n.child1 = addrNode;
+                            } else {
+                                n.child1 = recv;
+                            }
                         } else {
                             n.child1 = recv;
                         }
@@ -569,13 +594,18 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             n.kind = hCall;
             let methodName: String = expr.child1.strValue;
             var receiverTypeName: String = "";
+            var receiverRefType: *TypeExpr = null as *TypeExpr;
             if expr.child1.child1 != null as *Expr && expr.child1.child1.kind == ekIdent {
                 let sym: Symbol = Scope_Lookup(ctx.scope, expr.child1.child1.strValue);
                 receiverTypeName = sym.typeName;
+                receiverRefType = sym.refType;
             }
             if String_Eq(receiverTypeName, "") && expr.child1.child1 != null as *Expr && expr.child1.child1.refType != null as *TypeExpr {
                 receiverTypeName = expr.child1.child1.refType.typeName;
+                receiverRefType = expr.child1.child1.refType;
             }
+
+            var methodDecl: *Decl = null as *Decl;
             if !String_Eq(receiverTypeName, "") {
                 // Strip trailing '*' from pointer type names (e.g. "Box*" → "Box")
                 var baseName: String = receiverTypeName;
@@ -588,10 +618,52 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                 }
                 n.strValue = String_Concat(baseName, "_");
                 n.strValue = String_Concat(n.strValue, methodName);
+
+                // Generic method monomorphization: Box_Get<T> on Box<int> -> Box_Get_int
+                var genericRecvType: *TypeExpr = receiverRefType;
+                if genericRecvType != null as *TypeExpr && genericRecvType.kind == tekPointer && genericRecvType.pointerPointee != null as *TypeExpr {
+                    genericRecvType = genericRecvType.pointerPointee;
+                }
+                if genericRecvType != null as *TypeExpr && genericRecvType.typeArgCount > 0 {
+                    let baseTypeName: String = Lcx_StripTypeArgs(genericRecvType.typeName, genericRecvType.typeArgName0, genericRecvType.typeArgName1, genericRecvType.typeArgCount);
+                    let baseMethodName: String = String_Concat(String_Concat(baseTypeName, "_"), methodName);
+                    let genDecl: *Decl = Lcx_FindGenericFunc(ctx, baseMethodName);
+                    if genDecl != null as *Decl {
+                        let mangled: String = Lcx_GenerateFuncInstance(ctx, genDecl, genericRecvType.typeArgName0, genericRecvType.typeArgName1, genericRecvType.typeArgCount);
+                        n.strValue = mangled;
+                        methodDecl = genDecl;
+                    }
+                }
             }
             // Lower receiver as first argument
             let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1.child1);
-            n.child1 = recv;
+            // Find method decl if not already found (non-generic case)
+            if methodDecl == null as *Decl {
+                let sym: Symbol = Scope_Lookup(ctx.scope, n.strValue);
+                if sym.kind == skFunc && sym.decl != null as *Decl {
+                    methodDecl = sym.decl;
+                }
+            }
+            // Auto-address if method expects pointer/reference but receiver is a value
+            if methodDecl != null as *Decl && methodDecl.paramCount > 0 && methodDecl.param0.refParamType != null as *TypeExpr {
+                let paramKind: int = methodDecl.param0.refParamType.kind;
+                if paramKind == tekPointer || paramKind == tekRef || paramKind == tekMutRef {
+                    if expr.child1.child1 != null as *Expr && expr.child1.child1.refType != null as *TypeExpr &&
+                       expr.child1.child1.refType.kind != tekPointer && expr.child1.child1.refType.kind != tekRef && expr.child1.child1.refType.kind != tekMutRef {
+                        let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        addrNode.kind = hUnary;
+                        addrNode.intValue = tkAmp;
+                        addrNode.child1 = recv;
+                        n.child1 = addrNode;
+                    } else {
+                        n.child1 = recv;
+                    }
+                } else {
+                    n.child1 = recv;
+                }
+            } else {
+                n.child1 = recv;
+            }
             // Lower remaining arguments from linked list
             var arg: *ExprList = expr.callArgs;
             var argIdx: int = 0;
@@ -743,6 +815,25 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                 return n;
             }
         }
+        // Simple enum .tag is the enum value itself
+        if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekNamed && String_Eq(expr.strValue, "tag") {
+            let sym: Symbol = Scope_Lookup(ctx.scope, expr.child1.refType.typeName);
+            if sym.decl != null as *Decl && sym.decl.kind == dkEnum {
+                var hasData: bool = false;
+                if sym.decl.variantCount > 0 && sym.decl.variant0.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 1 && sym.decl.variant1.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 2 && sym.decl.variant2.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 3 && sym.decl.variant3.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 4 && sym.decl.variant4.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 5 && sym.decl.variant5.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 6 && sym.decl.variant6.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 7 && sym.decl.variant7.fieldCount > 0 { hasData = true; }
+                if sym.decl.variantCount > 8 && sym.decl.variant8.fieldCount > 0 { hasData = true; }
+                if !hasData {
+                    return Lcx_LowerExpr(ctx, expr.child1);
+                }
+            }
+        }
         n.kind = hFieldPtr;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
         n.strValue = expr.strValue;
@@ -757,6 +848,7 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     // spawn Callee(args)
     if kind == ekSpawn {
         n.kind = hSpawn;
+        n.boolValue = expr.boolValue;
         if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
             n.strValue = expr.child1.strValue;
         }
@@ -877,14 +969,19 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                     n.kind = hCall;
                     n.strValue = funcName;
                     let recv: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
-                    // If method expects pointer but receiver is not pointer, add &
-                    if targetDecl != null as *Decl && targetDecl.paramCount > 0 && targetDecl.param0.refParamType != null as *TypeExpr && targetDecl.param0.refParamType.kind == tekPointer {
-                        if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind != tekPointer {
-                            let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                            addrNode.kind = hUnary;
-                            addrNode.intValue = tkAmp;
-                            addrNode.child1 = recv;
-                            n.child1 = addrNode;
+                    // If method expects pointer/reference but receiver is a value, add &
+                    if targetDecl != null as *Decl && targetDecl.paramCount > 0 && targetDecl.param0.refParamType != null as *TypeExpr {
+                        let paramKind: int = targetDecl.param0.refParamType.kind;
+                        if paramKind == tekPointer || paramKind == tekRef || paramKind == tekMutRef {
+                            if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind != tekPointer && expr.child1.refType.kind != tekRef && expr.child1.refType.kind != tekMutRef {
+                                let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                addrNode.kind = hUnary;
+                                addrNode.intValue = tkAmp;
+                                addrNode.child1 = recv;
+                                n.child1 = addrNode;
+                            } else {
+                                n.child1 = recv;
+                            }
                         } else {
                             n.child1 = recv;
                         }
@@ -999,14 +1096,19 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                     callNode.line = line;
                     callNode.column = col;
                     let recv: *HirNode = Lcx_LowerExpr(ctx, objExpr);
-                    // If method expects pointer but receiver is not pointer, add &
-                    if targetDecl != null as *Decl && targetDecl.paramCount > 0 && targetDecl.param0.refParamType != null as *TypeExpr && targetDecl.param0.refParamType.kind == tekPointer {
-                        if objExpr.refType != null as *TypeExpr && objExpr.refType.kind != tekPointer {
-                            let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                            addrNode.kind = hUnary;
-                            addrNode.intValue = tkAmp;
-                            addrNode.child1 = recv;
-                            callNode.child1 = addrNode;
+                    // If method expects pointer/reference but receiver is a value, add &
+                    if targetDecl != null as *Decl && targetDecl.paramCount > 0 && targetDecl.param0.refParamType != null as *TypeExpr {
+                        let paramKind: int = targetDecl.param0.refParamType.kind;
+                        if paramKind == tekPointer || paramKind == tekRef || paramKind == tekMutRef {
+                            if objExpr.refType != null as *TypeExpr && objExpr.refType.kind != tekPointer && objExpr.refType.kind != tekRef && objExpr.refType.kind != tekMutRef {
+                                let addrNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                                addrNode.kind = hUnary;
+                                addrNode.intValue = tkAmp;
+                                addrNode.child1 = recv;
+                                callNode.child1 = addrNode;
+                            } else {
+                                callNode.child1 = recv;
+                            }
                         } else {
                             callNode.child1 = recv;
                         }
@@ -1068,6 +1170,23 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Struct init: TypeName { field: value, ... }
     if kind == ekStructInit {
+        // Simple enum init: EnumName { tag: EnumName_Variant } -> EnumName_Variant
+        let enumSym: Symbol = Scope_Lookup(ctx.scope, expr.structName);
+        if enumSym.decl != null as *Decl && enumSym.decl.kind == dkEnum {
+            var hasData: bool = false;
+            if enumSym.decl.variantCount > 0 && enumSym.decl.variant0.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 1 && enumSym.decl.variant1.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 2 && enumSym.decl.variant2.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 3 && enumSym.decl.variant3.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 4 && enumSym.decl.variant4.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 5 && enumSym.decl.variant5.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 6 && enumSym.decl.variant6.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 7 && enumSym.decl.variant7.fieldCount > 0 { hasData = true; }
+            if enumSym.decl.variantCount > 8 && enumSym.decl.variant8.fieldCount > 0 { hasData = true; }
+            if !hasData && expr.child1 != null as *Expr && String_Eq(expr.child1.strValue, "tag") {
+                return Lcx_LowerExpr(ctx, expr.child1.child1);
+            }
+        }
         n.kind = hStructInit;
         var structName: String = expr.structName;
         // Generic struct monomorphization
@@ -1129,6 +1248,157 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
 
     // Let/var → alloca + store
     if kind == skLet {
+        // Try operator: let x: T = operand?  ->  tmp = operand; if tmp.tag == Err { return tmp; } let x = tmp.data.Ok;
+        if stmt.child1 != null as *Expr && stmt.child1.kind == ekTry {
+            let tryExpr: *Expr = stmt.child1;
+            let operandExpr: *Expr = tryExpr.child1;
+            let operandTypeExpr: *TypeExpr = operandExpr.refType;
+            var typeName: String = "Result";
+            var errTag: String = "Result_Err";
+            var okField: String = "Ok_0";
+            if operandTypeExpr != null as *TypeExpr && operandTypeExpr.kind == tekNamed {
+                typeName = operandTypeExpr.typeName;
+                if String_Eq(typeName, "Option") {
+                    errTag = "Option_None";
+                    okField = "Some_0";
+                } else if !String_Eq(typeName, "Result") {
+                    errTag = String_Concat(String_Concat(typeName, "_"), "Err");
+                    okField = "Ok_0";
+                }
+            }
+            let tmpName: String = String_Concat("__try_tmp_", String_FromInt(ctx.tryCounter as int64));
+            ctx.tryCounter = ctx.tryCounter + 1;
+
+            // alloca tmp
+            let tmpAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tmpAlloca.kind = hAlloca;
+            tmpAlloca.line = line;
+            tmpAlloca.column = col;
+            tmpAlloca.strValue = tmpName;
+            tmpAlloca.typeName = typeName;
+
+            // tmp = operand
+            let tmpStore: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tmpStore.kind = hStore;
+            tmpStore.line = line;
+            tmpStore.column = col;
+            let tmpVarRef: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tmpVarRef.kind = hVar;
+            tmpVarRef.strValue = tmpName;
+            tmpStore.child1 = tmpVarRef;
+            tmpStore.child2 = Lcx_LowerExpr(ctx, operandExpr);
+
+            // if (tmp.tag == errTag) return tmp
+            let tagPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tagPtr.kind = hFieldPtr;
+            tagPtr.line = line;
+            tagPtr.column = col;
+            tagPtr.strValue = "tag";
+            tagPtr.child1 = tmpVarRef;
+            let tagLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tagLoad.kind = hLoad;
+            tagLoad.line = line;
+            tagLoad.column = col;
+            tagLoad.child1 = tagPtr;
+            let errConst: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            errConst.kind = hVar;
+            errConst.strValue = errTag;
+            let cond: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            cond.kind = hBinary;
+            cond.line = line;
+            cond.column = col;
+            cond.intValue = tkEq;
+            cond.child1 = tagLoad;
+            cond.child2 = errConst;
+            let retNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            retNode.kind = hReturn;
+            retNode.line = line;
+            retNode.column = col;
+            retNode.child1 = tmpVarRef;
+            let thenBlock: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            thenBlock.kind = hBlock;
+            thenBlock.line = line;
+            thenBlock.column = col;
+            thenBlock.child1 = retNode;
+            let ifNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            ifNode.kind = hIf;
+            ifNode.line = line;
+            ifNode.column = col;
+            ifNode.child1 = cond;
+            ifNode.child2 = thenBlock;
+
+            // New initializer: tmp.data.OkField
+            let dataPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            dataPtr.kind = hFieldPtr;
+            dataPtr.line = line;
+            dataPtr.column = col;
+            dataPtr.strValue = "data";
+            dataPtr.child1 = tmpVarRef;
+            let dataLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            dataLoad.kind = hLoad;
+            dataLoad.line = line;
+            dataLoad.column = col;
+            dataLoad.child1 = dataPtr;
+            let okPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            okPtr.kind = hFieldPtr;
+            okPtr.line = line;
+            okPtr.column = col;
+            okPtr.strValue = okField;
+            okPtr.child1 = dataLoad;
+            let okLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            okLoad.kind = hLoad;
+            okLoad.line = line;
+            okLoad.column = col;
+            okLoad.child1 = okPtr;
+
+            // alloca x
+            let xAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            xAlloca.kind = hAlloca;
+            xAlloca.line = line;
+            xAlloca.column = col;
+            xAlloca.strValue = stmt.strValue;
+            xAlloca.typeName = "";
+            let letTe: *TypeExpr = Lcx_SubstituteType(ctx, stmt.refStmtType);
+            if letTe != null as *TypeExpr {
+                xAlloca.intValue = letTe.kind;
+                xAlloca.typeKind = Lcx_ResolveTypeKind(letTe);
+                if letTe.kind == tekFunc {
+                    xAlloca.typeName = Lcx_BuildFuncTypeName(letTe);
+                } else if letTe.kind == tekPointer && letTe.pointerPointee != null as *TypeExpr {
+                    xAlloca.typeName = String_Concat(letTe.pointerPointee.typeName, "*");
+                } else if !String_Eq(letTe.typeName, "") {
+                    xAlloca.typeName = letTe.typeName;
+                }
+            }
+            var xSym: Symbol;
+            xSym.kind = skVar;
+            xSym.name = stmt.strValue;
+            xSym.typeKind = xAlloca.typeKind;
+            xSym.typeName = xAlloca.typeName;
+            xSym.refType = letTe;
+            xSym.isMutable = false;
+            xSym.isPublic = false;
+            xSym.decl = null as *Decl;
+            discard Scope_Define(ctx.scope, xSym);
+
+            let xStore: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            xStore.kind = hStore;
+            xStore.line = line;
+            xStore.column = col;
+            xStore.child1 = xAlloca;
+            xStore.child2 = okLoad;
+
+            tmpAlloca.child3 = tmpStore;
+            tmpStore.child3 = ifNode;
+            ifNode.child3 = xStore;
+            let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            blockNode.kind = hBlock;
+            blockNode.line = line;
+            blockNode.column = col;
+            blockNode.child1 = tmpAlloca;
+            return blockNode;
+        }
+
         let init: *HirNode = Lcx_LowerExpr(ctx, stmt.child1);
         // alloca for the variable
         let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
@@ -2169,87 +2439,240 @@ func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
 // Compile-Time Function Execution (CTFE) — constant expression evaluator
 // ---------------------------------------------------------------------------
 
-func Lcx_EvalConstExpr(ctx: *LowerCtx, expr: *Expr) -> int {
+const CTFE_MAX_LOCALS: int = 64;
+
+struct CtfeLocal {
+    name: String,
+    value: int,
+}
+
+struct CtfeEnv {
+    locals: *CtfeLocal,
+    count: int,
+}
+
+struct CtVal {
+    value: int,
+    isReturn: bool,
+}
+
+func CtfeEnv_New() -> CtfeEnv {
+    let locals: *CtfeLocal = bux_alloc(CTFE_MAX_LOCALS as uint * sizeof(CtfeLocal)) as *CtfeLocal;
+    return CtfeEnv { locals: locals, count: 0 };
+}
+
+func CtfeEnv_Get(env: *CtfeEnv, name: String) -> int {
+    var i: int = env.count - 1;
+    while i >= 0 {
+        if String_Eq(env.locals[i].name, name) {
+            return env.locals[i].value;
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+func CtfeEnv_Set(env: *CtfeEnv, name: String, value: int) {
+    if env.count >= CTFE_MAX_LOCALS { return; }
+    env.locals[env.count].name = name;
+    env.locals[env.count].value = value;
+    env.count = env.count + 1;
+}
+
+func Lcx_FindConstFunc(ctx: *LowerCtx, name: String) -> *Decl {
+    var decl: *Decl = ctx.module.firstItem;
+    while decl != null as *Decl {
+        if decl.kind == dkFunc && decl.isConst == 1 && String_Eq(decl.strValue, name) {
+            return decl;
+        }
+        decl = decl.childDecl2;
+    }
+    return null as *Decl;
+}
+
+func Lcx_ParamName(fd: *Decl, idx: int) -> String {
+    if fd == null as *Decl { return ""; }
+    if idx == 0 { return fd.param0.name; }
+    if idx == 1 { return fd.param1.name; }
+    if idx == 2 { return fd.param2.name; }
+    if idx == 3 { return fd.param3.name; }
+    if idx == 4 { return fd.param4.name; }
+    if idx == 5 { return fd.param5.name; }
+    if idx == 6 { return fd.param6.name; }
+    if idx == 7 { return fd.param7.name; }
+    if idx == 8 { return fd.param8.name; }
+    return "";
+}
+
+func CtVal_Make(value: int) -> CtVal {
+    return CtVal { value: value, isReturn: false };
+}
+
+func CtVal_Return(value: int) -> CtVal {
+    return CtVal { value: value, isReturn: true };
+}
+
+func Lcx_EvalConstExprEnv(ctx: *LowerCtx, expr: *Expr, env: *CtfeEnv) -> CtVal {
     if expr == null as *Expr {
-        return 0;
+        return CtVal_Make(0);
     }
 
     // Literal integer
     if expr.kind == ekLiteral {
-        return expr.intValue;
+        return CtVal_Make(expr.intValue);
     }
 
-    // Reference to another constant
+    // Reference to local or another constant
     if expr.kind == ekIdent {
+        let localVal: int = CtfeEnv_Get(env, expr.strValue);
+        // Local takes precedence; 0 from Get could mean not found, but global const 0
+        // will still be looked up below if needed. For Factorial parameters this works
+        // because params are always set in env.
+        if localVal != 0 {
+            return CtVal_Make(localVal);
+        }
         let name: String = expr.strValue;
-        let i: int = 0;
+        var i: int = 0;
         while i < ctx.hm.constCount {
             if String_Eq(ctx.hm.consts[i].name, name) {
-                return ctx.hm.consts[i].value;
+                return CtVal_Make(ctx.hm.consts[i].value);
             }
             i = i + 1;
         }
-        return 0;
+        return CtVal_Make(0);
     }
 
     // Unary operators
     if expr.kind == ekUnary {
-        let operand: int = Lcx_EvalConstExpr(ctx, expr.child1);
+        let operand: CtVal = Lcx_EvalConstExprEnv(ctx, expr.child1, env);
         let op: int = expr.intValue;
-        if op == tkMinus { return -operand; }
-        if op == tkBang { return (operand == 0) as int; }
-        if op == tkTilde { return ~operand; }
-        return operand;
+        if op == tkMinus { return CtVal_Make(-operand.value); }
+        if op == tkBang { return CtVal_Make((operand.value == 0) as int); }
+        if op == tkTilde { return CtVal_Make(~operand.value); }
+        return CtVal_Make(operand.value);
     }
 
     // Binary operators
     if expr.kind == ekBinary {
-        let left: int = Lcx_EvalConstExpr(ctx, expr.child1);
-        let right: int = Lcx_EvalConstExpr(ctx, expr.child2);
+        let left: CtVal = Lcx_EvalConstExprEnv(ctx, expr.child1, env);
+        let right: CtVal = Lcx_EvalConstExprEnv(ctx, expr.child2, env);
         let op: int = expr.intValue;
-        if op == tkPlus { return left + right; }
-        if op == tkMinus { return left - right; }
-        if op == tkStar { return left * right; }
+        if op == tkPlus { return CtVal_Make(left.value + right.value); }
+        if op == tkMinus { return CtVal_Make(left.value - right.value); }
+        if op == tkStar { return CtVal_Make(left.value * right.value); }
         if op == tkSlash {
-            if right == 0 { return 0; }
-            return left / right;
+            if right.value == 0 { return CtVal_Make(0); }
+            return CtVal_Make(left.value / right.value);
         }
         if op == tkPercent {
-            if right == 0 { return 0; }
-            return left % right;
+            if right.value == 0 { return CtVal_Make(0); }
+            return CtVal_Make(left.value % right.value);
         }
-        if op == tkLt { return (left < right) as int; }
-        if op == tkLe { return (left <= right) as int; }
-        if op == tkGt { return (left > right) as int; }
-        if op == tkGe { return (left >= right) as int; }
-        if op == tkEq { return (left == right) as int; }
-        if op == tkNe { return (left != right) as int; }
-        if op == tkAmp { return left & right; }
-        if op == tkPipe { return left | right; }
-        if op == tkCaret { return left ^ right; }
-        if op == tkShl { return left << right; }
-        if op == tkShr { return left >> right; }
-        if op == tkAmpAmp { return (left != 0 && right != 0) as int; }
-        if op == tkPipePipe { return (left != 0 || right != 0) as int; }
-        return 0;
+        if op == tkLt { return CtVal_Make((left.value < right.value) as int); }
+        if op == tkLe { return CtVal_Make((left.value <= right.value) as int); }
+        if op == tkGt { return CtVal_Make((left.value > right.value) as int); }
+        if op == tkGe { return CtVal_Make((left.value >= right.value) as int); }
+        if op == tkEq { return CtVal_Make((left.value == right.value) as int); }
+        if op == tkNe { return CtVal_Make((left.value != right.value) as int); }
+        if op == tkAmp { return CtVal_Make(left.value & right.value); }
+        if op == tkPipe { return CtVal_Make(left.value | right.value); }
+        if op == tkCaret { return CtVal_Make(left.value ^ right.value); }
+        if op == tkShl { return CtVal_Make(left.value << right.value); }
+        if op == tkShr { return CtVal_Make(left.value >> right.value); }
+        if op == tkAmpAmp { return CtVal_Make((left.value != 0 && right.value != 0) as int); }
+        if op == tkPipePipe { return CtVal_Make((left.value != 0 || right.value != 0) as int); }
+        return CtVal_Make(0);
     }
 
     // Ternary operator
     if expr.kind == ekTernary {
-        let cond: int = Lcx_EvalConstExpr(ctx, expr.child1);
-        if cond != 0 {
-            return Lcx_EvalConstExpr(ctx, expr.child2);
+        let cond: CtVal = Lcx_EvalConstExprEnv(ctx, expr.child1, env);
+        if cond.value != 0 {
+            return Lcx_EvalConstExprEnv(ctx, expr.child2, env);
         } else {
-            return Lcx_EvalConstExpr(ctx, expr.child3);
+            return Lcx_EvalConstExprEnv(ctx, expr.child3, env);
         }
     }
 
     // Cast — evaluate operand (types don't affect integer values)
     if expr.kind == ekCast {
-        return Lcx_EvalConstExpr(ctx, expr.child1);
+        return Lcx_EvalConstExprEnv(ctx, expr.child1, env);
     }
 
-    return 0;
+    // Const function call
+    if expr.kind == ekCall {
+        if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+            let funcName: String = expr.child1.strValue;
+            let fd: *Decl = Lcx_FindConstFunc(ctx, funcName);
+            if fd != null as *Decl && fd.refBody != null as *Block {
+                // Evaluate arguments
+                var argExpr: *ExprList = expr.callArgs;
+                var ai: int = 0;
+                var argVals: *int = bux_alloc(fd.paramCount as uint * sizeof(int)) as *int;
+                while ai < fd.paramCount {
+                    argVals[ai] = 0;
+                    ai = ai + 1;
+                }
+                ai = 0;
+                while argExpr != null as *ExprList && ai < fd.paramCount {
+                    let av: CtVal = Lcx_EvalConstExprEnv(ctx, argExpr.expr, env);
+                    argVals[ai] = av.value;
+                    argExpr = argExpr.next;
+                    ai = ai + 1;
+                }
+                // Set up call environment
+                let callEnv: CtfeEnv = CtfeEnv_New();
+                var pi: int = 0;
+                while pi < fd.paramCount {
+                    CtfeEnv_Set(&callEnv, Lcx_ParamName(fd, pi), argVals[pi]);
+                    pi = pi + 1;
+                }
+                let result: CtVal = Lcx_EvalConstBlock(ctx, fd.refBody, &callEnv);
+                return CtVal_Make(result.value);
+            }
+        }
+        return CtVal_Make(0);
+    }
+
+    return CtVal_Make(0);
+}
+
+func Lcx_EvalConstBlock(ctx: *LowerCtx, block: *Block, env: *CtfeEnv) -> CtVal {
+    if block == null as *Block {
+        return CtVal_Make(0);
+    }
+    var stmt: *Stmt = block.firstStmt;
+    while stmt != null as *Stmt {
+        if stmt.kind == skLet && stmt.child1 != null as *Expr {
+            let val: CtVal = Lcx_EvalConstExprEnv(ctx, stmt.child1, env);
+            CtfeEnv_Set(env, stmt.strValue, val.value);
+        } else if stmt.kind == skIf {
+            let cond: CtVal = Lcx_EvalConstExprEnv(ctx, stmt.child1, env);
+            if cond.value != 0 {
+                let r: CtVal = Lcx_EvalConstBlock(ctx, stmt.refStmtBlock, env);
+                if r.isReturn { return r; }
+            } else if stmt.refStmtElse != null as *Block {
+                let r: CtVal = Lcx_EvalConstBlock(ctx, stmt.refStmtElse, env);
+                if r.isReturn { return r; }
+            }
+        } else if stmt.kind == skReturn {
+            if stmt.child1 != null as *Expr {
+                let val: CtVal = Lcx_EvalConstExprEnv(ctx, stmt.child1, env);
+                return CtVal_Return(val.value);
+            }
+            return CtVal_Return(0);
+        } else if stmt.kind == skExpr {
+            discard Lcx_EvalConstExprEnv(ctx, stmt.child1, env);
+        }
+        stmt = stmt.nextStmt;
+    }
+    return CtVal_Make(0);
+}
+
+func Lcx_EvalConstExpr(ctx: *LowerCtx, expr: *Expr) -> int {
+    let env: CtfeEnv = CtfeEnv_New();
+    let result: CtVal = Lcx_EvalConstExprEnv(ctx, expr, &env);
+    return result.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -2379,6 +2802,24 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             ctx.genStructs[ctx.genStructCount] = *decl;
             ctx.genStructCount = ctx.genStructCount + 1;
         }
+        // Generic impl/extend blocks: methods inherit the impl's type params
+        if decl.kind == dkImpl && decl.typeParamCount > 0 {
+            let implTypeName: String = decl.strValue;
+            var implDecl: *Decl = decl.childDecl1;
+            while implDecl != null as *Decl {
+                if implDecl.kind == dkFunc {
+                    let renamed: String = String_Concat(String_Concat(implTypeName, "_"), implDecl.strValue);
+                    var copy: Decl = *implDecl;
+                    copy.strValue = renamed;
+                    copy.typeParam0 = decl.typeParam0;
+                    copy.typeParam1 = decl.typeParam1;
+                    copy.typeParamCount = decl.typeParamCount;
+                    ctx.genFuncs[ctx.genFuncCount] = copy;
+                    ctx.genFuncCount = ctx.genFuncCount + 1;
+                }
+                implDecl = implDecl.childDecl2;
+            }
+        }
         decl = decl.childDecl2;
     }
 
@@ -2427,6 +2868,11 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
             var implDecl: *Decl = decl.childDecl1;
             while implDecl != null as *Decl {
                 if implDecl.kind == dkFunc && implDecl.refBody != null as *Block {
+                    // Generic impl methods are monomorphized on demand; skip direct lowering
+                    if decl.typeParamCount > 0 {
+                        implDecl = implDecl.childDecl2;
+                        continue;
+                    }
                     let mangled: String = String_Concat(implTypeName, "_");
                     implDecl.strValue = String_Concat(mangled, implDecl.strValue);
                     let f: *HirFunc = Lcx_LowerFunc(ctx, implDecl);

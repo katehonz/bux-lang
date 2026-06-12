@@ -15,6 +15,10 @@ extern func bux_mkdir_if_needed(path: String) -> int;
 extern func bux_run_nim(nim_file: String, out_bin: String) -> int;
 extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
 extern func bux_system(cmd: String) -> int;
+extern func bux_getenv(name: String) -> String;
+extern func bux_setenv(name: String, value: String) -> int;
+extern func bux_strlen(s: String) -> uint;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
 
 func ReadFile(path: String) -> String {
     return bux_read_file(path);
@@ -412,12 +416,18 @@ func Cli_CompileSource(source: String, sourceName: String) -> *HirModule {
 // ---------------------------------------------------------------------------
 
 func Cli_FindStdlibDir(projectDir: String) -> String {
+    // Allow tests and temp packages to inherit the parent project's stdlib.
+    let envPath: String = bux_getenv("BUX_STDLIB");
+    if !String_Eq(envPath, "") && DirExists(envPath) && FileExists(bux_path_join(envPath, "Fs.bux")) {
+        return envPath;
+    }
+
     var path: String = bux_path_join(projectDir, "lib");
-    if DirExists(path) { return path; }
+    if DirExists(path) && FileExists(bux_path_join(path, "Fs.bux")) { return path; }
     path = bux_path_join(projectDir, "../lib");
-    if DirExists(path) { return path; }
+    if DirExists(path) && FileExists(bux_path_join(path, "Fs.bux")) { return path; }
     path = bux_path_join(projectDir, "../../lib");
-    if DirExists(path) { return path; }
+    if DirExists(path) && FileExists(bux_path_join(path, "Fs.bux")) { return path; }
     return "";
 }
 
@@ -874,34 +884,170 @@ func Cli_Fmt(dir: String) -> int {
     return 0;
 }
 
+func Cli_FileNameFromPath(path: String) -> String {
+    let len: int = bux_strlen(path) as int;
+    var i: int = len - 1;
+    while i >= 0 {
+        let ch: String = bux_str_slice(path, i as uint, 1);
+        if String_Eq(ch, "/") {
+            return bux_str_slice(path, (i + 1) as uint, (len - i - 1) as uint);
+        }
+        i = i - 1;
+    }
+    return path;
+}
+
+func Cli_StripExtension(name: String) -> String {
+    let len: int = bux_strlen(name) as int;
+    var i: int = len - 1;
+    while i >= 0 {
+        let ch: String = bux_str_slice(name, i as uint, 1);
+        if String_Eq(ch, ".") {
+            return bux_str_slice(name, 0, i as uint);
+        }
+        i = i - 1;
+    }
+    return name;
+}
+
 func Cli_Test(projectDir: String) -> int {
     Print("Testing project: ");
     PrintLine(projectDir);
-    // Build the project first
-    let rc: int = Cli_BuildProject(projectDir, "", false);
-    if rc != 0 {
-        PrintLine("Test build failed");
-        return rc;
+    // Build and run the project's own Main first
+    let mainRc: int = Cli_BuildProject(projectDir, "", false);
+    if mainRc != 0 {
+        PrintLine("Main test build failed");
+        return mainRc;
     }
-    // Run the resulting binary
     let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
-    var outName: String = man.name;
-    if String_Eq(outName, "") { outName = "bux_out"; }
-    let outBin: String = bux_path_join(bux_path_join(projectDir, "build"), outName);
-    if !FileExists(outBin) {
+    var mainName: String = man.name;
+    if String_Eq(mainName, "") { mainName = "bux_out"; }
+    let mainBin: String = bux_path_join(bux_path_join(projectDir, "build"), mainName);
+    if !FileExists(mainBin) {
         Print("Error: test binary not found: ");
-        PrintLine(outBin);
+        PrintLine(mainBin);
         return 1;
     }
-    let result: int = bux_system(outBin);
-    if result == 0 {
-        PrintLine("Tests passed");
-    } else {
-        Print("Tests failed (exit code ");
-        PrintInt(result as int64);
+    let mainResult: int = bux_system(mainBin);
+    if mainResult != 0 {
+        Print("Main tests failed (exit code ");
+        PrintInt(mainResult as int64);
         PrintLine(")");
+        return mainResult;
     }
-    return result;
+    PrintLine("Main tests passed");
+
+    // Propagate the project's stdlib to temp test packages.
+    let stdlibDir: String = Cli_FindStdlibDir(projectDir);
+    if !String_Eq(stdlibDir, "") {
+        discard bux_setenv("BUX_STDLIB", stdlibDir);
+    }
+
+    // Run individual test files from tests/ directory
+    let testsDir: String = bux_path_join(projectDir, "tests");
+    if !DirExists(testsDir) {
+        PrintLine("No tests/ directory found");
+        return 0;
+    }
+    var testCount: int = 0;
+    let testFiles: *String = bux_list_dir(testsDir, ".bux", &testCount);
+    if testCount == 0 {
+        PrintLine("No .bux test files found in tests/");
+        return 0;
+    }
+
+    var passed: int = 0;
+    var failed: int = 0;
+    var i: int = 0;
+    while i < testCount {
+        let testPath: String = testFiles[i];
+        let fileName: String = Cli_FileNameFromPath(testPath);
+        let testName: String = Cli_StripExtension(fileName);
+        Print("  Test: ");
+        Print(testName);
+        Print(" ... ");
+
+        // Create temp package for this test file
+        let tmpDir: String = bux_path_join(bux_path_join(projectDir, "build"), "_test_tmp");
+        let tmpSrc: String = bux_path_join(tmpDir, "src");
+        discard bux_mkdir_if_needed(tmpDir);
+        discard bux_mkdir_if_needed(tmpSrc);
+
+        let source: String = ReadFile(testPath);
+        if String_Eq(source, "") {
+            PrintLine("FAIL (cannot read test file)");
+            failed = failed + 1;
+            i = i + 1;
+            continue;
+        }
+        let tmpMain: String = bux_path_join(tmpSrc, "Main.bux");
+        if !WriteFile(tmpMain, source) {
+            PrintLine("FAIL (cannot write temp Main.bux)");
+            failed = failed + 1;
+            i = i + 1;
+            continue;
+        }
+
+        let tmpToml: String = bux_path_join(tmpDir, "bux.toml");
+        var tomlContent: String = "[Package]\nName    = \"_test_tmp\"\nVersion = \"0.1.0\"\nType    = \"bin\"\n\n[Build]\nOutput = \"Bin\"\n";
+        if !WriteFile(tmpToml, tomlContent) {
+            PrintLine("FAIL (cannot write temp bux.toml)");
+            failed = failed + 1;
+            i = i + 1;
+            continue;
+        }
+
+        // Copy runtime shims so the temp package links even when nested deep.
+        if !String_Eq(stdlibDir, "") {
+            let rtDir: String = bux_path_join(bux_path_parent(stdlibDir), "rt");
+            let tmpRtDir: String = bux_path_join(tmpDir, "rt");
+            discard bux_mkdir_if_needed(tmpRtDir);
+            let rtSrc: String = bux_path_join(rtDir, "runtime.c");
+            let rtDst: String = bux_path_join(tmpRtDir, "runtime.c");
+            if FileExists(rtSrc) && !FileExists(rtDst) {
+                discard WriteFile(rtDst, ReadFile(rtSrc));
+            }
+            let ioSrc: String = bux_path_join(rtDir, "io.c");
+            let ioDst: String = bux_path_join(tmpRtDir, "io.c");
+            if FileExists(ioSrc) && !FileExists(ioDst) {
+                discard WriteFile(ioDst, ReadFile(ioSrc));
+            }
+        }
+
+        let buildRc: int = Cli_BuildProject(tmpDir, "", false);
+        if buildRc != 0 {
+            PrintLine("FAIL (build error)");
+            failed = failed + 1;
+            i = i + 1;
+            continue;
+        }
+        let testBin: String = bux_path_join(bux_path_join(tmpDir, "build"), "_test_tmp");
+        if !FileExists(testBin) {
+            PrintLine("FAIL (test binary not found)");
+            failed = failed + 1;
+            i = i + 1;
+            continue;
+        }
+        let runRc: int = bux_system(testBin);
+        if runRc == 0 {
+            PrintLine("PASS");
+            passed = passed + 1;
+        } else {
+            Print("FAIL (exit ");
+            PrintInt(runRc as int64);
+            PrintLine(")");
+            failed = failed + 1;
+        }
+        i = i + 1;
+    }
+
+    Print("Tests: ");
+    PrintInt(passed as int64);
+    Print(" passed, ");
+    PrintInt(failed as int64);
+    PrintLine(" failed");
+    if failed > 0 { return 1; }
+    return 0;
 }
 
 func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool) -> int {
