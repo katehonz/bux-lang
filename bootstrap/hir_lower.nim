@@ -512,6 +512,27 @@ proc getReceiverTypeExpr(ctx: LowerCtx, expr: Expr): TypeExpr =
   else: discard
   return nil
 
+proc getCollectionElementTypeExpr(ctx: var LowerCtx, expr: Expr): TypeExpr =
+  ## Return the element TypeExpr of a collection expression (Array<T>, Iter<T>, Channel<T>).
+  ## For identifiers we can use the declared TypeExpr directly; for other expressions we
+  ## fall back to the resolved concrete Type.
+  case expr.kind
+  of ekIdent:
+    if ctx.varTypeExprs.hasKey(expr.exprIdent):
+      let te = ctx.varTypeExprs[expr.exprIdent]
+      if te.kind == tekNamed and te.typeArgs.len > 0:
+        return te.typeArgs[0]
+      if te.kind in {tekPointer, tekRef, tekMutRef} and te.pointerPointee.kind == tekNamed and te.pointerPointee.typeArgs.len > 0:
+        return te.pointerPointee.typeArgs[0]
+  else:
+    discard
+  let t = ctx.resolveExprType(expr)
+  if t.kind == tkNamed and t.inner.len > 0:
+    return typeToTypeExpr(t.inner[0])
+  if t.isPointer and t.inner.len > 0 and t.inner[0].kind == tkNamed and t.inner[0].inner.len > 0:
+    return typeToTypeExpr(t.inner[0].inner[0])
+  return TypeExpr(kind: tekNamed, typeName: "unknown")
+
 proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs: seq[TypeExpr]): string
 
 proc lowerExprWithDynRefCoerce(ctx: var LowerCtx, arg: Expr, expectedType: Type): HirNode =
@@ -1336,10 +1357,130 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
       let forBlock = hirBlock(@[initStmt, initStore, whileNode], nil, makeVoid(), loc, isScope = true)
       return ctx.flushPending(forBlock)
     
-    # Generic iterator for loop (simplified - just infinite loop for now)
-    let loweredIter = ctx.lowerExpr(iterExpr)
+    # Collection-based for: for x in collection { body }
+    let collType = ctx.resolveExprType(iterExpr)
+    let elemTypeExpr = ctx.getCollectionElementTypeExpr(iterExpr)
+    let elemType = ctx.resolveTypeExpr(elemTypeExpr)
+    # Resolve the collection type to its mangled struct instance (e.g. Array<int> -> Array_int).
+    let collTypeMangled = substituteType(ctx, typeToTypeExpr(collType), ctx.typeSubst)
+
+    let isChannel = collType.kind == tkNamed and collType.name.startsWith("Channel")
+
+    if isChannel:
+      # Channel lowering:
+      #   alloca x
+      #   while (true) {
+      #       if (!Channel_Recv_Ok_T(&ch, &x)) break;
+      #       body
+      #   }
+      let recvOkName = ctx.generateMethodInstance("Channel_Recv_Ok", @[elemTypeExpr])
+
+      let xAlloca = hirAlloca(varName, elemType, loc)
+      let xVar = hirVar(varName, elemType, loc)
+
+      ctx.varTypeExprs[varName] = elemTypeExpr
+
+      let chAddr = HirNode(kind: hUnary, unaryOp: tkAmp, unaryOperand: ctx.lowerExpr(iterExpr),
+                           typ: makePointer(collType), loc: loc)
+      let xAddr = HirNode(kind: hUnary, unaryOp: tkAmp, unaryOperand: xVar,
+                          typ: makePointer(elemType), loc: loc)
+      let recvOkCall = hirCall(recvOkName, @[chAddr, xAddr], makeBool(), loc)
+      let notRecvOk = HirNode(kind: hUnary, unaryOp: tkBang, unaryOperand: recvOkCall,
+                              typ: makeBool(), loc: loc)
+      let breakNode = HirNode(kind: hBreak, loc: loc)
+      let ifNode = HirNode(kind: hIf, ifCond: notRecvOk, ifThen: breakNode, ifElse: nil,
+                           typ: makeVoid(), loc: loc)
+
+      let loweredBody = ctx.lowerBlock(body)
+      var whileBodyStmts: seq[HirNode] = @[]
+      whileBodyStmts.add(xAlloca)
+      whileBodyStmts.add(ifNode)
+      if loweredBody != nil:
+        whileBodyStmts.add(loweredBody)
+      let whileBody = hirBlock(whileBodyStmts, nil, makeVoid(), loc)
+
+      let trueLit = hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc)
+      let whileNode = HirNode(kind: hWhile, whileCond: trueLit, whileBody: whileBody,
+                              typ: makeVoid(), loc: loc)
+
+      let forBlock = hirBlock(@[whileNode], nil, makeVoid(), loc, isScope = true)
+      return ctx.flushPending(forBlock)
+
+    # Array / Iter lowering:
+    #   alloca __iter
+    #   __iter = Array_Iter_T(&collection);
+    #   while (Iter_HasNext_T(&__iter)) {
+    #       alloca x
+    #       x = Iter_Next_T(&__iter);
+    #       body
+    #   }
+    let iterFuncName = ctx.generateMethodInstance("Array_Iter", @[elemTypeExpr])
+    let hasNextFuncName = ctx.generateMethodInstance("Iter_HasNext", @[elemTypeExpr])
+    let nextFuncName = ctx.generateMethodInstance("Iter_Next", @[elemTypeExpr])
+
+    # Ensure Iter<T> struct instance exists and resolve its mangled name.
+    let iterType = substituteType(ctx, TypeExpr(kind: tekNamed, typeName: "Iter", typeArgs: @[elemTypeExpr]), ctx.typeSubst)
+
+    let iterVarName = "__iter_" & varName & "_" & $ctx.varCounter
+    inc ctx.varCounter
+
+    # Build collection pointer. If the collection is not a simple identifier, spill to a temp.
+    var preStmts: seq[HirNode] = @[]
+    var collPtr: HirNode = nil
+    if iterExpr.kind == ekIdent:
+      let collVar = hirVar(iterExpr.exprIdent, collType, loc)
+      collPtr = HirNode(kind: hUnary, unaryOp: tkAmp, unaryOperand: collVar,
+                        typ: makePointer(collType), loc: loc)
+    else:
+      let collAllocaName = ctx.freshName()
+      let collAlloca = hirAlloca(collAllocaName, collTypeMangled, loc)
+      let collVarPtr = hirVar(collAllocaName, makePointer(collTypeMangled), loc)
+      let collValue = ctx.lowerExpr(iterExpr)
+      let collStore = hirStore(collVarPtr, collValue, loc)
+      preStmts.add(collAlloca)
+      preStmts.add(collStore)
+      collPtr = HirNode(kind: hUnary, unaryOp: tkAmp,
+                        unaryOperand: hirVar(collAllocaName, collTypeMangled, loc),
+                        typ: makePointer(collTypeMangled), loc: loc)
+
+    let iterAlloca = hirAlloca(iterVarName, iterType, loc)
+    let iterVarPtr = hirVar(iterVarName, makePointer(iterType), loc)
+    let iterInitCall = hirCall(iterFuncName, @[collPtr], iterType, loc)
+    let iterStore = hirStore(iterVarPtr, iterInitCall, loc)
+
+    preStmts.add(iterAlloca)
+    preStmts.add(iterStore)
+
+    # while condition: Iter_HasNext_T(&__iter)
+    let iterAddr = HirNode(kind: hUnary, unaryOp: tkAmp, unaryOperand: hirVar(iterVarName, iterType, loc),
+                           typ: makePointer(iterType), loc: loc)
+    let condCall = hirCall(hasNextFuncName, @[iterAddr], makeBool(), loc)
+
+    # loop body: alloca x; x = Iter_Next_T(&__iter); body
+    let xAlloca = hirAlloca(varName, elemType, loc)
+    let xVarPtr = hirVar(varName, makePointer(elemType), loc)
+    let iterAddr2 = HirNode(kind: hUnary, unaryOp: tkAmp, unaryOperand: hirVar(iterVarName, iterType, loc),
+                            typ: makePointer(iterType), loc: loc)
+    let nextCall = hirCall(nextFuncName, @[iterAddr2], elemType, loc)
+    let xStore = hirStore(xVarPtr, nextCall, loc)
+
+    ctx.varTypeExprs[varName] = elemTypeExpr
     let loweredBody = ctx.lowerBlock(body)
-    return ctx.flushPending(HirNode(kind: hLoop, loopBody: loweredBody, typ: makeVoid(), loc: loc))
+
+    var bodyStmts: seq[HirNode] = @[]
+    bodyStmts.add(xAlloca)
+    bodyStmts.add(xStore)
+    if loweredBody != nil:
+      bodyStmts.add(loweredBody)
+    let whileBody = hirBlock(bodyStmts, nil, makeVoid(), loc)
+
+    let whileNode = HirNode(kind: hWhile, whileCond: condCall, whileBody: whileBody,
+                            typ: makeVoid(), loc: loc)
+
+    var blockStmts = preStmts
+    blockStmts.add(whileNode)
+    let forBlock = hirBlock(blockStmts, nil, makeVoid(), loc, isScope = true)
+    return ctx.flushPending(forBlock)
 
   of skDoWhile:
     let body = ctx.lowerBlock(stmt.stmtDoWhileBody)

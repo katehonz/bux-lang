@@ -137,7 +137,7 @@ proc typeExprReferencesTypeParam(te: TypeExpr, name: string): bool =
   of tekSelf:
     return false
 
-proc typeToTypeExpr(t: Type): TypeExpr =
+proc typeToTypeExpr*(t: Type): TypeExpr =
   ## Convert a resolved Type back to a TypeExpr for storage in inferred type args.
   case t.kind
   of tkInt: TypeExpr(kind: tekNamed, typeName: "int")
@@ -154,7 +154,11 @@ proc typeToTypeExpr(t: Type): TypeExpr =
   of tkFloat64: TypeExpr(kind: tekNamed, typeName: "float64")
   of tkBool: TypeExpr(kind: tekNamed, typeName: "bool")
   of tkStr: TypeExpr(kind: tekNamed, typeName: "String")
-  of tkNamed: TypeExpr(kind: tekNamed, typeName: t.name)
+  of tkNamed:
+    var args: seq[TypeExpr] = @[]
+    for a in t.inner:
+      args.add(typeToTypeExpr(a))
+    return TypeExpr(kind: tekNamed, typeName: t.name, typeArgs: args)
   of tkPointer:
     if t.inner.len > 0:
       TypeExpr(kind: tekPointer, refLifetime: "", pointerPointee: typeToTypeExpr(t.inner[0]))
@@ -201,6 +205,8 @@ proc substituteTypeInType(sema: var Sema, t: Type, subst: Table[string, Type]): 
       inner.add(sema.substituteTypeInType(it, subst))
     return Type(kind: tkFunc, inner: inner)
   of tkNamed:
+    if subst.hasKey(t.name):
+      return subst[t.name]
     if t.inner.len > 0:
       var args: seq[Type] = @[]
       for a in t.inner:
@@ -1263,9 +1269,13 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         let sym = sema.globalScope.lookup(objType.name)
         if sym != nil and sym.decl != nil:
           if sym.decl.kind == dkStruct:
+            var subst = initTable[string, Type]()
+            for i, tp in sym.decl.declStructTypeParams:
+              if i < objType.inner.len:
+                subst[tp.name] = objType.inner[i]
             for f in sym.decl.declStructFields:
               if f.name == expr.exprFieldName:
-                return sema.resolveType(f.ftype)
+                return sema.substituteTypeInType(sema.resolveType(f.ftype), subst)
             sema.emitError(expr.loc, &"struct '{objType.name}' has no field '{expr.exprFieldName}'")
           elif sym.decl.kind == dkEnum:
             # Algebraic enum fields
@@ -1498,11 +1508,15 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
     return makeVoid()
   of skFor:
     let iterExpr = stmt.stmtForIter
-    discard sema.checkExpr(iterExpr, scope)
+    let collType = sema.checkExpr(iterExpr, scope)
     var forScope = newScope(scope)
     var iterTyp = makeUnknown()
     if iterExpr.kind == ekRange:
       iterTyp = sema.checkExpr(iterExpr.exprRangeLo, scope)
+    elif collType.kind == tkNamed and collType.inner.len > 0:
+      iterTyp = collType.inner[0]
+    elif collType.isPointer and collType.inner.len > 0 and collType.inner[0].kind == tkNamed and collType.inner[0].inner.len > 0:
+      iterTyp = collType.inner[0].inner[0]
     let iterSym = Symbol(kind: skVar, name: stmt.stmtForVar, typ: iterTyp, isMutable: true)
     discard forScope.define(iterSym)
     discard sema.checkStmt(Stmt(kind: skExpr, loc: stmt.stmtForBody.loc, stmtExpr: Expr(kind: ekBlock, loc: stmt.stmtForBody.loc, exprBlock: stmt.stmtForBody)), forScope)
