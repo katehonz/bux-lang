@@ -166,10 +166,14 @@ proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type])
               break
           if hasUnresolved: break
         if not hasUnresolved:
+          var localSubst = subst
+          for j, tp in genericDecl.declStructTypeParams:
+            if j < te.typeArgs.len:
+              localSubst[tp.name] = substituteType(ctx, te.typeArgs[j], subst)
           var fields: seq[tuple[name: string, typ: Type]] = @[]
           var concreteArgs: seq[Type] = @[]
           for f in genericDecl.declStructFields:
-            let resolvedType = substituteType(ctx, f.ftype, subst)
+            let resolvedType = substituteType(ctx, f.ftype, localSubst)
             fields.add((f.name, resolvedType))
           for arg in te.typeArgs:
             concreteArgs.add(substituteType(ctx, arg, subst))
@@ -1431,8 +1435,6 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
     if p.ptype != nil:
       pType = substituteType(ctx, p.ptype, ctx.typeSubst)
     params.add((p.name, pType))
-    if p.ptype != nil:
-      ctx.varTypeExprs[p.name] = p.ptype
 
   var retType = makeVoid()
   if funcReturnType != nil:
@@ -1444,6 +1446,10 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   ctx.currentFuncRetType = retType
   ctx.currentFuncDecl = decl
   ctx.varTypeExprs = initTable[string, TypeExpr]()  # Clear local vars for new function
+  # Add parameters to varTypeExprs after clearing so they are visible in the body.
+  for p in funcParams:
+    if p.ptype != nil:
+      ctx.varTypeExprs[p.name] = p.ptype
   var body = if funcBody != nil: ctx.lowerBlock(funcBody) else: nil
   
   # Inject remaining defers at end of function (for implicit return)

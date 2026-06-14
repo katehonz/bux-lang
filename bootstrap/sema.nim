@@ -173,6 +173,43 @@ proc typeToTypeExpr(t: Type): TypeExpr =
   of tkVoid: TypeExpr(kind: tekNamed, typeName: "void")
   else: TypeExpr(kind: tekNamed, typeName: t.toString)
 
+proc substituteTypeInType(sema: var Sema, t: Type, subst: Table[string, Type]): Type =
+  ## Recursively substitute type parameters in a resolved Type.
+  if t == nil:
+    return makeUnknown()
+  case t.kind
+  of tkTypeParam:
+    if subst.hasKey(t.name):
+      return subst[t.name]
+    return t
+  of tkPointer, tkRef, tkMutRef:
+    if t.inner.len > 0:
+      return Type(kind: t.kind, inner: @[sema.substituteTypeInType(t.inner[0], subst)])
+    return t
+  of tkSlice, tkRange:
+    if t.inner.len > 0:
+      return Type(kind: t.kind, inner: @[sema.substituteTypeInType(t.inner[0], subst)])
+    return t
+  of tkTuple:
+    var elems: seq[Type] = @[]
+    for e in t.inner:
+      elems.add(sema.substituteTypeInType(e, subst))
+    return makeTuple(elems)
+  of tkFunc:
+    var inner: seq[Type] = @[]
+    for it in t.inner:
+      inner.add(sema.substituteTypeInType(it, subst))
+    return Type(kind: tkFunc, inner: inner)
+  of tkNamed:
+    if t.inner.len > 0:
+      var args: seq[Type] = @[]
+      for a in t.inner:
+        args.add(sema.substituteTypeInType(a, subst))
+      return Type(kind: tkNamed, name: t.name, inner: args)
+    return t
+  else:
+    return t
+
 proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
                    loc: SourceLocation): seq[TypeExpr] =
   ## Infer type arguments from argument types for a generic function call.
@@ -260,6 +297,11 @@ proc resolveType(sema: var Sema, te: TypeExpr): Type =
     of "float64": return makeFloat64()
     of "float": return makeFloat64()
     else:
+      if te.typeArgs.len > 0:
+        var args: seq[Type] = @[]
+        for arg in te.typeArgs:
+          args.add(sema.resolveType(arg))
+        return Type(kind: tkNamed, name: name, inner: args)
       if sema.typeTable.hasKey(name):
         return sema.typeTable[name]
       return makeNamed(name)
@@ -977,19 +1019,22 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         sema.emitError(expr.loc, &"undeclared identifier '{expr.exprCallCallee.exprGenericCallee}'")
         return makeUnknown()
       if sym.typ != nil and sym.typ.kind == tkFunc:
-        # Get the return type and substitute type parameters
         let retType = sym.typ.inner[^1]
-        if retType.kind == tkNamed:
-          # Check if this is a type parameter
-          let sym2 = sema.globalScope.lookup(expr.exprCallCallee.exprGenericCallee)
-          if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkFunc:
-            let typeParams = sym2.decl.declFuncTypeParams
-            for i, tp in typeParams:
-              if retType.name == tp.name and i < expr.exprCallCallee.exprGenericTypeArgs.len:
-                # Substitute with concrete type
-                let concreteType = expr.exprCallCallee.exprGenericTypeArgs[i]
-                if concreteType.kind == tekNamed:
-                  return sema.resolveType(concreteType)
+        let sym2 = sema.globalScope.lookup(expr.exprCallCallee.exprGenericCallee)
+        if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkFunc and
+           sym2.decl.declFuncTypeParams.len > 0 and
+           sym2.decl.declFuncReturnType != nil:
+          let typeParams = sym2.decl.declFuncTypeParams
+          var added: seq[string] = @[]
+          for i, tp in typeParams:
+            if i < expr.exprCallCallee.exprGenericTypeArgs.len:
+              let concrete = sema.resolveType(expr.exprCallCallee.exprGenericTypeArgs[i])
+              sema.typeTable[tp.name] = concrete
+              added.add(tp.name)
+          let resolvedRet = sema.resolveType(sym2.decl.declFuncReturnType)
+          for tp in added:
+            sema.typeTable.del(tp)
+          return resolvedRet
         return retType
       return makeUnknown()
 
@@ -1076,13 +1121,13 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     # Resolve named args and inject defaults before type-checking args
     sema.resolveCallArgs(expr, calleeDecl, scope)
     var argTypes = sema.checkExprList(expr.exprCallArgs, scope)
-    if calleeDecl != nil and calleeDecl.kind == dkFunc and calleeDecl.declFuncTypeParams.len > 0:
-      discard  # will be handled later
+    let isGenericFunc = calleeDecl != nil and calleeDecl.kind == dkFunc and calleeDecl.declFuncTypeParams.len > 0
     if calleeType.kind == tkFunc:
       let expectedParams = calleeType.inner[0..^2]
       if argTypes.len != expectedParams.len:
         sema.emitError(expr.loc, &"expected {expectedParams.len} arguments, got {argTypes.len}")
-      else:
+      elif not isGenericFunc:
+        # Generic function arg checks are deferred until after type inference/monomorphization.
         for i in 0 ..< argTypes.len:
           if not argTypes[i].isAssignableTo(expectedParams[i]) and not (argTypes[i].kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
             sema.emitError(expr.loc, &"argument {i+1}: expected {expectedParams[i].toString}, got {argTypes[i].toString}")
@@ -1157,6 +1202,26 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     let idx = sema.checkExpr(expr.exprIndexIdx, scope)
     if not idx.isInteger:
       sema.emitError(expr.loc, "index must be integer")
+
+    # Try method-table operator_index_get on a named receiver (possibly behind a pointer).
+    var receiverNamed: Type = nil
+    if obj.kind == tkNamed:
+      receiverNamed = obj
+    elif obj.isPointer and obj.inner.len > 0 and obj.inner[0].kind == tkNamed:
+      receiverNamed = obj.inner[0]
+
+    if receiverNamed != nil and sema.methodTable.hasKey(receiverNamed.name):
+      for minfo in sema.methodTable[receiverNamed.name]:
+        if minfo.name == "operator_index_get" and minfo.params.len == 2:
+          var subst = initTable[string, Type]()
+          if minfo.decl.declFuncTypeParams.len > 0 and receiverNamed.inner.len > 0:
+            for i, tp in minfo.decl.declFuncTypeParams:
+              if i < receiverNamed.inner.len:
+                subst[tp.name] = receiverNamed.inner[i]
+          let idxType = sema.substituteTypeInType(minfo.params[1], subst)
+          if idx.isAssignableTo(idxType) or idxType.isAssignableTo(idx) or idx.kind == tkUnknown:
+            return sema.substituteTypeInType(minfo.retType, subst)
+
     if obj.isSlice:
       if sema.checkedFunc:
         expr.exprIndexBoundsCheck = true
@@ -1165,14 +1230,6 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       return obj.inner[0]
     elif obj.kind == tkStr:
       return makeChar8()
-    elif obj.kind == tkNamed and sema.methodTable.hasKey(obj.name):
-      for minfo in sema.methodTable[obj.name]:
-        if minfo.name == "operator_index_get" and minfo.params.len == 2:
-          let idxType = minfo.params[1]
-          if idx.isAssignableTo(idxType) or idxType.isAssignableTo(idx) or idx.kind == tkUnknown:
-            return minfo.retType
-      sema.emitError(expr.loc, "cannot index non-slice/non-pointer type")
-      return makeUnknown()
     else:
       sema.emitError(expr.loc, "cannot index non-slice/non-pointer type")
       return makeUnknown()
