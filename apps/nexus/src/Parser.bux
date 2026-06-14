@@ -1,0 +1,130 @@
+module Parser {
+
+import Std::String::{String_Len, String_Eq, String_Trim};
+import Std::Array::{Array, Array_New, Array_Push};
+import Http::{HttpMethod, HttpRequest, HeaderEntry};
+import Errors::{HttpError, ParseResult, ParseResult_NewOk, ParseResult_NewErr};
+
+extern func bux_strlen(s: String) -> uint;
+extern func bux_strstr(haystack: String, needle: String) -> String;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+extern func bux_str_offset(pos: String, base: String) -> uint;
+
+pub func ParseMethod(s: String) -> HttpMethod {
+    if String_Eq(s, "GET")     { return HttpMethod { tag: HttpMethod_GET }; }
+    if String_Eq(s, "POST")    { return HttpMethod { tag: HttpMethod_POST }; }
+    if String_Eq(s, "PUT")     { return HttpMethod { tag: HttpMethod_PUT }; }
+    if String_Eq(s, "DELETE")  { return HttpMethod { tag: HttpMethod_DELETE }; }
+    if String_Eq(s, "PATCH")   { return HttpMethod { tag: HttpMethod_PATCH }; }
+    if String_Eq(s, "HEAD")    { return HttpMethod { tag: HttpMethod_HEAD }; }
+    if String_Eq(s, "OPTIONS") { return HttpMethod { tag: HttpMethod_OPTIONS }; }
+    return HttpMethod { tag: HttpMethod_UNKNOWN };
+}
+
+func Slice(raw: String, start: int, len: int) -> String {
+    if start < 0 || len <= 0 { return ""; }
+    return bux_str_slice(raw, start as uint, len as uint);
+}
+
+func FindCrlf(raw: String, start: int) -> int {
+    let rawLen: uint = bux_strlen(raw);
+    if start as uint >= rawLen { return -1; }
+    let tail: String = bux_str_slice(raw, start as uint, rawLen - start as uint);
+    let hit: String = bux_strstr(tail, "\r\n");
+    if String_Len(hit) == 0 { return -1; }
+    let offset: uint = bux_str_offset(hit, tail);
+    return start + offset as int;
+}
+
+func ParseHeaders(raw: String, start: int, end: int) -> Array<HeaderEntry> {
+    var headers: Array<HeaderEntry> = Array_New<HeaderEntry>(16);
+    var pos: int = start;
+    while pos < end {
+        let lineEnd: int = FindCrlf(raw, pos);
+        if lineEnd < 0 || lineEnd >= end { break; }
+        let lineLen: int = lineEnd - pos;
+        if lineLen > 0 {
+            let line: String = Slice(raw, pos, lineLen);
+            let colon: String = bux_strstr(line, ":");
+            if String_Len(colon) > 0 {
+                let keyLen: uint = bux_str_offset(colon, line);
+                let key: String = String_Trim(Slice(line, 0, keyLen as int));
+                let valStart: int = keyLen as int + 1;
+                let val: String = String_Trim(Slice(line, valStart, lineLen - valStart));
+                let entry: HeaderEntry = HeaderEntry { key: key, value: val };
+                Array_Push<HeaderEntry>(&headers, entry);
+            }
+        }
+        pos = lineEnd + 2;
+    }
+    return headers;
+}
+
+pub func ParseRequest(raw: String) -> ParseResult {
+    let rawLen: uint = bux_strlen(raw);
+    if rawLen == 0 {
+        return ParseResult_NewErr(HttpError { tag: HttpError_BadRequest });
+    }
+
+    // Find end of request line
+    let lineEnd: int = FindCrlf(raw, 0);
+    if lineEnd < 0 {
+        return ParseResult_NewErr(HttpError { tag: HttpError_BadRequest });
+    }
+
+    // Split request line: METHOD PATH VERSION
+    var methodEnd: int = -1;
+    var pathStart: int = -1;
+    var pathEnd: int = -1;
+    var i: int = 0;
+    while i < lineEnd {
+        if raw[i] as int == 32 {  // space
+            if methodEnd < 0 {
+                methodEnd = i;
+                pathStart = i + 1;
+            } else if pathEnd < 0 {
+                pathEnd = i;
+                break;
+            }
+        }
+        i = i + 1;
+    }
+
+    if methodEnd < 0 || pathStart < 0 || pathEnd < 0 {
+        return ParseResult_NewErr(HttpError { tag: HttpError_BadRequest });
+    }
+
+    let methodStr: String = Slice(raw, 0, methodEnd);
+    let path: String = Slice(raw, pathStart, pathEnd - pathStart);
+    let version: String = Slice(raw, pathEnd + 1, lineEnd - pathEnd - 1);
+
+    // Find header/body boundary
+    let boundary: String = bux_strstr(raw, "\r\n\r\n");
+    var headers: Array<HeaderEntry> = Array_New<HeaderEntry>(16);
+    var body: String = "";
+    if String_Len(boundary) > 0 {
+        let headerEnd: uint = bux_str_offset(boundary, raw);
+        headers = ParseHeaders(raw, lineEnd + 2, headerEnd as int);
+        let bodyStart: uint = headerEnd + 4;
+        if bodyStart < rawLen {
+            body = bux_str_slice(raw, bodyStart, rawLen - bodyStart);
+        }
+    } else {
+        headers = ParseHeaders(raw, lineEnd + 2, rawLen as int);
+    }
+
+    if String_Eq(path, "") {
+        return ParseResult_NewErr(HttpError { tag: HttpError_BadRequest });
+    }
+
+    let req: HttpRequest = HttpRequest {
+        method: ParseMethod(methodStr),
+        path: path,
+        version: version,
+        body: body,
+        headers: headers,
+    };
+    return ParseResult_NewOk(req);
+}
+
+}

@@ -11,6 +11,7 @@ void PrintLine(const char* s) {
     } else {
         puts("");
     }
+    fflush(stdout);
 }
 
 /* Print - print string without newline */
@@ -18,6 +19,7 @@ void Print(const char* s) {
     if (s != NULL) {
         printf("%s", s);
     }
+    fflush(stdout);
 }
 
 /* PrintInt - print integer */

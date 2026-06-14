@@ -61,12 +61,6 @@ proc advance(lex: var Lexer): char =
     else:
       inc lex.col
 
-proc match(lex: var Lexer, expected: char): bool =
-  if lex.isAtEnd(): return false
-  if lex.peek() != expected: return false
-  discard lex.advance()
-  return true
-
 proc matchStr(lex: var Lexer, s: string): bool =
   for i, c in s:
     if lex.peek(i) != c:
@@ -80,9 +74,6 @@ proc currentLocation(lex: Lexer): SourceLocation =
 
 proc emitError(lex: var Lexer, loc: SourceLocation, message: string) =
   lex.diagnostics.add(LexerDiagnostic(severity: ldsError, loc: loc, message: message))
-
-proc emitWarning(lex: var Lexer, loc: SourceLocation, message: string) =
-  lex.diagnostics.add(LexerDiagnostic(severity: ldsWarning, loc: loc, message: message))
 
 proc makeToken(lex: Lexer, kind: TokenKind, startLoc: SourceLocation, startPos: int): Token =
   let text = lex.source[startPos ..< lex.pos]
@@ -336,19 +327,6 @@ proc scanSymbol(lex: var Lexer, startLoc: SourceLocation): Token =
       return lex.makeToken(kind2, startLoc, startPos)
     else:
       return lex.makeToken(kind1, startLoc, startPos)
-
-  template check3(c2: char, kind2: TokenKind, c3: char, kind3: TokenKind, kind1: TokenKind) =
-    if lex.peek() == c2:
-      discard lex.advance()
-      if lex.peek() == c3:
-        discard lex.advance()
-        return lex.makeToken(kind3, startLoc, startPos)
-      return lex.makeToken(kind2, startLoc, startPos)
-    else:
-      return lex.makeToken(kind1, startLoc, startPos)
-
-  template checkEq(c2: char, kind2: TokenKind, kind1: TokenKind) =
-    check2(c2, kind2, kind1)
 
   case c1
   of '(': return lex.makeToken(tkLParen, startLoc, startPos)

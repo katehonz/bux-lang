@@ -2,8 +2,6 @@
 ## Linear 3-address code IR, designed for straightforward C emission.
 ## Each HIR construct lowers to 5-30 LIR instructions.
 
-import types
-
 type
   LirKind* = enum
     # ── Data movement ──

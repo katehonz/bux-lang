@@ -1,5 +1,5 @@
 import std/[os, strutils, terminal, strformat, osproc, sets]
-import lexer, parser, ast, sema, manifest, hir_lower, lir, lir_lower, lir_c_backend
+import lexer, parser, ast, sema, manifest, hir_lower, lir_lower, lir_c_backend
 
 type
   ColorMode* = enum

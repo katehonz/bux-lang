@@ -198,6 +198,34 @@ extern const char* bux_base64_decode(const char* data, int len, int* outlen);
 #define ED25519_PRIVKEY_SIZE 32
 #define ED25519_SIG_SIZE 64
 
+typedef struct Channel_float64 {
+    void* handle;
+} Channel_float64;
+
+typedef struct TaskHandle {
+    void* handle;
+} TaskHandle;
+
+typedef struct RwLock {
+    void* handle;
+} RwLock;
+
+typedef struct Channel_int {
+    void* handle;
+} Channel_int;
+
+typedef enum {
+    JwtAlg_HS256,
+    JwtAlg_HS384,
+    JwtAlg_HS512,
+    JwtAlg_RS256,
+    JwtAlg_RS384,
+    JwtAlg_RS512,
+    JwtAlg_ES256,
+    JwtAlg_ES384,
+    JwtAlg_EdDSA
+} JwtAlg;
+
 typedef enum {
     Result_Ok,
     Result_Err
@@ -227,31 +255,6 @@ typedef struct {
     Option_Data data;
 } Option;
 
-typedef enum {
-    JwtAlg_HS256,
-    JwtAlg_HS384,
-    JwtAlg_HS512,
-    JwtAlg_RS256,
-    JwtAlg_RS384,
-    JwtAlg_RS512,
-    JwtAlg_ES256,
-    JwtAlg_ES384,
-    JwtAlg_EdDSA
-} JwtAlg;
-
-
-typedef struct TaskHandle {
-    void* handle;
-} TaskHandle;
-
-typedef struct Mutex {
-    void* handle;
-} Mutex;
-
-typedef struct RwLock {
-    void* handle;
-} RwLock;
-
 typedef struct JsonValue {
     int tag;
     bool boolVal;
@@ -266,24 +269,20 @@ typedef struct JsonValue {
     unsigned int objCap;
 } JsonValue;
 
+typedef struct Mutex {
+    void* handle;
+} Mutex;
+
+typedef struct StringBuilder {
+    void* handle;
+} StringBuilder;
+
 typedef struct JsonParser {
     const char* src;
     unsigned int pos;
     unsigned int len;
     const char* error;
 } JsonParser;
-
-typedef struct StringBuilder {
-    void* handle;
-} StringBuilder;
-
-typedef struct Channel_int {
-    void* handle;
-} Channel_int;
-
-typedef struct Channel_float64 {
-    void* handle;
-} Channel_float64;
 
 bool DirExists(const char* path);
 bool Mkdir(const char* path);
@@ -866,7 +865,7 @@ const char* Fmt_Format(const char* tmpl, const char** argStrs, int argCount) {
     tmplLen = _t60;
     while1:;
     _t61 = (i < tmplLen);
-    if (!_t61) goto wend3;
+    if (!_t61) goto wend2;
     {
     const char* ch;
     const char* _t62;
@@ -874,13 +873,13 @@ const char* Fmt_Format(const char* tmpl, const char** argStrs, int argCount) {
     ch = _t62;
     bool _t63;
     _t63 = String_Eq(ch, "{");
-    if (!_t63) goto endif5;
+    if (!_t63) goto endif4;
     {
     unsigned int digitIdx;
     _t64 = i + 1;
     digitIdx = _t64;
     _t65 = (digitIdx < tmplLen);
-    if (!_t65) goto endif7;
+    if (!_t65) goto endif6;
     {
     const char* digitCh;
     const char* _t66;
@@ -892,22 +891,22 @@ const char* Fmt_Format(const char* tmpl, const char** argStrs, int argCount) {
     d = _t67;
     bool __and_tmp_0;
     _t68 = (d >= 0);
-    if (!_t68) goto else8;
+    if (!_t68) goto else7;
     _t69 = (int64_t)argCount;
     _t70 = (d < _t69);
     *(bool*)&__and_tmp_0 = _t70;
-    goto endif9;
-    else8:;
+    goto endif8;
+    else7:;
     *(bool*)&__and_tmp_0 = 0;
-    endif9:;
+    endif8:;
     bool _t71;
     _t71 = *(bool*)&__and_tmp_0;
-    if (!_t71) goto endif11;
+    if (!_t71) goto endif10;
     {
     _t72 = i + 2;
     i = _t72;
     _t73 = (i < tmplLen);
-    if (!_t73) goto endif13;
+    if (!_t73) goto endif12;
     {
     const char* closeCh;
     const char* _t74;
@@ -915,7 +914,7 @@ const char* Fmt_Format(const char* tmpl, const char** argStrs, int argCount) {
     closeCh = _t74;
     bool _t75;
     _t75 = String_Eq(closeCh, "}");
-    if (!_t75) goto endif15;
+    if (!_t75) goto endif14;
     {
     _t76 = i + 1;
     i = _t76;
@@ -928,22 +927,22 @@ const char* Fmt_Format(const char* tmpl, const char** argStrs, int argCount) {
     StringBuilder_Append(_t79, argStr);
     goto while1;
     }
-    endif15:;
+    endif14:;
     }
-    endif13:;
+    endif12:;
     }
-    endif11:;
+    endif10:;
     }
-    endif7:;
+    endif6:;
     }
-    endif5:;
+    endif4:;
     _t80 = &sb;
     StringBuilder_Append(_t80, ch);
     _t81 = i + 1;
     i = _t81;
     }
     goto while1;
-    wend3:;
+    wend2:;
     _t82 = &sb;
     const char* _t83;
     _t83 = StringBuilder_Build(_t82);
@@ -951,276 +950,276 @@ const char* Fmt_Format(const char* tmpl, const char** argStrs, int argCount) {
 }
 
 const char* Fmt_Fmt1(const char* tmpl, const char* a1) {
-    const char** _t86;
+    const char** _t85;
     const char** args;
     /* sizeof(const char*) */
-    void* _t85;
-    _t85 = bux_alloc(sizeof(const char*));
-    _t86 = (const char**)_t85;
-    args = _t86;
+    void* _t84;
+    _t84 = bux_alloc(sizeof(const char*));
+    _t85 = (const char**)_t84;
+    args = _t85;
     args[0] = a1;
-    const char* _t87;
-    _t87 = Fmt_Format(tmpl, args, 1);
-    return _t87;
+    const char* _t86;
+    _t86 = Fmt_Format(tmpl, args, 1);
+    return _t86;
 }
 
 const char* Fmt_FmtInt(const char* tmpl, int64_t val) {
     const char* s;
+    const char* _t87;
+    _t87 = String_FromInt(val);
+    s = _t87;
     const char* _t88;
-    _t88 = String_FromInt(val);
-    s = _t88;
-    const char* _t89;
-    _t89 = Fmt_Fmt1(tmpl, s);
-    return _t89;
+    _t88 = Fmt_Fmt1(tmpl, s);
+    return _t88;
 }
 
 const char* Fmt_FmtBool(const char* tmpl, bool val) {
     const char* s;
+    const char* _t89;
+    _t89 = String_FromBool(val);
+    s = _t89;
     const char* _t90;
-    _t90 = String_FromBool(val);
-    s = _t90;
-    const char* _t91;
-    _t91 = Fmt_Fmt1(tmpl, s);
-    return _t91;
+    _t90 = Fmt_Fmt1(tmpl, s);
+    return _t90;
 }
 
 const char* Fmt_FmtFloat(const char* tmpl, double val) {
     const char* s;
+    const char* _t91;
+    _t91 = String_FromFloat(val);
+    s = _t91;
     const char* _t92;
-    _t92 = String_FromFloat(val);
-    s = _t92;
-    const char* _t93;
-    _t93 = Fmt_Fmt1(tmpl, s);
-    return _t93;
+    _t92 = Fmt_Fmt1(tmpl, s);
+    return _t92;
 }
 
 const char* Fmt_Fmt2(const char* tmpl, const char* a1, const char* a2) {
-    int _t95;
-    const char** _t97;
+    int _t93;
+    const char** _t95;
     const char** args;
     /* sizeof(const char*) */
-    _t95 = 2 * sizeof(const char*);
-    void* _t96;
-    _t96 = bux_alloc(_t95);
-    _t97 = (const char**)_t96;
-    args = _t97;
+    _t93 = 2 * sizeof(const char*);
+    void* _t94;
+    _t94 = bux_alloc(_t93);
+    _t95 = (const char**)_t94;
+    args = _t95;
     args[0] = a1;
     args[1] = a2;
-    const char* _t98;
-    _t98 = Fmt_Format(tmpl, args, 2);
-    return _t98;
+    const char* _t96;
+    _t96 = Fmt_Format(tmpl, args, 2);
+    return _t96;
 }
 
 const char* Fmt_Fmt3(const char* tmpl, const char* a1, const char* a2, const char* a3) {
-    int _t100;
-    const char** _t102;
+    int _t97;
+    const char** _t99;
     const char** args;
     /* sizeof(const char*) */
-    _t100 = 3 * sizeof(const char*);
-    void* _t101;
-    _t101 = bux_alloc(_t100);
-    _t102 = (const char**)_t101;
-    args = _t102;
+    _t97 = 3 * sizeof(const char*);
+    void* _t98;
+    _t98 = bux_alloc(_t97);
+    _t99 = (const char**)_t98;
+    args = _t99;
     args[0] = a1;
     args[1] = a2;
     args[2] = a3;
-    const char* _t103;
-    _t103 = Fmt_Format(tmpl, args, 3);
-    return _t103;
+    const char* _t100;
+    _t100 = Fmt_Format(tmpl, args, 3);
+    return _t100;
 }
 
 const char* Crypto_Sha256(const char* data) {
-    int _t105;
-    void* _t107;
+    int _t102;
+    void* _t104;
     int len;
-    unsigned int _t104;
-    _t104 = String_Len(data);
-    _t105 = (int)_t104;
-    len = _t105;
+    unsigned int _t101;
+    _t101 = String_Len(data);
+    _t102 = (int)_t101;
+    len = _t102;
     void* hashBuf;
-    void* _t106;
-    _t106 = Alloc(32);
-    hashBuf = _t106;
+    void* _t103;
+    _t103 = Alloc(32);
+    hashBuf = _t103;
     bux_sha256(data, len, hashBuf);
     const char* result;
-    _t107 = (void*)hashBuf;
-    const char* _t108;
-    _t108 = bux_bytes_to_hex(_t107, 32);
-    result = _t108;
+    _t104 = (void*)hashBuf;
+    const char* _t105;
+    _t105 = bux_bytes_to_hex(_t104, 32);
+    result = _t105;
     Free(hashBuf);
     return result;
 }
 
 const char* Crypto_HmacSha256(const char* key, const char* message) {
-    int _t110;
-    int _t112;
-    void* _t114;
+    int _t107;
+    int _t109;
+    void* _t111;
     int keylen;
-    unsigned int _t109;
-    _t109 = String_Len(key);
-    _t110 = (int)_t109;
-    keylen = _t110;
+    unsigned int _t106;
+    _t106 = String_Len(key);
+    _t107 = (int)_t106;
+    keylen = _t107;
     int msglen;
-    unsigned int _t111;
-    _t111 = String_Len(message);
-    _t112 = (int)_t111;
-    msglen = _t112;
+    unsigned int _t108;
+    _t108 = String_Len(message);
+    _t109 = (int)_t108;
+    msglen = _t109;
     void* hmacBuf;
-    void* _t113;
-    _t113 = Alloc(32);
-    hmacBuf = _t113;
+    void* _t110;
+    _t110 = Alloc(32);
+    hmacBuf = _t110;
     bux_hmac_sha256(key, keylen, message, msglen, hmacBuf);
     const char* result;
-    _t114 = (void*)hmacBuf;
-    const char* _t115;
-    _t115 = bux_bytes_to_hex(_t114, 32);
-    result = _t115;
+    _t111 = (void*)hmacBuf;
+    const char* _t112;
+    _t112 = bux_bytes_to_hex(_t111, 32);
+    result = _t112;
     Free(hmacBuf);
     return result;
 }
 
 const char* Crypto_RandomBytes(int n) {
-    int _t116;
-    unsigned int _t117;
-    int _t120;
-    const char* _t121;
-    _t116 = (n <= 0);
-    if (!_t116) goto endif17;
+    int _t113;
+    unsigned int _t114;
+    int _t117;
+    const char* _t118;
+    _t113 = (n <= 0);
+    if (!_t113) goto endif16;
     {
     return "";
     }
-    endif17:;
+    endif16:;
     void* buf;
-    _t117 = (unsigned int)n;
-    void* _t118;
-    _t118 = Alloc(_t117);
-    buf = _t118;
-    int _t119;
-    _t119 = bux_random_bytes(buf, n);
-    _t120 = (_t119 != 1);
-    if (!_t120) goto endif19;
+    _t114 = (unsigned int)n;
+    void* _t115;
+    _t115 = Alloc(_t114);
+    buf = _t115;
+    int _t116;
+    _t116 = bux_random_bytes(buf, n);
+    _t117 = (_t116 != 1);
+    if (!_t117) goto endif18;
     {
     Free(buf);
     return "";
     }
-    endif19:;
+    endif18:;
     const char* result;
-    _t121 = (const char*)buf;
-    const char* _t122;
-    _t122 = bux_base64_encode(_t121, n);
-    result = _t122;
+    _t118 = (const char*)buf;
+    const char* _t119;
+    _t119 = bux_base64_encode(_t118, n);
+    result = _t119;
     Free(buf);
     return result;
 }
 
 const char* Crypto_Base64Encode(const char* s) {
-    int _t124;
-    unsigned int _t123;
-    _t123 = String_Len(s);
-    _t124 = (int)_t123;
-    const char* _t125;
-    _t125 = bux_base64_encode(s, _t124);
-    return _t125;
+    int _t121;
+    unsigned int _t120;
+    _t120 = String_Len(s);
+    _t121 = (int)_t120;
+    const char* _t122;
+    _t122 = bux_base64_encode(s, _t121);
+    return _t122;
 }
 
 const char* Crypto_HmacSha256Raw(const char* key, const char* message) {
-    int _t127;
-    int _t129;
-    const char* _t131;
+    int _t124;
+    int _t126;
+    const char* _t128;
     int keylen;
-    unsigned int _t126;
-    _t126 = String_Len(key);
-    _t127 = (int)_t126;
-    keylen = _t127;
+    unsigned int _t123;
+    _t123 = String_Len(key);
+    _t124 = (int)_t123;
+    keylen = _t124;
     int msglen;
-    unsigned int _t128;
-    _t128 = String_Len(message);
-    _t129 = (int)_t128;
-    msglen = _t129;
+    unsigned int _t125;
+    _t125 = String_Len(message);
+    _t126 = (int)_t125;
+    msglen = _t126;
     void* hmacBuf;
-    void* _t130;
-    _t130 = Alloc(32);
-    hmacBuf = _t130;
+    void* _t127;
+    _t127 = Alloc(32);
+    hmacBuf = _t127;
     bux_hmac_sha256(key, keylen, message, msglen, hmacBuf);
     const char* result;
-    _t131 = (const char*)hmacBuf;
-    const char* _t132;
-    _t132 = bux_base64_encode(_t131, 32);
-    result = _t132;
+    _t128 = (const char*)hmacBuf;
+    const char* _t129;
+    _t129 = bux_base64_encode(_t128, 32);
+    result = _t129;
     Free(hmacBuf);
     return result;
 }
 
 const char* Crypto_Base64Decode(const char* s) {
-    int _t134;
-    void* _t135;
+    int _t131;
+    void* _t132;
     int outlen;
     outlen = 0;
-    unsigned int _t133;
-    _t133 = String_Len(s);
-    _t134 = (int)_t133;
-    _t135 = &outlen;
-    const char* _t136;
-    _t136 = bux_base64_decode(s, _t134, _t135);
-    return _t136;
+    unsigned int _t130;
+    _t130 = String_Len(s);
+    _t131 = (int)_t130;
+    _t132 = &outlen;
+    const char* _t133;
+    _t133 = bux_base64_decode(s, _t131, _t132);
+    return _t133;
 }
 
 Mutex Mutex_New(void) {
-    Mutex _t138;
-    void* _t137;
-    _t137 = bux_mutex_new();
-    _t138 = (Mutex){.handle = _t137};
-    return _t138;
+    Mutex _t135;
+    void* _t134;
+    _t134 = bux_mutex_new();
+    _t135 = (Mutex){.handle = _t134};
+    return _t135;
 }
 
 void Mutex_Lock(Mutex* m) {
-    void* _t139;
-    _t139 = m->handle;
-    bux_mutex_lock(_t139);
+    void* _t136;
+    _t136 = m->handle;
+    bux_mutex_lock(_t136);
 }
 
 void Mutex_Unlock(Mutex* m) {
-    void* _t140;
-    _t140 = m->handle;
-    bux_mutex_unlock(_t140);
+    void* _t137;
+    _t137 = m->handle;
+    bux_mutex_unlock(_t137);
 }
 
 void Mutex_Free(Mutex* m) {
-    void* _t141;
-    _t141 = m->handle;
-    bux_mutex_free(_t141);
+    void* _t138;
+    _t138 = m->handle;
+    bux_mutex_free(_t138);
 }
 
 RwLock RwLock_New(void) {
-    RwLock _t143;
-    void* _t142;
-    _t142 = bux_rwlock_new();
-    _t143 = (RwLock){.handle = _t142};
-    return _t143;
+    RwLock _t140;
+    void* _t139;
+    _t139 = bux_rwlock_new();
+    _t140 = (RwLock){.handle = _t139};
+    return _t140;
 }
 
 void RwLock_ReadLock(RwLock* rw) {
-    void* _t144;
-    _t144 = rw->handle;
-    bux_rwlock_rdlock(_t144);
+    void* _t141;
+    _t141 = rw->handle;
+    bux_rwlock_rdlock(_t141);
 }
 
 void RwLock_WriteLock(RwLock* rw) {
-    void* _t145;
-    _t145 = rw->handle;
-    bux_rwlock_wrlock(_t145);
+    void* _t142;
+    _t142 = rw->handle;
+    bux_rwlock_wrlock(_t142);
 }
 
 void RwLock_Unlock(RwLock* rw) {
-    void* _t146;
-    _t146 = rw->handle;
-    bux_rwlock_unlock(_t146);
+    void* _t143;
+    _t143 = rw->handle;
+    bux_rwlock_unlock(_t143);
 }
 
 void RwLock_Free(RwLock* rw) {
-    void* _t147;
-    _t147 = rw->handle;
-    bux_rwlock_free(_t147);
+    void* _t144;
+    _t144 = rw->handle;
+    bux_rwlock_free(_t144);
 }
 
 void Test_Exit(int code) {
@@ -1228,15 +1227,15 @@ void Test_Exit(int code) {
 }
 
 void Test_Assert(bool cond) {
-    int _t148;
-    _t148 = (int)cond;
-    bux_assert(_t148, "", 0, "");
+    int _t145;
+    _t145 = (int)cond;
+    bux_assert(_t145, "", 0, "");
 }
 
 void Test_AssertEqInt(int a, int b) {
-    int _t149;
-    _t149 = (a != b);
-    if (!_t149) goto endif21;
+    int _t146;
+    _t146 = (a != b);
+    if (!_t146) goto endif20;
     {
     PrintLine("ASSERT_EQ FAILED:");
     PrintInt(a);
@@ -1244,27 +1243,27 @@ void Test_AssertEqInt(int a, int b) {
     PrintInt(b);
     bux_exit(1);
     }
-    endif21:;
+    endif20:;
 }
 
 void Test_AssertTrue(bool cond) {
-    int _t150;
-    _t150 = !cond;
-    if (!_t150) goto endif23;
+    int _t147;
+    _t147 = !cond;
+    if (!_t147) goto endif22;
     {
     PrintLine("ASSERT_TRUE FAILED");
     bux_exit(1);
     }
-    endif23:;
+    endif22:;
 }
 
 void Test_AssertFalse(bool cond) {
-    if (!cond) goto endif25;
+    if (!cond) goto endif24;
     {
     PrintLine("ASSERT_FALSE FAILED");
     bux_exit(1);
     }
-    endif25:;
+    endif24:;
 }
 
 void Test_Fail(const char* msg) {
@@ -1274,735 +1273,744 @@ void Test_Fail(const char* msg) {
 }
 
 Result Result_NewOk(int value) {
-    Result _t151;
+    Result _t148;
     Result r;
-    _t151 = (Result){.tag = Result_Ok};
-    r = _t151;
+    _t148 = (Result){.tag = Result_Ok};
+    r = _t148;
     r.data.Ok_0 = value;
     return r;
 }
 
 Result Result_NewErr(const char* msg) {
-    Result _t152;
+    Result _t149;
     Result r;
-    _t152 = (Result){.tag = Result_Err};
-    r = _t152;
+    _t149 = (Result){.tag = Result_Err};
+    r = _t149;
     r.data.Err_0 = msg;
     return r;
 }
 
 bool Result_IsOk(Result r) {
-    int _t154;
-    Result_Tag _t153;
-    _t153 = r.tag;
-    _t154 = (_t153 == Result_Ok);
-    return _t154;
+    int _t151;
+    Result_Tag _t150;
+    _t150 = r.tag;
+    _t151 = (_t150 == Result_Ok);
+    return _t151;
 }
 
 bool Result_IsErr(Result r) {
-    int _t156;
-    Result_Tag _t155;
-    _t155 = r.tag;
-    _t156 = (_t155 == Result_Err);
-    return _t156;
+    int _t153;
+    Result_Tag _t152;
+    _t152 = r.tag;
+    _t153 = (_t152 == Result_Err);
+    return _t153;
 }
 
 int Result_Unwrap(Result r) {
-    int _t158;
-    Result_Tag _t157;
-    _t157 = r.tag;
-    _t158 = (_t157 != Result_Ok);
-    if (!_t158) goto endif27;
+    int _t155;
+    Result_Tag _t154;
+    _t154 = r.tag;
+    _t155 = (_t154 != Result_Ok);
+    if (!_t155) goto endif26;
     {
     PrintLine("panic: unwrap on Err");
     return 0;
     }
-    endif27:;
-    Result_Data _t159;
-    _t159 = r.data;
-    int _t160;
-    _t160 = _t159.Ok_0;
-    return _t160;
+    endif26:;
+    Result_Data _t156;
+    _t156 = r.data;
+    int _t157;
+    _t157 = _t156.Ok_0;
+    return _t157;
 }
 
 int Result_UnwrapOr(Result r, int fallback) {
-    int _t162;
-    Result_Tag _t161;
-    _t161 = r.tag;
-    _t162 = (_t161 == Result_Ok);
-    if (!_t162) goto endif29;
+    int _t159;
+    Result_Tag _t158;
+    _t158 = r.tag;
+    _t159 = (_t158 == Result_Ok);
+    if (!_t159) goto endif28;
     {
-    Result_Data _t163;
-    _t163 = r.data;
-    int _t164;
-    _t164 = _t163.Ok_0;
-    return _t164;
+    Result_Data _t160;
+    _t160 = r.data;
+    int _t161;
+    _t161 = _t160.Ok_0;
+    return _t161;
     }
-    endif29:;
+    endif28:;
     return fallback;
 }
 
 Option Option_NewSome(int value) {
-    Option _t165;
+    Option _t162;
     Option o;
-    _t165 = (Option){.tag = Option_Some};
-    o = _t165;
+    _t162 = (Option){.tag = Option_Some};
+    o = _t162;
     o.data.Some_0 = value;
     return o;
 }
 
 Option Option_NewNone(void) {
-    Option _t166;
-    _t166 = (Option){.tag = Option_None};
-    return _t166;
+    Option _t163;
+    _t163 = (Option){.tag = Option_None};
+    return _t163;
 }
 
 bool Option_IsSome(Option o) {
-    int _t168;
-    Option_Tag _t167;
-    _t167 = o.tag;
-    _t168 = (_t167 == Option_Some);
-    return _t168;
+    int _t165;
+    Option_Tag _t164;
+    _t164 = o.tag;
+    _t165 = (_t164 == Option_Some);
+    return _t165;
 }
 
 bool Option_IsNone(Option o) {
-    int _t170;
-    Option_Tag _t169;
-    _t169 = o.tag;
-    _t170 = (_t169 == Option_None);
-    return _t170;
+    int _t167;
+    Option_Tag _t166;
+    _t166 = o.tag;
+    _t167 = (_t166 == Option_None);
+    return _t167;
 }
 
 int Option_Unwrap(Option o) {
-    int _t172;
-    Option_Tag _t171;
-    _t171 = o.tag;
-    _t172 = (_t171 != Option_Some);
-    if (!_t172) goto endif31;
+    int _t169;
+    Option_Tag _t168;
+    _t168 = o.tag;
+    _t169 = (_t168 != Option_Some);
+    if (!_t169) goto endif30;
     {
     PrintLine("panic: unwrap on None");
     return 0;
     }
-    endif31:;
-    Option_Data _t173;
-    _t173 = o.data;
-    int _t174;
-    _t174 = _t173.Some_0;
-    return _t174;
+    endif30:;
+    Option_Data _t170;
+    _t170 = o.data;
+    int _t171;
+    _t171 = _t170.Some_0;
+    return _t171;
 }
 
 int Option_UnwrapOr(Option o, int fallback) {
-    int _t176;
-    Option_Tag _t175;
-    _t175 = o.tag;
-    _t176 = (_t175 == Option_Some);
-    if (!_t176) goto endif33;
+    int _t173;
+    Option_Tag _t172;
+    _t172 = o.tag;
+    _t173 = (_t172 == Option_Some);
+    if (!_t173) goto endif32;
     {
-    Option_Data _t177;
-    _t177 = o.data;
-    int _t178;
-    _t178 = _t177.Some_0;
-    return _t178;
+    Option_Data _t174;
+    _t174 = o.data;
+    int _t175;
+    _t175 = _t174.Some_0;
+    return _t175;
     }
-    endif33:;
+    endif32:;
     return fallback;
 }
 
 JsonValue Json_Null(void) {
-    JsonValue _t179;
-    _t179 = (JsonValue){.tag = JsonTagNull, .boolVal = 0, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
-    return _t179;
+    JsonValue _t176;
+    _t176 = (JsonValue){.tag = JsonTagNull, .boolVal = 0, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
+    return _t176;
 }
 
 JsonValue Json_Bool(bool b) {
-    JsonValue _t180;
-    _t180 = (JsonValue){.tag = JsonTagBool, .boolVal = b, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
-    return _t180;
+    JsonValue _t177;
+    _t177 = (JsonValue){.tag = JsonTagBool, .boolVal = b, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
+    return _t177;
 }
 
 JsonValue Json_Number(double n) {
-    JsonValue _t181;
-    _t181 = (JsonValue){.tag = JsonTagNumber, .boolVal = 0, .numVal = n, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
-    return _t181;
+    JsonValue _t178;
+    _t178 = (JsonValue){.tag = JsonTagNumber, .boolVal = 0, .numVal = n, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
+    return _t178;
 }
 
 JsonValue Json_String(const char* s) {
-    JsonValue _t182;
-    _t182 = (JsonValue){.tag = JsonTagString, .boolVal = 0, .numVal = 0.0, .strVal = s, .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
-    return _t182;
+    JsonValue _t179;
+    _t179 = (JsonValue){.tag = JsonTagString, .boolVal = 0, .numVal = 0.0, .strVal = s, .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
+    return _t179;
 }
 
 JsonValue Json_Array(void) {
-    JsonValue _t183;
-    _t183 = (JsonValue){.tag = JsonTagArray, .boolVal = 0, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
-    return _t183;
+    JsonValue _t180;
+    _t180 = (JsonValue){.tag = JsonTagArray, .boolVal = 0, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
+    return _t180;
 }
 
 JsonValue Json_Object(void) {
-    JsonValue _t184;
-    _t184 = (JsonValue){.tag = JsonTagObject, .boolVal = 0, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
-    return _t184;
+    JsonValue _t181;
+    _t181 = (JsonValue){.tag = JsonTagObject, .boolVal = 0, .numVal = 0.0, .strVal = "", .arrData = 0, .arrLen = 0, .arrCap = 0, .objKeys = 0, .objValues = 0, .objLen = 0, .objCap = 0};
+    return _t181;
 }
 
 unsigned int Json_ArrayLen(JsonValue v) {
-    int _t186;
-    int _t185;
-    _t185 = v.tag;
-    _t186 = (_t185 != JsonTagArray);
-    if (!_t186) goto endif35;
+    int _t183;
+    int _t182;
+    _t182 = v.tag;
+    _t183 = (_t182 != JsonTagArray);
+    if (!_t183) goto endif34;
     {
     return 0;
     }
-    endif35:;
-    unsigned int _t187;
-    _t187 = v.arrLen;
-    return _t187;
+    endif34:;
+    unsigned int _t184;
+    _t184 = v.arrLen;
+    return _t184;
 }
 
 JsonValue Json_ArrayGet(JsonValue v, unsigned int index) {
+    int _t186;
     int _t189;
-    int _t192;
-    int _t188;
-    _t188 = v.tag;
-    _t189 = (_t188 != JsonTagArray);
-    if (!_t189) goto endif37;
+    int _t185;
+    _t185 = v.tag;
+    _t186 = (_t185 != JsonTagArray);
+    if (!_t186) goto endif36;
+    {
+    JsonValue _t187;
+    _t187 = Json_Null();
+    return _t187;
+    }
+    endif36:;
+    unsigned int _t188;
+    _t188 = v.arrLen;
+    _t189 = (index >= _t188);
+    if (!_t189) goto endif38;
     {
     JsonValue _t190;
     _t190 = Json_Null();
     return _t190;
     }
-    endif37:;
-    unsigned int _t191;
-    _t191 = v.arrLen;
-    _t192 = (index >= _t191);
-    if (!_t192) goto endif39;
-    {
-    JsonValue _t193;
-    _t193 = Json_Null();
-    return _t193;
-    }
-    endif39:;
-    JsonValue* _t194;
-    _t194 = v.arrData;
-    JsonValue _t195;
-    _t195 = _t194[index];
-    return _t195;
+    endif38:;
+    JsonValue* _t191;
+    _t191 = v.arrData;
+    JsonValue _t192;
+    _t192 = _t191[index];
+    return _t192;
 }
 
 void Json_ArrayPush(JsonValue* self, JsonValue val) {
+    int _t194;
     int _t197;
+    int _t199;
     int _t200;
-    int _t202;
-    int _t204;
-    JsonValue* _t206;
-    int _t207;
-    void* _t209;
-    int _t211;
-    JsonValue* _t213;
-    int _t217;
-    int _t196;
-    _t196 = self->tag;
-    _t197 = (_t196 != JsonTagArray);
-    if (!_t197) goto endif41;
+    JsonValue* _t202;
+    int _t203;
+    void* _t205;
+    int _t206;
+    JsonValue* _t208;
+    int _t212;
+    int _t193;
+    _t193 = self->tag;
+    _t194 = (_t193 != JsonTagArray);
+    if (!_t194) goto endif40;
     {
     return;
     }
-    endif41:;
-    unsigned int _t198;
-    _t198 = self->arrLen;
-    unsigned int _t199;
-    _t199 = self->arrCap;
-    _t200 = (_t198 >= _t199);
-    if (!_t200) goto endif43;
+    endif40:;
+    unsigned int _t195;
+    _t195 = self->arrLen;
+    unsigned int _t196;
+    _t196 = self->arrCap;
+    _t197 = (_t195 >= _t196);
+    if (!_t197) goto endif42;
     {
     unsigned int arrNewCap;
-    unsigned int _t201;
-    _t201 = self->arrCap;
-    arrNewCap = _t201;
-    _t202 = (arrNewCap == 0);
-    if (!_t202) goto else44;
+    unsigned int _t198;
+    _t198 = self->arrCap;
+    arrNewCap = _t198;
+    _t199 = (arrNewCap == 0);
+    if (!_t199) goto else43;
     {
     self->arrCap = 4;
     /* sizeof(JsonValue) */
-    _t204 = 4 * sizeof(JsonValue);
-    void* _t205;
-    _t205 = Alloc(_t204);
-    _t206 = (JsonValue*)_t205;
-    self->arrData = _t206;
+    _t200 = 4 * sizeof(JsonValue);
+    void* _t201;
+    _t201 = Alloc(_t200);
+    _t202 = (JsonValue*)_t201;
+    self->arrData = _t202;
     }
-    goto endif45;
-    else44:;
+    goto endif44;
+    else43:;
     {
     unsigned int doubleCap;
-    _t207 = arrNewCap * 2;
-    doubleCap = _t207;
+    _t203 = arrNewCap * 2;
+    doubleCap = _t203;
     self->arrCap = doubleCap;
-    JsonValue* _t208;
-    _t208 = self->arrData;
-    _t209 = (void*)_t208;
+    JsonValue* _t204;
+    _t204 = self->arrData;
+    _t205 = (void*)_t204;
     /* sizeof(JsonValue) */
-    _t211 = doubleCap * sizeof(JsonValue);
-    void* _t212;
-    _t212 = Realloc(_t209, _t211);
-    _t213 = (JsonValue*)_t212;
-    self->arrData = _t213;
+    _t206 = doubleCap * sizeof(JsonValue);
+    void* _t207;
+    _t207 = Realloc(_t205, _t206);
+    _t208 = (JsonValue*)_t207;
+    self->arrData = _t208;
     }
-    endif45:;
+    endif44:;
     }
-    endif43:;
-    JsonValue* _t214;
-    _t214 = self->arrData;
-    unsigned int _t215;
-    _t215 = self->arrLen;
-    _t214[_t215] = val;
-    unsigned int _t216;
-    _t216 = self->arrLen;
-    _t217 = _t216 + 1;
-    self->arrLen = _t217;
+    endif42:;
+    JsonValue* _t209;
+    _t209 = self->arrData;
+    unsigned int _t210;
+    _t210 = self->arrLen;
+    _t209[_t210] = val;
+    unsigned int _t211;
+    _t211 = self->arrLen;
+    _t212 = _t211 + 1;
+    self->arrLen = _t212;
 }
 
 unsigned int Json_ObjectLen(JsonValue v) {
-    int _t219;
-    int _t218;
-    _t218 = v.tag;
-    _t219 = (_t218 != JsonTagObject);
-    if (!_t219) goto endif47;
+    int _t214;
+    int _t213;
+    _t213 = v.tag;
+    _t214 = (_t213 != JsonTagObject);
+    if (!_t214) goto endif46;
     {
     return 0;
     }
-    endif47:;
-    unsigned int _t220;
-    _t220 = v.objLen;
-    return _t220;
+    endif46:;
+    unsigned int _t215;
+    _t215 = v.objLen;
+    return _t215;
 }
 
 JsonValue Json_ObjectGet(JsonValue v, const char* key) {
-    int _t222;
-    int _t225;
-    int _t231;
-    int _t221;
-    _t221 = v.tag;
-    _t222 = (_t221 != JsonTagObject);
-    if (!_t222) goto endif49;
+    int _t217;
+    int _t220;
+    int _t226;
+    int _t216;
+    _t216 = v.tag;
+    _t217 = (_t216 != JsonTagObject);
+    if (!_t217) goto endif48;
     {
-    JsonValue _t223;
-    _t223 = Json_Null();
-    return _t223;
+    JsonValue _t218;
+    _t218 = Json_Null();
+    return _t218;
     }
-    endif49:;
+    endif48:;
     unsigned int i;
     i = 0;
-    while50:;
-    unsigned int _t224;
-    _t224 = v.objLen;
-    _t225 = (i < _t224);
-    if (!_t225) goto wend52;
+    while49:;
+    unsigned int _t219;
+    _t219 = v.objLen;
+    _t220 = (i < _t219);
+    if (!_t220) goto wend50;
     {
-    const char** _t226;
-    _t226 = v.objKeys;
-    const char* _t227;
-    _t227 = _t226[i];
-    bool _t228;
-    _t228 = String_Eq(_t227, key);
-    if (!_t228) goto endif54;
+    const char** _t221;
+    _t221 = v.objKeys;
+    const char* _t222;
+    _t222 = _t221[i];
+    bool _t223;
+    _t223 = String_Eq(_t222, key);
+    if (!_t223) goto endif52;
     {
-    JsonValue* _t229;
-    _t229 = v.objValues;
-    JsonValue _t230;
-    _t230 = _t229[i];
-    return _t230;
+    JsonValue* _t224;
+    _t224 = v.objValues;
+    JsonValue _t225;
+    _t225 = _t224[i];
+    return _t225;
     }
-    endif54:;
-    _t231 = i + 1;
-    i = _t231;
+    endif52:;
+    _t226 = i + 1;
+    i = _t226;
     }
-    goto while50;
-    wend52:;
-    JsonValue _t232;
-    _t232 = Json_Null();
-    return _t232;
+    goto while49;
+    wend50:;
+    JsonValue _t227;
+    _t227 = Json_Null();
+    return _t227;
 }
 
 bool Json_ObjectHas(JsonValue v, const char* key) {
-    int _t234;
-    int _t236;
-    int _t240;
-    int _t233;
-    _t233 = v.tag;
-    _t234 = (_t233 != JsonTagObject);
-    if (!_t234) goto endif56;
+    int _t229;
+    int _t231;
+    int _t235;
+    int _t228;
+    _t228 = v.tag;
+    _t229 = (_t228 != JsonTagObject);
+    if (!_t229) goto endif54;
     {
     return 0;
     }
-    endif56:;
+    endif54:;
     unsigned int i;
     i = 0;
-    while57:;
-    unsigned int _t235;
-    _t235 = v.objLen;
-    _t236 = (i < _t235);
-    if (!_t236) goto wend59;
+    while55:;
+    unsigned int _t230;
+    _t230 = v.objLen;
+    _t231 = (i < _t230);
+    if (!_t231) goto wend56;
     {
-    const char** _t237;
-    _t237 = v.objKeys;
-    const char* _t238;
-    _t238 = _t237[i];
-    bool _t239;
-    _t239 = String_Eq(_t238, key);
-    if (!_t239) goto endif61;
+    const char** _t232;
+    _t232 = v.objKeys;
+    const char* _t233;
+    _t233 = _t232[i];
+    bool _t234;
+    _t234 = String_Eq(_t233, key);
+    if (!_t234) goto endif58;
     {
     return 1;
     }
-    endif61:;
-    _t240 = i + 1;
-    i = _t240;
+    endif58:;
+    _t235 = i + 1;
+    i = _t235;
     }
-    goto while57;
-    wend59:;
+    goto while55;
+    wend56:;
     return 0;
 }
 
 void Json_ObjectSet(JsonValue* self, const char* key, JsonValue val) {
-    int _t242;
+    int _t237;
+    int _t239;
     int _t244;
+    int _t247;
     int _t249;
-    int _t252;
-    int _t254;
+    int _t250;
+    const char** _t252;
+    int _t253;
+    JsonValue* _t255;
     int _t256;
-    const char** _t258;
-    int _t260;
-    JsonValue* _t262;
-    int _t263;
-    void* _t265;
-    int _t267;
-    const char** _t269;
-    void* _t271;
-    int _t273;
-    JsonValue* _t275;
-    int _t281;
-    int _t241;
-    _t241 = self->tag;
-    _t242 = (_t241 != JsonTagObject);
-    if (!_t242) goto endif63;
+    void* _t258;
+    int _t259;
+    const char** _t261;
+    void* _t263;
+    int _t264;
+    JsonValue* _t266;
+    int _t272;
+    int _t236;
+    _t236 = self->tag;
+    _t237 = (_t236 != JsonTagObject);
+    if (!_t237) goto endif60;
     {
     return;
     }
-    endif63:;
+    endif60:;
     unsigned int i;
     i = 0;
-    while64:;
-    unsigned int _t243;
-    _t243 = self->objLen;
-    _t244 = (i < _t243);
-    if (!_t244) goto wend66;
+    while61:;
+    unsigned int _t238;
+    _t238 = self->objLen;
+    _t239 = (i < _t238);
+    if (!_t239) goto wend62;
     {
-    const char** _t245;
-    _t245 = self->objKeys;
-    const char* _t246;
-    _t246 = _t245[i];
-    bool _t247;
-    _t247 = String_Eq(_t246, key);
-    if (!_t247) goto endif68;
+    const char** _t240;
+    _t240 = self->objKeys;
+    const char* _t241;
+    _t241 = _t240[i];
+    bool _t242;
+    _t242 = String_Eq(_t241, key);
+    if (!_t242) goto endif64;
     {
-    JsonValue* _t248;
-    _t248 = self->objValues;
-    _t248[i] = val;
+    JsonValue* _t243;
+    _t243 = self->objValues;
+    _t243[i] = val;
     return;
     }
-    endif68:;
-    _t249 = i + 1;
-    i = _t249;
+    endif64:;
+    _t244 = i + 1;
+    i = _t244;
     }
-    goto while64;
-    wend66:;
-    unsigned int _t250;
-    _t250 = self->objLen;
-    unsigned int _t251;
-    _t251 = self->objCap;
-    _t252 = (_t250 >= _t251);
-    if (!_t252) goto endif70;
+    goto while61;
+    wend62:;
+    unsigned int _t245;
+    _t245 = self->objLen;
+    unsigned int _t246;
+    _t246 = self->objCap;
+    _t247 = (_t245 >= _t246);
+    if (!_t247) goto endif66;
     {
     unsigned int objNewCap;
-    unsigned int _t253;
-    _t253 = self->objCap;
-    objNewCap = _t253;
-    _t254 = (objNewCap == 0);
-    if (!_t254) goto else71;
+    unsigned int _t248;
+    _t248 = self->objCap;
+    objNewCap = _t248;
+    _t249 = (objNewCap == 0);
+    if (!_t249) goto else67;
     {
     self->objCap = 4;
     /* sizeof(const char*) */
-    _t256 = 4 * sizeof(const char*);
-    void* _t257;
-    _t257 = Alloc(_t256);
-    _t258 = (const char**)_t257;
-    self->objKeys = _t258;
+    _t250 = 4 * sizeof(const char*);
+    void* _t251;
+    _t251 = Alloc(_t250);
+    _t252 = (const char**)_t251;
+    self->objKeys = _t252;
     /* sizeof(JsonValue) */
-    _t260 = 4 * sizeof(JsonValue);
-    void* _t261;
-    _t261 = Alloc(_t260);
-    _t262 = (JsonValue*)_t261;
-    self->objValues = _t262;
+    _t253 = 4 * sizeof(JsonValue);
+    void* _t254;
+    _t254 = Alloc(_t253);
+    _t255 = (JsonValue*)_t254;
+    self->objValues = _t255;
     }
-    goto endif72;
-    else71:;
+    goto endif68;
+    else67:;
     {
     unsigned int doubleCap;
-    _t263 = objNewCap * 2;
-    doubleCap = _t263;
+    _t256 = objNewCap * 2;
+    doubleCap = _t256;
     self->objCap = doubleCap;
-    const char** _t264;
-    _t264 = self->objKeys;
-    _t265 = (void*)_t264;
+    const char** _t257;
+    _t257 = self->objKeys;
+    _t258 = (void*)_t257;
     /* sizeof(const char*) */
-    _t267 = doubleCap * sizeof(const char*);
-    void* _t268;
-    _t268 = Realloc(_t265, _t267);
-    _t269 = (const char**)_t268;
-    self->objKeys = _t269;
-    JsonValue* _t270;
-    _t270 = self->objValues;
-    _t271 = (void*)_t270;
+    _t259 = doubleCap * sizeof(const char*);
+    void* _t260;
+    _t260 = Realloc(_t258, _t259);
+    _t261 = (const char**)_t260;
+    self->objKeys = _t261;
+    JsonValue* _t262;
+    _t262 = self->objValues;
+    _t263 = (void*)_t262;
     /* sizeof(JsonValue) */
-    _t273 = doubleCap * sizeof(JsonValue);
-    void* _t274;
-    _t274 = Realloc(_t271, _t273);
-    _t275 = (JsonValue*)_t274;
-    self->objValues = _t275;
+    _t264 = doubleCap * sizeof(JsonValue);
+    void* _t265;
+    _t265 = Realloc(_t263, _t264);
+    _t266 = (JsonValue*)_t265;
+    self->objValues = _t266;
     }
-    endif72:;
+    endif68:;
     }
-    endif70:;
-    const char** _t276;
-    _t276 = self->objKeys;
-    unsigned int _t277;
-    _t277 = self->objLen;
-    _t276[_t277] = key;
-    JsonValue* _t278;
-    _t278 = self->objValues;
-    unsigned int _t279;
-    _t279 = self->objLen;
-    _t278[_t279] = val;
-    unsigned int _t280;
-    _t280 = self->objLen;
-    _t281 = _t280 + 1;
-    self->objLen = _t281;
+    endif66:;
+    const char** _t267;
+    _t267 = self->objKeys;
+    unsigned int _t268;
+    _t268 = self->objLen;
+    _t267[_t268] = key;
+    JsonValue* _t269;
+    _t269 = self->objValues;
+    unsigned int _t270;
+    _t270 = self->objLen;
+    _t269[_t270] = val;
+    unsigned int _t271;
+    _t271 = self->objLen;
+    _t272 = _t271 + 1;
+    self->objLen = _t272;
 }
 
 bool Json_IsNull(JsonValue v) {
-    int _t283;
-    int _t282;
-    _t282 = v.tag;
-    _t283 = (_t282 == JsonTagNull);
-    return _t283;
+    int _t274;
+    int _t273;
+    _t273 = v.tag;
+    _t274 = (_t273 == JsonTagNull);
+    return _t274;
 }
 
 bool Json_AsBool(JsonValue v) {
-    int _t285;
-    int _t284;
-    _t284 = v.tag;
-    _t285 = (_t284 == JsonTagBool);
-    if (!_t285) goto endif74;
+    int _t276;
+    int _t275;
+    _t275 = v.tag;
+    _t276 = (_t275 == JsonTagBool);
+    if (!_t276) goto endif70;
     {
-    bool _t286;
-    _t286 = v.boolVal;
-    return _t286;
+    bool _t277;
+    _t277 = v.boolVal;
+    return _t277;
     }
-    endif74:;
+    endif70:;
     return 0;
 }
 
 double Json_AsNumber(JsonValue v) {
-    int _t288;
-    int _t287;
-    _t287 = v.tag;
-    _t288 = (_t287 == JsonTagNumber);
-    if (!_t288) goto endif76;
+    int _t279;
+    int _t278;
+    _t278 = v.tag;
+    _t279 = (_t278 == JsonTagNumber);
+    if (!_t279) goto endif72;
     {
-    double _t289;
-    _t289 = v.numVal;
-    return _t289;
+    double _t280;
+    _t280 = v.numVal;
+    return _t280;
     }
-    endif76:;
+    endif72:;
     return 0.0;
 }
 
 const char* Json_AsString(JsonValue v) {
-    int _t291;
-    int _t290;
-    _t290 = v.tag;
-    _t291 = (_t290 == JsonTagString);
-    if (!_t291) goto endif78;
+    int _t282;
+    int _t281;
+    _t281 = v.tag;
+    _t282 = (_t281 == JsonTagString);
+    if (!_t282) goto endif74;
     {
-    const char* _t292;
-    _t292 = v.strVal;
-    return _t292;
+    const char* _t283;
+    _t283 = v.strVal;
+    return _t283;
     }
-    endif78:;
+    endif74:;
     return "";
 }
 
 int JsonParser_Peek(JsonParser* p) {
-    int _t295;
-    int _t299;
-    unsigned int _t293;
-    _t293 = p->pos;
-    unsigned int _t294;
-    _t294 = p->len;
-    _t295 = (_t293 >= _t294);
-    if (!_t295) goto endif80;
+    int _t286;
+    int _t290;
+    unsigned int _t284;
+    _t284 = p->pos;
+    unsigned int _t285;
+    _t285 = p->len;
+    _t286 = (_t284 >= _t285);
+    if (!_t286) goto endif76;
     {
     return 0;
     }
-    endif80:;
-    const char* _t296;
-    _t296 = p->src;
-    unsigned int _t297;
-    _t297 = p->pos;
-    int _t298;
-    _t298 = _t296[_t297];
-    _t299 = (int)_t298;
-    return _t299;
+    endif76:;
+    const char* _t287;
+    _t287 = p->src;
+    unsigned int _t288;
+    _t288 = p->pos;
+    int _t289;
+    _t289 = _t287[_t288];
+    _t290 = (int)_t289;
+    return _t290;
 }
 
 void JsonParser_Advance(JsonParser* p) {
-    int _t302;
-    int _t304;
-    unsigned int _t300;
-    _t300 = p->pos;
-    unsigned int _t301;
-    _t301 = p->len;
-    _t302 = (_t300 < _t301);
-    if (!_t302) goto endif82;
+    int _t293;
+    int _t295;
+    unsigned int _t291;
+    _t291 = p->pos;
+    unsigned int _t292;
+    _t292 = p->len;
+    _t293 = (_t291 < _t292);
+    if (!_t293) goto endif78;
     {
-    unsigned int _t303;
-    _t303 = p->pos;
-    _t304 = _t303 + 1;
-    p->pos = _t304;
+    unsigned int _t294;
+    _t294 = p->pos;
+    _t295 = _t294 + 1;
+    p->pos = _t295;
     }
-    endif82:;
+    endif78:;
 }
 
 void JsonParser_SkipWhitespace(JsonParser* p) {
-    int _t306;
-    int _t307;
-    int _t309;
-    int _t311;
-    while83:;
-    if (!1) goto wend85;
+    int _t297;
+    int _t298;
+    int _t300;
+    int _t302;
+    while79:;
+    if (!1) goto wend80;
     {
     int c;
-    int _t305;
-    _t305 = JsonParser_Peek(p);
-    c = _t305;
+    int _t296;
+    _t296 = JsonParser_Peek(p);
+    c = _t296;
     bool __or_tmp_1;
     bool __or_tmp_2;
     bool __or_tmp_3;
-    _t306 = (c == 32);
-    if (!_t306) goto else86;
+    _t297 = (c == 32);
+    if (!_t297) goto else81;
     *(bool*)&__or_tmp_3 = 1;
-    goto endif87;
-    else86:;
-    _t307 = (c == 9);
-    *(bool*)&__or_tmp_3 = _t307;
-    endif87:;
-    bool _t308;
-    _t308 = *(bool*)&__or_tmp_3;
-    if (!_t308) goto else88;
+    goto endif82;
+    else81:;
+    _t298 = (c == 9);
+    *(bool*)&__or_tmp_3 = _t298;
+    endif82:;
+    bool _t299;
+    _t299 = *(bool*)&__or_tmp_3;
+    if (!_t299) goto else83;
     *(bool*)&__or_tmp_2 = 1;
-    goto endif89;
-    else88:;
-    _t309 = (c == 10);
-    *(bool*)&__or_tmp_2 = _t309;
-    endif89:;
-    bool _t310;
-    _t310 = *(bool*)&__or_tmp_2;
-    if (!_t310) goto else90;
+    goto endif84;
+    else83:;
+    _t300 = (c == 10);
+    *(bool*)&__or_tmp_2 = _t300;
+    endif84:;
+    bool _t301;
+    _t301 = *(bool*)&__or_tmp_2;
+    if (!_t301) goto else85;
     *(bool*)&__or_tmp_1 = 1;
-    goto endif91;
-    else90:;
-    _t311 = (c == 13);
-    *(bool*)&__or_tmp_1 = _t311;
-    endif91:;
-    bool _t312;
-    _t312 = *(bool*)&__or_tmp_1;
-    if (!_t312) goto else92;
+    goto endif86;
+    else85:;
+    _t302 = (c == 13);
+    *(bool*)&__or_tmp_1 = _t302;
+    endif86:;
+    bool _t303;
+    _t303 = *(bool*)&__or_tmp_1;
+    if (!_t303) goto else87;
     {
     JsonParser_Advance(p);
     }
-    goto endif93;
-    else92:;
+    goto endif88;
+    else87:;
     {
     return;
     }
-    endif93:;
+    endif88:;
     }
-    goto while83;
-    wend85:;
+    goto while79;
+    wend80:;
 }
 
 bool JsonParser_Match(JsonParser* p, const char* expected) {
+    int _t306;
+    int _t308;
+    int _t309;
+    int _t312;
     int _t315;
-    int _t317;
+    int _t316;
     int _t318;
-    int _t321;
-    int _t324;
-    int _t325;
-    int _t327;
     unsigned int elen;
-    unsigned int _t313;
-    _t313 = String_Len(expected);
-    elen = _t313;
-    unsigned int _t314;
-    _t314 = p->pos;
-    _t315 = _t314 + elen;
-    unsigned int _t316;
-    _t316 = p->len;
-    _t317 = (_t315 > _t316);
-    if (!_t317) goto endif95;
+    unsigned int _t304;
+    _t304 = String_Len(expected);
+    elen = _t304;
+    unsigned int _t305;
+    _t305 = p->pos;
+    _t306 = _t305 + elen;
+    unsigned int _t307;
+    _t307 = p->len;
+    _t308 = (_t306 > _t307);
+    if (!_t308) goto endif90;
     {
     return 0;
     }
-    endif95:;
+    endif90:;
     unsigned int i;
     i = 0;
-    while96:;
-    _t318 = (i < elen);
-    if (!_t318) goto wend98;
+    while91:;
+    _t309 = (i < elen);
+    if (!_t309) goto wend92;
     {
-    const char* _t319;
-    _t319 = p->src;
-    unsigned int _t320;
-    _t320 = p->pos;
-    _t321 = _t320 + i;
-    int _t322;
-    _t322 = _t319[_t321];
-    int _t323;
-    _t323 = expected[i];
-    _t324 = (_t322 != _t323);
-    if (!_t324) goto endif100;
+    const char* _t310;
+    _t310 = p->src;
+    unsigned int _t311;
+    _t311 = p->pos;
+    _t312 = _t311 + i;
+    int _t313;
+    _t313 = _t310[_t312];
+    int _t314;
+    _t314 = expected[i];
+    _t315 = (_t313 != _t314);
+    if (!_t315) goto endif94;
     {
     return 0;
     }
-    endif100:;
-    _t325 = i + 1;
-    i = _t325;
+    endif94:;
+    _t316 = i + 1;
+    i = _t316;
     }
-    goto while96;
-    wend98:;
-    unsigned int _t326;
-    _t326 = p->pos;
-    _t327 = _t326 + elen;
-    p->pos = _t327;
+    goto while91;
+    wend92:;
+    unsigned int _t317;
+    _t317 = p->pos;
+    _t318 = _t317 + elen;
+    p->pos = _t318;
     return 1;
 }
 
 const char* JsonParser_ParseString(JsonParser* p) {
-    int _t329;
-    int _t332;
+    int _t320;
+    int _t323;
+    int _t324;
+    int _t326;
+    int _t328;
+    void* _t329;
+    int _t330;
+    void* _t331;
+    char _t332;
     int _t333;
-    int _t335;
-    int _t337;
-    void* _t338;
+    void* _t334;
+    char _t335;
+    int _t336;
+    void* _t337;
+    char _t338;
     int _t339;
     void* _t340;
     char _t341;
@@ -2015,234 +2023,262 @@ const char* JsonParser_ParseString(JsonParser* p) {
     int _t348;
     void* _t349;
     char _t350;
-    int _t351;
-    void* _t352;
-    char _t353;
-    int _t354;
+    void* _t351;
+    char _t352;
+    void* _t353;
+    char _t354;
     void* _t355;
     char _t356;
-    int _t357;
-    void* _t358;
-    char _t359;
+    int _t358;
+    void* _t359;
     void* _t360;
-    char _t361;
     void* _t362;
-    char _t363;
-    void* _t364;
-    char _t365;
-    int _t367;
-    void* _t368;
-    void* _t369;
-    void* _t371;
-    int _t328;
-    _t328 = JsonParser_Peek(p);
-    _t329 = (_t328 != 34);
-    if (!_t329) goto endif102;
+    int _t319;
+    _t319 = JsonParser_Peek(p);
+    _t320 = (_t319 != 34);
+    if (!_t320) goto endif96;
     {
     p->error = "Expected string";
     return "";
     }
-    endif102:;
+    endif96:;
     JsonParser_Advance(p);
     StringBuilder sb;
-    StringBuilder _t330;
-    _t330 = StringBuilder_New();
-    sb = _t330;
-    while103:;
-    if (!1) goto wend105;
+    StringBuilder _t321;
+    _t321 = StringBuilder_New();
+    sb = _t321;
+    while97:;
+    if (!1) goto wend98;
     {
     int c;
-    int _t331;
-    _t331 = JsonParser_Peek(p);
-    c = _t331;
+    int _t322;
+    _t322 = JsonParser_Peek(p);
+    c = _t322;
     bool __or_tmp_4;
-    _t332 = (c == 0);
-    if (!_t332) goto else106;
+    _t323 = (c == 0);
+    if (!_t323) goto else99;
     *(bool*)&__or_tmp_4 = 1;
-    goto endif107;
-    else106:;
-    _t333 = (c == 34);
-    *(bool*)&__or_tmp_4 = _t333;
-    endif107:;
-    bool _t334;
-    _t334 = *(bool*)&__or_tmp_4;
-    if (!_t334) goto endif109;
+    goto endif100;
+    else99:;
+    _t324 = (c == 34);
+    *(bool*)&__or_tmp_4 = _t324;
+    endif100:;
+    bool _t325;
+    _t325 = *(bool*)&__or_tmp_4;
+    if (!_t325) goto endif102;
     {
-    goto wend105;
+    goto wend98;
     }
-    endif109:;
-    _t335 = (c == 92);
-    if (!_t335) goto else110;
+    endif102:;
+    _t326 = (c == 92);
+    if (!_t326) goto else103;
     {
     JsonParser_Advance(p);
     int esc;
-    int _t336;
-    _t336 = JsonParser_Peek(p);
-    esc = _t336;
-    _t337 = (esc == 0);
-    if (!_t337) goto endif113;
+    int _t327;
+    _t327 = JsonParser_Peek(p);
+    esc = _t327;
+    _t328 = (esc == 0);
+    if (!_t328) goto endif106;
     {
     p->error = "Unterminated string escape";
-    _t338 = &sb;
-    StringBuilder_Free(_t338);
+    _t329 = &sb;
+    StringBuilder_Free(_t329);
     return "";
     }
-    endif113:;
-    _t339 = (esc == 110);
-    if (!_t339) goto else114;
+    endif106:;
+    _t330 = (esc == 110);
+    if (!_t330) goto else107;
+    {
+    _t331 = &sb;
+    _t332 = (char)10;
+    StringBuilder_AppendChar(_t331, _t332);
+    }
+    goto endif108;
+    else107:;
+    _t333 = (esc == 116);
+    if (!_t333) goto else109;
+    {
+    _t334 = &sb;
+    _t335 = (char)9;
+    StringBuilder_AppendChar(_t334, _t335);
+    }
+    goto endif110;
+    else109:;
+    _t336 = (esc == 114);
+    if (!_t336) goto else111;
+    {
+    _t337 = &sb;
+    _t338 = (char)13;
+    StringBuilder_AppendChar(_t337, _t338);
+    }
+    goto endif112;
+    else111:;
+    _t339 = (esc == 98);
+    if (!_t339) goto else113;
     {
     _t340 = &sb;
-    _t341 = (char)10;
+    _t341 = (char)8;
     StringBuilder_AppendChar(_t340, _t341);
     }
-    goto endif115;
-    else114:;
-    _t342 = (esc == 116);
-    if (!_t342) goto else116;
+    goto endif114;
+    else113:;
+    _t342 = (esc == 102);
+    if (!_t342) goto else115;
     {
     _t343 = &sb;
-    _t344 = (char)9;
+    _t344 = (char)12;
     StringBuilder_AppendChar(_t343, _t344);
     }
-    goto endif117;
-    else116:;
-    _t345 = (esc == 114);
-    if (!_t345) goto else118;
+    goto endif116;
+    else115:;
+    _t345 = (esc == 34);
+    if (!_t345) goto else117;
     {
     _t346 = &sb;
-    _t347 = (char)13;
+    _t347 = (char)34;
     StringBuilder_AppendChar(_t346, _t347);
     }
-    goto endif119;
-    else118:;
-    _t348 = (esc == 98);
-    if (!_t348) goto else120;
+    goto endif118;
+    else117:;
+    _t348 = (esc == 92);
+    if (!_t348) goto else119;
     {
     _t349 = &sb;
-    _t350 = (char)8;
+    _t350 = (char)92;
     StringBuilder_AppendChar(_t349, _t350);
     }
-    goto endif121;
-    else120:;
-    _t351 = (esc == 102);
-    if (!_t351) goto else122;
+    goto endif120;
+    else119:;
     {
-    _t352 = &sb;
-    _t353 = (char)12;
-    StringBuilder_AppendChar(_t352, _t353);
+    _t351 = &sb;
+    _t352 = (char)92;
+    StringBuilder_AppendChar(_t351, _t352);
+    _t353 = &sb;
+    _t354 = (char)esc;
+    StringBuilder_AppendChar(_t353, _t354);
     }
-    goto endif123;
-    else122:;
-    _t354 = (esc == 34);
-    if (!_t354) goto else124;
+    endif120:;
+    endif118:;
+    endif116:;
+    endif114:;
+    endif112:;
+    endif110:;
+    endif108:;
+    JsonParser_Advance(p);
+    }
+    goto endif104;
+    else103:;
     {
     _t355 = &sb;
-    _t356 = (char)34;
+    _t356 = (char)c;
     StringBuilder_AppendChar(_t355, _t356);
-    }
-    goto endif125;
-    else124:;
-    _t357 = (esc == 92);
-    if (!_t357) goto else126;
-    {
-    _t358 = &sb;
-    _t359 = (char)92;
-    StringBuilder_AppendChar(_t358, _t359);
-    }
-    goto endif127;
-    else126:;
-    {
-    _t360 = &sb;
-    _t361 = (char)92;
-    StringBuilder_AppendChar(_t360, _t361);
-    _t362 = &sb;
-    _t363 = (char)esc;
-    StringBuilder_AppendChar(_t362, _t363);
-    }
-    endif127:;
-    endif125:;
-    endif123:;
-    endif121:;
-    endif119:;
-    endif117:;
-    endif115:;
     JsonParser_Advance(p);
     }
-    goto endif111;
-    else110:;
-    {
-    _t364 = &sb;
-    _t365 = (char)c;
-    StringBuilder_AppendChar(_t364, _t365);
-    JsonParser_Advance(p);
+    endif104:;
     }
-    endif111:;
-    }
-    goto while103;
-    wend105:;
-    int _t366;
-    _t366 = JsonParser_Peek(p);
-    _t367 = (_t366 != 34);
-    if (!_t367) goto endif129;
+    goto while97;
+    wend98:;
+    int _t357;
+    _t357 = JsonParser_Peek(p);
+    _t358 = (_t357 != 34);
+    if (!_t358) goto endif122;
     {
     p->error = "Unterminated string";
-    _t368 = &sb;
-    StringBuilder_Free(_t368);
+    _t359 = &sb;
+    StringBuilder_Free(_t359);
     return "";
     }
-    endif129:;
+    endif122:;
     JsonParser_Advance(p);
     const char* result;
-    _t369 = &sb;
-    const char* _t370;
-    _t370 = StringBuilder_Build(_t369);
-    result = _t370;
-    _t371 = &sb;
-    StringBuilder_Free(_t371);
+    _t360 = &sb;
+    const char* _t361;
+    _t361 = StringBuilder_Build(_t360);
+    result = _t361;
+    _t362 = &sb;
+    StringBuilder_Free(_t362);
     return result;
 }
 
 JsonValue JsonParser_ParseNumber(JsonParser* p) {
-    int _t374;
-    int _t376;
-    int _t377;
-    int _t380;
-    int _t382;
-    int _t383;
-    int _t387;
-    unsigned int start;
-    unsigned int _t372;
-    _t372 = p->pos;
-    start = _t372;
-    int c0;
+    int _t365;
+    int _t367;
+    int _t368;
+    int _t371;
     int _t373;
-    _t373 = JsonParser_Peek(p);
-    c0 = _t373;
-    _t374 = (c0 == 45);
-    if (!_t374) goto endif131;
+    int _t374;
+    int _t378;
+    unsigned int start;
+    unsigned int _t363;
+    _t363 = p->pos;
+    start = _t363;
+    int c0;
+    int _t364;
+    _t364 = JsonParser_Peek(p);
+    c0 = _t364;
+    _t365 = (c0 == 45);
+    if (!_t365) goto endif124;
     {
     JsonParser_Advance(p);
     }
-    endif131:;
-    while132:;
+    endif124:;
+    while125:;
+    if (!1) goto wend126;
+    {
+    int c;
+    int _t366;
+    _t366 = JsonParser_Peek(p);
+    c = _t366;
+    bool __and_tmp_5;
+    _t367 = (c >= 48);
+    if (!_t367) goto else127;
+    _t368 = (c <= 57);
+    *(bool*)&__and_tmp_5 = _t368;
+    goto endif128;
+    else127:;
+    *(bool*)&__and_tmp_5 = 0;
+    endif128:;
+    bool _t369;
+    _t369 = *(bool*)&__and_tmp_5;
+    if (!_t369) goto else129;
+    {
+    JsonParser_Advance(p);
+    }
+    goto endif130;
+    else129:;
+    {
+    goto wend126;
+    }
+    endif130:;
+    }
+    goto while125;
+    wend126:;
+    int _t370;
+    _t370 = JsonParser_Peek(p);
+    _t371 = (_t370 == 46);
+    if (!_t371) goto endif132;
+    {
+    JsonParser_Advance(p);
+    while133:;
     if (!1) goto wend134;
     {
     int c;
-    int _t375;
-    _t375 = JsonParser_Peek(p);
-    c = _t375;
-    bool __and_tmp_5;
-    _t376 = (c >= 48);
-    if (!_t376) goto else135;
-    _t377 = (c <= 57);
-    *(bool*)&__and_tmp_5 = _t377;
+    int _t372;
+    _t372 = JsonParser_Peek(p);
+    c = _t372;
+    bool __and_tmp_6;
+    _t373 = (c >= 48);
+    if (!_t373) goto else135;
+    _t374 = (c <= 57);
+    *(bool*)&__and_tmp_6 = _t374;
     goto endif136;
     else135:;
-    *(bool*)&__and_tmp_5 = 0;
+    *(bool*)&__and_tmp_6 = 0;
     endif136:;
-    bool _t378;
-    _t378 = *(bool*)&__and_tmp_5;
-    if (!_t378) goto else137;
+    bool _t375;
+    _t375 = *(bool*)&__and_tmp_6;
+    if (!_t375) goto else137;
     {
     JsonParser_Advance(p);
     }
@@ -2253,1098 +2289,1061 @@ JsonValue JsonParser_ParseNumber(JsonParser* p) {
     }
     endif138:;
     }
-    goto while132;
+    goto while133;
     wend134:;
-    int _t379;
-    _t379 = JsonParser_Peek(p);
-    _t380 = (_t379 == 46);
-    if (!_t380) goto endif140;
-    {
-    JsonParser_Advance(p);
-    while141:;
-    if (!1) goto wend143;
-    {
-    int c;
-    int _t381;
-    _t381 = JsonParser_Peek(p);
-    c = _t381;
-    bool __and_tmp_6;
-    _t382 = (c >= 48);
-    if (!_t382) goto else144;
-    _t383 = (c <= 57);
-    *(bool*)&__and_tmp_6 = _t383;
-    goto endif145;
-    else144:;
-    *(bool*)&__and_tmp_6 = 0;
-    endif145:;
-    bool _t384;
-    _t384 = *(bool*)&__and_tmp_6;
-    if (!_t384) goto else146;
-    {
-    JsonParser_Advance(p);
     }
-    goto endif147;
-    else146:;
-    {
-    goto wend143;
-    }
-    endif147:;
-    }
-    goto while141;
-    wend143:;
-    }
-    endif140:;
+    endif132:;
     const char* numStr;
-    const char* _t385;
-    _t385 = p->src;
-    unsigned int _t386;
-    _t386 = p->pos;
-    _t387 = _t386 - start;
-    const char* _t388;
-    _t388 = String_Slice(_t385, start, _t387);
-    numStr = _t388;
+    const char* _t376;
+    _t376 = p->src;
+    unsigned int _t377;
+    _t377 = p->pos;
+    _t378 = _t377 - start;
+    const char* _t379;
+    _t379 = String_Slice(_t376, start, _t378);
+    numStr = _t379;
     double n;
-    double _t389;
-    _t389 = String_ToFloat(numStr);
-    n = _t389;
-    JsonValue _t390;
-    _t390 = Json_Number(n);
-    return _t390;
+    double _t380;
+    _t380 = String_ToFloat(numStr);
+    n = _t380;
+    JsonValue _t381;
+    _t381 = Json_Number(n);
+    return _t381;
 }
 
 JsonValue JsonParser_ParseArray(JsonParser* p) {
-    int _t393;
-    int _t396;
-    void* _t398;
-    int _t400;
-    int _t401;
+    int _t384;
+    int _t387;
+    void* _t389;
+    int _t391;
+    int _t392;
     JsonParser_Advance(p);
     JsonValue arr;
-    JsonValue _t391;
-    _t391 = Json_Array();
-    arr = _t391;
+    JsonValue _t382;
+    _t382 = Json_Array();
+    arr = _t382;
     JsonParser_SkipWhitespace(p);
-    int _t392;
-    _t392 = JsonParser_Peek(p);
-    _t393 = (_t392 == 93);
-    if (!_t393) goto endif149;
+    int _t383;
+    _t383 = JsonParser_Peek(p);
+    _t384 = (_t383 == 93);
+    if (!_t384) goto endif140;
     {
     JsonParser_Advance(p);
     return arr;
     }
-    endif149:;
-    while150:;
-    if (!1) goto wend152;
+    endif140:;
+    while141:;
+    if (!1) goto wend142;
     {
     JsonParser_SkipWhitespace(p);
     JsonValue val;
-    JsonValue _t394;
-    _t394 = JsonParser_ParseValue(p);
-    val = _t394;
-    const char* _t395;
-    _t395 = p->error;
-    _t396 = (_t395 != "");
-    if (!_t396) goto endif154;
+    JsonValue _t385;
+    _t385 = JsonParser_ParseValue(p);
+    val = _t385;
+    const char* _t386;
+    _t386 = p->error;
+    _t387 = (_t386 != "");
+    if (!_t387) goto endif144;
     {
-    JsonValue _t397;
-    _t397 = Json_Null();
-    return _t397;
+    JsonValue _t388;
+    _t388 = Json_Null();
+    return _t388;
     }
-    endif154:;
-    _t398 = &arr;
-    Json_ArrayPush(_t398, val);
+    endif144:;
+    _t389 = &arr;
+    Json_ArrayPush(_t389, val);
     JsonParser_SkipWhitespace(p);
     int c;
-    int _t399;
-    _t399 = JsonParser_Peek(p);
-    c = _t399;
-    _t400 = (c == 93);
-    if (!_t400) goto endif156;
+    int _t390;
+    _t390 = JsonParser_Peek(p);
+    c = _t390;
+    _t391 = (c == 93);
+    if (!_t391) goto endif146;
     {
     JsonParser_Advance(p);
     return arr;
     }
-    endif156:;
-    _t401 = (c == 44);
-    if (!_t401) goto else157;
+    endif146:;
+    _t392 = (c == 44);
+    if (!_t392) goto else147;
     {
     JsonParser_Advance(p);
     }
-    goto endif158;
-    else157:;
+    goto endif148;
+    else147:;
     {
     p->error = "Expected ',' or ']' in array";
-    JsonValue _t402;
-    _t402 = Json_Null();
-    return _t402;
+    JsonValue _t393;
+    _t393 = Json_Null();
+    return _t393;
     }
-    endif158:;
+    endif148:;
     }
-    goto while150;
-    wend152:;
+    goto while141;
+    wend142:;
 }
 
 JsonValue JsonParser_ParseObject(JsonParser* p) {
-    int _t405;
-    int _t408;
+    int _t396;
+    int _t399;
+    int _t402;
+    int _t406;
+    void* _t408;
+    int _t410;
     int _t411;
-    int _t415;
-    void* _t417;
-    int _t419;
-    int _t420;
     JsonParser_Advance(p);
     JsonValue obj;
-    JsonValue _t403;
-    _t403 = Json_Object();
-    obj = _t403;
+    JsonValue _t394;
+    _t394 = Json_Object();
+    obj = _t394;
     JsonParser_SkipWhitespace(p);
-    int _t404;
-    _t404 = JsonParser_Peek(p);
-    _t405 = (_t404 == 125);
-    if (!_t405) goto endif160;
+    int _t395;
+    _t395 = JsonParser_Peek(p);
+    _t396 = (_t395 == 125);
+    if (!_t396) goto endif150;
+    {
+    JsonParser_Advance(p);
+    return obj;
+    }
+    endif150:;
+    while151:;
+    if (!1) goto wend152;
+    {
+    JsonParser_SkipWhitespace(p);
+    const char* key;
+    const char* _t397;
+    _t397 = JsonParser_ParseString(p);
+    key = _t397;
+    const char* _t398;
+    _t398 = p->error;
+    _t399 = (_t398 != "");
+    if (!_t399) goto endif154;
+    {
+    JsonValue _t400;
+    _t400 = Json_Null();
+    return _t400;
+    }
+    endif154:;
+    JsonParser_SkipWhitespace(p);
+    int _t401;
+    _t401 = JsonParser_Peek(p);
+    _t402 = (_t401 != 58);
+    if (!_t402) goto endif156;
+    {
+    p->error = "Expected ':' after object key";
+    JsonValue _t403;
+    _t403 = Json_Null();
+    return _t403;
+    }
+    endif156:;
+    JsonParser_Advance(p);
+    JsonParser_SkipWhitespace(p);
+    JsonValue val;
+    JsonValue _t404;
+    _t404 = JsonParser_ParseValue(p);
+    val = _t404;
+    const char* _t405;
+    _t405 = p->error;
+    _t406 = (_t405 != "");
+    if (!_t406) goto endif158;
+    {
+    JsonValue _t407;
+    _t407 = Json_Null();
+    return _t407;
+    }
+    endif158:;
+    _t408 = &obj;
+    Json_ObjectSet(_t408, key, val);
+    JsonParser_SkipWhitespace(p);
+    int c;
+    int _t409;
+    _t409 = JsonParser_Peek(p);
+    c = _t409;
+    _t410 = (c == 125);
+    if (!_t410) goto endif160;
     {
     JsonParser_Advance(p);
     return obj;
     }
     endif160:;
-    while161:;
-    if (!1) goto wend163;
+    _t411 = (c == 44);
+    if (!_t411) goto else161;
     {
-    JsonParser_SkipWhitespace(p);
-    const char* key;
-    const char* _t406;
-    _t406 = JsonParser_ParseString(p);
-    key = _t406;
-    const char* _t407;
-    _t407 = p->error;
-    _t408 = (_t407 != "");
-    if (!_t408) goto endif165;
-    {
-    JsonValue _t409;
-    _t409 = Json_Null();
-    return _t409;
+    JsonParser_Advance(p);
     }
-    endif165:;
-    JsonParser_SkipWhitespace(p);
-    int _t410;
-    _t410 = JsonParser_Peek(p);
-    _t411 = (_t410 != 58);
-    if (!_t411) goto endif167;
+    goto endif162;
+    else161:;
     {
-    p->error = "Expected ':' after object key";
+    p->error = "Expected ',' or '}' in object";
     JsonValue _t412;
     _t412 = Json_Null();
     return _t412;
     }
-    endif167:;
-    JsonParser_Advance(p);
-    JsonParser_SkipWhitespace(p);
-    JsonValue val;
-    JsonValue _t413;
-    _t413 = JsonParser_ParseValue(p);
-    val = _t413;
-    const char* _t414;
-    _t414 = p->error;
-    _t415 = (_t414 != "");
-    if (!_t415) goto endif169;
-    {
-    JsonValue _t416;
-    _t416 = Json_Null();
-    return _t416;
+    endif162:;
     }
-    endif169:;
-    _t417 = &obj;
-    Json_ObjectSet(_t417, key, val);
-    JsonParser_SkipWhitespace(p);
-    int c;
-    int _t418;
-    _t418 = JsonParser_Peek(p);
-    c = _t418;
-    _t419 = (c == 125);
-    if (!_t419) goto endif171;
-    {
-    JsonParser_Advance(p);
-    return obj;
-    }
-    endif171:;
-    _t420 = (c == 44);
-    if (!_t420) goto else172;
-    {
-    JsonParser_Advance(p);
-    }
-    goto endif173;
-    else172:;
-    {
-    p->error = "Expected ',' or '}' in object";
-    JsonValue _t421;
-    _t421 = Json_Null();
-    return _t421;
-    }
-    endif173:;
-    }
-    goto while161;
-    wend163:;
+    goto while151;
+    wend152:;
 }
 
 JsonValue JsonParser_ParseValue(JsonParser* p) {
+    int _t414;
+    int _t416;
+    int _t419;
+    int _t421;
     int _t423;
-    int _t425;
-    int _t428;
-    int _t430;
-    int _t432;
+    int _t427;
+    int _t431;
+    int _t435;
     int _t436;
-    int _t440;
-    int _t444;
-    int _t445;
-    int _t447;
+    int _t438;
     JsonParser_SkipWhitespace(p);
     int c;
-    int _t422;
-    _t422 = JsonParser_Peek(p);
-    c = _t422;
-    _t423 = (c == 0);
-    if (!_t423) goto endif175;
+    int _t413;
+    _t413 = JsonParser_Peek(p);
+    c = _t413;
+    _t414 = (c == 0);
+    if (!_t414) goto endif164;
     {
     p->error = "Unexpected end of input";
-    JsonValue _t424;
-    _t424 = Json_Null();
-    return _t424;
+    JsonValue _t415;
+    _t415 = Json_Null();
+    return _t415;
     }
-    endif175:;
-    _t425 = (c == 34);
-    if (!_t425) goto endif177;
+    endif164:;
+    _t416 = (c == 34);
+    if (!_t416) goto endif166;
     {
-    const char* _t426;
-    _t426 = JsonParser_ParseString(p);
-    JsonValue _t427;
-    _t427 = Json_String(_t426);
-    return _t427;
+    const char* _t417;
+    _t417 = JsonParser_ParseString(p);
+    JsonValue _t418;
+    _t418 = Json_String(_t417);
+    return _t418;
     }
-    endif177:;
-    _t428 = (c == 123);
-    if (!_t428) goto endif179;
+    endif166:;
+    _t419 = (c == 123);
+    if (!_t419) goto endif168;
+    {
+    JsonValue _t420;
+    _t420 = JsonParser_ParseObject(p);
+    return _t420;
+    }
+    endif168:;
+    _t421 = (c == 91);
+    if (!_t421) goto endif170;
+    {
+    JsonValue _t422;
+    _t422 = JsonParser_ParseArray(p);
+    return _t422;
+    }
+    endif170:;
+    _t423 = (c == 116);
+    if (!_t423) goto endif172;
+    {
+    bool _t424;
+    _t424 = JsonParser_Match(p, "true");
+    if (!_t424) goto endif174;
+    {
+    JsonValue _t425;
+    _t425 = Json_Bool(1);
+    return _t425;
+    }
+    endif174:;
+    p->error = "Expected 'true'";
+    JsonValue _t426;
+    _t426 = Json_Null();
+    return _t426;
+    }
+    endif172:;
+    _t427 = (c == 102);
+    if (!_t427) goto endif176;
+    {
+    bool _t428;
+    _t428 = JsonParser_Match(p, "false");
+    if (!_t428) goto endif178;
     {
     JsonValue _t429;
-    _t429 = JsonParser_ParseObject(p);
+    _t429 = Json_Bool(0);
     return _t429;
     }
-    endif179:;
-    _t430 = (c == 91);
-    if (!_t430) goto endif181;
-    {
-    JsonValue _t431;
-    _t431 = JsonParser_ParseArray(p);
-    return _t431;
+    endif178:;
+    p->error = "Expected 'false'";
+    JsonValue _t430;
+    _t430 = Json_Null();
+    return _t430;
     }
-    endif181:;
-    _t432 = (c == 116);
-    if (!_t432) goto endif183;
+    endif176:;
+    _t431 = (c == 110);
+    if (!_t431) goto endif180;
     {
-    bool _t433;
-    _t433 = JsonParser_Match(p, "true");
-    if (!_t433) goto endif185;
+    bool _t432;
+    _t432 = JsonParser_Match(p, "null");
+    if (!_t432) goto endif182;
     {
+    JsonValue _t433;
+    _t433 = Json_Null();
+    return _t433;
+    }
+    endif182:;
+    p->error = "Expected 'null'";
     JsonValue _t434;
-    _t434 = Json_Bool(1);
+    _t434 = Json_Null();
     return _t434;
     }
-    endif185:;
-    p->error = "Expected 'true'";
-    JsonValue _t435;
-    _t435 = Json_Null();
-    return _t435;
-    }
-    endif183:;
-    _t436 = (c == 102);
-    if (!_t436) goto endif187;
-    {
-    bool _t437;
-    _t437 = JsonParser_Match(p, "false");
-    if (!_t437) goto endif189;
-    {
-    JsonValue _t438;
-    _t438 = Json_Bool(0);
-    return _t438;
-    }
-    endif189:;
-    p->error = "Expected 'false'";
-    JsonValue _t439;
-    _t439 = Json_Null();
-    return _t439;
-    }
-    endif187:;
-    _t440 = (c == 110);
-    if (!_t440) goto endif191;
-    {
-    bool _t441;
-    _t441 = JsonParser_Match(p, "null");
-    if (!_t441) goto endif193;
-    {
-    JsonValue _t442;
-    _t442 = Json_Null();
-    return _t442;
-    }
-    endif193:;
-    p->error = "Expected 'null'";
-    JsonValue _t443;
-    _t443 = Json_Null();
-    return _t443;
-    }
-    endif191:;
+    endif180:;
     bool __or_tmp_7;
     bool __and_tmp_8;
-    _t444 = (c >= 48);
-    if (!_t444) goto else194;
-    _t445 = (c <= 57);
-    *(bool*)&__and_tmp_8 = _t445;
-    goto endif195;
-    else194:;
+    _t435 = (c >= 48);
+    if (!_t435) goto else183;
+    _t436 = (c <= 57);
+    *(bool*)&__and_tmp_8 = _t436;
+    goto endif184;
+    else183:;
     *(bool*)&__and_tmp_8 = 0;
-    endif195:;
-    bool _t446;
-    _t446 = *(bool*)&__and_tmp_8;
-    if (!_t446) goto else196;
+    endif184:;
+    bool _t437;
+    _t437 = *(bool*)&__and_tmp_8;
+    if (!_t437) goto else185;
     *(bool*)&__or_tmp_7 = 1;
-    goto endif197;
-    else196:;
-    _t447 = (c == 45);
-    *(bool*)&__or_tmp_7 = _t447;
-    endif197:;
-    bool _t448;
-    _t448 = *(bool*)&__or_tmp_7;
-    if (!_t448) goto endif199;
+    goto endif186;
+    else185:;
+    _t438 = (c == 45);
+    *(bool*)&__or_tmp_7 = _t438;
+    endif186:;
+    bool _t439;
+    _t439 = *(bool*)&__or_tmp_7;
+    if (!_t439) goto endif188;
     {
-    JsonValue _t449;
-    _t449 = JsonParser_ParseNumber(p);
-    return _t449;
+    JsonValue _t440;
+    _t440 = JsonParser_ParseNumber(p);
+    return _t440;
     }
-    endif199:;
+    endif188:;
     p->error = "Unexpected character";
-    JsonValue _t450;
-    _t450 = Json_Null();
-    return _t450;
+    JsonValue _t441;
+    _t441 = Json_Null();
+    return _t441;
 }
 
 JsonValue Json_Parse(const char* s) {
-    JsonParser _t452;
-    void* _t453;
-    void* _t455;
-    int _t457;
-    int _t460;
+    JsonParser _t443;
+    void* _t444;
+    void* _t446;
+    int _t448;
+    int _t451;
     JsonParser p;
-    unsigned int _t451;
-    _t451 = String_Len(s);
-    _t452 = (JsonParser){.src = s, .pos = 0, .len = _t451, .error = ""};
-    p = _t452;
+    unsigned int _t442;
+    _t442 = String_Len(s);
+    _t443 = (JsonParser){.src = s, .pos = 0, .len = _t442, .error = ""};
+    p = _t443;
     JsonValue result;
-    _t453 = &p;
-    JsonValue _t454;
-    _t454 = JsonParser_ParseValue(_t453);
-    result = _t454;
-    _t455 = &p;
-    JsonParser_SkipWhitespace(_t455);
+    _t444 = &p;
+    JsonValue _t445;
+    _t445 = JsonParser_ParseValue(_t444);
+    result = _t445;
+    _t446 = &p;
+    JsonParser_SkipWhitespace(_t446);
     bool __and_tmp_9;
-    const char* _t456;
-    _t456 = p.error;
-    _t457 = (_t456 == "");
-    if (!_t457) goto else200;
-    unsigned int _t458;
-    _t458 = p.pos;
-    unsigned int _t459;
-    _t459 = p.len;
-    _t460 = (_t458 != _t459);
-    *(bool*)&__and_tmp_9 = _t460;
-    goto endif201;
-    else200:;
+    const char* _t447;
+    _t447 = p.error;
+    _t448 = (_t447 == "");
+    if (!_t448) goto else189;
+    unsigned int _t449;
+    _t449 = p.pos;
+    unsigned int _t450;
+    _t450 = p.len;
+    _t451 = (_t449 != _t450);
+    *(bool*)&__and_tmp_9 = _t451;
+    goto endif190;
+    else189:;
     *(bool*)&__and_tmp_9 = 0;
-    endif201:;
-    bool _t461;
-    _t461 = *(bool*)&__and_tmp_9;
-    if (!_t461) goto endif203;
+    endif190:;
+    bool _t452;
+    _t452 = *(bool*)&__and_tmp_9;
+    if (!_t452) goto endif192;
     {
     p.error = "Trailing data after JSON value";
-    JsonValue _t462;
-    _t462 = Json_Null();
-    return _t462;
+    JsonValue _t453;
+    _t453 = Json_Null();
+    return _t453;
     }
-    endif203:;
+    endif192:;
     return result;
 }
 
 void Json_StringifyImpl(StringBuilder* sb, JsonValue v) {
-    int _t464;
-    int _t466;
-    int _t469;
+    int _t455;
+    int _t457;
+    int _t460;
+    int _t463;
+    char _t464;
+    char _t466;
+    int _t468;
+    char _t469;
+    int _t471;
     int _t472;
     char _t473;
-    char _t475;
-    int _t477;
-    char _t478;
-    int _t480;
-    int _t481;
-    char _t482;
-    int _t485;
-    char _t486;
-    int _t488;
+    int _t476;
+    char _t477;
+    int _t479;
+    char _t480;
+    int _t482;
+    int _t483;
+    char _t484;
+    char _t485;
+    char _t488;
     char _t489;
-    int _t491;
     int _t492;
     char _t493;
-    char _t494;
-    char _t497;
-    char _t498;
-    int _t501;
-    char _t502;
-    int _t463;
-    _t463 = v.tag;
-    _t464 = (_t463 == JsonTagNull);
-    if (!_t464) goto endif205;
+    int _t454;
+    _t454 = v.tag;
+    _t455 = (_t454 == JsonTagNull);
+    if (!_t455) goto endif194;
     {
     StringBuilder_Append(sb, "null");
     return;
     }
-    endif205:;
-    int _t465;
-    _t465 = v.tag;
-    _t466 = (_t465 == JsonTagBool);
-    if (!_t466) goto endif207;
+    endif194:;
+    int _t456;
+    _t456 = v.tag;
+    _t457 = (_t456 == JsonTagBool);
+    if (!_t457) goto endif196;
     {
-    bool _t467;
-    _t467 = v.boolVal;
-    if (!_t467) goto else208;
+    bool _t458;
+    _t458 = v.boolVal;
+    if (!_t458) goto else197;
     {
     StringBuilder_Append(sb, "true");
     }
-    goto endif209;
-    else208:;
+    goto endif198;
+    else197:;
     {
     StringBuilder_Append(sb, "false");
     }
-    endif209:;
+    endif198:;
     return;
     }
-    endif207:;
-    int _t468;
-    _t468 = v.tag;
-    _t469 = (_t468 == JsonTagNumber);
-    if (!_t469) goto endif211;
+    endif196:;
+    int _t459;
+    _t459 = v.tag;
+    _t460 = (_t459 == JsonTagNumber);
+    if (!_t460) goto endif200;
     {
-    double _t470;
-    _t470 = v.numVal;
-    StringBuilder_AppendFloat(sb, _t470);
+    double _t461;
+    _t461 = v.numVal;
+    StringBuilder_AppendFloat(sb, _t461);
     return;
     }
-    endif211:;
-    int _t471;
-    _t471 = v.tag;
-    _t472 = (_t471 == JsonTagString);
-    if (!_t472) goto endif213;
+    endif200:;
+    int _t462;
+    _t462 = v.tag;
+    _t463 = (_t462 == JsonTagString);
+    if (!_t463) goto endif202;
     {
-    _t473 = (char)34;
+    _t464 = (char)34;
+    StringBuilder_AppendChar(sb, _t464);
+    const char* _t465;
+    _t465 = v.strVal;
+    StringBuilder_Append(sb, _t465);
+    _t466 = (char)34;
+    StringBuilder_AppendChar(sb, _t466);
+    return;
+    }
+    endif202:;
+    int _t467;
+    _t467 = v.tag;
+    _t468 = (_t467 == JsonTagArray);
+    if (!_t468) goto endif204;
+    {
+    _t469 = (char)91;
+    StringBuilder_AppendChar(sb, _t469);
+    unsigned int i;
+    i = 0;
+    while205:;
+    unsigned int _t470;
+    _t470 = v.arrLen;
+    _t471 = (i < _t470);
+    if (!_t471) goto wend206;
+    {
+    _t472 = (i > 0);
+    if (!_t472) goto endif208;
+    {
+    _t473 = (char)44;
     StringBuilder_AppendChar(sb, _t473);
-    const char* _t474;
-    _t474 = v.strVal;
-    StringBuilder_Append(sb, _t474);
-    _t475 = (char)34;
-    StringBuilder_AppendChar(sb, _t475);
+    }
+    endif208:;
+    JsonValue* _t474;
+    _t474 = v.arrData;
+    JsonValue _t475;
+    _t475 = _t474[i];
+    Json_StringifyImpl(sb, _t475);
+    _t476 = i + 1;
+    i = _t476;
+    }
+    goto while205;
+    wend206:;
+    _t477 = (char)93;
+    StringBuilder_AppendChar(sb, _t477);
     return;
     }
-    endif213:;
-    int _t476;
-    _t476 = v.tag;
-    _t477 = (_t476 == JsonTagArray);
-    if (!_t477) goto endif215;
+    endif204:;
+    int _t478;
+    _t478 = v.tag;
+    _t479 = (_t478 == JsonTagObject);
+    if (!_t479) goto endif210;
     {
-    _t478 = (char)91;
-    StringBuilder_AppendChar(sb, _t478);
+    _t480 = (char)123;
+    StringBuilder_AppendChar(sb, _t480);
     unsigned int i;
     i = 0;
-    while216:;
-    unsigned int _t479;
-    _t479 = v.arrLen;
-    _t480 = (i < _t479);
-    if (!_t480) goto wend218;
+    while211:;
+    unsigned int _t481;
+    _t481 = v.objLen;
+    _t482 = (i < _t481);
+    if (!_t482) goto wend212;
     {
-    _t481 = (i > 0);
-    if (!_t481) goto endif220;
+    _t483 = (i > 0);
+    if (!_t483) goto endif214;
     {
-    _t482 = (char)44;
-    StringBuilder_AppendChar(sb, _t482);
+    _t484 = (char)44;
+    StringBuilder_AppendChar(sb, _t484);
     }
-    endif220:;
-    JsonValue* _t483;
-    _t483 = v.arrData;
-    JsonValue _t484;
-    _t484 = _t483[i];
-    Json_StringifyImpl(sb, _t484);
-    _t485 = i + 1;
-    i = _t485;
-    }
-    goto while216;
-    wend218:;
-    _t486 = (char)93;
-    StringBuilder_AppendChar(sb, _t486);
-    return;
-    }
-    endif215:;
-    int _t487;
-    _t487 = v.tag;
-    _t488 = (_t487 == JsonTagObject);
-    if (!_t488) goto endif222;
-    {
-    _t489 = (char)123;
+    endif214:;
+    _t485 = (char)34;
+    StringBuilder_AppendChar(sb, _t485);
+    const char** _t486;
+    _t486 = v.objKeys;
+    const char* _t487;
+    _t487 = _t486[i];
+    StringBuilder_Append(sb, _t487);
+    _t488 = (char)34;
+    StringBuilder_AppendChar(sb, _t488);
+    _t489 = (char)58;
     StringBuilder_AppendChar(sb, _t489);
-    unsigned int i;
-    i = 0;
-    while223:;
-    unsigned int _t490;
-    _t490 = v.objLen;
-    _t491 = (i < _t490);
-    if (!_t491) goto wend225;
-    {
-    _t492 = (i > 0);
-    if (!_t492) goto endif227;
-    {
-    _t493 = (char)44;
+    JsonValue* _t490;
+    _t490 = v.objValues;
+    JsonValue _t491;
+    _t491 = _t490[i];
+    Json_StringifyImpl(sb, _t491);
+    _t492 = i + 1;
+    i = _t492;
+    }
+    goto while211;
+    wend212:;
+    _t493 = (char)125;
     StringBuilder_AppendChar(sb, _t493);
-    }
-    endif227:;
-    _t494 = (char)34;
-    StringBuilder_AppendChar(sb, _t494);
-    const char** _t495;
-    _t495 = v.objKeys;
-    const char* _t496;
-    _t496 = _t495[i];
-    StringBuilder_Append(sb, _t496);
-    _t497 = (char)34;
-    StringBuilder_AppendChar(sb, _t497);
-    _t498 = (char)58;
-    StringBuilder_AppendChar(sb, _t498);
-    JsonValue* _t499;
-    _t499 = v.objValues;
-    JsonValue _t500;
-    _t500 = _t499[i];
-    Json_StringifyImpl(sb, _t500);
-    _t501 = i + 1;
-    i = _t501;
-    }
-    goto while223;
-    wend225:;
-    _t502 = (char)125;
-    StringBuilder_AppendChar(sb, _t502);
     return;
     }
-    endif222:;
+    endif210:;
 }
 
 const char* Json_Stringify(JsonValue v) {
-    void* _t504;
-    void* _t505;
+    void* _t495;
+    void* _t496;
     StringBuilder sb;
-    StringBuilder _t503;
-    _t503 = StringBuilder_New();
-    sb = _t503;
-    _t504 = &sb;
-    Json_StringifyImpl(_t504, v);
-    _t505 = &sb;
-    const char* _t506;
-    _t506 = StringBuilder_Build(_t505);
-    return _t506;
+    StringBuilder _t494;
+    _t494 = StringBuilder_New();
+    sb = _t494;
+    _t495 = &sb;
+    Json_StringifyImpl(_t495, v);
+    _t496 = &sb;
+    const char* _t497;
+    _t497 = StringBuilder_Build(_t496);
+    return _t497;
 }
 
 unsigned int String_Len(const char* s) {
-    unsigned int _t507;
-    _t507 = bux_strlen(s);
-    return _t507;
+    unsigned int _t498;
+    _t498 = bux_strlen(s);
+    return _t498;
 }
 
 bool String_IsNull(const char* s) {
-    int _t509;
-    int _t508;
-    _t508 = bux_str_is_null(s);
-    _t509 = (_t508 != 0);
-    return _t509;
+    int _t500;
+    int _t499;
+    _t499 = bux_str_is_null(s);
+    _t500 = (_t499 != 0);
+    return _t500;
 }
 
 bool String_Eq(const char* a, const char* b) {
-    int _t511;
-    int _t510;
-    _t510 = bux_strcmp(a, b);
-    _t511 = (_t510 == 0);
-    return _t511;
+    int _t502;
+    int _t501;
+    _t501 = bux_strcmp(a, b);
+    _t502 = (_t501 == 0);
+    return _t502;
 }
 
 const char* String_Concat(const char* a, const char* b) {
-    int _t514;
-    int _t515;
-    char* _t517;
+    int _t505;
+    int _t506;
+    char* _t508;
     unsigned int len_a;
-    unsigned int _t512;
-    _t512 = bux_strlen(a);
-    len_a = _t512;
+    unsigned int _t503;
+    _t503 = bux_strlen(a);
+    len_a = _t503;
     unsigned int len_b;
-    unsigned int _t513;
-    _t513 = bux_strlen(b);
-    len_b = _t513;
+    unsigned int _t504;
+    _t504 = bux_strlen(b);
+    len_b = _t504;
     unsigned int total;
-    _t514 = len_a + len_b;
-    _t515 = _t514 + 1;
-    total = _t515;
+    _t505 = len_a + len_b;
+    _t506 = _t505 + 1;
+    total = _t506;
     char* buf;
-    void* _t516;
-    _t516 = bux_alloc(total);
-    _t517 = (char*)_t516;
-    buf = _t517;
+    void* _t507;
+    _t507 = bux_alloc(total);
+    _t508 = (char*)_t507;
+    buf = _t508;
     bux_strcpy(buf, a);
     bux_strcat(buf, b);
     return buf;
 }
 
 const char* String_Copy(const char* s) {
-    int _t519;
-    char* _t521;
+    int _t510;
+    char* _t512;
     unsigned int len;
-    unsigned int _t518;
-    _t518 = bux_strlen(s);
-    len = _t518;
+    unsigned int _t509;
+    _t509 = bux_strlen(s);
+    len = _t509;
     char* buf;
-    _t519 = len + 1;
-    void* _t520;
-    _t520 = bux_alloc(_t519);
-    _t521 = (char*)_t520;
-    buf = _t521;
+    _t510 = len + 1;
+    void* _t511;
+    _t511 = bux_alloc(_t510);
+    _t512 = (char*)_t511;
+    buf = _t512;
     bux_strcpy(buf, s);
     return buf;
 }
 
 bool String_StartsWith(const char* s, const char* prefix) {
-    int _t524;
-    int _t526;
+    int _t515;
+    int _t517;
     unsigned int s_len;
-    unsigned int _t522;
-    _t522 = bux_strlen(s);
-    s_len = _t522;
+    unsigned int _t513;
+    _t513 = bux_strlen(s);
+    s_len = _t513;
     unsigned int p_len;
-    unsigned int _t523;
-    _t523 = bux_strlen(prefix);
-    p_len = _t523;
-    _t524 = (p_len > s_len);
-    if (!_t524) goto endif229;
+    unsigned int _t514;
+    _t514 = bux_strlen(prefix);
+    p_len = _t514;
+    _t515 = (p_len > s_len);
+    if (!_t515) goto endif216;
     {
     return 0;
     }
-    endif229:;
+    endif216:;
     int r;
-    int _t525;
-    _t525 = bux_strncmp(s, prefix, p_len);
-    r = _t525;
-    _t526 = (r == 0);
-    return _t526;
+    int _t516;
+    _t516 = bux_strncmp(s, prefix, p_len);
+    r = _t516;
+    _t517 = (r == 0);
+    return _t517;
 }
 
 bool String_EndsWith(const char* s, const char* suffix) {
-    int _t529;
-    int _t530;
-    int _t533;
+    int _t520;
+    int _t521;
+    int _t524;
     unsigned int s_len;
-    unsigned int _t527;
-    _t527 = bux_strlen(s);
-    s_len = _t527;
+    unsigned int _t518;
+    _t518 = bux_strlen(s);
+    s_len = _t518;
     unsigned int suf_len;
-    unsigned int _t528;
-    _t528 = bux_strlen(suffix);
-    suf_len = _t528;
-    _t529 = (suf_len > s_len);
-    if (!_t529) goto endif231;
+    unsigned int _t519;
+    _t519 = bux_strlen(suffix);
+    suf_len = _t519;
+    _t520 = (suf_len > s_len);
+    if (!_t520) goto endif218;
     {
     return 0;
     }
-    endif231:;
+    endif218:;
     unsigned int start;
-    _t530 = s_len - suf_len;
-    start = _t530;
+    _t521 = s_len - suf_len;
+    start = _t521;
     const char* tail;
-    const char* _t531;
-    _t531 = bux_str_slice(s, start, suf_len);
-    tail = _t531;
+    const char* _t522;
+    _t522 = bux_str_slice(s, start, suf_len);
+    tail = _t522;
     bool eq;
-    int _t532;
-    _t532 = bux_strcmp(tail, suffix);
-    _t533 = (_t532 == 0);
-    eq = _t533;
+    int _t523;
+    _t523 = bux_strcmp(tail, suffix);
+    _t524 = (_t523 == 0);
+    eq = _t524;
     return eq;
 }
 
 bool String_Contains(const char* s, const char* substr) {
-    int _t535;
+    int _t526;
     int r;
-    int _t534;
-    _t534 = bux_str_contains(s, substr);
-    r = _t534;
-    _t535 = (r != 0);
-    return _t535;
+    int _t525;
+    _t525 = bux_str_contains(s, substr);
+    r = _t525;
+    _t526 = (r != 0);
+    return _t526;
 }
 
 const char* String_Slice(const char* s, unsigned int start, unsigned int len) {
-    const char* _t536;
-    _t536 = bux_str_slice(s, start, len);
-    return _t536;
+    const char* _t527;
+    _t527 = bux_str_slice(s, start, len);
+    return _t527;
 }
 
 const char* String_Trim(const char* s) {
-    const char* _t537;
-    _t537 = bux_str_trim(s);
-    return _t537;
+    const char* _t528;
+    _t528 = bux_str_trim(s);
+    return _t528;
 }
 
 const char* String_TrimLeft(const char* s) {
-    const char* _t538;
-    _t538 = bux_str_trim_left(s);
-    return _t538;
+    const char* _t529;
+    _t529 = bux_str_trim_left(s);
+    return _t529;
 }
 
 const char* String_TrimRight(const char* s) {
-    const char* _t539;
-    _t539 = bux_str_trim_right(s);
-    return _t539;
+    const char* _t530;
+    _t530 = bux_str_trim_right(s);
+    return _t530;
 }
 
 const char* String_FromInt(int64_t n) {
-    const char* _t540;
-    _t540 = bux_int_to_str(n);
-    return _t540;
+    const char* _t531;
+    _t531 = bux_int_to_str(n);
+    return _t531;
 }
 
 int64_t String_ToInt(const char* s) {
-    int64_t _t541;
-    _t541 = bux_str_to_int(s);
-    return _t541;
+    int64_t _t532;
+    _t532 = bux_str_to_int(s);
+    return _t532;
 }
 
 StringBuilder StringBuilder_New(void) {
-    StringBuilder _t543;
-    void* _t542;
-    _t542 = bux_sb_new(64);
-    _t543 = (StringBuilder){.handle = _t542};
-    return _t543;
+    StringBuilder _t534;
+    void* _t533;
+    _t533 = bux_sb_new(64);
+    _t534 = (StringBuilder){.handle = _t533};
+    return _t534;
 }
 
 StringBuilder StringBuilder_NewCap(unsigned int cap) {
-    StringBuilder _t545;
-    void* _t544;
-    _t544 = bux_sb_new(cap);
-    _t545 = (StringBuilder){.handle = _t544};
-    return _t545;
+    StringBuilder _t536;
+    void* _t535;
+    _t535 = bux_sb_new(cap);
+    _t536 = (StringBuilder){.handle = _t535};
+    return _t536;
 }
 
 void StringBuilder_Append(StringBuilder* sb, const char* s) {
-    void* _t546;
-    _t546 = sb->handle;
-    bux_sb_append(_t546, s);
+    void* _t537;
+    _t537 = sb->handle;
+    bux_sb_append(_t537, s);
 }
 
 void StringBuilder_AppendInt(StringBuilder* sb, int64_t n) {
-    void* _t547;
-    _t547 = sb->handle;
-    bux_sb_append_int(_t547, n);
+    void* _t538;
+    _t538 = sb->handle;
+    bux_sb_append_int(_t538, n);
 }
 
 void StringBuilder_AppendFloat(StringBuilder* sb, double f) {
-    void* _t548;
-    _t548 = sb->handle;
-    bux_sb_append_float(_t548, f);
+    void* _t539;
+    _t539 = sb->handle;
+    bux_sb_append_float(_t539, f);
 }
 
 void StringBuilder_AppendChar(StringBuilder* sb, char c) {
-    void* _t549;
-    _t549 = sb->handle;
-    bux_sb_append_char(_t549, c);
+    void* _t540;
+    _t540 = sb->handle;
+    bux_sb_append_char(_t540, c);
 }
 
 const char* StringBuilder_Build(StringBuilder* sb) {
-    void* _t550;
-    _t550 = sb->handle;
-    const char* _t551;
-    _t551 = bux_sb_build(_t550);
-    return _t551;
+    void* _t541;
+    _t541 = sb->handle;
+    const char* _t542;
+    _t542 = bux_sb_build(_t541);
+    return _t542;
 }
 
 void StringBuilder_Free(StringBuilder* sb) {
-    void* _t552;
-    _t552 = sb->handle;
-    bux_sb_free(_t552);
+    void* _t543;
+    _t543 = sb->handle;
+    bux_sb_free(_t543);
 }
 
 unsigned int String_SplitCount(const char* s, const char* delim) {
-    unsigned int _t553;
-    _t553 = bux_str_split_count(s, delim);
-    return _t553;
+    unsigned int _t544;
+    _t544 = bux_str_split_count(s, delim);
+    return _t544;
 }
 
 const char* String_SplitPart(const char* s, const char* delim, unsigned int index) {
-    const char* _t554;
-    _t554 = bux_str_split_part(s, delim, index);
-    return _t554;
+    const char* _t545;
+    _t545 = bux_str_split_part(s, delim, index);
+    return _t545;
 }
 
 const char* String_Join2(const char* a, const char* b, const char* sep) {
-    const char* _t555;
-    _t555 = bux_str_join2(a, b, sep);
-    return _t555;
+    const char* _t546;
+    _t546 = bux_str_join2(a, b, sep);
+    return _t546;
 }
 
 const char* String_Chars(const char* s, unsigned int index) {
-    const char* _t556;
-    _t556 = bux_str_slice(s, index, 1);
-    return _t556;
+    const char* _t547;
+    _t547 = bux_str_slice(s, index, 1);
+    return _t547;
 }
 
 const char* String_Find(const char* haystack, const char* needle) {
-    const char* _t557;
-    _t557 = bux_strstr(haystack, needle);
-    return _t557;
+    const char* _t548;
+    _t548 = bux_strstr(haystack, needle);
+    return _t548;
 }
 
 unsigned int String_Offset(const char* pos, const char* base) {
-    unsigned int _t558;
-    _t558 = bux_str_offset(pos, base);
-    return _t558;
+    unsigned int _t549;
+    _t549 = bux_str_offset(pos, base);
+    return _t549;
 }
 
 const char* String_Replace(const char* s, const char* old, const char* new) {
-    int _t564;
-    int _t566;
-    int _t567;
+    int _t555;
+    int _t557;
+    int _t558;
     const char* pos;
-    const char* _t559;
-    _t559 = bux_strstr(s, old);
-    pos = _t559;
-    bool _t560;
-    _t560 = String_IsNull(pos);
-    if (!_t560) goto endif233;
+    const char* _t550;
+    _t550 = bux_strstr(s, old);
+    pos = _t550;
+    bool _t551;
+    _t551 = String_IsNull(pos);
+    if (!_t551) goto endif220;
     {
     return s;
     }
-    endif233:;
+    endif220:;
     unsigned int oldLen;
-    unsigned int _t561;
-    _t561 = bux_strlen(old);
-    oldLen = _t561;
+    unsigned int _t552;
+    _t552 = bux_strlen(old);
+    oldLen = _t552;
     unsigned int prefixLen;
-    unsigned int _t562;
-    _t562 = String_Offset(pos, s);
-    prefixLen = _t562;
+    unsigned int _t553;
+    _t553 = String_Offset(pos, s);
+    prefixLen = _t553;
     const char* prefix;
-    const char* _t563;
-    _t563 = bux_str_slice(s, 0, prefixLen);
-    prefix = _t563;
+    const char* _t554;
+    _t554 = bux_str_slice(s, 0, prefixLen);
+    prefix = _t554;
     const char* suffix;
-    _t564 = prefixLen + oldLen;
-    unsigned int _t565;
-    _t565 = bux_strlen(s);
-    _t566 = _t565 - prefixLen;
-    _t567 = _t566 - oldLen;
-    const char* _t568;
-    _t568 = bux_str_slice(s, _t564, _t567);
-    suffix = _t568;
+    _t555 = prefixLen + oldLen;
+    unsigned int _t556;
+    _t556 = bux_strlen(s);
+    _t557 = _t556 - prefixLen;
+    _t558 = _t557 - oldLen;
+    const char* _t559;
+    _t559 = bux_str_slice(s, _t555, _t558);
+    suffix = _t559;
     const char* temp;
-    const char* _t569;
-    _t569 = String_Concat(prefix, new);
-    temp = _t569;
+    const char* _t560;
+    _t560 = String_Concat(prefix, new);
+    temp = _t560;
     const char* result;
-    const char* _t570;
-    _t570 = String_Concat(temp, suffix);
-    result = _t570;
+    const char* _t561;
+    _t561 = String_Concat(temp, suffix);
+    result = _t561;
     return result;
 }
 
 double String_ToFloat(const char* s) {
-    double _t571;
-    _t571 = bux_str_to_float(s);
-    return _t571;
+    double _t562;
+    _t562 = bux_str_to_float(s);
+    return _t562;
 }
 
 const char* String_FromBool(bool b) {
-    if (!b) goto endif235;
+    if (!b) goto endif222;
     {
     return "true";
     }
-    endif235:;
+    endif222:;
     return "false";
 }
 
 const char* String_FromFloat(double f) {
-    const char* _t572;
-    _t572 = bux_float_to_string(f);
-    return _t572;
+    const char* _t563;
+    _t563 = bux_float_to_string(f);
+    return _t563;
 }
 
 const char* String_Format1(const char* pattern, const char* a0) {
-    const char* _t573;
-    _t573 = bux_str_format(pattern, a0, "", "", "", "", "", "", "");
-    return _t573;
+    const char* _t564;
+    _t564 = bux_str_format(pattern, a0, "", "", "", "", "", "", "");
+    return _t564;
 }
 
 const char* String_Format2(const char* pattern, const char* a0, const char* a1) {
-    const char* _t574;
-    _t574 = bux_str_format(pattern, a0, a1, "", "", "", "", "", "");
-    return _t574;
+    const char* _t565;
+    _t565 = bux_str_format(pattern, a0, a1, "", "", "", "", "", "");
+    return _t565;
 }
 
 const char* String_Format3(const char* pattern, const char* a0, const char* a1, const char* a2) {
-    const char* _t575;
-    _t575 = bux_str_format(pattern, a0, a1, a2, "", "", "", "", "");
-    return _t575;
+    const char* _t566;
+    _t566 = bux_str_format(pattern, a0, a1, a2, "", "", "", "", "");
+    return _t566;
 }
 
 void Channel_SendInt(Channel_int* ch, int value) {
-    void* _t577;
-    void* _t578;
-    void* _t576;
-    _t576 = ch->handle;
-    _t577 = &value;
-    _t578 = (void*)_t577;
-    bux_channel_send(_t576, _t578);
+    void* _t568;
+    void* _t569;
+    void* _t567;
+    _t567 = ch->handle;
+    _t568 = &value;
+    _t569 = (void*)_t568;
+    bux_channel_send(_t567, _t569);
 }
 
 int Channel_RecvInt(Channel_int* ch) {
-    void* _t580;
-    void* _t581;
+    void* _t571;
+    void* _t572;
     int result;
     result = 0;
-    void* _t579;
-    _t579 = ch->handle;
-    _t580 = &result;
-    _t581 = (void*)_t580;
-    bux_channel_recv(_t579, _t581);
+    void* _t570;
+    _t570 = ch->handle;
+    _t571 = &result;
+    _t572 = (void*)_t571;
+    bux_channel_recv(_t570, _t572);
     return result;
 }
 
 void Channel_SendFloat64(Channel_float64* ch, double value) {
-    void* _t583;
-    void* _t584;
-    void* _t582;
-    _t582 = ch->handle;
-    _t583 = &value;
-    _t584 = (void*)_t583;
-    bux_channel_send(_t582, _t584);
+    void* _t574;
+    void* _t575;
+    void* _t573;
+    _t573 = ch->handle;
+    _t574 = &value;
+    _t575 = (void*)_t574;
+    bux_channel_send(_t573, _t575);
 }
 
 double Channel_RecvFloat64(Channel_float64* ch) {
-    void* _t586;
-    void* _t587;
+    void* _t577;
+    void* _t578;
     double result;
     result = 0.0;
-    void* _t585;
-    _t585 = ch->handle;
-    _t586 = &result;
-    _t587 = (void*)_t586;
-    bux_channel_recv(_t585, _t587);
+    void* _t576;
+    _t576 = ch->handle;
+    _t577 = &result;
+    _t578 = (void*)_t577;
+    bux_channel_recv(_t576, _t578);
     return result;
 }
 
 const char* Hash_Sha1(const char* data) {
-    int _t589;
+    int _t580;
     int len;
-    unsigned int _t588;
-    _t588 = String_Len(data);
-    _t589 = (int)_t588;
-    len = _t589;
+    unsigned int _t579;
+    _t579 = String_Len(data);
+    _t580 = (int)_t579;
+    len = _t580;
     void* buf;
-    void* _t590;
-    _t590 = Alloc(20);
-    buf = _t590;
+    void* _t581;
+    _t581 = Alloc(20);
+    buf = _t581;
     bux_sha1(data, len, buf);
     const char* result;
-    const char* _t591;
-    _t591 = bux_bytes_to_hex(buf, 20);
-    result = _t591;
+    const char* _t582;
+    _t582 = bux_bytes_to_hex(buf, 20);
+    result = _t582;
     Free(buf);
     return result;
 }
 
 const char* Hash_Sha256(const char* data) {
-    int _t593;
+    int _t584;
     int len;
-    unsigned int _t592;
-    _t592 = String_Len(data);
-    _t593 = (int)_t592;
-    len = _t593;
+    unsigned int _t583;
+    _t583 = String_Len(data);
+    _t584 = (int)_t583;
+    len = _t584;
     void* buf;
-    void* _t594;
-    _t594 = Alloc(32);
-    buf = _t594;
+    void* _t585;
+    _t585 = Alloc(32);
+    buf = _t585;
     bux_sha256(data, len, buf);
     const char* result;
-    const char* _t595;
-    _t595 = bux_bytes_to_hex(buf, 32);
-    result = _t595;
+    const char* _t586;
+    _t586 = bux_bytes_to_hex(buf, 32);
+    result = _t586;
     Free(buf);
     return result;
 }
 
 const char* Hash_Sha384(const char* data) {
-    int _t597;
+    int _t588;
     int len;
-    unsigned int _t596;
-    _t596 = String_Len(data);
-    _t597 = (int)_t596;
-    len = _t597;
+    unsigned int _t587;
+    _t587 = String_Len(data);
+    _t588 = (int)_t587;
+    len = _t588;
     void* buf;
-    void* _t598;
-    _t598 = Alloc(48);
-    buf = _t598;
+    void* _t589;
+    _t589 = Alloc(48);
+    buf = _t589;
     bux_sha384(data, len, buf);
     const char* result;
-    const char* _t599;
-    _t599 = bux_bytes_to_hex(buf, 48);
-    result = _t599;
+    const char* _t590;
+    _t590 = bux_bytes_to_hex(buf, 48);
+    result = _t590;
     Free(buf);
     return result;
 }
 
 const char* Hash_Sha512(const char* data) {
-    int _t601;
+    int _t592;
     int len;
-    unsigned int _t600;
-    _t600 = String_Len(data);
-    _t601 = (int)_t600;
-    len = _t601;
+    unsigned int _t591;
+    _t591 = String_Len(data);
+    _t592 = (int)_t591;
+    len = _t592;
     void* buf;
-    void* _t602;
-    _t602 = Alloc(64);
-    buf = _t602;
+    void* _t593;
+    _t593 = Alloc(64);
+    buf = _t593;
     bux_sha512(data, len, buf);
     const char* result;
-    const char* _t603;
-    _t603 = bux_bytes_to_hex(buf, 64);
-    result = _t603;
+    const char* _t594;
+    _t594 = bux_bytes_to_hex(buf, 64);
+    result = _t594;
     Free(buf);
     return result;
 }
 
 void Hash_Sha256Raw(const char* data, void* out) {
-    int _t605;
-    unsigned int _t604;
-    _t604 = String_Len(data);
-    _t605 = (int)_t604;
-    bux_sha256(data, _t605, out);
+    int _t596;
+    unsigned int _t595;
+    _t595 = String_Len(data);
+    _t596 = (int)_t595;
+    bux_sha256(data, _t596, out);
 }
 
 void Hash_Sha384Raw(const char* data, void* out) {
-    int _t607;
-    unsigned int _t606;
-    _t606 = String_Len(data);
-    _t607 = (int)_t606;
-    bux_sha384(data, _t607, out);
+    int _t598;
+    unsigned int _t597;
+    _t597 = String_Len(data);
+    _t598 = (int)_t597;
+    bux_sha384(data, _t598, out);
 }
 
 void Hash_Sha512Raw(const char* data, void* out) {
-    int _t609;
-    unsigned int _t608;
-    _t608 = String_Len(data);
-    _t609 = (int)_t608;
-    bux_sha512(data, _t609, out);
+    int _t600;
+    unsigned int _t599;
+    _t599 = String_Len(data);
+    _t600 = (int)_t599;
+    bux_sha512(data, _t600, out);
 }
 
 int Hash_Sha1Size(void) {
@@ -3364,1498 +3363,1498 @@ int Hash_Sha512Size(void) {
 }
 
 const char* Base64_Encode(const char* s) {
-    int _t611;
-    unsigned int _t610;
-    _t610 = String_Len(s);
-    _t611 = (int)_t610;
-    const char* _t612;
-    _t612 = bux_base64_encode(s, _t611);
-    return _t612;
+    int _t602;
+    unsigned int _t601;
+    _t601 = String_Len(s);
+    _t602 = (int)_t601;
+    const char* _t603;
+    _t603 = bux_base64_encode(s, _t602);
+    return _t603;
 }
 
 const char* Base64_Decode(const char* s) {
-    int _t614;
-    void* _t615;
+    int _t605;
+    void* _t606;
     int outlen;
     outlen = 0;
-    unsigned int _t613;
-    _t613 = String_Len(s);
-    _t614 = (int)_t613;
-    _t615 = &outlen;
-    const char* _t616;
-    _t616 = bux_base64_decode(s, _t614, _t615);
-    return _t616;
+    unsigned int _t604;
+    _t604 = String_Len(s);
+    _t605 = (int)_t604;
+    _t606 = &outlen;
+    const char* _t607;
+    _t607 = bux_base64_decode(s, _t605, _t606);
+    return _t607;
 }
 
 const char* Base64URL_Encode(const char* s) {
-    int _t618;
-    unsigned int _t617;
-    _t617 = String_Len(s);
-    _t618 = (int)_t617;
-    const char* _t619;
-    _t619 = bux_base64url_encode(s, _t618);
-    return _t619;
+    int _t609;
+    unsigned int _t608;
+    _t608 = String_Len(s);
+    _t609 = (int)_t608;
+    const char* _t610;
+    _t610 = bux_base64url_encode(s, _t609);
+    return _t610;
 }
 
 const char* Base64URL_Decode(const char* s) {
-    int _t621;
-    void* _t622;
+    int _t612;
+    void* _t613;
     int outlen;
     outlen = 0;
-    unsigned int _t620;
-    _t620 = String_Len(s);
-    _t621 = (int)_t620;
-    _t622 = &outlen;
-    const char* _t623;
-    _t623 = bux_base64url_decode(s, _t621, _t622);
-    return _t623;
+    unsigned int _t611;
+    _t611 = String_Len(s);
+    _t612 = (int)_t611;
+    _t613 = &outlen;
+    const char* _t614;
+    _t614 = bux_base64url_decode(s, _t612, _t613);
+    return _t614;
 }
 
 const char* Hmac_Sha256(const char* key, const char* message) {
-    int _t625;
-    int _t627;
+    int _t616;
+    int _t618;
     int kl;
-    unsigned int _t624;
-    _t624 = String_Len(key);
-    _t625 = (int)_t624;
-    kl = _t625;
+    unsigned int _t615;
+    _t615 = String_Len(key);
+    _t616 = (int)_t615;
+    kl = _t616;
     int ml;
-    unsigned int _t626;
-    _t626 = String_Len(message);
-    _t627 = (int)_t626;
-    ml = _t627;
+    unsigned int _t617;
+    _t617 = String_Len(message);
+    _t618 = (int)_t617;
+    ml = _t618;
     void* buf;
-    void* _t628;
-    _t628 = Alloc(32);
-    buf = _t628;
+    void* _t619;
+    _t619 = Alloc(32);
+    buf = _t619;
     bux_hmac_sha256(key, kl, message, ml, buf);
     const char* result;
-    const char* _t629;
-    _t629 = bux_bytes_to_hex(buf, 32);
-    result = _t629;
+    const char* _t620;
+    _t620 = bux_bytes_to_hex(buf, 32);
+    result = _t620;
     Free(buf);
     return result;
 }
 
 void Hmac_Sha256Raw(const char* key, const char* message, void* out) {
-    int _t631;
-    int _t633;
-    unsigned int _t630;
-    _t630 = String_Len(key);
-    _t631 = (int)_t630;
-    unsigned int _t632;
-    _t632 = String_Len(message);
-    _t633 = (int)_t632;
-    bux_hmac_sha256(key, _t631, message, _t633, out);
+    int _t622;
+    int _t624;
+    unsigned int _t621;
+    _t621 = String_Len(key);
+    _t622 = (int)_t621;
+    unsigned int _t623;
+    _t623 = String_Len(message);
+    _t624 = (int)_t623;
+    bux_hmac_sha256(key, _t622, message, _t624, out);
 }
 
 const char* Hmac_Sha256Base64(const char* key, const char* message) {
-    int _t635;
-    int _t637;
-    const char* _t639;
+    int _t626;
+    int _t628;
+    const char* _t630;
     int kl;
-    unsigned int _t634;
-    _t634 = String_Len(key);
-    _t635 = (int)_t634;
-    kl = _t635;
+    unsigned int _t625;
+    _t625 = String_Len(key);
+    _t626 = (int)_t625;
+    kl = _t626;
     int ml;
-    unsigned int _t636;
-    _t636 = String_Len(message);
-    _t637 = (int)_t636;
-    ml = _t637;
+    unsigned int _t627;
+    _t627 = String_Len(message);
+    _t628 = (int)_t627;
+    ml = _t628;
     void* buf;
-    void* _t638;
-    _t638 = Alloc(32);
-    buf = _t638;
+    void* _t629;
+    _t629 = Alloc(32);
+    buf = _t629;
     bux_hmac_sha256(key, kl, message, ml, buf);
     const char* result;
-    _t639 = (const char*)buf;
-    const char* _t640;
-    _t640 = bux_base64_encode(_t639, 32);
-    result = _t640;
+    _t630 = (const char*)buf;
+    const char* _t631;
+    _t631 = bux_base64_encode(_t630, 32);
+    result = _t631;
     Free(buf);
     return result;
 }
 
 const char* Hmac_Sha384(const char* key, const char* message) {
-    int _t642;
-    int _t644;
+    int _t633;
+    int _t635;
     int kl;
-    unsigned int _t641;
-    _t641 = String_Len(key);
-    _t642 = (int)_t641;
-    kl = _t642;
+    unsigned int _t632;
+    _t632 = String_Len(key);
+    _t633 = (int)_t632;
+    kl = _t633;
     int ml;
-    unsigned int _t643;
-    _t643 = String_Len(message);
-    _t644 = (int)_t643;
-    ml = _t644;
+    unsigned int _t634;
+    _t634 = String_Len(message);
+    _t635 = (int)_t634;
+    ml = _t635;
     void* buf;
-    void* _t645;
-    _t645 = Alloc(48);
-    buf = _t645;
+    void* _t636;
+    _t636 = Alloc(48);
+    buf = _t636;
     bux_hmac_sha384(key, kl, message, ml, buf);
     const char* result;
-    const char* _t646;
-    _t646 = bux_bytes_to_hex(buf, 48);
-    result = _t646;
+    const char* _t637;
+    _t637 = bux_bytes_to_hex(buf, 48);
+    result = _t637;
     Free(buf);
     return result;
 }
 
 void Hmac_Sha384Raw(const char* key, const char* message, void* out) {
-    int _t648;
-    int _t650;
-    unsigned int _t647;
-    _t647 = String_Len(key);
-    _t648 = (int)_t647;
-    unsigned int _t649;
-    _t649 = String_Len(message);
-    _t650 = (int)_t649;
-    bux_hmac_sha384(key, _t648, message, _t650, out);
+    int _t639;
+    int _t641;
+    unsigned int _t638;
+    _t638 = String_Len(key);
+    _t639 = (int)_t638;
+    unsigned int _t640;
+    _t640 = String_Len(message);
+    _t641 = (int)_t640;
+    bux_hmac_sha384(key, _t639, message, _t641, out);
 }
 
 const char* Hmac_Sha384Base64(const char* key, const char* message) {
-    int _t652;
-    int _t654;
-    const char* _t656;
+    int _t643;
+    int _t645;
+    const char* _t647;
     int kl;
-    unsigned int _t651;
-    _t651 = String_Len(key);
-    _t652 = (int)_t651;
-    kl = _t652;
+    unsigned int _t642;
+    _t642 = String_Len(key);
+    _t643 = (int)_t642;
+    kl = _t643;
     int ml;
-    unsigned int _t653;
-    _t653 = String_Len(message);
-    _t654 = (int)_t653;
-    ml = _t654;
+    unsigned int _t644;
+    _t644 = String_Len(message);
+    _t645 = (int)_t644;
+    ml = _t645;
     void* buf;
-    void* _t655;
-    _t655 = Alloc(48);
-    buf = _t655;
+    void* _t646;
+    _t646 = Alloc(48);
+    buf = _t646;
     bux_hmac_sha384(key, kl, message, ml, buf);
     const char* result;
-    _t656 = (const char*)buf;
-    const char* _t657;
-    _t657 = bux_base64_encode(_t656, 48);
-    result = _t657;
+    _t647 = (const char*)buf;
+    const char* _t648;
+    _t648 = bux_base64_encode(_t647, 48);
+    result = _t648;
     Free(buf);
     return result;
 }
 
 const char* Hmac_Sha512(const char* key, const char* message) {
-    int _t659;
-    int _t661;
+    int _t650;
+    int _t652;
     int kl;
-    unsigned int _t658;
-    _t658 = String_Len(key);
-    _t659 = (int)_t658;
-    kl = _t659;
+    unsigned int _t649;
+    _t649 = String_Len(key);
+    _t650 = (int)_t649;
+    kl = _t650;
     int ml;
-    unsigned int _t660;
-    _t660 = String_Len(message);
-    _t661 = (int)_t660;
-    ml = _t661;
+    unsigned int _t651;
+    _t651 = String_Len(message);
+    _t652 = (int)_t651;
+    ml = _t652;
     void* buf;
-    void* _t662;
-    _t662 = Alloc(64);
-    buf = _t662;
+    void* _t653;
+    _t653 = Alloc(64);
+    buf = _t653;
     bux_hmac_sha512(key, kl, message, ml, buf);
     const char* result;
-    const char* _t663;
-    _t663 = bux_bytes_to_hex(buf, 64);
-    result = _t663;
+    const char* _t654;
+    _t654 = bux_bytes_to_hex(buf, 64);
+    result = _t654;
     Free(buf);
     return result;
 }
 
 void Hmac_Sha512Raw(const char* key, const char* message, void* out) {
-    int _t665;
-    int _t667;
-    unsigned int _t664;
-    _t664 = String_Len(key);
-    _t665 = (int)_t664;
-    unsigned int _t666;
-    _t666 = String_Len(message);
-    _t667 = (int)_t666;
-    bux_hmac_sha512(key, _t665, message, _t667, out);
+    int _t656;
+    int _t658;
+    unsigned int _t655;
+    _t655 = String_Len(key);
+    _t656 = (int)_t655;
+    unsigned int _t657;
+    _t657 = String_Len(message);
+    _t658 = (int)_t657;
+    bux_hmac_sha512(key, _t656, message, _t658, out);
 }
 
 const char* Hmac_Sha512Base64(const char* key, const char* message) {
-    int _t669;
-    int _t671;
-    const char* _t673;
+    int _t660;
+    int _t662;
+    const char* _t664;
     int kl;
-    unsigned int _t668;
-    _t668 = String_Len(key);
-    _t669 = (int)_t668;
-    kl = _t669;
+    unsigned int _t659;
+    _t659 = String_Len(key);
+    _t660 = (int)_t659;
+    kl = _t660;
     int ml;
-    unsigned int _t670;
-    _t670 = String_Len(message);
-    _t671 = (int)_t670;
-    ml = _t671;
+    unsigned int _t661;
+    _t661 = String_Len(message);
+    _t662 = (int)_t661;
+    ml = _t662;
     void* buf;
-    void* _t672;
-    _t672 = Alloc(64);
-    buf = _t672;
+    void* _t663;
+    _t663 = Alloc(64);
+    buf = _t663;
     bux_hmac_sha512(key, kl, message, ml, buf);
     const char* result;
-    _t673 = (const char*)buf;
-    const char* _t674;
-    _t674 = bux_base64_encode(_t673, 64);
-    result = _t674;
+    _t664 = (const char*)buf;
+    const char* _t665;
+    _t665 = bux_base64_encode(_t664, 64);
+    result = _t665;
     Free(buf);
     return result;
 }
 
 const char* Random_Bytes(int n) {
-    int _t675;
-    unsigned int _t676;
-    int _t679;
-    const char* _t680;
-    _t675 = (n <= 0);
-    if (!_t675) goto endif237;
+    int _t666;
+    unsigned int _t667;
+    int _t670;
+    const char* _t671;
+    _t666 = (n <= 0);
+    if (!_t666) goto endif224;
     {
     return "";
     }
-    endif237:;
+    endif224:;
     void* buf;
-    _t676 = (unsigned int)n;
-    void* _t677;
-    _t677 = Alloc(_t676);
-    buf = _t677;
-    int _t678;
-    _t678 = bux_random_bytes(buf, n);
-    _t679 = (_t678 != 1);
-    if (!_t679) goto endif239;
+    _t667 = (unsigned int)n;
+    void* _t668;
+    _t668 = Alloc(_t667);
+    buf = _t668;
+    int _t669;
+    _t669 = bux_random_bytes(buf, n);
+    _t670 = (_t669 != 1);
+    if (!_t670) goto endif226;
     {
     Free(buf);
     return "";
     }
-    endif239:;
-    _t680 = (const char*)buf;
-    return _t680;
+    endif226:;
+    _t671 = (const char*)buf;
+    return _t671;
 }
 
 const char* Random_Hex(int n) {
-    int _t681;
-    unsigned int _t682;
-    int _t685;
-    _t681 = (n <= 0);
-    if (!_t681) goto endif241;
+    int _t672;
+    unsigned int _t673;
+    int _t676;
+    _t672 = (n <= 0);
+    if (!_t672) goto endif228;
     {
     return "";
     }
-    endif241:;
+    endif228:;
     void* buf;
-    _t682 = (unsigned int)n;
-    void* _t683;
-    _t683 = Alloc(_t682);
-    buf = _t683;
-    int _t684;
-    _t684 = bux_random_bytes(buf, n);
-    _t685 = (_t684 != 1);
-    if (!_t685) goto endif243;
+    _t673 = (unsigned int)n;
+    void* _t674;
+    _t674 = Alloc(_t673);
+    buf = _t674;
+    int _t675;
+    _t675 = bux_random_bytes(buf, n);
+    _t676 = (_t675 != 1);
+    if (!_t676) goto endif230;
     {
     Free(buf);
     return "";
     }
-    endif243:;
+    endif230:;
     const char* result;
-    const char* _t686;
-    _t686 = bux_bytes_to_hex(buf, n);
-    result = _t686;
+    const char* _t677;
+    _t677 = bux_bytes_to_hex(buf, n);
+    result = _t677;
     Free(buf);
     return result;
 }
 
 const char* Random_Base64(int n) {
-    int _t687;
-    unsigned int _t688;
-    int _t691;
-    const char* _t692;
-    _t687 = (n <= 0);
-    if (!_t687) goto endif245;
+    int _t678;
+    unsigned int _t679;
+    int _t682;
+    const char* _t683;
+    _t678 = (n <= 0);
+    if (!_t678) goto endif232;
     {
     return "";
     }
-    endif245:;
+    endif232:;
     void* buf;
-    _t688 = (unsigned int)n;
-    void* _t689;
-    _t689 = Alloc(_t688);
-    buf = _t689;
-    int _t690;
-    _t690 = bux_random_bytes(buf, n);
-    _t691 = (_t690 != 1);
-    if (!_t691) goto endif247;
+    _t679 = (unsigned int)n;
+    void* _t680;
+    _t680 = Alloc(_t679);
+    buf = _t680;
+    int _t681;
+    _t681 = bux_random_bytes(buf, n);
+    _t682 = (_t681 != 1);
+    if (!_t682) goto endif234;
     {
     Free(buf);
     return "";
     }
-    endif247:;
+    endif234:;
     const char* result;
-    _t692 = (const char*)buf;
-    const char* _t693;
-    _t693 = bux_base64_encode(_t692, n);
-    result = _t693;
+    _t683 = (const char*)buf;
+    const char* _t684;
+    _t684 = bux_base64_encode(_t683, n);
+    result = _t684;
     Free(buf);
     return result;
 }
 
 unsigned int Random_Uint32(void) {
-    int _t696;
-    unsigned int* _t697;
-    unsigned int _t698;
+    int _t687;
+    unsigned int* _t688;
+    unsigned int _t689;
     void* buf;
-    void* _t694;
-    _t694 = Alloc(4);
-    buf = _t694;
-    int _t695;
-    _t695 = bux_random_bytes(buf, 4);
-    _t696 = (_t695 != 1);
-    if (!_t696) goto endif249;
+    void* _t685;
+    _t685 = Alloc(4);
+    buf = _t685;
+    int _t686;
+    _t686 = bux_random_bytes(buf, 4);
+    _t687 = (_t686 != 1);
+    if (!_t687) goto endif236;
     {
     Free(buf);
     return 0;
     }
-    endif249:;
+    endif236:;
     unsigned int* ptr;
-    _t697 = (unsigned int*)buf;
-    ptr = _t697;
+    _t688 = (unsigned int*)buf;
+    ptr = _t688;
     unsigned int val;
-    _t698 = *ptr;
-    val = _t698;
+    _t689 = *ptr;
+    val = _t689;
     Free(buf);
     return val;
 }
 
 const char* Aes_GenerateKey(void) {
-    unsigned int _t699;
-    int _t702;
-    const char* _t703;
+    unsigned int _t690;
+    int _t693;
+    const char* _t694;
     void* buf;
-    _t699 = (unsigned int)AES_KEY_SIZE;
-    void* _t700;
-    _t700 = Alloc(_t699);
-    buf = _t700;
-    int _t701;
-    _t701 = bux_random_bytes(buf, AES_KEY_SIZE);
-    _t702 = (_t701 != 1);
-    if (!_t702) goto endif251;
+    _t690 = (unsigned int)AES_KEY_SIZE;
+    void* _t691;
+    _t691 = Alloc(_t690);
+    buf = _t691;
+    int _t692;
+    _t692 = bux_random_bytes(buf, AES_KEY_SIZE);
+    _t693 = (_t692 != 1);
+    if (!_t693) goto endif238;
     {
     Free(buf);
     return "";
     }
-    endif251:;
-    _t703 = (const char*)buf;
-    return _t703;
+    endif238:;
+    _t694 = (const char*)buf;
+    return _t694;
 }
 
 const char* Aes_GenerateIV(void) {
-    unsigned int _t704;
-    int _t707;
-    const char* _t708;
+    unsigned int _t695;
+    int _t698;
+    const char* _t699;
     void* buf;
-    _t704 = (unsigned int)AES_IV_SIZE;
-    void* _t705;
-    _t705 = Alloc(_t704);
-    buf = _t705;
-    int _t706;
-    _t706 = bux_random_bytes(buf, AES_IV_SIZE);
-    _t707 = (_t706 != 1);
-    if (!_t707) goto endif253;
+    _t695 = (unsigned int)AES_IV_SIZE;
+    void* _t696;
+    _t696 = Alloc(_t695);
+    buf = _t696;
+    int _t697;
+    _t697 = bux_random_bytes(buf, AES_IV_SIZE);
+    _t698 = (_t697 != 1);
+    if (!_t698) goto endif240;
     {
     Free(buf);
     return "";
     }
-    endif253:;
-    _t708 = (const char*)buf;
-    return _t708;
+    endif240:;
+    _t699 = (const char*)buf;
+    return _t699;
 }
 
 const char* Aes_CbcEncrypt(const char* plain, const char* key, const char* iv) {
-    int _t710;
-    void* _t711;
+    int _t701;
+    void* _t702;
     int outlen;
     outlen = 0;
-    unsigned int _t709;
-    _t709 = String_Len(plain);
-    _t710 = (int)_t709;
-    _t711 = &outlen;
-    const char* _t712;
-    _t712 = bux_aes_256_cbc_encrypt(plain, _t710, key, iv, _t711);
-    return _t712;
+    unsigned int _t700;
+    _t700 = String_Len(plain);
+    _t701 = (int)_t700;
+    _t702 = &outlen;
+    const char* _t703;
+    _t703 = bux_aes_256_cbc_encrypt(plain, _t701, key, iv, _t702);
+    return _t703;
 }
 
 const char* Aes_CbcDecrypt(const char* cipher, const char* key, const char* iv) {
-    int _t714;
-    void* _t715;
+    int _t705;
+    void* _t706;
     int outlen;
     outlen = 0;
-    unsigned int _t713;
-    _t713 = String_Len(cipher);
-    _t714 = (int)_t713;
-    _t715 = &outlen;
-    const char* _t716;
-    _t716 = bux_aes_256_cbc_decrypt(cipher, _t714, key, iv, _t715);
-    return _t716;
+    unsigned int _t704;
+    _t704 = String_Len(cipher);
+    _t705 = (int)_t704;
+    _t706 = &outlen;
+    const char* _t707;
+    _t707 = bux_aes_256_cbc_decrypt(cipher, _t705, key, iv, _t706);
+    return _t707;
 }
 
 const char* Aes_GcmEncrypt(const char* plain, const char* key, const char* iv, void* tag) {
-    int _t718;
-    void* _t719;
+    int _t709;
+    void* _t710;
     int outlen;
     outlen = 0;
-    unsigned int _t717;
-    _t717 = String_Len(plain);
-    _t718 = (int)_t717;
-    _t719 = &outlen;
-    const char* _t720;
-    _t720 = bux_aes_256_gcm_encrypt(plain, _t718, key, iv, tag, _t719);
-    return _t720;
+    unsigned int _t708;
+    _t708 = String_Len(plain);
+    _t709 = (int)_t708;
+    _t710 = &outlen;
+    const char* _t711;
+    _t711 = bux_aes_256_gcm_encrypt(plain, _t709, key, iv, tag, _t710);
+    return _t711;
 }
 
 const char* Aes_GcmDecrypt(const char* cipher, const char* key, const char* iv, const char* tag) {
-    int _t722;
-    void* _t723;
+    int _t713;
+    void* _t714;
     int outlen;
     outlen = 0;
-    unsigned int _t721;
-    _t721 = String_Len(cipher);
-    _t722 = (int)_t721;
-    _t723 = &outlen;
-    const char* _t724;
-    _t724 = bux_aes_256_gcm_decrypt(cipher, _t722, key, iv, tag, _t723);
-    return _t724;
+    unsigned int _t712;
+    _t712 = String_Len(cipher);
+    _t713 = (int)_t712;
+    _t714 = &outlen;
+    const char* _t715;
+    _t715 = bux_aes_256_gcm_decrypt(cipher, _t713, key, iv, tag, _t714);
+    return _t715;
 }
 
 const char* Jwt_MakeHeader(JwtAlg alg) {
-    int _t725;
-    int _t726;
-    int _t727;
-    int _t728;
-    int _t729;
-    int _t730;
-    int _t731;
-    int _t732;
-    int _t733;
-    _t725 = (alg == JwtAlg_HS256);
-    if (!_t725) goto endif255;
+    int _t716;
+    int _t717;
+    int _t718;
+    int _t719;
+    int _t720;
+    int _t721;
+    int _t722;
+    int _t723;
+    int _t724;
+    _t716 = (alg == JwtAlg_HS256);
+    if (!_t716) goto endif242;
     {
     return "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
     }
-    endif255:;
-    _t726 = (alg == JwtAlg_HS384);
-    if (!_t726) goto endif257;
+    endif242:;
+    _t717 = (alg == JwtAlg_HS384);
+    if (!_t717) goto endif244;
     {
     return "{\"alg\":\"HS384\",\"typ\":\"JWT\"}";
     }
-    endif257:;
-    _t727 = (alg == JwtAlg_HS512);
-    if (!_t727) goto endif259;
+    endif244:;
+    _t718 = (alg == JwtAlg_HS512);
+    if (!_t718) goto endif246;
     {
     return "{\"alg\":\"HS512\",\"typ\":\"JWT\"}";
     }
-    endif259:;
-    _t728 = (alg == JwtAlg_RS256);
-    if (!_t728) goto endif261;
+    endif246:;
+    _t719 = (alg == JwtAlg_RS256);
+    if (!_t719) goto endif248;
     {
     return "{\"alg\":\"RS256\",\"typ\":\"JWT\"}";
     }
-    endif261:;
-    _t729 = (alg == JwtAlg_RS384);
-    if (!_t729) goto endif263;
+    endif248:;
+    _t720 = (alg == JwtAlg_RS384);
+    if (!_t720) goto endif250;
     {
     return "{\"alg\":\"RS384\",\"typ\":\"JWT\"}";
     }
-    endif263:;
-    _t730 = (alg == JwtAlg_RS512);
-    if (!_t730) goto endif265;
+    endif250:;
+    _t721 = (alg == JwtAlg_RS512);
+    if (!_t721) goto endif252;
     {
     return "{\"alg\":\"RS512\",\"typ\":\"JWT\"}";
     }
-    endif265:;
-    _t731 = (alg == JwtAlg_ES256);
-    if (!_t731) goto endif267;
+    endif252:;
+    _t722 = (alg == JwtAlg_ES256);
+    if (!_t722) goto endif254;
     {
     return "{\"alg\":\"ES256\",\"typ\":\"JWT\"}";
     }
-    endif267:;
-    _t732 = (alg == JwtAlg_ES384);
-    if (!_t732) goto endif269;
+    endif254:;
+    _t723 = (alg == JwtAlg_ES384);
+    if (!_t723) goto endif256;
     {
     return "{\"alg\":\"ES384\",\"typ\":\"JWT\"}";
     }
-    endif269:;
-    _t733 = (alg == JwtAlg_EdDSA);
-    if (!_t733) goto endif271;
+    endif256:;
+    _t724 = (alg == JwtAlg_EdDSA);
+    if (!_t724) goto endif258;
     {
     return "{\"alg\":\"EdDSA\",\"typ\":\"JWT\"}";
     }
-    endif271:;
+    endif258:;
     return "{\"alg\":\"none\",\"typ\":\"JWT\"}";
 }
 
 const char* Jwt_Sign(JwtAlg alg, const char* signingInput, const char* key) {
-    int _t734;
-    const char* _t736;
-    int _t738;
-    const char* _t740;
+    int _t725;
+    const char* _t727;
+    int _t729;
+    const char* _t731;
+    int _t733;
+    const char* _t735;
+    int _t737;
+    int _t740;
     int _t742;
-    const char* _t744;
-    int _t746;
-    int _t749;
-    int _t751;
-    int _t754;
-    int _t756;
-    int _t759;
-    int _t761;
-    int _t764;
-    int _t766;
-    int _t769;
-    int _t771;
-    _t734 = (alg == JwtAlg_HS256);
-    if (!_t734) goto endif273;
+    int _t745;
+    int _t747;
+    int _t750;
+    int _t752;
+    int _t755;
+    int _t757;
+    int _t760;
+    int _t762;
+    _t725 = (alg == JwtAlg_HS256);
+    if (!_t725) goto endif260;
     {
     void* buf;
-    void* _t735;
-    _t735 = Alloc(32);
-    buf = _t735;
+    void* _t726;
+    _t726 = Alloc(32);
+    buf = _t726;
     Hmac_Sha256Raw(key, signingInput, buf);
     const char* result;
-    _t736 = (const char*)buf;
-    const char* _t737;
-    _t737 = bux_base64_encode(_t736, 32);
-    result = _t737;
+    _t727 = (const char*)buf;
+    const char* _t728;
+    _t728 = bux_base64_encode(_t727, 32);
+    result = _t728;
     Free(buf);
     return result;
     }
-    endif273:;
-    _t738 = (alg == JwtAlg_HS384);
-    if (!_t738) goto endif275;
+    endif260:;
+    _t729 = (alg == JwtAlg_HS384);
+    if (!_t729) goto endif262;
     {
     void* buf;
-    void* _t739;
-    _t739 = Alloc(48);
-    buf = _t739;
+    void* _t730;
+    _t730 = Alloc(48);
+    buf = _t730;
     Hmac_Sha384Raw(key, signingInput, buf);
     const char* result;
-    _t740 = (const char*)buf;
-    const char* _t741;
-    _t741 = bux_base64_encode(_t740, 48);
-    result = _t741;
+    _t731 = (const char*)buf;
+    const char* _t732;
+    _t732 = bux_base64_encode(_t731, 48);
+    result = _t732;
     Free(buf);
     return result;
     }
-    endif275:;
-    _t742 = (alg == JwtAlg_HS512);
-    if (!_t742) goto endif277;
+    endif262:;
+    _t733 = (alg == JwtAlg_HS512);
+    if (!_t733) goto endif264;
     {
     void* buf;
-    void* _t743;
-    _t743 = Alloc(64);
-    buf = _t743;
+    void* _t734;
+    _t734 = Alloc(64);
+    buf = _t734;
     Hmac_Sha512Raw(key, signingInput, buf);
     const char* result;
-    _t744 = (const char*)buf;
-    const char* _t745;
-    _t745 = bux_base64_encode(_t744, 64);
-    result = _t745;
+    _t735 = (const char*)buf;
+    const char* _t736;
+    _t736 = bux_base64_encode(_t735, 64);
+    result = _t736;
     Free(buf);
     return result;
     }
-    endif277:;
-    _t746 = (alg == JwtAlg_RS256);
-    if (!_t746) goto endif279;
+    endif264:;
+    _t737 = (alg == JwtAlg_RS256);
+    if (!_t737) goto endif266;
     {
     const char* raw;
-    const char* _t747;
-    _t747 = Rsa_SignSha256(key, signingInput);
-    raw = _t747;
-    unsigned int _t748;
-    _t748 = String_Len(raw);
-    _t749 = (int)_t748;
-    const char* _t750;
-    _t750 = bux_base64_encode(raw, _t749);
-    return _t750;
+    const char* _t738;
+    _t738 = Rsa_SignSha256(key, signingInput);
+    raw = _t738;
+    unsigned int _t739;
+    _t739 = String_Len(raw);
+    _t740 = (int)_t739;
+    const char* _t741;
+    _t741 = bux_base64_encode(raw, _t740);
+    return _t741;
     }
-    endif279:;
-    _t751 = (alg == JwtAlg_RS384);
-    if (!_t751) goto endif281;
+    endif266:;
+    _t742 = (alg == JwtAlg_RS384);
+    if (!_t742) goto endif268;
     {
     const char* raw;
-    const char* _t752;
-    _t752 = Rsa_SignSha384(key, signingInput);
-    raw = _t752;
-    unsigned int _t753;
-    _t753 = String_Len(raw);
-    _t754 = (int)_t753;
-    const char* _t755;
-    _t755 = bux_base64_encode(raw, _t754);
-    return _t755;
+    const char* _t743;
+    _t743 = Rsa_SignSha384(key, signingInput);
+    raw = _t743;
+    unsigned int _t744;
+    _t744 = String_Len(raw);
+    _t745 = (int)_t744;
+    const char* _t746;
+    _t746 = bux_base64_encode(raw, _t745);
+    return _t746;
     }
-    endif281:;
-    _t756 = (alg == JwtAlg_RS512);
-    if (!_t756) goto endif283;
+    endif268:;
+    _t747 = (alg == JwtAlg_RS512);
+    if (!_t747) goto endif270;
     {
     const char* raw;
-    const char* _t757;
-    _t757 = Rsa_SignSha512(key, signingInput);
-    raw = _t757;
-    unsigned int _t758;
-    _t758 = String_Len(raw);
-    _t759 = (int)_t758;
-    const char* _t760;
-    _t760 = bux_base64_encode(raw, _t759);
-    return _t760;
+    const char* _t748;
+    _t748 = Rsa_SignSha512(key, signingInput);
+    raw = _t748;
+    unsigned int _t749;
+    _t749 = String_Len(raw);
+    _t750 = (int)_t749;
+    const char* _t751;
+    _t751 = bux_base64_encode(raw, _t750);
+    return _t751;
     }
-    endif283:;
-    _t761 = (alg == JwtAlg_ES256);
-    if (!_t761) goto endif285;
+    endif270:;
+    _t752 = (alg == JwtAlg_ES256);
+    if (!_t752) goto endif272;
     {
     const char* raw;
-    const char* _t762;
-    _t762 = Ecdsa_SignP256(key, signingInput);
-    raw = _t762;
-    unsigned int _t763;
-    _t763 = String_Len(raw);
-    _t764 = (int)_t763;
-    const char* _t765;
-    _t765 = bux_base64_encode(raw, _t764);
-    return _t765;
+    const char* _t753;
+    _t753 = Ecdsa_SignP256(key, signingInput);
+    raw = _t753;
+    unsigned int _t754;
+    _t754 = String_Len(raw);
+    _t755 = (int)_t754;
+    const char* _t756;
+    _t756 = bux_base64_encode(raw, _t755);
+    return _t756;
     }
-    endif285:;
-    _t766 = (alg == JwtAlg_ES384);
-    if (!_t766) goto endif287;
+    endif272:;
+    _t757 = (alg == JwtAlg_ES384);
+    if (!_t757) goto endif274;
     {
     const char* raw;
-    const char* _t767;
-    _t767 = Ecdsa_SignP384(key, signingInput);
-    raw = _t767;
-    unsigned int _t768;
-    _t768 = String_Len(raw);
-    _t769 = (int)_t768;
-    const char* _t770;
-    _t770 = bux_base64_encode(raw, _t769);
-    return _t770;
+    const char* _t758;
+    _t758 = Ecdsa_SignP384(key, signingInput);
+    raw = _t758;
+    unsigned int _t759;
+    _t759 = String_Len(raw);
+    _t760 = (int)_t759;
+    const char* _t761;
+    _t761 = bux_base64_encode(raw, _t760);
+    return _t761;
     }
-    endif287:;
-    _t771 = (alg == JwtAlg_EdDSA);
-    if (!_t771) goto endif289;
+    endif274:;
+    _t762 = (alg == JwtAlg_EdDSA);
+    if (!_t762) goto endif276;
     {
-    const char* _t772;
-    _t772 = Ed25519_Sign(key, signingInput);
-    return _t772;
+    const char* _t763;
+    _t763 = Ed25519_Sign(key, signingInput);
+    return _t763;
     }
-    endif289:;
+    endif276:;
     return "";
 }
 
 bool Jwt_Verify(JwtAlg alg, const char* signingInput, const char* signatureB64, const char* key) {
-    int _t773;
-    const char* _t775;
-    int _t778;
-    const char* _t780;
+    int _t764;
+    const char* _t766;
+    int _t769;
+    const char* _t771;
+    int _t774;
+    const char* _t776;
+    int _t779;
+    int _t781;
     int _t783;
-    const char* _t785;
-    int _t788;
-    int _t790;
-    int _t792;
-    int _t794;
-    int _t796;
-    int _t798;
-    _t773 = (alg == JwtAlg_HS256);
-    if (!_t773) goto endif291;
+    int _t785;
+    int _t787;
+    int _t789;
+    _t764 = (alg == JwtAlg_HS256);
+    if (!_t764) goto endif278;
     {
     void* expectBuf;
-    void* _t774;
-    _t774 = Alloc(32);
-    expectBuf = _t774;
+    void* _t765;
+    _t765 = Alloc(32);
+    expectBuf = _t765;
     Hmac_Sha256Raw(key, signingInput, expectBuf);
     const char* expectB64;
-    _t775 = (const char*)expectBuf;
-    const char* _t776;
-    _t776 = bux_base64_encode(_t775, 32);
-    expectB64 = _t776;
+    _t766 = (const char*)expectBuf;
+    const char* _t767;
+    _t767 = bux_base64_encode(_t766, 32);
+    expectB64 = _t767;
     Free(expectBuf);
-    bool _t777;
-    _t777 = String_Eq(expectB64, signatureB64);
-    return _t777;
+    bool _t768;
+    _t768 = String_Eq(expectB64, signatureB64);
+    return _t768;
     }
-    endif291:;
-    _t778 = (alg == JwtAlg_HS384);
-    if (!_t778) goto endif293;
+    endif278:;
+    _t769 = (alg == JwtAlg_HS384);
+    if (!_t769) goto endif280;
     {
     void* expectBuf;
-    void* _t779;
-    _t779 = Alloc(48);
-    expectBuf = _t779;
+    void* _t770;
+    _t770 = Alloc(48);
+    expectBuf = _t770;
     Hmac_Sha384Raw(key, signingInput, expectBuf);
     const char* expectB64;
-    _t780 = (const char*)expectBuf;
-    const char* _t781;
-    _t781 = bux_base64_encode(_t780, 48);
-    expectB64 = _t781;
+    _t771 = (const char*)expectBuf;
+    const char* _t772;
+    _t772 = bux_base64_encode(_t771, 48);
+    expectB64 = _t772;
     Free(expectBuf);
-    bool _t782;
-    _t782 = String_Eq(expectB64, signatureB64);
-    return _t782;
+    bool _t773;
+    _t773 = String_Eq(expectB64, signatureB64);
+    return _t773;
     }
-    endif293:;
-    _t783 = (alg == JwtAlg_HS512);
-    if (!_t783) goto endif295;
+    endif280:;
+    _t774 = (alg == JwtAlg_HS512);
+    if (!_t774) goto endif282;
     {
     void* expectBuf;
-    void* _t784;
-    _t784 = Alloc(64);
-    expectBuf = _t784;
+    void* _t775;
+    _t775 = Alloc(64);
+    expectBuf = _t775;
     Hmac_Sha512Raw(key, signingInput, expectBuf);
     const char* expectB64;
-    _t785 = (const char*)expectBuf;
-    const char* _t786;
-    _t786 = bux_base64_encode(_t785, 64);
-    expectB64 = _t786;
+    _t776 = (const char*)expectBuf;
+    const char* _t777;
+    _t777 = bux_base64_encode(_t776, 64);
+    expectB64 = _t777;
     Free(expectBuf);
-    bool _t787;
-    _t787 = String_Eq(expectB64, signatureB64);
-    return _t787;
+    bool _t778;
+    _t778 = String_Eq(expectB64, signatureB64);
+    return _t778;
     }
-    endif295:;
-    _t788 = (alg == JwtAlg_RS256);
-    if (!_t788) goto endif297;
+    endif282:;
+    _t779 = (alg == JwtAlg_RS256);
+    if (!_t779) goto endif284;
     {
-    bool _t789;
-    _t789 = Rsa_VerifySha256(key, signingInput, signatureB64);
-    return _t789;
+    bool _t780;
+    _t780 = Rsa_VerifySha256(key, signingInput, signatureB64);
+    return _t780;
     }
-    endif297:;
-    _t790 = (alg == JwtAlg_RS384);
-    if (!_t790) goto endif299;
+    endif284:;
+    _t781 = (alg == JwtAlg_RS384);
+    if (!_t781) goto endif286;
     {
-    bool _t791;
-    _t791 = Rsa_VerifySha384(key, signingInput, signatureB64);
-    return _t791;
+    bool _t782;
+    _t782 = Rsa_VerifySha384(key, signingInput, signatureB64);
+    return _t782;
     }
-    endif299:;
-    _t792 = (alg == JwtAlg_RS512);
-    if (!_t792) goto endif301;
+    endif286:;
+    _t783 = (alg == JwtAlg_RS512);
+    if (!_t783) goto endif288;
     {
-    bool _t793;
-    _t793 = Rsa_VerifySha512(key, signingInput, signatureB64);
-    return _t793;
+    bool _t784;
+    _t784 = Rsa_VerifySha512(key, signingInput, signatureB64);
+    return _t784;
     }
-    endif301:;
-    _t794 = (alg == JwtAlg_ES256);
-    if (!_t794) goto endif303;
+    endif288:;
+    _t785 = (alg == JwtAlg_ES256);
+    if (!_t785) goto endif290;
     {
-    bool _t795;
-    _t795 = Ecdsa_VerifyP256(key, signingInput, signatureB64);
-    return _t795;
+    bool _t786;
+    _t786 = Ecdsa_VerifyP256(key, signingInput, signatureB64);
+    return _t786;
     }
-    endif303:;
-    _t796 = (alg == JwtAlg_ES384);
-    if (!_t796) goto endif305;
+    endif290:;
+    _t787 = (alg == JwtAlg_ES384);
+    if (!_t787) goto endif292;
     {
-    bool _t797;
-    _t797 = Ecdsa_VerifyP384(key, signingInput, signatureB64);
-    return _t797;
+    bool _t788;
+    _t788 = Ecdsa_VerifyP384(key, signingInput, signatureB64);
+    return _t788;
     }
-    endif305:;
-    _t798 = (alg == JwtAlg_EdDSA);
-    if (!_t798) goto endif307;
+    endif292:;
+    _t789 = (alg == JwtAlg_EdDSA);
+    if (!_t789) goto endif294;
     {
-    bool _t799;
-    _t799 = Ed25519_Verify(key, signatureB64, signingInput);
-    return _t799;
+    bool _t790;
+    _t790 = Ed25519_Verify(key, signatureB64, signingInput);
+    return _t790;
     }
-    endif307:;
+    endif294:;
     return 0;
 }
 
 const char* Jwt_Encode(const char* headerJson, const char* payloadJson, JwtAlg alg, const char* key) {
     const char* headerB64;
-    const char* _t800;
-    _t800 = Base64URL_Encode(headerJson);
-    headerB64 = _t800;
+    const char* _t791;
+    _t791 = Base64URL_Encode(headerJson);
+    headerB64 = _t791;
     const char* payloadB64;
-    const char* _t801;
-    _t801 = Base64URL_Encode(payloadJson);
-    payloadB64 = _t801;
+    const char* _t792;
+    _t792 = Base64URL_Encode(payloadJson);
+    payloadB64 = _t792;
     const char* signingInput;
-    const char* _t802;
-    _t802 = String_Concat(headerB64, ".");
-    signingInput = _t802;
+    const char* _t793;
+    _t793 = String_Concat(headerB64, ".");
+    signingInput = _t793;
     const char* signingInputFull;
-    const char* _t803;
-    _t803 = String_Concat(signingInput, payloadB64);
-    signingInputFull = _t803;
+    const char* _t794;
+    _t794 = String_Concat(signingInput, payloadB64);
+    signingInputFull = _t794;
     const char* sigB64;
-    const char* _t804;
-    _t804 = Jwt_Sign(alg, signingInputFull, key);
-    sigB64 = _t804;
+    const char* _t795;
+    _t795 = Jwt_Sign(alg, signingInputFull, key);
+    sigB64 = _t795;
     const char* part1;
-    const char* _t805;
-    _t805 = String_Concat(signingInputFull, ".");
-    part1 = _t805;
-    const char* _t806;
-    _t806 = String_Concat(part1, sigB64);
-    return _t806;
+    const char* _t796;
+    _t796 = String_Concat(signingInputFull, ".");
+    part1 = _t796;
+    const char* _t797;
+    _t797 = String_Concat(part1, sigB64);
+    return _t797;
 }
 
 bool Jwt_Decode(const char* token, JwtAlg alg, const char* key, const char** headerOut, const char** payloadOut) {
-    int _t808;
-    int _t815;
+    int _t799;
+    int _t806;
     unsigned int partCount;
-    unsigned int _t807;
-    _t807 = bux_str_split_count(token, ".");
-    partCount = _t807;
-    _t808 = (partCount != 3);
-    if (!_t808) goto endif309;
+    unsigned int _t798;
+    _t798 = bux_str_split_count(token, ".");
+    partCount = _t798;
+    _t799 = (partCount != 3);
+    if (!_t799) goto endif296;
     {
     return 0;
     }
-    endif309:;
+    endif296:;
     const char* headerB64;
-    const char* _t809;
-    _t809 = bux_str_split_part(token, ".", 0);
-    headerB64 = _t809;
+    const char* _t800;
+    _t800 = bux_str_split_part(token, ".", 0);
+    headerB64 = _t800;
     const char* payloadB64;
-    const char* _t810;
-    _t810 = bux_str_split_part(token, ".", 1);
-    payloadB64 = _t810;
+    const char* _t801;
+    _t801 = bux_str_split_part(token, ".", 1);
+    payloadB64 = _t801;
     const char* sigB64;
-    const char* _t811;
-    _t811 = bux_str_split_part(token, ".", 2);
-    sigB64 = _t811;
+    const char* _t802;
+    _t802 = bux_str_split_part(token, ".", 2);
+    sigB64 = _t802;
     const char* input;
-    const char* _t812;
-    _t812 = String_Concat(headerB64, ".");
-    input = _t812;
+    const char* _t803;
+    _t803 = String_Concat(headerB64, ".");
+    input = _t803;
     const char* signingInput;
-    const char* _t813;
-    _t813 = String_Concat(input, payloadB64);
-    signingInput = _t813;
-    bool _t814;
-    _t814 = Jwt_Verify(alg, signingInput, sigB64, key);
-    _t815 = !_t814;
-    if (!_t815) goto endif311;
+    const char* _t804;
+    _t804 = String_Concat(input, payloadB64);
+    signingInput = _t804;
+    bool _t805;
+    _t805 = Jwt_Verify(alg, signingInput, sigB64, key);
+    _t806 = !_t805;
+    if (!_t806) goto endif298;
     {
     return 0;
     }
-    endif311:;
-    const char* _t816;
-    _t816 = Base64URL_Decode(headerB64);
-    headerOut[0] = _t816;
-    const char* _t817;
-    _t817 = Base64URL_Decode(payloadB64);
-    payloadOut[0] = _t817;
+    endif298:;
+    const char* _t807;
+    _t807 = Base64URL_Decode(headerB64);
+    headerOut[0] = _t807;
+    const char* _t808;
+    _t808 = Base64URL_Decode(payloadB64);
+    payloadOut[0] = _t808;
     return 1;
 }
 
 const char* Jwt_EncodeHS256(const char* payloadJson, const char* secret) {
     const char* header;
-    const char* _t818;
-    _t818 = Jwt_MakeHeader(JwtAlg_HS256);
-    header = _t818;
-    const char* _t819;
-    _t819 = Jwt_Encode(header, payloadJson, JwtAlg_HS256, secret);
-    return _t819;
+    const char* _t809;
+    _t809 = Jwt_MakeHeader(JwtAlg_HS256);
+    header = _t809;
+    const char* _t810;
+    _t810 = Jwt_Encode(header, payloadJson, JwtAlg_HS256, secret);
+    return _t810;
 }
 
 const char* Jwt_EncodeHS384(const char* payloadJson, const char* secret) {
     const char* header;
-    const char* _t820;
-    _t820 = Jwt_MakeHeader(JwtAlg_HS384);
-    header = _t820;
-    const char* _t821;
-    _t821 = Jwt_Encode(header, payloadJson, JwtAlg_HS384, secret);
-    return _t821;
+    const char* _t811;
+    _t811 = Jwt_MakeHeader(JwtAlg_HS384);
+    header = _t811;
+    const char* _t812;
+    _t812 = Jwt_Encode(header, payloadJson, JwtAlg_HS384, secret);
+    return _t812;
 }
 
 const char* Jwt_EncodeHS512(const char* payloadJson, const char* secret) {
     const char* header;
-    const char* _t822;
-    _t822 = Jwt_MakeHeader(JwtAlg_HS512);
-    header = _t822;
-    const char* _t823;
-    _t823 = Jwt_Encode(header, payloadJson, JwtAlg_HS512, secret);
-    return _t823;
+    const char* _t813;
+    _t813 = Jwt_MakeHeader(JwtAlg_HS512);
+    header = _t813;
+    const char* _t814;
+    _t814 = Jwt_Encode(header, payloadJson, JwtAlg_HS512, secret);
+    return _t814;
 }
 
 const char* Jwt_EncodeRS256(const char* payloadJson, const char* pemPrivateKey) {
     const char* header;
-    const char* _t824;
-    _t824 = Jwt_MakeHeader(JwtAlg_RS256);
-    header = _t824;
-    const char* _t825;
-    _t825 = Jwt_Encode(header, payloadJson, JwtAlg_RS256, pemPrivateKey);
-    return _t825;
+    const char* _t815;
+    _t815 = Jwt_MakeHeader(JwtAlg_RS256);
+    header = _t815;
+    const char* _t816;
+    _t816 = Jwt_Encode(header, payloadJson, JwtAlg_RS256, pemPrivateKey);
+    return _t816;
 }
 
 const char* Jwt_EncodeES256(const char* payloadJson, const char* pemPrivateKey) {
     const char* header;
-    const char* _t826;
-    _t826 = Jwt_MakeHeader(JwtAlg_ES256);
-    header = _t826;
-    const char* _t827;
-    _t827 = Jwt_Encode(header, payloadJson, JwtAlg_ES256, pemPrivateKey);
-    return _t827;
+    const char* _t817;
+    _t817 = Jwt_MakeHeader(JwtAlg_ES256);
+    header = _t817;
+    const char* _t818;
+    _t818 = Jwt_Encode(header, payloadJson, JwtAlg_ES256, pemPrivateKey);
+    return _t818;
 }
 
 const char* Jwt_EncodeEdDSA(const char* payloadJson, const char* rawPrivKey) {
     const char* header;
-    const char* _t828;
-    _t828 = Jwt_MakeHeader(JwtAlg_EdDSA);
-    header = _t828;
-    const char* _t829;
-    _t829 = Jwt_Encode(header, payloadJson, JwtAlg_EdDSA, rawPrivKey);
-    return _t829;
+    const char* _t819;
+    _t819 = Jwt_MakeHeader(JwtAlg_EdDSA);
+    header = _t819;
+    const char* _t820;
+    _t820 = Jwt_Encode(header, payloadJson, JwtAlg_EdDSA, rawPrivKey);
+    return _t820;
 }
 
 const char* Ecdsa_SignP256(const char* pemPrivateKey, const char* data) {
-    int _t831;
-    int _t833;
-    void* _t834;
+    int _t822;
+    int _t824;
+    void* _t825;
     int siglen;
     siglen = 0;
-    unsigned int _t830;
-    _t830 = String_Len(pemPrivateKey);
-    _t831 = (int)_t830;
-    unsigned int _t832;
-    _t832 = String_Len(data);
-    _t833 = (int)_t832;
-    _t834 = &siglen;
-    const char* _t835;
-    _t835 = bux_ecdsa_sign_p256(pemPrivateKey, _t831, data, _t833, _t834);
-    return _t835;
+    unsigned int _t821;
+    _t821 = String_Len(pemPrivateKey);
+    _t822 = (int)_t821;
+    unsigned int _t823;
+    _t823 = String_Len(data);
+    _t824 = (int)_t823;
+    _t825 = &siglen;
+    const char* _t826;
+    _t826 = bux_ecdsa_sign_p256(pemPrivateKey, _t822, data, _t824, _t825);
+    return _t826;
 }
 
 const char* Ecdsa_SignP256Base64(const char* pemPrivateKey, const char* data) {
-    int _t838;
+    int _t829;
     const char* raw;
-    const char* _t836;
-    _t836 = Ecdsa_SignP256(pemPrivateKey, data);
-    raw = _t836;
-    unsigned int _t837;
-    _t837 = String_Len(raw);
-    _t838 = (int)_t837;
-    const char* _t839;
-    _t839 = bux_base64_encode(raw, _t838);
-    return _t839;
+    const char* _t827;
+    _t827 = Ecdsa_SignP256(pemPrivateKey, data);
+    raw = _t827;
+    unsigned int _t828;
+    _t828 = String_Len(raw);
+    _t829 = (int)_t828;
+    const char* _t830;
+    _t830 = bux_base64_encode(raw, _t829);
+    return _t830;
 }
 
 bool Ecdsa_VerifyP256(const char* pemPublicKey, const char* data, const char* signature) {
-    int _t841;
-    int _t843;
-    int _t845;
-    int _t847;
+    int _t832;
+    int _t834;
+    int _t836;
+    int _t838;
     int r;
-    unsigned int _t840;
-    _t840 = String_Len(pemPublicKey);
-    _t841 = (int)_t840;
-    unsigned int _t842;
-    _t842 = String_Len(data);
-    _t843 = (int)_t842;
-    unsigned int _t844;
-    _t844 = String_Len(signature);
-    _t845 = (int)_t844;
-    int _t846;
-    _t846 = bux_ecdsa_verify_p256(pemPublicKey, _t841, data, _t843, signature, _t845);
-    r = _t846;
-    _t847 = (r == 1);
-    return _t847;
+    unsigned int _t831;
+    _t831 = String_Len(pemPublicKey);
+    _t832 = (int)_t831;
+    unsigned int _t833;
+    _t833 = String_Len(data);
+    _t834 = (int)_t833;
+    unsigned int _t835;
+    _t835 = String_Len(signature);
+    _t836 = (int)_t835;
+    int _t837;
+    _t837 = bux_ecdsa_verify_p256(pemPublicKey, _t832, data, _t834, signature, _t836);
+    r = _t837;
+    _t838 = (r == 1);
+    return _t838;
 }
 
 bool Ecdsa_VerifyP256Base64(const char* pemPublicKey, const char* data, const char* signatureB64) {
-    int _t849;
-    void* _t850;
+    int _t840;
+    void* _t841;
     int outlen;
     outlen = 0;
     const char* sig;
-    unsigned int _t848;
-    _t848 = String_Len(signatureB64);
-    _t849 = (int)_t848;
-    _t850 = &outlen;
-    const char* _t851;
-    _t851 = bux_base64_decode(signatureB64, _t849, _t850);
-    sig = _t851;
-    bool _t852;
-    _t852 = Ecdsa_VerifyP256(pemPublicKey, data, sig);
-    return _t852;
+    unsigned int _t839;
+    _t839 = String_Len(signatureB64);
+    _t840 = (int)_t839;
+    _t841 = &outlen;
+    const char* _t842;
+    _t842 = bux_base64_decode(signatureB64, _t840, _t841);
+    sig = _t842;
+    bool _t843;
+    _t843 = Ecdsa_VerifyP256(pemPublicKey, data, sig);
+    return _t843;
 }
 
 const char* Ecdsa_SignP384(const char* pemPrivateKey, const char* data) {
-    int _t854;
-    int _t856;
-    void* _t857;
+    int _t845;
+    int _t847;
+    void* _t848;
     int siglen;
     siglen = 0;
-    unsigned int _t853;
-    _t853 = String_Len(pemPrivateKey);
-    _t854 = (int)_t853;
-    unsigned int _t855;
-    _t855 = String_Len(data);
-    _t856 = (int)_t855;
-    _t857 = &siglen;
-    const char* _t858;
-    _t858 = bux_ecdsa_sign_p384(pemPrivateKey, _t854, data, _t856, _t857);
-    return _t858;
+    unsigned int _t844;
+    _t844 = String_Len(pemPrivateKey);
+    _t845 = (int)_t844;
+    unsigned int _t846;
+    _t846 = String_Len(data);
+    _t847 = (int)_t846;
+    _t848 = &siglen;
+    const char* _t849;
+    _t849 = bux_ecdsa_sign_p384(pemPrivateKey, _t845, data, _t847, _t848);
+    return _t849;
 }
 
 const char* Ecdsa_SignP384Base64(const char* pemPrivateKey, const char* data) {
-    int _t861;
+    int _t852;
     const char* raw;
-    const char* _t859;
-    _t859 = Ecdsa_SignP384(pemPrivateKey, data);
-    raw = _t859;
-    unsigned int _t860;
-    _t860 = String_Len(raw);
-    _t861 = (int)_t860;
-    const char* _t862;
-    _t862 = bux_base64_encode(raw, _t861);
-    return _t862;
+    const char* _t850;
+    _t850 = Ecdsa_SignP384(pemPrivateKey, data);
+    raw = _t850;
+    unsigned int _t851;
+    _t851 = String_Len(raw);
+    _t852 = (int)_t851;
+    const char* _t853;
+    _t853 = bux_base64_encode(raw, _t852);
+    return _t853;
 }
 
 bool Ecdsa_VerifyP384(const char* pemPublicKey, const char* data, const char* signature) {
-    int _t864;
-    int _t866;
-    int _t868;
-    int _t870;
+    int _t855;
+    int _t857;
+    int _t859;
+    int _t861;
     int r;
-    unsigned int _t863;
-    _t863 = String_Len(pemPublicKey);
-    _t864 = (int)_t863;
-    unsigned int _t865;
-    _t865 = String_Len(data);
-    _t866 = (int)_t865;
-    unsigned int _t867;
-    _t867 = String_Len(signature);
-    _t868 = (int)_t867;
-    int _t869;
-    _t869 = bux_ecdsa_verify_p384(pemPublicKey, _t864, data, _t866, signature, _t868);
-    r = _t869;
-    _t870 = (r == 1);
-    return _t870;
+    unsigned int _t854;
+    _t854 = String_Len(pemPublicKey);
+    _t855 = (int)_t854;
+    unsigned int _t856;
+    _t856 = String_Len(data);
+    _t857 = (int)_t856;
+    unsigned int _t858;
+    _t858 = String_Len(signature);
+    _t859 = (int)_t858;
+    int _t860;
+    _t860 = bux_ecdsa_verify_p384(pemPublicKey, _t855, data, _t857, signature, _t859);
+    r = _t860;
+    _t861 = (r == 1);
+    return _t861;
 }
 
 bool Ecdsa_VerifyP384Base64(const char* pemPublicKey, const char* data, const char* signatureB64) {
-    int _t872;
-    void* _t873;
+    int _t863;
+    void* _t864;
     int outlen;
     outlen = 0;
     const char* sig;
-    unsigned int _t871;
-    _t871 = String_Len(signatureB64);
-    _t872 = (int)_t871;
-    _t873 = &outlen;
-    const char* _t874;
-    _t874 = bux_base64_decode(signatureB64, _t872, _t873);
-    sig = _t874;
-    bool _t875;
-    _t875 = Ecdsa_VerifyP384(pemPublicKey, data, sig);
-    return _t875;
+    unsigned int _t862;
+    _t862 = String_Len(signatureB64);
+    _t863 = (int)_t862;
+    _t864 = &outlen;
+    const char* _t865;
+    _t865 = bux_base64_decode(signatureB64, _t863, _t864);
+    sig = _t865;
+    bool _t866;
+    _t866 = Ecdsa_VerifyP384(pemPublicKey, data, sig);
+    return _t866;
 }
 
 bool Ed25519_Keypair(void* pubKey, void* privKey) {
-    int _t877;
+    int _t868;
     int r;
-    int _t876;
-    _t876 = bux_ed25519_keypair(pubKey, privKey);
-    r = _t876;
-    _t877 = (r == 1);
-    return _t877;
+    int _t867;
+    _t867 = bux_ed25519_keypair(pubKey, privKey);
+    r = _t867;
+    _t868 = (r == 1);
+    return _t868;
 }
 
 const char* Ed25519_KeypairBase64(void) {
-    unsigned int _t878;
-    unsigned int _t880;
-    int _t883;
-    const char* _t884;
-    const char* _t886;
+    unsigned int _t869;
+    unsigned int _t871;
+    int _t874;
+    const char* _t875;
+    const char* _t877;
     void* pubBuf;
-    _t878 = (unsigned int)ED25519_PUBKEY_SIZE;
-    void* _t879;
-    _t879 = Alloc(_t878);
-    pubBuf = _t879;
+    _t869 = (unsigned int)ED25519_PUBKEY_SIZE;
+    void* _t870;
+    _t870 = Alloc(_t869);
+    pubBuf = _t870;
     void* priv;
-    _t880 = (unsigned int)ED25519_PRIVKEY_SIZE;
-    void* _t881;
-    _t881 = Alloc(_t880);
-    priv = _t881;
-    int _t882;
-    _t882 = bux_ed25519_keypair(pubBuf, priv);
-    _t883 = (_t882 != 1);
-    if (!_t883) goto endif313;
+    _t871 = (unsigned int)ED25519_PRIVKEY_SIZE;
+    void* _t872;
+    _t872 = Alloc(_t871);
+    priv = _t872;
+    int _t873;
+    _t873 = bux_ed25519_keypair(pubBuf, priv);
+    _t874 = (_t873 != 1);
+    if (!_t874) goto endif300;
     {
     Free(pubBuf);
     Free(priv);
     return "";
     }
-    endif313:;
+    endif300:;
     const char* pubB64;
-    _t884 = (const char*)pubBuf;
-    const char* _t885;
-    _t885 = bux_base64_encode(_t884, ED25519_PUBKEY_SIZE);
-    pubB64 = _t885;
+    _t875 = (const char*)pubBuf;
+    const char* _t876;
+    _t876 = bux_base64_encode(_t875, ED25519_PUBKEY_SIZE);
+    pubB64 = _t876;
     const char* privB64;
-    _t886 = (const char*)priv;
-    const char* _t887;
-    _t887 = bux_base64_encode(_t886, ED25519_PRIVKEY_SIZE);
-    privB64 = _t887;
+    _t877 = (const char*)priv;
+    const char* _t878;
+    _t878 = bux_base64_encode(_t877, ED25519_PRIVKEY_SIZE);
+    privB64 = _t878;
     Free(pubBuf);
     Free(priv);
     const char* pair;
-    const char* _t888;
-    _t888 = String_Concat(pubB64, ":");
-    pair = _t888;
-    const char* _t889;
-    _t889 = String_Concat(pair, privB64);
-    return _t889;
+    const char* _t879;
+    _t879 = String_Concat(pubB64, ":");
+    pair = _t879;
+    const char* _t880;
+    _t880 = String_Concat(pair, privB64);
+    return _t880;
 }
 
 const char* Ed25519_Sign(const char* privKey, const char* data) {
-    unsigned int _t890;
-    int _t893;
-    int _t895;
-    const char* _t896;
+    unsigned int _t881;
+    int _t884;
+    int _t886;
+    const char* _t887;
     void* sig;
-    _t890 = (unsigned int)ED25519_SIG_SIZE;
-    void* _t891;
-    _t891 = Alloc(_t890);
-    sig = _t891;
-    unsigned int _t892;
-    _t892 = String_Len(data);
-    _t893 = (int)_t892;
-    int _t894;
-    _t894 = bux_ed25519_sign(privKey, data, _t893, sig);
-    _t895 = (_t894 != 1);
-    if (!_t895) goto endif315;
+    _t881 = (unsigned int)ED25519_SIG_SIZE;
+    void* _t882;
+    _t882 = Alloc(_t881);
+    sig = _t882;
+    unsigned int _t883;
+    _t883 = String_Len(data);
+    _t884 = (int)_t883;
+    int _t885;
+    _t885 = bux_ed25519_sign(privKey, data, _t884, sig);
+    _t886 = (_t885 != 1);
+    if (!_t886) goto endif302;
     {
     Free(sig);
     return "";
     }
-    endif315:;
-    _t896 = (const char*)sig;
-    return _t896;
+    endif302:;
+    _t887 = (const char*)sig;
+    return _t887;
 }
 
 const char* Ed25519_SignBase64(const char* privKey, const char* data) {
-    int _t899;
+    int _t890;
     const char* sig;
-    const char* _t897;
-    _t897 = Ed25519_Sign(privKey, data);
-    sig = _t897;
-    unsigned int _t898;
-    _t898 = String_Len(sig);
-    _t899 = (_t898 == 0);
-    if (!_t899) goto endif317;
+    const char* _t888;
+    _t888 = Ed25519_Sign(privKey, data);
+    sig = _t888;
+    unsigned int _t889;
+    _t889 = String_Len(sig);
+    _t890 = (_t889 == 0);
+    if (!_t890) goto endif304;
     {
     return "";
     }
-    endif317:;
-    const char* _t900;
-    _t900 = bux_base64_encode(sig, ED25519_SIG_SIZE);
-    return _t900;
+    endif304:;
+    const char* _t891;
+    _t891 = bux_base64_encode(sig, ED25519_SIG_SIZE);
+    return _t891;
 }
 
 bool Ed25519_Verify(const char* pubKey, const char* signature, const char* data) {
-    int _t902;
-    int _t904;
+    int _t893;
+    int _t895;
     int r;
-    unsigned int _t901;
-    _t901 = String_Len(data);
-    _t902 = (int)_t901;
-    int _t903;
-    _t903 = bux_ed25519_verify(pubKey, signature, data, _t902);
-    r = _t903;
-    _t904 = (r == 1);
-    return _t904;
+    unsigned int _t892;
+    _t892 = String_Len(data);
+    _t893 = (int)_t892;
+    int _t894;
+    _t894 = bux_ed25519_verify(pubKey, signature, data, _t893);
+    r = _t894;
+    _t895 = (r == 1);
+    return _t895;
 }
 
 bool Ed25519_VerifyBase64(const char* pubKey, const char* signatureB64, const char* data) {
-    int _t906;
-    void* _t907;
-    int _t909;
+    int _t897;
+    void* _t898;
+    int _t900;
     int outlen;
     outlen = 0;
     const char* sig;
-    unsigned int _t905;
-    _t905 = String_Len(signatureB64);
-    _t906 = (int)_t905;
-    _t907 = &outlen;
-    const char* _t908;
-    _t908 = bux_base64_decode(signatureB64, _t906, _t907);
-    sig = _t908;
-    _t909 = (outlen != ED25519_SIG_SIZE);
-    if (!_t909) goto endif319;
+    unsigned int _t896;
+    _t896 = String_Len(signatureB64);
+    _t897 = (int)_t896;
+    _t898 = &outlen;
+    const char* _t899;
+    _t899 = bux_base64_decode(signatureB64, _t897, _t898);
+    sig = _t899;
+    _t900 = (outlen != ED25519_SIG_SIZE);
+    if (!_t900) goto endif306;
     {
     return 0;
     }
-    endif319:;
-    bool _t910;
-    _t910 = Ed25519_Verify(pubKey, sig, data);
-    return _t910;
+    endif306:;
+    bool _t901;
+    _t901 = Ed25519_Verify(pubKey, sig, data);
+    return _t901;
 }
 
 const char* Rsa_SignSha256(const char* pemPrivateKey, const char* data) {
-    int _t912;
-    int _t914;
-    void* _t915;
+    int _t903;
+    int _t905;
+    void* _t906;
     int siglen;
     siglen = 0;
-    unsigned int _t911;
-    _t911 = String_Len(pemPrivateKey);
-    _t912 = (int)_t911;
-    unsigned int _t913;
-    _t913 = String_Len(data);
-    _t914 = (int)_t913;
-    _t915 = &siglen;
-    const char* _t916;
-    _t916 = bux_rsa_sign_sha256(pemPrivateKey, _t912, data, _t914, _t915);
-    return _t916;
+    unsigned int _t902;
+    _t902 = String_Len(pemPrivateKey);
+    _t903 = (int)_t902;
+    unsigned int _t904;
+    _t904 = String_Len(data);
+    _t905 = (int)_t904;
+    _t906 = &siglen;
+    const char* _t907;
+    _t907 = bux_rsa_sign_sha256(pemPrivateKey, _t903, data, _t905, _t906);
+    return _t907;
 }
 
 const char* Rsa_SignSha384(const char* pemPrivateKey, const char* data) {
-    int _t918;
-    int _t920;
-    void* _t921;
+    int _t909;
+    int _t911;
+    void* _t912;
     int siglen;
     siglen = 0;
-    unsigned int _t917;
-    _t917 = String_Len(pemPrivateKey);
-    _t918 = (int)_t917;
-    unsigned int _t919;
-    _t919 = String_Len(data);
-    _t920 = (int)_t919;
-    _t921 = &siglen;
-    const char* _t922;
-    _t922 = bux_rsa_sign_sha384(pemPrivateKey, _t918, data, _t920, _t921);
-    return _t922;
+    unsigned int _t908;
+    _t908 = String_Len(pemPrivateKey);
+    _t909 = (int)_t908;
+    unsigned int _t910;
+    _t910 = String_Len(data);
+    _t911 = (int)_t910;
+    _t912 = &siglen;
+    const char* _t913;
+    _t913 = bux_rsa_sign_sha384(pemPrivateKey, _t909, data, _t911, _t912);
+    return _t913;
 }
 
 const char* Rsa_SignSha512(const char* pemPrivateKey, const char* data) {
-    int _t924;
-    int _t926;
-    void* _t927;
+    int _t915;
+    int _t917;
+    void* _t918;
     int siglen;
     siglen = 0;
-    unsigned int _t923;
-    _t923 = String_Len(pemPrivateKey);
-    _t924 = (int)_t923;
-    unsigned int _t925;
-    _t925 = String_Len(data);
-    _t926 = (int)_t925;
-    _t927 = &siglen;
-    const char* _t928;
-    _t928 = bux_rsa_sign_sha512(pemPrivateKey, _t924, data, _t926, _t927);
-    return _t928;
+    unsigned int _t914;
+    _t914 = String_Len(pemPrivateKey);
+    _t915 = (int)_t914;
+    unsigned int _t916;
+    _t916 = String_Len(data);
+    _t917 = (int)_t916;
+    _t918 = &siglen;
+    const char* _t919;
+    _t919 = bux_rsa_sign_sha512(pemPrivateKey, _t915, data, _t917, _t918);
+    return _t919;
 }
 
 const char* Rsa_SignSha256Base64(const char* pemPrivateKey, const char* data) {
-    int _t931;
+    int _t922;
     const char* raw;
-    const char* _t929;
-    _t929 = Rsa_SignSha256(pemPrivateKey, data);
-    raw = _t929;
-    unsigned int _t930;
-    _t930 = String_Len(raw);
-    _t931 = (int)_t930;
-    const char* _t932;
-    _t932 = bux_base64_encode(raw, _t931);
-    return _t932;
+    const char* _t920;
+    _t920 = Rsa_SignSha256(pemPrivateKey, data);
+    raw = _t920;
+    unsigned int _t921;
+    _t921 = String_Len(raw);
+    _t922 = (int)_t921;
+    const char* _t923;
+    _t923 = bux_base64_encode(raw, _t922);
+    return _t923;
 }
 
 const char* Rsa_SignSha384Base64(const char* pemPrivateKey, const char* data) {
-    int _t935;
+    int _t926;
     const char* raw;
-    const char* _t933;
-    _t933 = Rsa_SignSha384(pemPrivateKey, data);
-    raw = _t933;
-    unsigned int _t934;
-    _t934 = String_Len(raw);
-    _t935 = (int)_t934;
-    const char* _t936;
-    _t936 = bux_base64_encode(raw, _t935);
-    return _t936;
+    const char* _t924;
+    _t924 = Rsa_SignSha384(pemPrivateKey, data);
+    raw = _t924;
+    unsigned int _t925;
+    _t925 = String_Len(raw);
+    _t926 = (int)_t925;
+    const char* _t927;
+    _t927 = bux_base64_encode(raw, _t926);
+    return _t927;
 }
 
 const char* Rsa_SignSha512Base64(const char* pemPrivateKey, const char* data) {
-    int _t939;
+    int _t930;
     const char* raw;
-    const char* _t937;
-    _t937 = Rsa_SignSha512(pemPrivateKey, data);
-    raw = _t937;
-    unsigned int _t938;
-    _t938 = String_Len(raw);
-    _t939 = (int)_t938;
-    const char* _t940;
-    _t940 = bux_base64_encode(raw, _t939);
-    return _t940;
+    const char* _t928;
+    _t928 = Rsa_SignSha512(pemPrivateKey, data);
+    raw = _t928;
+    unsigned int _t929;
+    _t929 = String_Len(raw);
+    _t930 = (int)_t929;
+    const char* _t931;
+    _t931 = bux_base64_encode(raw, _t930);
+    return _t931;
 }
 
 bool Rsa_VerifySha256(const char* pemPublicKey, const char* data, const char* signature) {
-    int _t942;
-    int _t944;
-    int _t946;
-    int _t948;
+    int _t933;
+    int _t935;
+    int _t937;
+    int _t939;
     int r;
-    unsigned int _t941;
-    _t941 = String_Len(pemPublicKey);
-    _t942 = (int)_t941;
-    unsigned int _t943;
-    _t943 = String_Len(data);
-    _t944 = (int)_t943;
-    unsigned int _t945;
-    _t945 = String_Len(signature);
-    _t946 = (int)_t945;
-    int _t947;
-    _t947 = bux_rsa_verify_sha256(pemPublicKey, _t942, data, _t944, signature, _t946);
-    r = _t947;
-    _t948 = (r == 1);
-    return _t948;
+    unsigned int _t932;
+    _t932 = String_Len(pemPublicKey);
+    _t933 = (int)_t932;
+    unsigned int _t934;
+    _t934 = String_Len(data);
+    _t935 = (int)_t934;
+    unsigned int _t936;
+    _t936 = String_Len(signature);
+    _t937 = (int)_t936;
+    int _t938;
+    _t938 = bux_rsa_verify_sha256(pemPublicKey, _t933, data, _t935, signature, _t937);
+    r = _t938;
+    _t939 = (r == 1);
+    return _t939;
 }
 
 bool Rsa_VerifySha384(const char* pemPublicKey, const char* data, const char* signature) {
-    int _t950;
-    int _t952;
-    int _t954;
-    int _t956;
+    int _t941;
+    int _t943;
+    int _t945;
+    int _t947;
     int r;
-    unsigned int _t949;
-    _t949 = String_Len(pemPublicKey);
-    _t950 = (int)_t949;
-    unsigned int _t951;
-    _t951 = String_Len(data);
-    _t952 = (int)_t951;
-    unsigned int _t953;
-    _t953 = String_Len(signature);
-    _t954 = (int)_t953;
-    int _t955;
-    _t955 = bux_rsa_verify_sha384(pemPublicKey, _t950, data, _t952, signature, _t954);
-    r = _t955;
-    _t956 = (r == 1);
-    return _t956;
+    unsigned int _t940;
+    _t940 = String_Len(pemPublicKey);
+    _t941 = (int)_t940;
+    unsigned int _t942;
+    _t942 = String_Len(data);
+    _t943 = (int)_t942;
+    unsigned int _t944;
+    _t944 = String_Len(signature);
+    _t945 = (int)_t944;
+    int _t946;
+    _t946 = bux_rsa_verify_sha384(pemPublicKey, _t941, data, _t943, signature, _t945);
+    r = _t946;
+    _t947 = (r == 1);
+    return _t947;
 }
 
 bool Rsa_VerifySha512(const char* pemPublicKey, const char* data, const char* signature) {
-    int _t958;
-    int _t960;
-    int _t962;
-    int _t964;
+    int _t949;
+    int _t951;
+    int _t953;
+    int _t955;
     int r;
-    unsigned int _t957;
-    _t957 = String_Len(pemPublicKey);
-    _t958 = (int)_t957;
-    unsigned int _t959;
-    _t959 = String_Len(data);
-    _t960 = (int)_t959;
-    unsigned int _t961;
-    _t961 = String_Len(signature);
-    _t962 = (int)_t961;
-    int _t963;
-    _t963 = bux_rsa_verify_sha512(pemPublicKey, _t958, data, _t960, signature, _t962);
-    r = _t963;
-    _t964 = (r == 1);
-    return _t964;
+    unsigned int _t948;
+    _t948 = String_Len(pemPublicKey);
+    _t949 = (int)_t948;
+    unsigned int _t950;
+    _t950 = String_Len(data);
+    _t951 = (int)_t950;
+    unsigned int _t952;
+    _t952 = String_Len(signature);
+    _t953 = (int)_t952;
+    int _t954;
+    _t954 = bux_rsa_verify_sha512(pemPublicKey, _t949, data, _t951, signature, _t953);
+    r = _t954;
+    _t955 = (r == 1);
+    return _t955;
 }
 
 bool Rsa_VerifySha256Base64(const char* pemPublicKey, const char* data, const char* signatureB64) {
-    int _t966;
-    void* _t967;
+    int _t957;
+    void* _t958;
     int outlen;
     outlen = 0;
     const char* sig;
-    unsigned int _t965;
-    _t965 = String_Len(signatureB64);
-    _t966 = (int)_t965;
-    _t967 = &outlen;
-    const char* _t968;
-    _t968 = bux_base64_decode(signatureB64, _t966, _t967);
-    sig = _t968;
-    bool _t969;
-    _t969 = Rsa_VerifySha256(pemPublicKey, data, sig);
-    return _t969;
+    unsigned int _t956;
+    _t956 = String_Len(signatureB64);
+    _t957 = (int)_t956;
+    _t958 = &outlen;
+    const char* _t959;
+    _t959 = bux_base64_decode(signatureB64, _t957, _t958);
+    sig = _t959;
+    bool _t960;
+    _t960 = Rsa_VerifySha256(pemPublicKey, data, sig);
+    return _t960;
 }
 
 bool Rsa_VerifySha384Base64(const char* pemPublicKey, const char* data, const char* signatureB64) {
-    int _t971;
-    void* _t972;
+    int _t962;
+    void* _t963;
     int outlen;
     outlen = 0;
     const char* sig;
-    unsigned int _t970;
-    _t970 = String_Len(signatureB64);
-    _t971 = (int)_t970;
-    _t972 = &outlen;
-    const char* _t973;
-    _t973 = bux_base64_decode(signatureB64, _t971, _t972);
-    sig = _t973;
-    bool _t974;
-    _t974 = Rsa_VerifySha384(pemPublicKey, data, sig);
-    return _t974;
+    unsigned int _t961;
+    _t961 = String_Len(signatureB64);
+    _t962 = (int)_t961;
+    _t963 = &outlen;
+    const char* _t964;
+    _t964 = bux_base64_decode(signatureB64, _t962, _t963);
+    sig = _t964;
+    bool _t965;
+    _t965 = Rsa_VerifySha384(pemPublicKey, data, sig);
+    return _t965;
 }
 
 bool Rsa_VerifySha512Base64(const char* pemPublicKey, const char* data, const char* signatureB64) {
-    int _t976;
-    void* _t977;
+    int _t967;
+    void* _t968;
     int outlen;
     outlen = 0;
     const char* sig;
-    unsigned int _t975;
-    _t975 = String_Len(signatureB64);
-    _t976 = (int)_t975;
-    _t977 = &outlen;
-    const char* _t978;
-    _t978 = bux_base64_decode(signatureB64, _t976, _t977);
-    sig = _t978;
-    bool _t979;
-    _t979 = Rsa_VerifySha512(pemPublicKey, data, sig);
-    return _t979;
+    unsigned int _t966;
+    _t966 = String_Len(signatureB64);
+    _t967 = (int)_t966;
+    _t968 = &outlen;
+    const char* _t969;
+    _t969 = bux_base64_decode(signatureB64, _t967, _t968);
+    sig = _t969;
+    bool _t970;
+    _t970 = Rsa_VerifySha512(pemPublicKey, data, sig);
+    return _t970;
 }
 
 int Main(void) {
-    int _t986;
+    int _t977;
     const char* hello;
     hello = "Hello";
     const char* world;
     world = "World";
     PrintLine("String operations:");
     PrintLine("Length of 'Hello':");
-    unsigned int _t980;
-    _t980 = String_Len(hello);
-    PrintInt(_t980);
+    unsigned int _t971;
+    _t971 = String_Len(hello);
+    PrintInt(_t971);
     PrintLine("");
     const char* greeting;
-    const char* _t981;
-    _t981 = String_Concat(hello, ", ");
-    greeting = _t981;
+    const char* _t972;
+    _t972 = String_Concat(hello, ", ");
+    greeting = _t972;
     const char* greeting2;
-    const char* _t982;
-    _t982 = String_Concat(greeting, world);
-    greeting2 = _t982;
+    const char* _t973;
+    _t973 = String_Concat(greeting, world);
+    greeting2 = _t973;
     const char* full;
-    const char* _t983;
-    _t983 = String_Concat(greeting2, "!");
-    full = _t983;
+    const char* _t974;
+    _t974 = String_Concat(greeting2, "!");
+    full = _t974;
     PrintLine("Concatenated:");
     PrintLine(full);
-    bool _t984;
-    _t984 = String_Eq(hello, "Hello");
-    if (!_t984) goto endif321;
+    bool _t975;
+    _t975 = String_Eq(hello, "Hello");
+    if (!_t975) goto endif308;
     {
     PrintLine("'Hello' equals 'Hello'");
     }
-    endif321:;
-    bool _t985;
-    _t985 = String_Eq(hello, world);
-    _t986 = !_t985;
-    if (!_t986) goto endif323;
+    endif308:;
+    bool _t976;
+    _t976 = String_Eq(hello, world);
+    _t977 = !_t976;
+    if (!_t977) goto endif310;
     {
     PrintLine("'Hello' does not equal 'World'");
     }
-    endif323:;
+    endif310:;
     return 0;
 }
 

@@ -3,7 +3,7 @@
 ## Each HIR node kind lowers to 1-20 LIR instructions.
 
 import std/[strutils, strformat, tables, sequtils]
-import ast, types, token, hir, lir
+import types, token, hir, lir
 
 ## Convert LirValue to C expression string (no % prefix)
 proc lirValToC(v: LirValue): string =
@@ -429,7 +429,6 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
   # ── SizeOf ──
   of hSizeOf:
     let ctype = typeToCStr(node.sizeOfType)
-    let t = b.freshTemp()
     b.emit(LirInstr(kind: lirRawC, src: lirStr(&"/* sizeof({ctype}) */")))
     return lirVar(&"sizeof({ctype})")
 
@@ -608,7 +607,6 @@ proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode) =
   # ── While statement ──
   of hWhile:
     let startLbl = b.freshLabel("while")
-    let bodyLbl = b.freshLabel("wbody")
     let endLbl = b.freshLabel("wend")
 
     ctx.loopStartLabels.add(startLbl.strVal)
@@ -750,9 +748,8 @@ proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode) =
     for stmt in node.blockStmts:
       lowerStmt(ctx, stmt)
     if node.blockExpr != nil:
-      let exprVal = lowerExpr(ctx, node.blockExpr)
-      # If block is an expression, store result
-      discard
+      # If block is an expression, result is unused at statement level
+      discard lowerExpr(ctx, node.blockExpr)
     if node.isScope:
       b.emitRawC("}")
 
@@ -762,9 +759,8 @@ proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode) =
 
   # ── Expression statement ──
   else:
-    let exprVal = lowerExpr(ctx, node)
     # Expression evaluated for side effects; temp is unused
-    discard
+    discard lowerExpr(ctx, node)
 
 # ── Module-level lowering ──
 

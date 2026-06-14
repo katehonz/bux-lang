@@ -1,0 +1,107 @@
+module Http {
+
+import Std::Array::{Array};
+import Std::String::{String_Eq, String_EndsWith, String_Contains};
+
+pub enum HttpMethod {
+    GET,
+    POST,
+    PUT,
+    DELETE,
+    PATCH,
+    HEAD,
+    OPTIONS,
+    UNKNOWN,
+}
+
+pub struct HeaderEntry {
+    key: String;
+    value: String;
+}
+
+pub struct HttpRequest {
+    method: HttpMethod;
+    path: String;
+    version: String;
+    body: String;
+    headers: Array<HeaderEntry>;
+}
+
+pub struct HttpResponse {
+    statusCode: int;
+    contentType: String;
+    body: String;
+    extraHeaders: String;
+}
+
+pub func Http_StatusText(code: int) -> String {
+    if code == 200 { return "OK"; }
+    if code == 201 { return "Created"; }
+    if code == 204 { return "No Content"; }
+    if code == 301 { return "Moved Permanently"; }
+    if code == 302 { return "Found"; }
+    if code == 304 { return "Not Modified"; }
+    if code == 400 { return "Bad Request"; }
+    if code == 401 { return "Unauthorized"; }
+    if code == 403 { return "Forbidden"; }
+    if code == 404 { return "Not Found"; }
+    if code == 405 { return "Method Not Allowed"; }
+    if code == 413 { return "Payload Too Large"; }
+    if code == 414 { return "URI Too Long"; }
+    if code == 500 { return "Internal Server Error"; }
+    if code == 501 { return "Not Implemented"; }
+    if code == 503 { return "Service Unavailable"; }
+    return "Unknown";
+}
+
+pub func Http_MimeType(path: String) -> String {
+    if String_EndsWith(path, ".html") || String_EndsWith(path, ".htm") { return "text/html; charset=utf-8"; }
+    if String_EndsWith(path, ".css")   { return "text/css; charset=utf-8"; }
+    if String_EndsWith(path, ".js")    { return "application/javascript; charset=utf-8"; }
+    if String_EndsWith(path, ".json")  { return "application/json; charset=utf-8"; }
+    if String_EndsWith(path, ".xml")   { return "application/xml; charset=utf-8"; }
+    if String_EndsWith(path, ".txt")   { return "text/plain; charset=utf-8"; }
+    if String_EndsWith(path, ".png")   { return "image/png"; }
+    if String_EndsWith(path, ".jpg") || String_EndsWith(path, ".jpeg") { return "image/jpeg"; }
+    if String_EndsWith(path, ".gif")   { return "image/gif"; }
+    if String_EndsWith(path, ".svg")   { return "image/svg+xml"; }
+    if String_EndsWith(path, ".ico")   { return "image/x-icon"; }
+    if String_EndsWith(path, ".webp")  { return "image/webp"; }
+    if String_EndsWith(path, ".woff2") { return "font/woff2"; }
+    if String_EndsWith(path, ".woff")  { return "font/woff"; }
+    if String_EndsWith(path, ".wasm")  { return "application/wasm"; }
+    return "application/octet-stream";
+}
+
+pub func Http_MethodName(m: HttpMethod) -> String {
+    match m {
+        HttpMethod::GET     => "GET",
+        HttpMethod::POST    => "POST",
+        HttpMethod::PUT     => "PUT",
+        HttpMethod::DELETE  => "DELETE",
+        HttpMethod::PATCH   => "PATCH",
+        HttpMethod::HEAD    => "HEAD",
+        HttpMethod::OPTIONS => "OPTIONS",
+        HttpMethod::UNKNOWN => "UNKNOWN",
+    }
+}
+
+pub func Http_NewResponse(code: int, contentType: String, body: String) -> HttpResponse {
+    var resp: HttpResponse;
+    resp.statusCode = code;
+    resp.contentType = contentType;
+    resp.body = body;
+    resp.extraHeaders = "";
+    return resp;
+}
+
+pub func RequestHeader_Get(req: HttpRequest, key: String) -> String {
+    for entry in req.headers {
+        if String_Eq(entry.key, key) {
+            return entry.value;
+        }
+    }
+    return "";
+}
+
+}

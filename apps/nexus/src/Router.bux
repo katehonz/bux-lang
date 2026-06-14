@@ -1,0 +1,46 @@
+module Router {
+
+import Std::Array::{Array};
+import Std::String::{String_Eq};
+import Http::{HttpMethod, HttpRequest, HttpResponse, Http_NewResponse};
+import Handlers::{ServeStaticFile, HandleApiHealth, HandleApiInfo, HandleWebSocketUpgrade, NotFoundResponse};
+
+pub enum Handler {
+    StaticFile,
+    ApiHealth,
+    ApiInfo,
+    WsUpgrade,
+    NotFound,
+}
+
+pub struct Route {
+    method: HttpMethod;
+    path: String;
+    handler: Handler;
+}
+
+pub struct Router {
+    routes: Array<Route>;
+    notFound: Handler;
+}
+
+pub func Handler_Handle(h: Handler, req: HttpRequest) -> HttpResponse {
+    match h {
+        Handler::StaticFile => ServeStaticFile(req),
+        Handler::ApiHealth  => HandleApiHealth(),
+        Handler::ApiInfo    => HandleApiInfo(),
+        Handler::WsUpgrade  => HandleWebSocketUpgrade(req),
+        Handler::NotFound   => NotFoundResponse(),
+    }
+}
+
+pub func Router_Dispatch(r: Router, req: HttpRequest) -> HttpResponse {
+    for route in r.routes {
+        if route.method == req.method && String_Eq(route.path, req.path) {
+            return Handler_Handle(route.handler, req);
+        }
+    }
+    return Handler_Handle(r.notFound, req);
+}
+
+}

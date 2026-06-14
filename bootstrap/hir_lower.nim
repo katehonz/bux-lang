@@ -42,22 +42,37 @@ proc flushPending(ctx: var LowerCtx, node: HirNode): HirNode =
     return hirBlock(stmts, nil, makeVoid(), node.loc)
   return node
 
+proc enumHasDataVariants(ctx: var LowerCtx, enumName: string): bool =
+  let sym = ctx.globalScope.lookup(enumName)
+  if sym != nil and sym.decl != nil and sym.decl.kind == dkEnum:
+    for v in sym.decl.declEnumVariants:
+      if v.fields.len > 0 or v.namedFields.len > 0:
+        return true
+  return false
+
 proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ: Type, loc: SourceLocation): HirNode =
   # Lower match expression to a block with if-else chain.
   # For now, supports enum tag matching and wildcard/ident fallbacks.
   let resultName = ctx.freshName()
   var stmts: seq[HirNode] = @[]
-  
+
   # Allocate result variable
   stmts.add(hirAlloca(resultName, typ, loc))
-  
+
+  # Determine whether the matched enum has data variants (needs .tag access).
+  var subjectEnumName = ""
+  var subjectHasData = false
+  if subject.typ != nil and subject.typ.kind == tkNamed:
+    subjectEnumName = subject.typ.name
+    subjectHasData = ctx.enumHasDataVariants(subjectEnumName)
+
   # Build if-else chain from arms (last arm is the outermost else)
   var ifChain: HirNode = nil
-  
+
   for i in countdown(arms.len - 1, 0):
     let arm = arms[i]
     let body = arm.body
-    
+
     case arm.pattern.kind
     of pkEnum:
       let path = arm.pattern.patEnumPath
@@ -65,19 +80,25 @@ proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ
         let enumName = path[0]
         let variantName = path[^1]
         let tagName = enumName & "_" & variantName
-        
-        # condition: subject.tag == EnumName_VariantName
-        let tagField = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: "tag",
-                               typ: makePointer(makeNamed(enumName & "_Tag")), loc: loc)
-        let tagLoad = HirNode(kind: hLoad, loadPtr: tagField, typ: makeNamed(enumName & "_Tag"), loc: loc)
-        let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName & "_Tag"), loc)
-        let cond = hirBinary(tkEq, tagLoad, tagConst, makeBool(), loc)
-        
+
+        var cond: HirNode
+        if subjectHasData and enumName == subjectEnumName:
+          # Algebraic enum: compare subject.tag
+          let tagField = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: "tag",
+                                 typ: makePointer(makeNamed(enumName & "_Tag")), loc: loc)
+          let tagLoad = HirNode(kind: hLoad, loadPtr: tagField, typ: makeNamed(enumName & "_Tag"), loc: loc)
+          let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName & "_Tag"), loc)
+          cond = hirBinary(tkEq, tagLoad, tagConst, makeBool(), loc)
+        else:
+          # Simple enum or cross-enum match: compare subject directly
+          let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName), loc)
+          cond = hirBinary(tkEq, subject, tagConst, makeBool(), loc)
+
         # body: result = arm_body
         var armStmts: seq[HirNode] = @[]
         armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
         let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
-        
+
         if ifChain == nil:
           ifChain = HirNode(kind: hIf, ifCond: cond, ifThen: armBlock, ifElse: nil,
                             typ: makeVoid(), loc: loc)
@@ -115,9 +136,9 @@ proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ
         ifChain = HirNode(kind: hIf,
           ifCond: hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc),
           ifThen: armBlock, ifElse: ifChain, typ: makeVoid(), loc: loc)
-  
+
   stmts.add(ifChain)
-  
+
   # Return the result variable as the block expression
   return hirBlock(stmts, hirVar(resultName, typ, loc), typ, loc)
 
@@ -397,6 +418,8 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
               if f.ftype != nil:
                 case f.ftype.kind
                 of tekNamed:
+                  if f.ftype.typeArgs.len > 0:
+                    return substituteType(ctx, f.ftype, subst)
                   case f.ftype.typeName
                   of "int", "int32", "int64": return makeInt()
                   of "float64": return makeFloat64()
@@ -417,6 +440,8 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
               if f.ftype != nil:
                 case f.ftype.kind
                 of tekNamed:
+                  if f.ftype.typeArgs.len > 0:
+                    return ctx.resolveTypeExpr(f.ftype)
                   case f.ftype.typeName
                   of "int", "int32", "int64": return makeInt()
                   of "float64": return makeFloat64()
@@ -478,6 +503,10 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     if baseType.isPointer and baseType.inner.len > 0:
       return baseType.inner[0]
     return makeUnknown()
+  of ekMatch:
+    if expr.exprMatchArms.len > 0:
+      return ctx.resolveExprType(expr.exprMatchArms[0].body)
+    return makeUnknown()
   of ekBlock:
     if expr.exprBlock.stmts.len > 0:
       let last = expr.exprBlock.stmts[^1]
@@ -524,6 +553,23 @@ proc getCollectionElementTypeExpr(ctx: var LowerCtx, expr: Expr): TypeExpr =
         return te.typeArgs[0]
       if te.kind in {tekPointer, tekRef, tekMutRef} and te.pointerPointee.kind == tekNamed and te.pointerPointee.typeArgs.len > 0:
         return te.pointerPointee.typeArgs[0]
+  of ekField:
+    # Try to resolve the field's declared TypeExpr directly.
+    let objType = ctx.resolveExprType(expr.exprFieldObj)
+    if objType.kind == tkNamed:
+      var decl = ctx.globalScope.lookup(objType.name).decl
+      if decl == nil and ctx.structInstMap.hasKey(objType.name):
+        let (baseName, _) = ctx.structInstMap[objType.name]
+        let baseSym = ctx.globalScope.lookup(baseName)
+        if baseSym != nil and baseSym.decl != nil and baseSym.decl.kind == dkStruct:
+          decl = baseSym.decl
+      if decl != nil and decl.kind == dkStruct:
+        for f in decl.declStructFields:
+          if f.name == expr.exprFieldName and f.ftype != nil:
+            let fte = f.ftype
+            if fte.kind == tekNamed and fte.typeArgs.len > 0 and (fte.typeName == "Array" or fte.typeName == "Iter" or fte.typeName == "Channel"):
+              return fte.typeArgs[0]
+            return fte
   else:
     discard
   let t = ctx.resolveExprType(expr)
@@ -531,6 +577,11 @@ proc getCollectionElementTypeExpr(ctx: var LowerCtx, expr: Expr): TypeExpr =
     return typeToTypeExpr(t.inner[0])
   if t.isPointer and t.inner.len > 0 and t.inner[0].kind == tkNamed and t.inner[0].inner.len > 0:
     return typeToTypeExpr(t.inner[0].inner[0])
+  # Generic struct instances (e.g. Array_HeaderEntry) store their type args in structInstMap.
+  if t.kind == tkNamed and ctx.structInstMap.hasKey(t.name):
+    let (baseName, concreteArgs) = ctx.structInstMap[t.name]
+    if concreteArgs.len > 0 and (baseName == "Array" or baseName == "Iter" or baseName == "Channel"):
+      return typeToTypeExpr(concreteArgs[0])
   return TypeExpr(kind: tekNamed, typeName: "unknown")
 
 proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs: seq[TypeExpr]): string
@@ -1660,7 +1711,6 @@ proc generateMethodInstance(ctx: var LowerCtx, baseMethodName: string, typeArgs:
   return mangledName
 
 proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc =
-  let loc = expr.loc
   let name = "__closure_" & $ctx.varCounter
   inc ctx.varCounter
   var f = HirFunc(name: name, isPublic: false)

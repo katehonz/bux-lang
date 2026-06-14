@@ -1,5 +1,5 @@
 import std/[unittest, strutils]
-import ../bootstrap/[lexer, parser, sema, types]
+import ../bootstrap/[lexer, parser, sema]
 
 proc checkSource(source: string): SemaResult =
   let lexRes = tokenize(source, "<test>")

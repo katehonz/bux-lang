@@ -1,0 +1,49 @@
+module Main {
+
+import Std::Array::{Array, Array_New, Array_Push};
+
+struct Record {
+    name: String;
+    value: int;
+}
+
+struct Box {
+    items: Array<Record>;
+}
+
+enum Payload {
+    Ok(Record),
+    Err(String),
+}
+
+enum Color { Red, Green }
+
+func Name(c: Color) -> String {
+    match c {
+        Color::Red   => "red",
+        Color::Green => "green",
+    }
+}
+
+func Main() -> int {
+    var box: Box;
+    box.items = Array_New<Record>(4);
+    Array_Push<Record>(&box.items, Record { name: "x", value: 10 });
+
+    for it in box.items {
+        if it.value == 10 {
+            return 0;
+        }
+    }
+
+    var r: Payload;
+    r.tag = Payload_Ok;
+    r.data.Ok_0 = Record { name: "y", value: 20 };
+    if r.data.Ok_0.value == 20 {
+        return 0;
+    }
+
+    return 1;
+}
+
+}

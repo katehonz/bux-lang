@@ -17,9 +17,6 @@ proc initLirCBackend*(): LirCBackend =
     tempTypes: initTable[string, string](),
   )
 
-proc emit(be: var LirCBackend, s: string) =
-  be.output.add(s)
-
 proc emitIndent(be: var LirCBackend) =
   for i in 0 ..< be.indent:
     be.output.add("    ")
@@ -42,21 +39,6 @@ proc valToC(be: var LirCBackend, v: LirValue): string =
   of lvkLabel: v.strVal
   of lvkField: v.strVal
   of lvkType: v.strVal
-
-proc typeFromValue(be: var LirCBackend, v: LirValue): string =
-  ## Infer a C type for a value. Temps are tracked; named vars use lookup.
-  case v.kind
-  of lvkTemp:
-    if be.tempTypes.hasKey(v.strVal):
-      return be.tempTypes[v.strVal]
-    return "int"  # Default
-  of lvkString: return "const char*"
-  of lvkInt: return "int"
-  of lvkFloat: return "double"
-  else: return ""
-
-proc setTempType(be: var LirCBackend, temp: string, cType: string) =
-  be.tempTypes[temp] = cType
 
 proc cParamDecl(cType, name: string): string =
   ## Emit a C parameter declaration, handling function-pointer syntax.
@@ -487,6 +469,26 @@ proc emitEnumDef(be: var LirCBackend, name: string, variants: seq[HirEnumVariant
     be.emitLine(&"}} {name};")
     be.emitLine("")
 
+# ── Type dependency ordering ──
+
+proc collectValueDeps(typ: Type): seq[string] =
+  ## Return type names that must be fully defined before a value of `typ`
+  ## can be declared. Pointers/refs only need a forward declaration, so
+  ## they do not introduce a dependency.
+  if typ == nil: return @[]
+  case typ.kind
+  of tkNamed:
+    return @[typ.name]
+  of tkSlice:
+    return @[typeToCStr(typ)]
+  of tkPointer, tkRef, tkMutRef, tkTuple, tkFunc:
+    return @[]
+  else:
+    return @[]
+
+proc emitSliceTypeDef(be: var LirCBackend, name: string, elem: string) =
+  be.emitLine(&"typedef struct {{ {elem}* data; size_t len; }} {name};")
+
 # ── Module emission ──
 
 proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): string =
@@ -557,36 +559,109 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
         else: discard
     be.emitLine("")
 
-  # Enum definitions
+  # Collect local type names (structs and enums defined in this module).
+  var localTypeNames: HashSet[string]
+  for s in module.structs:
+    localTypeNames.incl(s.name)
   for e in module.enums:
-    be.emitEnumDef(e.name, e.variants)
-  if module.enums.len > 0:
-    be.emitLine("")
+    localTypeNames.incl(e.name)
 
-  # Struct definitions
-  for s in module.structs:
-    be.emitStructDef(s.name, s.fields)
-
-  # Slice types (collect from functions/structs)
-  # Simple: scan function params/returns for slice types
+  # Collect slice types used in struct fields and enum payloads.
   var sliceTypes: seq[tuple[name: string, elem: string]] = @[]
-  var structNames: HashSet[string]
+  var sliceNames: HashSet[string]
+  proc registerSlice(t: Type) =
+    if t == nil or t.kind != tkSlice: return
+    let name = typeToCStr(t)
+    if sliceNames.contains(name): return
+    sliceNames.incl(name)
+    let elem = if t.inner.len > 0: typeToCStr(t.inner[0]) else: "void"
+    sliceTypes.add((name, elem))
+
   for s in module.structs:
-    structNames.incl(s.name)
-  for f in module.funcs:
-    for p in f.params:
-      var ct = typeToCStr(p.typ)
-      # Strip pointer/reference suffix to find the base slice type.
-      while ct.endsWith("*"):
-        ct = ct[0..^2]
-      if ct.startsWith("Slice_"):
-        let elem = ct[6 .. ^1]
-        if not sliceTypes.anyIt(it.name == ct) and not structNames.contains(ct):
-          sliceTypes.add((ct, elem))
-  if sliceTypes.len > 0:
-    for st in sliceTypes:
-      be.emitLine(&"typedef struct {{ {st.elem}* data; size_t len; }} {st.name};")
-    be.emitLine("")
+    for f in s.fields:
+      registerSlice(f.typ)
+  for e in module.enums:
+    for v in e.variants:
+      for ft in v.fields:
+        registerSlice(ft)
+      for nf in v.namedFields:
+        registerSlice(nf.typ)
+
+  # Build dependency graph among structs, enums, and slice types.
+  # Edge A -> B means "A depends on B, so B must be emitted before A".
+  var deps: Table[string, seq[string]]
+  for s in module.structs:
+    deps[s.name] = @[]
+  for e in module.enums:
+    deps[e.name] = @[]
+  for st in sliceTypes:
+    deps[st.name] = @[]
+
+  proc addDeps(node: string, t: Type) =
+    for dep in collectValueDeps(t):
+      if dep == node: continue
+      if localTypeNames.contains(dep) or sliceNames.contains(dep):
+        if dep notin deps[node]:
+          deps[node].add(dep)
+
+  for s in module.structs:
+    for f in s.fields:
+      addDeps(s.name, f.typ)
+  for e in module.enums:
+    for v in e.variants:
+      for ft in v.fields:
+        addDeps(e.name, ft)
+      for nf in v.namedFields:
+        addDeps(e.name, nf.typ)
+
+  # Topological sort (Kahn's algorithm).
+  var inDegree: Table[string, int]
+  var dependents: Table[string, seq[string]]
+  for node in deps.keys:
+    inDegree[node] = 0
+  for node, nodeDeps in deps:
+    for d in nodeDeps:
+      if not inDegree.hasKey(d): inDegree[d] = 0
+      inDegree[node] += 1
+      dependents.mgetOrPut(d, @[]).add(node)
+
+  var queue: seq[string] = @[]
+  for node, deg in inDegree:
+    if deg == 0:
+      queue.add(node)
+
+  var sorted: seq[string] = @[]
+  while queue.len > 0:
+    let node = queue.pop()
+    sorted.add(node)
+    for depNode in dependents.getOrDefault(node):
+      inDegree[depNode] -= 1
+      if inDegree[depNode] == 0:
+        queue.add(depNode)
+
+  if sorted.len < deps.len:
+    # Cycle detected; fall back to a safe deterministic order.
+    sorted = @[]
+    for s in module.structs: sorted.add(s.name)
+    for e in module.enums: sorted.add(e.name)
+    for st in sliceTypes: sorted.add(st.name)
+
+  # Map type names back to their definitions.
+  var structMap: Table[string, seq[tuple[name: string, typ: Type]]]
+  for s in module.structs: structMap[s.name] = s.fields
+  var enumMap: Table[string, seq[HirEnumVariant]]
+  for e in module.enums: enumMap[e.name] = e.variants
+  var sliceMap: Table[string, string]
+  for st in sliceTypes: sliceMap[st.name] = st.elem
+
+  # Emit type definitions in dependency order.
+  for name in sorted:
+    if structMap.hasKey(name):
+      be.emitStructDef(name, structMap[name])
+    elif enumMap.hasKey(name):
+      be.emitEnumDef(name, enumMap[name])
+    elif sliceMap.hasKey(name):
+      be.emitSliceTypeDef(name, sliceMap[name])
 
   # Forward function declarations
   for f in module.funcs:

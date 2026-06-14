@@ -11,8 +11,12 @@ typedef struct RwLock RwLock;
 typedef struct JsonValue JsonValue;
 typedef struct JsonParser JsonParser;
 typedef struct StringBuilder StringBuilder;
+typedef struct Record Record;
+typedef struct Box Box;
 typedef struct Channel_int Channel_int;
 typedef struct Channel_float64 Channel_float64;
+typedef struct Array_Record Array_Record;
+typedef struct Iter_Record Iter_Record;
 
 typedef struct Drop_FatPtr Drop_FatPtr;
 
@@ -202,13 +206,44 @@ typedef struct Channel_float64 {
     void* handle;
 } Channel_float64;
 
+typedef struct Iter_Record {
+    Record* data;
+    unsigned int len;
+    unsigned int pos;
+} Iter_Record;
+
 typedef struct TaskHandle {
     void* handle;
 } TaskHandle;
 
+typedef struct Record {
+    const char* name;
+    int value;
+} Record;
+
+typedef enum {
+    Payload_Ok,
+    Payload_Err
+} Payload_Tag;
+
+typedef union {
+    Record Ok_0;
+    const char* Err_0;
+} Payload_Data;
+
+typedef struct {
+    Payload_Tag tag;
+    Payload_Data data;
+} Payload;
+
 typedef struct RwLock {
     void* handle;
 } RwLock;
+
+typedef enum {
+    Color_Red,
+    Color_Green
+} Color;
 
 typedef struct Channel_int {
     void* handle;
@@ -276,6 +311,16 @@ typedef struct Mutex {
 typedef struct StringBuilder {
     void* handle;
 } StringBuilder;
+
+typedef struct Array_Record {
+    Record* data;
+    unsigned int len;
+    unsigned int cap;
+} Array_Record;
+
+typedef struct Box {
+    Array_Record items;
+} Box;
 
 typedef struct JsonParser {
     const char* src;
@@ -512,8 +557,13 @@ bool Rsa_VerifySha512(const char* pemPublicKey, const char* data, const char* si
 bool Rsa_VerifySha256Base64(const char* pemPublicKey, const char* data, const char* signatureB64);
 bool Rsa_VerifySha384Base64(const char* pemPublicKey, const char* data, const char* signatureB64);
 bool Rsa_VerifySha512Base64(const char* pemPublicKey, const char* data, const char* signatureB64);
-int Fibonacci(int n);
+const char* Name(Color c);
 int Main(void);
+Array_Record Array_New_Record(unsigned int cap);
+void Array_Push_Record(Array_Record* self, Record value);
+Iter_Record Array_Iter_Record(Array_Record* arr);
+bool Iter_HasNext_Record(Iter_Record* it);
+Record Iter_Next_Record(Iter_Record* it);
 
 typedef struct Drop_VTable {
     void (*Drop)(void* self);
@@ -4815,52 +4865,185 @@ bool Rsa_VerifySha512Base64(const char* pemPublicKey, const char* data, const ch
     return _t970;
 }
 
-int Fibonacci(int n) {
+const char* Name(Color c) {
     int _t971;
     int _t972;
-    int _t974;
-    int _t976;
-    _t971 = (n <= 1);
-    if (!_t971) goto endif308;
-    {
-    return n;
-    }
+    const char* __tmp_11;
+    _t971 = (c == Color_Red);
+    if (!_t971) goto else307;
+    __tmp_11 = "red";
+    goto endif308;
+    else307:;
+    _t972 = (c == Color_Green);
+    if (!_t972) goto endif310;
+    __tmp_11 = "green";
+    endif310:;
     endif308:;
-    _t972 = n - 1;
-    int _t973;
-    _t973 = Fibonacci(_t972);
-    _t974 = n - 2;
-    int _t975;
-    _t975 = Fibonacci(_t974);
-    _t976 = _t973 + _t975;
-    return _t976;
+    return __tmp_11;
 }
 
 int Main(void) {
-    int _t977;
-    int _t981;
-    PrintLine("Fibonacci sequence:");
-    int i;
-    i = 0;
-    while309:;
-    _t977 = (i < 10);
-    if (!_t977) goto wend310;
+    Record _t976;
+    void* _t978;
+    void* _t980;
+    void* _t982;
+    int _t985;
+    Record _t986;
+    int _t990;
+    Box box;
+    Array_Record _t973;
+    _t973 = Array_New_Record(4);
+    box.items = _t973;
+    Array_Record _t974;
+    _t974 = box.items;
+    void* _t975;
+    _t975 = &(box.items);
+    _t976 = (Record){.name = "x", .value = 10};
+    Array_Push_Record(_t975, _t976);
     {
-    int fib;
-    int _t978;
-    _t978 = Fibonacci(i);
-    fib = _t978;
-    const char* _t979;
-    _t979 = String_FromInt(fib);
-    const char* _t980;
-    _t980 = Fmt_Fmt1("{0}", _t979);
-    PrintLine(_t980);
-    _t981 = i + 1;
-    i = _t981;
-    }
-    goto while309;
-    wend310:;
+    Array_Record __tmp_13;
+    Array_Record _t977;
+    _t977 = box.items;
+    __tmp_13 = _t977;
+    Iter_Record __iter_it_11;
+    _t978 = &__tmp_13;
+    Iter_Record _t979;
+    _t979 = Array_Iter_Record(_t978);
+    __iter_it_11 = _t979;
+    while311:;
+    _t980 = &__iter_it_11;
+    bool _t981;
+    _t981 = Iter_HasNext_Record(_t980);
+    if (!_t981) goto wend312;
+    Record it;
+    _t982 = &__iter_it_11;
+    Record _t983;
+    _t983 = Iter_Next_Record(_t982);
+    it = _t983;
+    {
+    int _t984;
+    _t984 = it.value;
+    _t985 = (_t984 == 10);
+    if (!_t985) goto endif314;
+    {
     return 0;
+    }
+    endif314:;
+    }
+    goto while311;
+    wend312:;
+    }
+    Payload r;
+    r.tag = Payload_Ok;
+    _t986 = (Record){.name = "y", .value = 20};
+    r.data.Ok_0 = _t986;
+    Payload_Data _t987;
+    _t987 = r.data;
+    Record _t988;
+    _t988 = _t987.Ok_0;
+    int _t989;
+    _t989 = _t988.value;
+    _t990 = (_t989 == 20);
+    if (!_t990) goto endif316;
+    {
+    return 0;
+    }
+    endif316:;
+    return 1;
+}
+
+Array_Record Array_New_Record(unsigned int cap) {
+    int _t991;
+    Record* _t993;
+    Array_Record _t994;
+    Record* data;
+    /* sizeof(Record) */
+    _t991 = cap * sizeof(Record);
+    void* _t992;
+    _t992 = bux_alloc(_t991);
+    _t993 = (Record*)_t992;
+    data = _t993;
+    _t994 = (Array_Record){.data = data, .len = 0, .cap = cap};
+    return _t994;
+}
+
+void Array_Push_Record(Array_Record* self, Record value) {
+    int _t997;
+    int _t999;
+    void* _t1001;
+    int _t1003;
+    Record* _t1005;
+    int _t1009;
+    unsigned int _t995;
+    _t995 = self->len;
+    unsigned int _t996;
+    _t996 = self->cap;
+    _t997 = (_t995 >= _t996);
+    if (!_t997) goto endif318;
+    {
+    unsigned int _t998;
+    _t998 = self->cap;
+    _t999 = _t998 * 2;
+    self->cap = _t999;
+    Record* _t1000;
+    _t1000 = self->data;
+    _t1001 = (void*)_t1000;
+    unsigned int _t1002;
+    _t1002 = self->cap;
+    /* sizeof(Record) */
+    _t1003 = _t1002 * sizeof(Record);
+    void* _t1004;
+    _t1004 = bux_realloc(_t1001, _t1003);
+    _t1005 = (Record*)_t1004;
+    self->data = _t1005;
+    }
+    endif318:;
+    Record* _t1006;
+    _t1006 = self->data;
+    unsigned int _t1007;
+    _t1007 = self->len;
+    _t1006[_t1007] = value;
+    unsigned int _t1008;
+    _t1008 = self->len;
+    _t1009 = _t1008 + 1;
+    self->len = _t1009;
+}
+
+Iter_Record Array_Iter_Record(Array_Record* arr) {
+    Iter_Record _t1012;
+    Record* _t1010;
+    _t1010 = arr->data;
+    unsigned int _t1011;
+    _t1011 = arr->len;
+    _t1012 = (Iter_Record){.data = _t1010, .len = _t1011, .pos = 0};
+    return _t1012;
+}
+
+bool Iter_HasNext_Record(Iter_Record* it) {
+    int _t1015;
+    unsigned int _t1013;
+    _t1013 = it->pos;
+    unsigned int _t1014;
+    _t1014 = it->len;
+    _t1015 = (_t1013 < _t1014);
+    return _t1015;
+}
+
+Record Iter_Next_Record(Iter_Record* it) {
+    int _t1020;
+    Record val;
+    Record* _t1016;
+    _t1016 = it->data;
+    unsigned int _t1017;
+    _t1017 = it->pos;
+    Record _t1018;
+    _t1018 = _t1016[_t1017];
+    val = _t1018;
+    unsigned int _t1019;
+    _t1019 = it->pos;
+    _t1020 = _t1019 + 1;
+    it->pos = _t1020;
+    return val;
 }
 
 /* C entry point wrapper */

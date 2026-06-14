@@ -1,4 +1,4 @@
-import std/[unittest, os, strutils]
+import std/[unittest, os]
 import ../bootstrap/[lexer, parser, ast, token]
 
 proc parseSource(source: string): ParseResult =

@@ -1,5 +1,5 @@
-import std/[unittest, os, strutils]
-import ../bootstrap/[lexer, parser, sema, types]
+import std/[unittest, strutils]
+import ../bootstrap/[lexer, parser, sema]
 
 proc checkSource(source: string): tuple[hasErrors: bool, diagnostics: seq[SemaDiagnostic]] =
   let lexRes = lexer.tokenize(source, "test.bux")

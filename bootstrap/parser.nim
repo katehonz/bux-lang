@@ -62,12 +62,6 @@ proc checkAny(p: Parser, kinds: openArray[TokenKind]): bool =
     if p.peek() == k: return true
   return false
 
-proc match(p: var Parser, kind: TokenKind): bool =
-  if p.check(kind):
-    discard p.advance()
-    return true
-  return false
-
 proc isTypeArgListAhead(p: Parser): bool =
   ## Lookahead to determine if '<' starts a type argument list.
   ## Returns true if we can find a matching '>' before EOF, '{', or ';'.
@@ -788,7 +782,6 @@ proc parseShift(p: var Parser): Expr =
   return left
 
 proc parseCast(p: var Parser): Expr =
-  let loc = p.currentLoc
   var left = p.parseShift()
   # 'as' and 'is' are handled in postfix for chaining
   return left
@@ -1171,7 +1164,6 @@ proc parseParamList(p: var Parser, allowVariadic: bool = false): seq[Param] =
     if p.check(tkRParen) or p.isAtEnd:
       break
     let loc = p.currentLoc
-    var isVar = false
     if allowVariadic and p.check(tkDotDotDot):
       discard p.advance()
       let nameTok = p.at

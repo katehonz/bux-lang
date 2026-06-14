@@ -1,5 +1,5 @@
-import std/[unittest, os, strutils]
-import ../bootstrap/[lexer, token, source_location]
+import std/[unittest, strutils]
+import ../bootstrap/[lexer, token]
 
 proc tokenKinds(source: string): seq[TokenKind] =
   let res = tokenize(source, "<test>")

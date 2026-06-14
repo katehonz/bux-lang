@@ -90,7 +90,6 @@ proc parseInlineTable(s: string): OrderedTableRef[string, TomlValue] =
         if content[i] == '{': inc braceCount
         elif content[i] == '}': dec braceCount
         inc i
-      let val = content[valStart ..< i]
       result[key] = TomlValue(kind: tvkInlineTable, inlineVal: newOrderedTable[string, TomlValue]())
     else:
       while i < content.len and content[i] notin {',', ' ', '\t'}:

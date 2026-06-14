@@ -95,9 +95,6 @@ proc unescapeStringLiteral*(s: string): string =
 proc emitError(sema: var Sema, loc: SourceLocation, message: string) =
   sema.diagnostics.add(SemaDiagnostic(severity: sdsError, loc: loc, message: message))
 
-proc emitWarning(sema: var Sema, loc: SourceLocation, message: string) =
-  sema.diagnostics.add(SemaDiagnostic(severity: sdsWarning, loc: loc, message: message))
-
 proc hasErrors*(res: SemaResult): bool =
   for d in res.diagnostics:
     if d.severity == sdsError:
@@ -1348,12 +1345,12 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     discard sema.checkExpr(expr.exprIsOperand, scope)
     return makeBool()
   of ekTry:
-    let operandType = sema.checkExpr(expr.exprTryOperand, scope)
+    discard sema.checkExpr(expr.exprTryOperand, scope)
     # For now, assume Result<int, String> -> int
     # TODO: check operand is Result/Option and current function returns same type
     return makeInt()
   of ekUnwrap:
-    let operandType = sema.checkExpr(expr.exprUnwrapOperand, scope)
+    discard sema.checkExpr(expr.exprUnwrapOperand, scope)
     # Unwrap: extract Ok value or panic on Err
     return makeInt()
   of ekBlock:
@@ -1363,7 +1360,7 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       lastType = sema.checkStmt(stmt, blockScope)
     return lastType
   of ekMatch:
-    let subjectType = sema.checkExpr(expr.exprMatchSubject, scope)
+    discard sema.checkExpr(expr.exprMatchSubject, scope)
     var resultType = makeUnknown()
     for arm in expr.exprMatchArms:
       var armScope = newScope(scope)
@@ -1398,7 +1395,7 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         expr.exprSpawnAsync = true
     return makePointer(makeVoid())
   of ekAwait:
-    let operand = sema.checkExpr(expr.exprAwaitOperand, scope)
+    discard sema.checkExpr(expr.exprAwaitOperand, scope)
     # await on a task handle returns *void (result pointer)
     return makePointer(makeVoid())
   of ekBorrow:

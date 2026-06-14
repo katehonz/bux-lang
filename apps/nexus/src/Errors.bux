@@ -1,0 +1,65 @@
+module Errors {
+
+import Http::{HttpRequest};
+
+pub enum HttpError {
+    BadRequest,
+    NotFound,
+    MethodNotAllowed,
+    InternalError(String),
+}
+
+pub enum ParseResult {
+    Ok(HttpRequest),
+    Err(HttpError),
+}
+
+pub enum FileResult {
+    Ok(String),
+    Err(HttpError),
+}
+
+pub func ParseResult_NewOk(req: HttpRequest) -> ParseResult {
+    let r: ParseResult = ParseResult { tag: ParseResult_Ok };
+    r.data.Ok_0 = req;
+    return r;
+}
+
+pub func ParseResult_NewErr(err: HttpError) -> ParseResult {
+    let r: ParseResult = ParseResult { tag: ParseResult_Err };
+    r.data.Err_0 = err;
+    return r;
+}
+
+pub func FileResult_NewOk(content: String) -> FileResult {
+    let r: FileResult = FileResult { tag: FileResult_Ok };
+    r.data.Ok_0 = content;
+    return r;
+}
+
+pub func FileResult_NewErr(err: HttpError) -> FileResult {
+    let r: FileResult = FileResult { tag: FileResult_Err };
+    r.data.Err_0 = err;
+    return r;
+}
+
+pub func FileResult_IsOk(r: FileResult) -> bool {
+    return r.tag == FileResult_Ok;
+}
+
+pub func FileResult_Unwrap(r: FileResult) -> String {
+    return r.data.Ok_0;
+}
+
+pub func FileResult_UnwrapErr(r: FileResult) -> HttpError {
+    return r.data.Err_0;
+}
+
+pub func HttpError_ToString(err: HttpError) -> String {
+    if err.tag == HttpError_BadRequest       { return "Bad Request"; }
+    if err.tag == HttpError_NotFound         { return "Not Found"; }
+    if err.tag == HttpError_MethodNotAllowed { return "Method Not Allowed"; }
+    return err.data.InternalError_0;
+}
+
+}

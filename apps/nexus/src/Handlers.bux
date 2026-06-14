@@ -1,0 +1,94 @@
+module Handlers {
+
+import Std::String::{String_Eq, String_Contains};
+import Http::{HttpMethod, HttpRequest, HttpResponse, Http_NewResponse, Http_MimeType, RequestHeader_Get};
+import Errors::{HttpError, FileResult, FileResult_NewOk, FileResult_NewErr, FileResult_IsOk, FileResult_Unwrap, FileResult_UnwrapErr, HttpError_ToString};
+
+extern func bux_strlen(s: String) -> uint;
+extern func bux_file_exists(path: String) -> int;
+extern func bux_read_file(path: String) -> String;
+extern func bux_path_join(a: String, b: String) -> String;
+extern func bux_sb_new(initial_cap: uint) -> *void;
+extern func bux_sb_append(sb: *void, s: String);
+extern func bux_sb_append_int(sb: *void, n: int64);
+extern func bux_sb_build(sb: *void) -> String;
+extern func bux_sb_free(sb: *void);
+
+pub func NotFoundResponse() -> HttpResponse {
+    return Http_NewResponse(404, "application/json; charset=utf-8", "{\"error\":\"not_found\"}");
+}
+
+pub func MethodNotAllowedResponse() -> HttpResponse {
+    return Http_NewResponse(405, "text/plain; charset=utf-8", "Method Not Allowed");
+}
+
+pub func ReadStaticFile(requestPath: String) -> FileResult {
+    if String_Contains(requestPath, "..") {
+        return FileResult_NewErr(HttpError { tag: HttpError_NotFound });
+    }
+
+    var filePath: String = requestPath;
+    if String_Eq(filePath, "/") {
+        filePath = "/index.html";
+    }
+
+    let fullPath: String = bux_path_join("public", filePath);
+    if bux_file_exists(fullPath) == 0 {
+        return FileResult_NewErr(HttpError { tag: HttpError_NotFound });
+    }
+
+    let content: String = bux_read_file(fullPath);
+    return FileResult_NewOk(content);
+}
+
+func FileErrorResponse(err: HttpError) -> HttpResponse {
+    match err {
+        HttpError::NotFound => NotFoundResponse(),
+        _ => Http_NewResponse(500, "text/plain; charset=utf-8", HttpError_ToString(err)),
+    }
+}
+
+pub func ServeStaticFile(req: HttpRequest) -> HttpResponse {
+    if req.method != HttpMethod_GET && req.method != HttpMethod_HEAD {
+        return MethodNotAllowedResponse();
+    }
+
+    let result: FileResult = ReadStaticFile(req.path);
+    if FileResult_IsOk(result) {
+        let content: String = FileResult_Unwrap(result);
+        return Http_NewResponse(200, Http_MimeType(req.path), content);
+    }
+    return FileErrorResponse(FileResult_UnwrapErr(result));
+}
+
+pub func HandleApiHealth() -> HttpResponse {
+    return Http_NewResponse(200, "application/json; charset=utf-8",
+        "{\"status\":\"ok\",\"server\":\"Nexus\",\"version\":\"0.2.0\"}");
+}
+
+pub func HandleApiInfo() -> HttpResponse {
+    return Http_NewResponse(200, "application/json; charset=utf-8",
+        "{\"name\":\"Nexus\",\"language\":\"Bux\",\"features\":[\"HTTP/1.1\",\"thread-pool\",\"algebraic-enums\"]}");
+}
+
+pub func HandleWebSocketUpgrade(req: HttpRequest) -> HttpResponse {
+    let wsKey: String = RequestHeader_Get(req, "Sec-WebSocket-Key");
+
+    var resp: HttpResponse;
+    resp.statusCode = 101;
+    resp.contentType = "";
+    resp.body = "";
+
+    let sb: *void = bux_sb_new(256);
+    bux_sb_append(sb, "Upgrade: websocket\r\n");
+    bux_sb_append(sb, "Connection: Upgrade\r\n");
+    bux_sb_append(sb, "Sec-WebSocket-Accept: ");
+    bux_sb_append(sb, wsKey);
+    bux_sb_append(sb, "\r\n");
+    resp.extraHeaders = bux_sb_build(sb);
+    bux_sb_free(sb);
+
+    return resp;
+}
+
+}
