@@ -247,13 +247,24 @@ const C: int = A + B;  // Evaluated at compile time
 ## P2 — Nice to Have
 
 ### 11. Concurrency
+**Status:** ✅ Done in selfhost.
+
 **Why:** Go-style goroutines + channels, but without GC.
 
 **Syntax:**
 ```bux
-let (tx, rx) = Channel::New<int>();
-Task::Spawn(Worker, rx);
+import Std::Task;
+import Std::Channel;
+
+let ch: Channel<int> = Channel_New<int>(3);
+Task_Spawn(Worker as *void, (&ch) as *void);
+Channel_SendInt(&ch, 42);
 ```
+
+**Notes:**
+- Runtime support in `rt/runtime.c`: `bux_task_*` and `bux_channel_*`.
+- Stdlib wrappers: `lib/Task.bux`, `lib/Channel.bux`.
+- `for msg in ch` iterator lowering works in selfhost.
 
 ---
 
@@ -274,4 +285,4 @@ Task::Spawn(Worker, rx);
 13. ✅ **Selfhost bootstrap loop** — Done
 14. ✅ **Destructors / Drop** — Done in selfhost.
 15. ✅ **Bounds checking on slices** — `Slice<T>` with bounds-checked indexing works in selfhost via `lib/Slice.bux`.
-16. **Concurrency** — Green threads + channels.
+16. ✅ **Concurrency** — Green threads + channels work in selfhost.
