@@ -2,7 +2,7 @@
 ## Emits clean, well-structured C code from LIR instructions.
 ## Since LIR is already linear and low-level, C emission is straightforward.
 
-import std/[strutils, strformat, tables, sequtils]
+import std/[strutils, strformat, tables, sequtils, sets]
 import lir, hir, types, token
 
 type
@@ -570,12 +570,18 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
   # Slice types (collect from functions/structs)
   # Simple: scan function params/returns for slice types
   var sliceTypes: seq[tuple[name: string, elem: string]] = @[]
+  var structNames: HashSet[string]
+  for s in module.structs:
+    structNames.incl(s.name)
   for f in module.funcs:
     for p in f.params:
-      let ct = typeToCStr(p.typ)
+      var ct = typeToCStr(p.typ)
+      # Strip pointer/reference suffix to find the base slice type.
+      while ct.endsWith("*"):
+        ct = ct[0..^2]
       if ct.startsWith("Slice_"):
         let elem = ct[6 .. ^1]
-        if not sliceTypes.anyIt(it.name == ct):
+        if not sliceTypes.anyIt(it.name == ct) and not structNames.contains(ct):
           sliceTypes.add((ct, elem))
   if sliceTypes.len > 0:
     for st in sliceTypes:
