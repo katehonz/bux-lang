@@ -273,5 +273,5 @@ Task::Spawn(Worker, rx);
 12. ✅ **CTFE** — Done
 13. ✅ **Selfhost bootstrap loop** — Done
 14. ✅ **Destructors / Drop** — Done in selfhost.
-15. **Bounds checking on slices** — Add `Slice<T>` type with bounds-checked indexing.
+15. ✅ **Bounds checking on slices** — `Slice<T>` with bounds-checked indexing works in selfhost via `lib/Slice.bux`.
 16. **Concurrency** — Green threads + channels.
