@@ -1,7 +1,7 @@
 # Drop Trait / Destructors Design Document
 
 > **Date:** 2026-06-10  
-> **Status:** Approved  
+> **Status:** Superseded — see [2026-06-14-drop-interface-auto-drop-design.md](2026-06-14-drop-interface-auto-drop-design.md)  
 > **Scope:** Selfhost compiler (`src/*.bux`)
 
 ## 1. Problem Statement

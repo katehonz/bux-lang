@@ -184,23 +184,35 @@ for msg in channel {
 ## P1 — High Impact
 
 ### 8. Destructors / `Drop` Trait
+**Status:** ✅ Done in selfhost.
+
 **Why:** `own T` exists but nothing cleans up automatically. Complements `defer`.
 
 **Syntax:**
 ```bux
-extend Array<T> {
-    func Drop(self: own Array<T>) {
-        Array_Free(self);
+import Drop
+
+struct Buffer {
+    ptr: *int
+}
+
+extend Buffer for Drop {
+    func Drop(self: *Buffer) {
+        bux_free(self.ptr as *void);
     }
 }
 ```
 
 **Implementation Steps:**
-1. Define `Drop` interface in stdlib
-2. C backend: emit `Drop(value)` before variable goes out of scope
-3. Respect move semantics — don't drop moved values
+1. ✅ Define `Drop` interface in stdlib (`lib/Drop.bux`)
+2. ✅ HIR lowering: emit `TypeName_Drop(&value)` before variable goes out of scope (selfhost)
+3. ✅ Respect move semantics — moved values are skipped via `CBE_IsMoved`
 
-**Complexity:** High — needs ownership tracking + move semantics.
+**Notes:**
+- Bootstrap compiler still requires explicit `defer` for user-defined cleanup.
+- See `docs/superpowers/specs/2026-06-14-drop-interface-auto-drop-design.md`.
+
+**Complexity:** Medium — reused existing `@[Drop]` auto-drop path and interface method table.
 
 ---
 
@@ -260,6 +272,6 @@ Task::Spawn(Worker, rx);
 11. ✅ **Trait bounds (`T: Comparable`)** — Done
 12. ✅ **CTFE** — Done
 13. ✅ **Selfhost bootstrap loop** — Done
-14. **Destructors / Drop** — High complexity, needs ownership + C backend scope emission. **← NEXT**
+14. ✅ **Destructors / Drop** — Done in selfhost.
 15. **Bounds checking on slices** — Add `Slice<T>` type with bounds-checked indexing.
 16. **Concurrency** — Green threads + channels.

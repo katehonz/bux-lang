@@ -2742,12 +2742,14 @@ func Lcx_BuildAutoDropFree(ctx: *LowerCtx, typeName: String) -> String {
             return String_Concat(String_Concat("Map_Drop_", kType), String_Concat("_", vType));
         }
     }
-    // User-defined types with @[Drop]: look for TypeName_Drop function
+    // User-defined types with @[Drop] OR an explicit TypeName_Drop method
     let typeSym: Symbol = Scope_Lookup(ctx.scope, typeName);
-    if typeSym.kind == skType && typeSym.decl != null as *Decl && typeSym.decl.isDrop != 0 {
+    if typeSym.kind == skType && typeSym.decl != null as *Decl {
         let dropName: String = String_Concat(typeName, "_Drop");
         let dropSym: Symbol = Scope_Lookup(ctx.scope, dropName);
-        if dropSym.decl != null as *Decl {
+        let hasAttr: bool = typeSym.decl.isDrop != 0;
+        let hasMethod: bool = dropSym.decl != null as *Decl;
+        if hasAttr || hasMethod {
             return dropName;
         }
     }
