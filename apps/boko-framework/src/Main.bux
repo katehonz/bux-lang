@@ -1,24 +1,21 @@
 // =============================================================================
-// Boko Example App — demonstrates the framework API
+// Boko Example App — demonstrates the modern framework API
 // =============================================================================
 module Main {
 
 import Std::Io::{PrintLine, Print};
-import Std::String::{String_Eq};
+import Std::String::{
+    String_Eq, String_Len,
+    StringBuilder, StringBuilder_New, StringBuilder_Append,
+    StringBuilder_Build, StringBuilder_Free
+};
 import Boko::{
     App, App_New, App_Run,
     Request, Response,
-    Request_GetQuery, Request_GetPathParam,
     Response_Html, Response_Json, Response_NotFound, Response_Redirect,
     Path_Match,
     HttpVerb
 };
-
-extern func bux_strlen(s: String) -> uint;
-extern func bux_sb_new(initial_cap: uint) -> *void;
-extern func bux_sb_append(sb: *void, s: String);
-extern func bux_sb_build(sb: *void) -> String;
-extern func bux_sb_free(sb: *void);
 
 // =============================================================================
 // Boko_Router — user-defined dispatch (called by the framework)
@@ -31,7 +28,7 @@ func Boko_Router(req: Request) -> Response {
 
     // --- GET /api/health ---
     if String_Eq(req.path, "/api/health") {
-        return Response_Json("{\"status\":\"ok\",\"framework\":\"Boko\",\"version\":\"0.1.0\"}");
+        return Response_Json("{\"status\":\"ok\",\"framework\":\"Boko\",\"version\":\"0.2.0\"}");
     }
 
     // --- GET /api/info ---
@@ -41,43 +38,38 @@ func Boko_Router(req: Request) -> Response {
 
     // --- GET /hello?name=World ---
     if String_Eq(req.path, "/hello") {
-        let name: String = Request_GetQuery(&req, "name");
-        if bux_strlen(name) == 0 { name = "World"; }
-        let sb: *void = bux_sb_new(256);
-        bux_sb_append(sb, "<h1>Hello, ");
-        bux_sb_append(sb, name);
-        bux_sb_append(sb, "!</h1>");
-        let html: String = bux_sb_build(sb);
-        bux_sb_free(sb);
+        var name: String = req.GetQuery("name");
+        if String_Len(name) == 0 { name = "World"; }
+        let html: String = f"<h1>Hello, {name}!</h1>";
         return Response_Html(html);
     }
 
     // --- GET /users/{id} ---
     if Path_Match("/users/{id}", req.path, &req) {
-        let id: String = Request_GetPathParam(&req, "id");
-        let sb: *void = bux_sb_new(128);
-        bux_sb_append(sb, "{\"id\":");
-        bux_sb_append(sb, id);
-        bux_sb_append(sb, ",\"name\":\"User ");
-        bux_sb_append(sb, id);
-        bux_sb_append(sb, "\"}");
-        let json: String = bux_sb_build(sb);
-        bux_sb_free(sb);
+        let id: String = req.GetPathParam("id");
+        let sb: StringBuilder = StringBuilder_New();
+        StringBuilder_Append(&sb, "{\"id\":");
+        StringBuilder_Append(&sb, id);
+        StringBuilder_Append(&sb, ",\"name\":\"User ");
+        StringBuilder_Append(&sb, id);
+        StringBuilder_Append(&sb, "\"}");
+        let json: String = StringBuilder_Build(&sb);
+        StringBuilder_Free(&sb);
         return Response_Json(json);
     }
 
     // --- GET /posts/{postId}/comments/{commentId} ---
     if Path_Match("/posts/{postId}/comments/{commentId}", req.path, &req) {
-        let pid: String = Request_GetPathParam(&req, "postId");
-        let cid: String = Request_GetPathParam(&req, "commentId");
-        let sb: *void = bux_sb_new(128);
-        bux_sb_append(sb, "{\"postId\":");
-        bux_sb_append(sb, pid);
-        bux_sb_append(sb, ",\"commentId\":");
-        bux_sb_append(sb, cid);
-        bux_sb_append(sb, ",\"text\":\"Great post!\"}");
-        let json: String = bux_sb_build(sb);
-        bux_sb_free(sb);
+        let pid: String = req.GetPathParam("postId");
+        let cid: String = req.GetPathParam("commentId");
+        let sb: StringBuilder = StringBuilder_New();
+        StringBuilder_Append(&sb, "{\"postId\":");
+        StringBuilder_Append(&sb, pid);
+        StringBuilder_Append(&sb, ",\"commentId\":");
+        StringBuilder_Append(&sb, cid);
+        StringBuilder_Append(&sb, ",\"text\":\"Great post!\"}");
+        let json: String = StringBuilder_Build(&sb);
+        StringBuilder_Free(&sb);
         return Response_Json(json);
     }
 
@@ -88,12 +80,12 @@ func Boko_Router(req: Request) -> Response {
 
     // --- POST /api/echo ---
     if String_Eq(req.path, "/api/echo") && req.method.tag == HttpVerb_POST {
-        let sb: *void = bux_sb_new(256);
-        bux_sb_append(sb, "{\"echo\":");
-        bux_sb_append(sb, req.body);
-        bux_sb_append(sb, "}");
-        let json: String = bux_sb_build(sb);
-        bux_sb_free(sb);
+        let sb: StringBuilder = StringBuilder_New();
+        StringBuilder_Append(&sb, "{\"echo\":");
+        StringBuilder_Append(&sb, req.body);
+        StringBuilder_Append(&sb, "}");
+        let json: String = StringBuilder_Build(&sb);
+        StringBuilder_Free(&sb);
         return Response_Json(json);
     }
 

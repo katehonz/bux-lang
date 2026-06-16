@@ -1,11 +1,17 @@
 // =============================================================================
 // jwt-pitbul — JWT CLI Tool (encode, decode, verify, keygen)
-// Built with Bux + Std::Crypto
+// Rewritten with modern Bux: algebraic enums, methods, string interpolation,
+// for-in loops, generic arrays, and structured error handling.
 // =============================================================================
 module Main {
 
 import Std::Io::{PrintLine, Print, PrintInt};
-import Std::String::{String_Len, String_Eq, String_Contains};
+import Std::String::{
+    String_Len, String_Eq,
+    String_SplitCount, String_SplitPart,
+    StringBuilder, StringBuilder_New, StringBuilder_Append,
+    StringBuilder_AppendInt, StringBuilder_Build, StringBuilder_Free
+};
 import Std::Crypto::Jwt::{
     JwtAlg,
     Jwt_MakeHeader,
@@ -22,24 +28,191 @@ extern func bux_argv(index: int) -> String;
 extern func bux_alloc(size: uint) -> *void;
 extern func bux_read_file(path: String) -> String;
 extern func bux_file_exists(path: String) -> int;
-extern func bux_str_split_part(s: String, delim: String, index: uint) -> String;
-extern func bux_str_split_count(s: String, delim: String) -> uint;
 extern func bux_base64_encode(data: String, len: int) -> String;
+
+// =============================================================================
+// Constants
+// =============================================================================
+const AppName: String = "jwt-pitbul";
+const Version: String = "0.2.0";
+
+// =============================================================================
+// Algebraic enums for optionals and results
+// =============================================================================
+enum AlgOption {
+    Some(JwtAlg),
+    None,
+}
+
+func AlgOption_MakeSome(value: JwtAlg) -> AlgOption {
+    let o: AlgOption = AlgOption { tag: AlgOption_Some };
+    o.data.Some_0 = value;
+    return o;
+}
+
+func AlgOption_MakeNone() -> AlgOption {
+    return AlgOption { tag: AlgOption_None };
+}
+
+enum CmdOption {
+    Some(Cmd),
+    None,
+}
+
+func CmdOption_MakeSome(value: Cmd) -> CmdOption {
+    let o: CmdOption = CmdOption { tag: CmdOption_Some };
+    o.data.Some_0 = value;
+    return o;
+}
+
+func CmdOption_MakeNone() -> CmdOption {
+    return CmdOption { tag: CmdOption_None };
+}
+
+enum KeyTypeOption {
+    Some(KeyType),
+    None,
+}
+
+func KeyTypeOption_MakeSome(value: KeyType) -> KeyTypeOption {
+    let o: KeyTypeOption = KeyTypeOption { tag: KeyTypeOption_Some };
+    o.data.Some_0 = value;
+    return o;
+}
+
+func KeyTypeOption_MakeNone() -> KeyTypeOption {
+    return KeyTypeOption { tag: KeyTypeOption_None };
+}
+
+enum KeyResult {
+    Ok(String),
+    Err(String),
+}
+
+func KeyResult_MakeOk(value: String) -> KeyResult {
+    let r: KeyResult = KeyResult { tag: KeyResult_Ok };
+    r.data.Ok_0 = value;
+    return r;
+}
+
+func KeyResult_MakeErr(msg: String) -> KeyResult {
+    let r: KeyResult = KeyResult { tag: KeyResult_Err };
+    r.data.Err_0 = msg;
+    return r;
+}
+
+enum ExitResult {
+    Ok(int),
+    Err(String),
+}
+
+func ExitResult_MakeOk(value: int) -> ExitResult {
+    let r: ExitResult = ExitResult { tag: ExitResult_Ok };
+    r.data.Ok_0 = value;
+    return r;
+}
+
+func ExitResult_MakeErr(msg: String) -> ExitResult {
+    let r: ExitResult = ExitResult { tag: ExitResult_Err };
+    r.data.Err_0 = msg;
+    return r;
+}
+
+// =============================================================================
+// Commands
+// =============================================================================
+enum Cmd {
+    Sign,
+    Verify,
+    Decode,
+    Keygen,
+    Help,
+}
+
+func ParseCmd(name: String) -> CmdOption {
+    if String_Eq(name, "sign")   { return CmdOption_MakeSome(Cmd { tag: Cmd_Sign }); }
+    if String_Eq(name, "verify") { return CmdOption_MakeSome(Cmd { tag: Cmd_Verify }); }
+    if String_Eq(name, "decode") { return CmdOption_MakeSome(Cmd { tag: Cmd_Decode }); }
+    if String_Eq(name, "keygen") { return CmdOption_MakeSome(Cmd { tag: Cmd_Keygen }); }
+    if String_Eq(name, "help") || String_Eq(name, "--help") || String_Eq(name, "-h") {
+        return CmdOption_MakeSome(Cmd { tag: Cmd_Help });
+    }
+    return CmdOption_MakeNone();
+}
+
+// =============================================================================
+// Key type generation
+// =============================================================================
+enum KeyType {
+    Rsa,
+    Ecdsa,
+    Ed25519,
+}
+
+func ParseKeyType(name: String) -> KeyTypeOption {
+    if String_Eq(name, "rsa")     { return KeyTypeOption_MakeSome(KeyType { tag: KeyType_Rsa }); }
+    if String_Eq(name, "ecdsa")   { return KeyTypeOption_MakeSome(KeyType { tag: KeyType_Ecdsa }); }
+    if String_Eq(name, "ed25519") { return KeyTypeOption_MakeSome(KeyType { tag: KeyType_Ed25519 }); }
+    return KeyTypeOption_MakeNone();
+}
+
+// =============================================================================
+// Extend JwtAlg with parsing / introspection methods
+// =============================================================================
+extend JwtAlg {
+    func Name(self: JwtAlg) -> String {
+        match self {
+            JwtAlg::HS256 => "HS256",
+            JwtAlg::HS384 => "HS384",
+            JwtAlg::HS512 => "HS512",
+            JwtAlg::RS256 => "RS256",
+            JwtAlg::RS384 => "RS384",
+            JwtAlg::RS512 => "RS512",
+            JwtAlg::ES256 => "ES256",
+            JwtAlg::ES384 => "ES384",
+            JwtAlg::EdDSA => "EdDSA",
+            _ => "HS256",
+        }
+    }
+
+    func IsHmac(self: JwtAlg) -> bool {
+        return self.tag == JwtAlg_HS256 || self.tag == JwtAlg_HS384 || self.tag == JwtAlg_HS512;
+    }
+
+    func NeedsPemFile(self: JwtAlg) -> bool {
+        return self.tag == JwtAlg_RS256 || self.tag == JwtAlg_RS384 || self.tag == JwtAlg_RS512 ||
+               self.tag == JwtAlg_ES256 || self.tag == JwtAlg_ES384;
+    }
+
+}
+
+func ParseAlg(name: String) -> AlgOption {
+    if String_Eq(name, "HS256") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_HS256 }); }
+    if String_Eq(name, "HS384") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_HS384 }); }
+    if String_Eq(name, "HS512") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_HS512 }); }
+    if String_Eq(name, "RS256") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_RS256 }); }
+    if String_Eq(name, "RS384") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_RS384 }); }
+    if String_Eq(name, "RS512") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_RS512 }); }
+    if String_Eq(name, "ES256") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_ES256 }); }
+    if String_Eq(name, "ES384") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_ES384 }); }
+    if String_Eq(name, "EdDSA") { return AlgOption_MakeSome(JwtAlg { tag: JwtAlg_EdDSA }); }
+    return AlgOption_MakeNone();
+}
 
 // =============================================================================
 // Help / Usage
 // =============================================================================
 func PrintUsage() {
     PrintLine("╔══════════════════════════════════════════════════════╗");
-    PrintLine("║  jwt-pitbul — JWT CLI Tool v0.1.0                   ║");
+    PrintLine(f"║  {AppName} — JWT CLI Tool v{Version}                  ║");
     PrintLine("║  Sign, verify, decode JSON Web Tokens               ║");
     PrintLine("╚══════════════════════════════════════════════════════╝");
     PrintLine("");
     PrintLine("Usage:");
-    PrintLine("  jwt-pitbul sign <alg> <key> <claims>");
-    PrintLine("  jwt-pitbul verify <token> <alg> <key>");
-    PrintLine("  jwt-pitbul decode <token>");
-    PrintLine("  jwt-pitbul keygen <type>");
+    PrintLine(f"  {AppName} sign <alg> <key> <claims>");
+    PrintLine(f"  {AppName} verify <token> <alg> <key>");
+    PrintLine(f"  {AppName} decode <token>");
+    PrintLine(f"  {AppName} keygen <type>");
     PrintLine("");
     PrintLine("Commands:");
     PrintLine("  sign     Create a signed JWT from claims JSON");
@@ -60,130 +233,109 @@ func PrintUsage() {
     PrintLine("  EdDSA: base64-encoded 32-byte raw key");
     PrintLine("");
     PrintLine("Key generation:");
-    PrintLine("  jwt-pitbul keygen rsa       # RSA 2048-bit (PEM)");
-    PrintLine("  jwt-pitbul keygen ecdsa     # ECDSA P-256 (PEM)");
-    PrintLine("  jwt-pitbul keygen ed25519   # Ed25519 (raw base64)");
+    PrintLine(f"  {AppName} keygen rsa       # RSA 2048-bit (PEM)");
+    PrintLine(f"  {AppName} keygen ecdsa     # ECDSA P-256 (PEM)");
+    PrintLine(f"  {AppName} keygen ed25519   # Ed25519 (raw base64)");
     PrintLine("");
     PrintLine("Examples:");
-    PrintLine("  jwt-pitbul sign HS256 'my-secret' '{\"sub\":\"123\"}'");
-    PrintLine("  jwt-pitbul verify eyJh... HS256 'my-secret'");
-    PrintLine("  jwt-pitbul decode eyJh...");
-    PrintLine("  jwt-pitbul keygen ed25519");
+    Print(f"  {AppName} sign HS256 'my-secret' ");
+    PrintLine("'{\"sub\":\"123\"}'");
+    PrintLine(f"  {AppName} verify eyJh... HS256 'my-secret'");
+    PrintLine(f"  {AppName} decode eyJh...");
+    PrintLine(f"  {AppName} keygen ed25519");
 }
 
 // =============================================================================
-// Algorithm name → JwtAlg enum
+// Key resolution — for RSA/ECDSA, read PEM file; for HMAC/EdDSA, pass through
 // =============================================================================
-func ParseAlg(name: String) -> JwtAlg {
-    if String_Eq(name, "HS256") { return JwtAlg { tag: JwtAlg_HS256 }; }
-    if String_Eq(name, "HS384") { return JwtAlg { tag: JwtAlg_HS384 }; }
-    if String_Eq(name, "HS512") { return JwtAlg { tag: JwtAlg_HS512 }; }
-    if String_Eq(name, "RS256") { return JwtAlg { tag: JwtAlg_RS256 }; }
-    if String_Eq(name, "RS384") { return JwtAlg { tag: JwtAlg_RS384 }; }
-    if String_Eq(name, "RS512") { return JwtAlg { tag: JwtAlg_RS512 }; }
-    if String_Eq(name, "ES256") { return JwtAlg { tag: JwtAlg_ES256 }; }
-    if String_Eq(name, "ES384") { return JwtAlg { tag: JwtAlg_ES384 }; }
-    if String_Eq(name, "EdDSA") { return JwtAlg { tag: JwtAlg_EdDSA }; }
-    return JwtAlg { tag: JwtAlg_HS256 };
-}
-
-// =============================================================================
-// Resolve key — for RSA/ECDSA, read PEM file; for HMAC/EdDSA, pass through
-// =============================================================================
-func ResolveKey(alg: JwtAlg, keyArg: String) -> String {
-    // RSA and ECDSA: key is a path to PEM file
-    if alg.tag == JwtAlg_RS256 || alg.tag == JwtAlg_RS384 || alg.tag == JwtAlg_RS512 ||
-       alg.tag == JwtAlg_ES256 || alg.tag == JwtAlg_ES384 {
-        if bux_file_exists(keyArg) != 0 {
-            let pem: String = bux_read_file(keyArg);
-            if String_Len(pem) > 0 && String_Len(pem) > 0 {
-                return pem;
-            }
-            Print("ERROR: could not read PEM file: ");
-            PrintLine(keyArg);
-            return "";
-        }
-        Print("ERROR: PEM file not found: ");
-        PrintLine(keyArg);
-        return "";
+func ResolveKey(alg: JwtAlg, keyArg: String) -> KeyResult {
+    if !alg.NeedsPemFile() {
+        return KeyResult_MakeOk(keyArg);
     }
 
-    // HMAC and EdDSA: key is used directly
-    return keyArg;
-}
+    if bux_file_exists(keyArg) == 0 {
+        return KeyResult_MakeErr(f"ERROR: PEM file not found: {keyArg}");
+    }
 
-// =============================================================================
-// Check if algorithm is symmetric (HMAC) or asymmetric
-// =============================================================================
-func IsSymmetric(alg: JwtAlg) -> bool {
-    return alg.tag == JwtAlg_HS256 || alg.tag == JwtAlg_HS384 || alg.tag == JwtAlg_HS512;
+    let pem: String = bux_read_file(keyArg);
+    if String_Len(pem) == 0 {
+        return KeyResult_MakeErr(f"ERROR: could not read PEM file: {keyArg}");
+    }
+    return KeyResult_MakeOk(pem);
 }
 
 // =============================================================================
 // Command: sign
 // =============================================================================
-func CmdSign(algName: String, keyArg: String, claimsJson: String) -> int {
-    let alg: JwtAlg = ParseAlg(algName);
-    let key: String = ResolveKey(alg, keyArg);
-    if String_Len(key) == 0 {
-        return 1;
+func CmdSign(algName: String, keyArg: String, claimsJson: String) -> ExitResult {
+    let algOpt: AlgOption = ParseAlg(algName);
+    if algOpt.tag != AlgOption_Some {
+        return ExitResult_MakeErr(f"ERROR: unknown algorithm '{algName}'");
     }
+    let alg: JwtAlg = algOpt.data.Some_0;
+
+    let keyRes: KeyResult = ResolveKey(alg, keyArg);
+    if keyRes.tag != KeyResult_Ok {
+        return ExitResult_MakeErr(keyRes.data.Err_0);
+    }
+    let key: String = keyRes.data.Ok_0;
 
     let header: String = Jwt_MakeHeader(alg);
     let token: String = Jwt_Encode(header, claimsJson, alg, key);
 
     if String_Len(token) == 0 {
-        PrintLine("ERROR: signing failed");
-        return 1;
+        return ExitResult_MakeErr("ERROR: signing failed");
     }
 
     PrintLine(token);
-    return 0;
+    return ExitResult_MakeOk(0);
 }
 
 // =============================================================================
 // Command: verify
 // =============================================================================
-func CmdVerify(token: String, algName: String, keyArg: String) -> int {
-    let alg: JwtAlg = ParseAlg(algName);
-    let key: String = ResolveKey(alg, keyArg);
-    if String_Len(key) == 0 {
-        return 1;
+func CmdVerify(token: String, algName: String, keyArg: String) -> ExitResult {
+    let algOpt: AlgOption = ParseAlg(algName);
+    if algOpt.tag != AlgOption_Some {
+        return ExitResult_MakeErr(f"ERROR: unknown algorithm '{algName}'");
     }
+    let alg: JwtAlg = algOpt.data.Some_0;
+
+    let keyRes: KeyResult = ResolveKey(alg, keyArg);
+    if keyRes.tag != KeyResult_Ok {
+        return ExitResult_MakeErr(keyRes.data.Err_0);
+    }
+    let key: String = keyRes.data.Ok_0;
 
     var header: String = "";
     var payload: String = "";
 
-    let ok: bool = Jwt_Decode(token, alg, key, &header, &payload);
-
-    if ok {
-        PrintLine("✓ Signature valid");
-        PrintLine("");
-        PrintLine("Header:");
-        PrintLine(header);
-        PrintLine("");
-        PrintLine("Payload:");
-        PrintLine(payload);
-        return 0;
+    if !Jwt_Decode(token, alg, key, &header, &payload) {
+        return ExitResult_MakeErr("✗ Signature INVALID (or malformed token)");
     }
 
-    PrintLine("✗ Signature INVALID (or malformed token)");
-    return 1;
+    PrintLine("✓ Signature valid");
+    PrintLine("");
+    PrintLine("Header:");
+    PrintLine(header);
+    PrintLine("");
+    PrintLine("Payload:");
+    PrintLine(payload);
+    return ExitResult_MakeOk(0);
 }
 
 // =============================================================================
 // Command: decode (no verification)
 // =============================================================================
-func CmdDecode(token: String) -> int {
-    let partCount: uint = bux_str_split_count(token, ".");
+func CmdDecode(token: String) -> ExitResult {
+    let partCount: uint = String_SplitCount(token, ".");
     if partCount != 3 {
-        PrintLine("ERROR: not a valid JWT (expected 3 parts)");
-        return 1;
+        return ExitResult_MakeErr("ERROR: not a valid JWT (expected 3 parts)");
     }
 
-    let headerB64: String = bux_str_split_part(token, ".", 0);
-    let payloadB64: String = bux_str_split_part(token, ".", 1);
-    let sigB64: String = bux_str_split_part(token, ".", 2);
+    let headerB64: String = String_SplitPart(token, ".", 0);
+    let payloadB64: String = String_SplitPart(token, ".", 1);
+    let sigB64: String = String_SplitPart(token, ".", 2);
 
     let headerJson: String = Base64URL_Decode(headerB64);
     let payloadJson: String = Base64URL_Decode(payloadB64);
@@ -199,52 +351,84 @@ func CmdDecode(token: String) -> int {
     Print("Signature (base64url): ");
     PrintLine(sigB64);
 
-    return 0;
+    return ExitResult_MakeOk(0);
 }
 
 // =============================================================================
 // Command: keygen
 // =============================================================================
-func CmdKeygen(keyType: String) -> int {
-    if String_Eq(keyType, "ed25519") {
+func CmdKeygen(keyType: String) -> ExitResult {
+    let ktOpt: KeyTypeOption = ParseKeyType(keyType);
+    if ktOpt.tag != KeyTypeOption_Some {
+        return ExitResult_MakeErr(f"ERROR: unknown key type '{keyType}'. Use: rsa, ecdsa, ed25519");
+    }
+    let kt: KeyType = ktOpt.data.Some_0;
+
+    if kt.tag == KeyType_Ed25519 {
         let pubBuf: *void = bux_alloc(32);
         let priv: *void = bux_alloc(32);
         if !Ed25519_Keypair(pubBuf, priv) {
-            PrintLine("ERROR: Ed25519 key generation failed (OpenSSL 1.1.1+ required)");
-            return 1;
+            return ExitResult_MakeErr("ERROR: Ed25519 key generation failed (OpenSSL 1.1.1+ required)");
         }
         let pubB64: String = bux_base64_encode(pubBuf as String, 32);
         let privB64: String = bux_base64_encode(priv as String, 32);
         PrintLine("Ed25519 keypair (base64):");
-        Print("  Public:  ");
-        PrintLine(pubB64);
-        Print("  Private: ");
-        PrintLine(privB64);
-        return 0;
+        PrintLine(f"  Public:  {pubB64}");
+        PrintLine(f"  Private: {privB64}");
+        return ExitResult_MakeOk(0);
     }
-
-    if String_Eq(keyType, "rsa") {
+    if kt.tag == KeyType_Rsa {
         PrintLine("RSA key generation requires OpenSSL CLI:");
         PrintLine("  openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048");
         PrintLine("  openssl rsa -in private.pem -pubout -out public.pem");
         PrintLine("");
         PrintLine("(Key generation from within Bux requires PEM write support — coming soon)");
-        return 0;
+        return ExitResult_MakeOk(0);
     }
-
-    if String_Eq(keyType, "ecdsa") {
+    if kt.tag == KeyType_Ecdsa {
         PrintLine("ECDSA key generation requires OpenSSL CLI:");
         PrintLine("  openssl ecparam -genkey -name prime256v1 -noout -out ec_private.pem");
         PrintLine("  openssl ec -in ec_private.pem -pubout -out ec_public.pem");
         PrintLine("");
         PrintLine("(Key generation from within Bux requires PEM write support — coming soon)");
-        return 0;
+        return ExitResult_MakeOk(0);
     }
+    return ExitResult_MakeErr(f"ERROR: unknown key type '{keyType}'");
+}
 
-    Print("ERROR: unknown key type '");
-    Print(keyType);
-    PrintLine("'. Use: rsa, ecdsa, ed25519");
-    return 1;
+// =============================================================================
+// Dispatch a parsed command to its handler
+// =============================================================================
+func RunCommand(cmd: Cmd, args: Array<String>) -> ExitResult {
+    if cmd.tag == Cmd_Help {
+        PrintUsage();
+        return ExitResult_MakeOk(0);
+    }
+    if cmd.tag == Cmd_Sign {
+        if args.len < 5 {
+            return ExitResult_MakeErr("ERROR: 'sign' requires: <alg> <key> <claims_json>");
+        }
+        return CmdSign(args[2], args[3], args[4]);
+    }
+    if cmd.tag == Cmd_Verify {
+        if args.len < 5 {
+            return ExitResult_MakeErr("ERROR: 'verify' requires: <token> <alg> <key>");
+        }
+        return CmdVerify(args[2], args[3], args[4]);
+    }
+    if cmd.tag == Cmd_Decode {
+        if args.len < 3 {
+            return ExitResult_MakeErr("ERROR: 'decode' requires: <token>");
+        }
+        return CmdDecode(args[2]);
+    }
+    if cmd.tag == Cmd_Keygen {
+        if args.len < 3 {
+            return ExitResult_MakeErr("ERROR: 'keygen' requires: <type>");
+        }
+        return CmdKeygen(args[2]);
+    }
+    return ExitResult_MakeErr("ERROR: unhandled command");
 }
 
 // =============================================================================
@@ -253,71 +437,32 @@ func CmdKeygen(keyType: String) -> int {
 func Main() -> int {
     let argc: int = bux_argc();
 
-    if argc < 2 {
-        PrintUsage();
-        return 0;
+    // Collect CLI arguments into a generic Array<String>
+    let args: Array<String> = Array_New<String>(argc as uint);
+    for i in 0..argc {
+        Array_Push<String>(&args, bux_argv(i));
     }
 
-    // Collect arguments
-    let args: *String = bux_alloc(argc as uint * 8) as *String;
-    var i: int = 0;
-    while i < argc {
-        args[i] = bux_argv(i);
-        i = i + 1;
+    if args.len < 2 {
+        PrintUsage();
+        return 0;
     }
 
     let command: String = args[1];
-
-    if String_Eq(command, "help") || String_Eq(command, "--help") || String_Eq(command, "-h") {
-        PrintUsage();
-        return 0;
+    let cmdOpt: CmdOption = ParseCmd(command);
+    if cmdOpt.tag != CmdOption_Some {
+        PrintLine(f"ERROR: unknown command '{command}'");
+        PrintLine(f"Run '{AppName} help' for usage.");
+        return 1;
     }
+    let cmd: Cmd = cmdOpt.data.Some_0;
 
-    // --- sign <alg> <key> <claims> ---
-    if String_Eq(command, "sign") {
-        if argc < 5 {
-            PrintLine("ERROR: 'sign' requires: <alg> <key> <claims_json>");
-            PrintLine("  jwt-pitbul sign HS256 'secret' '{\"sub\":\"123\"}'");
-            return 1;
-        }
-        return CmdSign(args[2], args[3], args[4]);
+    let result: ExitResult = RunCommand(cmd, args);
+    if result.tag == ExitResult_Err {
+        PrintLine(result.data.Err_0);
+        return 1;
     }
-
-    // --- verify <token> <alg> <key> ---
-    if String_Eq(command, "verify") {
-        if argc < 5 {
-            PrintLine("ERROR: 'verify' requires: <token> <alg> <key>");
-            PrintLine("  jwt-pitbul verify eyJh... HS256 'secret'");
-            return 1;
-        }
-        return CmdVerify(args[2], args[3], args[4]);
-    }
-
-    // --- decode <token> ---
-    if String_Eq(command, "decode") {
-        if argc < 3 {
-            PrintLine("ERROR: 'decode' requires: <token>");
-            PrintLine("  jwt-pitbul decode eyJh...");
-            return 1;
-        }
-        return CmdDecode(args[2]);
-    }
-
-    // --- keygen <type> ---
-    if String_Eq(command, "keygen") {
-        if argc < 3 {
-            PrintLine("ERROR: 'keygen' requires: <type>");
-            PrintLine("  jwt-pitbul keygen ed25519");
-            return 1;
-        }
-        return CmdKeygen(args[3]);
-    }
-
-    Print("ERROR: unknown command '");
-    Print(command);
-    PrintLine("'");
-    PrintLine("Run 'jwt-pitbul help' for usage.");
-    return 1;
+    return result.data.Ok_0;
 }
 
 } // module Main

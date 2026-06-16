@@ -4,12 +4,14 @@
 
 Boko is a lightweight, multi-threaded web framework that brings FastAPI-style routing to the Bux programming language. It handles HTTP parsing, path pattern matching, query parameter extraction, and response building so you can focus on your application logic.
 
+This version (0.2.0) is rewritten with modern Bux: `struct` methods, generic `StringMap<String>` for headers/query/path params, `for` loops, algebraic enums, `StringBuilder`, and string interpolation.
+
 ## Quick Start
 
 ```bash
 cd apps/boko-framework
 ../../buxc build
-./boko-framework
+./build/boko-framework
 ```
 
 Open `http://localhost:8080` — you'll see the demo landing page.
@@ -20,7 +22,7 @@ Boko follows a **single-dispatch-function** pattern. You define one function —
 
 ```bux
 import Boko::{Request, Response, Response_Json, Response_Html, Response_NotFound,
-              Path_Match, Request_GetQuery, Request_GetPathParam,
+              Path_Match,
               App, App_New, App_Run};
 
 func Boko_Router(req: Request) -> Response {
@@ -36,14 +38,14 @@ func Boko_Router(req: Request) -> Response {
 
     // Route: GET /users/{id} — path parameter
     if Path_Match("/users/{id}", req.path, &req) {
-        let id: String = Request_GetPathParam(&req, "id");
+        let id: String = req.GetPathParam("id");
         // Build JSON response with id
         return Response_Json(...);
     }
 
     // Route: GET /search?q=... — query parameter
     if String_Eq(req.path, "/search") {
-        let q: String = Request_GetQuery(&req, "q");
+        let q: String = req.GetQuery("q");
         return Response_Json(...);
     }
 
@@ -63,16 +65,19 @@ func Main() -> int {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `method` | `HttpVerb` | GET, POST, PUT, DELETE |
+| `method` | `HttpVerb` | GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS |
 | `path` | `String` | Request path (without query string) |
 | `body` | `String` | Request body (for POST/PUT) |
-| `headerCount` | `int` | Number of headers |
+| `headers` | `StringMap<String>` | Parsed request headers |
+| `query` | `StringMap<String>` | Parsed query parameters |
+| `pathParams` | `StringMap<String>` | Extracted path parameters |
 
-| Function | Returns | Description |
-|----------|---------|-------------|
-| `Request_GetHeader(req, name)` | `String` | Get header value by name |
-| `Request_GetQuery(req, name)` | `String` | Get query parameter by name |
-| `Request_GetPathParam(req, name)` | `String` | Get extracted path parameter |
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `req.GetHeader(name)` | `String` | Get header value by name |
+| `req.GetQuery(name)` | `String` | Get query parameter by name |
+| `req.HasQuery(name)` | `bool` | Check if query parameter exists |
+| `req.GetPathParam(name)` | `String` | Get extracted path parameter |
 
 ### Response
 
@@ -96,12 +101,12 @@ func Main() -> int {
 // Extracts:   id=42, postId=7
 
 if Path_Match("/users/{id}/posts/{postId}", req.path, &req) {
-    let userId: String = Request_GetPathParam(&req, "id");      // "42"
-    let postId: String = Request_GetPathParam(&req, "postId");  // "7"
+    let userId: String = req.GetPathParam("id");      // "42"
+    let postId: String = req.GetPathParam("postId");  // "7"
 }
 ```
 
-The function returns `true` if the pattern matches and populates `req.pathParamKeys` / `req.pathParamValues`.
+The function returns `true` if the pattern matches and populates `req.pathParams`.
 
 ### App
 

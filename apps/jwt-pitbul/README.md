@@ -4,12 +4,14 @@
 
 A standalone command-line utility for working with JSON Web Tokens (RFC 7519). Built on `Std::Crypto`, backed by OpenSSL.
 
+This version (0.2.0) is rewritten with modern Bux: algebraic enums, generic `Array<String>`, methods on `JwtAlg`, string interpolation, `for` loops, and structured `Result`/`Option`-style error handling.
+
 ## Quick Start
 
 ```bash
 cd apps/jwt-pitbul
 ../../buxc build
-./jwt-pitbul
+./build/jwt-pitbul
 ```
 
 ## Commands
