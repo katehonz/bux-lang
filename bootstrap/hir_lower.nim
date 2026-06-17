@@ -481,7 +481,15 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     return makeSlice(makeUnknown())
   of ekRange:
     let loType = ctx.resolveExprType(expr.exprRangeLo)
-    return makeRange(loType)
+    let hiType = ctx.resolveExprType(expr.exprRangeHi)
+    if loType == hiType:
+      return makeRange(loType)
+    elif loType.isAssignableTo(hiType):
+      return makeRange(hiType)
+    elif hiType.isAssignableTo(loType):
+      return makeRange(loType)
+    else:
+      return makeRange(loType)
   of ekTuple:
     var elems: seq[Type] = @[]
     for e in expr.exprTupleElements:
@@ -1377,7 +1385,8 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
       let inclusive = iterExpr.exprRangeInclusive
       
       # Determine loop variable type from range bounds
-      let varType = ctx.resolveExprType(iterExpr.exprRangeLo)
+      let rangeType = ctx.resolveExprType(iterExpr)
+      let varType = if rangeType.inner.len > 0: rangeType.inner[0] else: ctx.resolveExprType(iterExpr.exprRangeLo)
       
       # Create: var i = lo; while i < hi { body; i = i + 1; }
       let initStmt = hirAlloca(varName, varType, loc)

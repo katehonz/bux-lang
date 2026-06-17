@@ -242,8 +242,7 @@ func Query_Parse(queryString: String) -> StringMap<String> {
     }
 
     let pairCount: uint = String_SplitCount(queryString, "&");
-    var i: uint = 0;
-    while i < pairCount {
+    for i in 0..pairCount {
         let pair: String = String_SplitPart(queryString, "&", i);
         let eqPos: String = String_Find(pair, "=");
         var key: String = pair;
@@ -258,7 +257,6 @@ func Query_Parse(queryString: String) -> StringMap<String> {
             }
         }
         StringMap_Set<String>(&map, key, value);
-        i = i + 1;
     }
     return map;
 }
@@ -317,8 +315,7 @@ func Request_Parse(raw: String) -> Request {
     }
 
     // Parse headers
-    var i: uint = 1;
-    while i < lineCount {
+    for i in 1..lineCount {
         let line: String = String_SplitPart(headerBlock, "\r\n", i);
         let colonPos: String = String_Find(line, ": ");
         if !String_IsNull(colonPos) {
@@ -332,7 +329,6 @@ func Request_Parse(raw: String) -> Request {
             }
             StringMap_Set<String>(&req.headers, key, value);
         }
-        i = i + 1;
     }
 
     return req;
@@ -349,8 +345,7 @@ func Path_Match(pattern: String, path: String, req: *Request) -> bool {
 
     req.pathParams = StringMap_New<String>(8);
 
-    var i: uint = 0;
-    while i < patParts {
+    for i in 0..patParts {
         let patPart: String = String_SplitPart(pattern, "/", i);
         let pathPart: String = String_SplitPart(path, "/", i);
 
@@ -361,7 +356,6 @@ func Path_Match(pattern: String, path: String, req: *Request) -> bool {
         } else {
             if !String_Eq(patPart, pathPart) { return false; }
         }
-        i = i + 1;
     }
 
     return true;
@@ -462,10 +456,8 @@ func App_Run(app: *App) {
     PrintLine("");
 
     // Spawn workers
-    var i: int = 0;
-    while i < app.threadCount - 1 {
+    for i in 0..(app.threadCount - 1) {
         spawn App_Worker(fd);
-        i = i + 1;
     }
 
     // Main thread is the last worker

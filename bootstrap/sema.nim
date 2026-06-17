@@ -1007,9 +1007,16 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
   of ekRange:
     let lo = sema.checkExpr(expr.exprRangeLo, scope)
     let hi = sema.checkExpr(expr.exprRangeHi, scope)
-    if lo != hi:
+    var rangeType: Type = lo
+    if lo == hi:
+      rangeType = lo
+    elif lo.isAssignableTo(hi):
+      rangeType = hi
+    elif hi.isAssignableTo(lo):
+      rangeType = lo
+    else:
       sema.emitError(expr.loc, "range bounds must have same type")
-    return makeRange(lo)
+    return makeRange(rangeType)
   of ekCall:
     if expr.exprCallCallee == nil:
       sema.emitError(expr.loc, "internal error: nil callee in call expression")
