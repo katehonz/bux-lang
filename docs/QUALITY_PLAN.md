@@ -169,4 +169,21 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 3. HIR lower → `hStructInit` of `Tuple_int_int`
 4. C backend: `typedef struct Tuple_int_int { int _0; int _1; }`
 5. Verified with `buxc2` on `examples/tuples.bux`
-```
+
+## Сесия 7 (Iter HOF)
+
+1. `Iter_MapInt` / `FilterInt` / `FoldInt` / `ForEachInt` / `AnyInt` / `AllInt` / `SumInt`
+2. Named funcs + capturing closures (fat ABI)
+3. Example `iter_hof.bux` (sum=15, product=120)
+4. Selfhost fix: pointer `->` field access; no bogus bounds check on `arr.data[len]` (Push)
+
+---
+
+## Утре — предложени следващи стъпки
+
+1. **Match expression** lowering докрай (B.3)
+2. **Още error golden cases** (parse error, use-after-move)
+3. **LSP hover / go-to-def** (над текущите diagnostics)
+4. **Generic Iter map** (не само int), ако monomorphization с `func` params е стабилна
+5. **Selfhost-loop** re-check след fat-func + tuples промените
+
