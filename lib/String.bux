@@ -34,6 +34,10 @@ func String_Len(s: String) -> uint {
     return bux_strlen(s);
 }
 
+func String_IsEmpty(s: String) -> bool {
+    return bux_strlen(s) == 0;
+}
+
 func String_IsNull(s: String) -> bool {
     return bux_str_is_null(s) != 0;
 }
@@ -147,6 +151,39 @@ func StringBuilder_Free(sb: *StringBuilder) {
     bux_sb_free(sb.handle);
 }
 
+/* True if empty or only whitespace (space, tab, CR, LF) */
+func String_IsBlank(s: String) -> bool {
+    let n: uint = bux_strlen(s);
+    var i: uint = 0;
+    while i < n {
+        let ch: String = bux_str_slice(s, i, 1);
+        if !(String_Eq(ch, " ") || String_Eq(ch, "\t") || String_Eq(ch, "\n") || String_Eq(ch, "\r")) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+/* Repeat s, count times (count==0 → empty string) */
+func String_Repeat(s: String, count: uint) -> String {
+    if count == 0 {
+        return "";
+    }
+    if count == 1 {
+        return s;
+    }
+    var sb: StringBuilder = StringBuilder_New();
+    var i: uint = 0;
+    while i < count {
+        StringBuilder_Append(&sb, s);
+        i = i + 1;
+    }
+    let result: String = StringBuilder_Build(&sb);
+    StringBuilder_Free(&sb);
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // String split/join
 // ---------------------------------------------------------------------------
@@ -191,6 +228,33 @@ func String_Replace(s: String, old: String, new: String) -> String {
     let suffix: String = bux_str_slice(s, prefixLen + oldLen, bux_strlen(s) - prefixLen - oldLen);
     let temp: String = String_Concat(prefix, new);
     let result: String = String_Concat(temp, suffix);
+    return result;
+}
+
+/* Replace every non-overlapping occurrence of old with new.
+   Empty old is a no-op (returns s unchanged). Safe if new contains old. */
+func String_ReplaceAll(s: String, old: String, new: String) -> String {
+    let oldLen: uint = bux_strlen(old);
+    if oldLen == 0 {
+        return s;
+    }
+    var sb: StringBuilder = StringBuilder_New();
+    var remaining: String = s;
+    while true {
+        let pos: String = bux_strstr(remaining, old);
+        if String_IsNull(pos) {
+            StringBuilder_Append(&sb, remaining);
+            break;
+        }
+        let prefixLen: uint = String_Offset(pos, remaining);
+        let prefix: String = bux_str_slice(remaining, 0, prefixLen);
+        StringBuilder_Append(&sb, prefix);
+        StringBuilder_Append(&sb, new);
+        let remLen: uint = bux_strlen(remaining);
+        remaining = bux_str_slice(remaining, prefixLen + oldLen, remLen - prefixLen - oldLen);
+    }
+    let result: String = StringBuilder_Build(&sb);
+    StringBuilder_Free(&sb);
     return result;
 }
 

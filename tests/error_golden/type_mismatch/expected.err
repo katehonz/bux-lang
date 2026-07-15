@@ -1,0 +1,7 @@
+error: type errors in project
+error: cannot assign String to int
+  --> FILE:4:18
+    |
+ 4 |     let x: int = "hello";
+    |                  ^^^^^^^
+   = help: ensure the right-hand side type matches the left-hand side

@@ -1,0 +1,21 @@
+// String_IsBlank / String_Repeat
+import Std::Io::{PrintLine};
+import Std::String::{String_IsBlank, String_IsEmpty, String_Repeat, String_Eq, String_Len};
+import Std::Test::{Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_AssertEqString, Test_Pass};
+
+func Main() -> int {
+    Test_AssertTrue(String_IsEmpty(""));
+    Test_AssertTrue(String_IsBlank(""));
+    Test_AssertTrue(String_IsBlank("   \t\n"));
+    Test_AssertFalse(String_IsBlank(" x "));
+
+    let dots: String = String_Repeat(".", 5);
+    Test_AssertEqString(dots, ".....");
+    Test_AssertEqInt(String_Len(String_Repeat("ab", 3)) as int, 6);
+    Test_AssertEqString(String_Repeat("x", 0), "");
+    Test_AssertEqString(String_Repeat("ok", 1), "ok");
+
+    PrintLine(String_Repeat("Bux ", 2));
+    Test_Pass("string_extra");
+    return 0;
+}

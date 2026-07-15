@@ -70,7 +70,8 @@ proc matchStr(lex: var Lexer, s: string): bool =
   return true
 
 proc currentLocation(lex: Lexer): SourceLocation =
-  result = SourceLocation(line: lex.line, column: lex.col, offset: uint32(lex.pos))
+  result = SourceLocation(line: lex.line, column: lex.col, offset: uint32(lex.pos),
+                          file: lex.sourceName)
 
 proc emitError(lex: var Lexer, loc: SourceLocation, message: string) =
   lex.diagnostics.add(LexerDiagnostic(severity: ldsError, loc: loc, message: message))

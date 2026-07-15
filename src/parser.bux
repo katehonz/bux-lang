@@ -399,6 +399,15 @@ func parserParsePrimary(p: *Parser) -> *Expr {
         return parserParseClosure(p);
     }
 
+    // unsafe { ... } — unsafe block expression
+    if kind == tkUnsafe {
+        discard parserAdvance(p);
+        let e: *Expr = parserMakeExpr(ekBlock, line, col);
+        e.boolValue = true; // marks this block as unsafe
+        e.refBlock = parserParseBlock(p);
+        return e;
+    }
+
     parserEmitDiag(p, line, col, "expected expression");
     return parserMakeExpr(ekLiteral, line, col);
 }

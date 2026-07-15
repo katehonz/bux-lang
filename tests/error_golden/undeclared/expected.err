@@ -1,0 +1,7 @@
+error: type errors in project
+error: undeclared identifier 'noSuchVar'
+  --> FILE:4:15
+    |
+ 4 |     PrintLine(noSuchVar);
+    |               ^^^^^^^^^
+   = help: check the spelling, or import the symbol from the right module

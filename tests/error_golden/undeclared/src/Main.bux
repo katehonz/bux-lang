@@ -1,0 +1,6 @@
+import Std::Io::PrintLine;
+
+func Main() -> int {
+    PrintLine(noSuchVar);
+    return 0;
+}

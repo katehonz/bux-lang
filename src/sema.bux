@@ -136,7 +136,6 @@ func Sema_BuildFuncTypeExprFromDecl(decl: *Decl) -> *TypeExpr {
 
 func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
     if te == null as *TypeExpr { return tyUnknown; }
-    let name: String = te.typeName;
 
     if te.kind == tekPointer {
         return tyPointer;
@@ -146,33 +145,7 @@ func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
         return tyFunc;
     }
 
-    if String_Eq(name, "void") { return tyVoid; }
-    if String_Eq(name, "bool") { return tyBool; }
-    if String_Eq(name, "bool8") { return tyBool8; }
-    if String_Eq(name, "bool16") { return tyBool16; }
-    if String_Eq(name, "bool32") { return tyBool32; }
-    if String_Eq(name, "char8") { return tyChar8; }
-    if String_Eq(name, "char16") { return tyChar16; }
-    if String_Eq(name, "char32") { return tyChar32; }
-    if String_Eq(name, "String") { return tyStr; }
-    if String_Eq(name, "str") { return tyStr; }
-    if String_Eq(name, "int8") { return tyInt8; }
-    if String_Eq(name, "int16") { return tyInt16; }
-    if String_Eq(name, "int32") { return tyInt32; }
-    if String_Eq(name, "int64") { return tyInt64; }
-    if String_Eq(name, "int") { return tyInt; }
-    if String_Eq(name, "uint8") { return tyUInt8; }
-    if String_Eq(name, "uint16") { return tyUInt16; }
-    if String_Eq(name, "uint32") { return tyUInt32; }
-    if String_Eq(name, "uint64") { return tyUInt64; }
-    if String_Eq(name, "uint") { return tyUInt; }
-    if String_Eq(name, "float32") { return tyFloat32; }
-    if String_Eq(name, "float64") { return tyFloat64; }
-    if String_Eq(name, "float") { return tyFloat64; }
-
-    // Type resolution uses scope-based lookup via Sema_CollectGlobals
-    // TODO: add StringMap-based type table for faster named-type validation
-    return tyNamed;
+    return Type_FromName(te.typeName);
 }
 
 // ---------------------------------------------------------------------------
@@ -758,10 +731,17 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         return tyUnknown;
     }
 
-    // Block expression
+    // Block expression (boolValue = true means unsafe block)
     if kind == ekBlock {
         if expr.refBlock != null as *Block {
-            Sema_CheckBlock(sema, expr.refBlock);
+            if expr.boolValue {
+                let prevChecked: bool = sema.checkedFunc;
+                sema.checkedFunc = false;
+                Sema_CheckBlock(sema, expr.refBlock);
+                sema.checkedFunc = prevChecked;
+            } else {
+                Sema_CheckBlock(sema, expr.refBlock);
+            }
         }
         return tyVoid;
     }

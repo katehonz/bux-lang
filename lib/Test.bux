@@ -1,5 +1,6 @@
 module Std::Test {
 import Std::Io::{PrintLine, PrintInt};
+import Std::String::{String_Eq};
 
 extern func bux_exit(code: int);
 extern func bux_assert(cond: int, file: String, line: int, expr: String);
@@ -14,10 +15,35 @@ func Test_Assert(cond: bool) {
 
 func Test_AssertEqInt(a: int, b: int) {
     if a != b {
-        PrintLine("ASSERT_EQ FAILED:");
+        PrintLine("ASSERT_EQ_INT FAILED:");
         PrintInt(a);
         PrintLine(" != ");
         PrintInt(b);
+        bux_exit(1);
+    }
+}
+
+func Test_AssertNeqInt(a: int, b: int) {
+    if a == b {
+        PrintLine("ASSERT_NEQ_INT FAILED: both are");
+        PrintInt(a);
+        bux_exit(1);
+    }
+}
+
+func Test_AssertEqString(a: String, b: String) {
+    if !String_Eq(a, b) {
+        PrintLine("ASSERT_EQ_STRING FAILED:");
+        PrintLine(a);
+        PrintLine(" != ");
+        PrintLine(b);
+        bux_exit(1);
+    }
+}
+
+func Test_AssertEqBool(a: bool, b: bool) {
+    if a != b {
+        PrintLine("ASSERT_EQ_BOOL FAILED");
         bux_exit(1);
     }
 }
@@ -40,6 +66,11 @@ func Test_Fail(msg: String) {
     PrintLine("FAIL:");
     PrintLine(msg);
     bux_exit(1);
+}
+
+func Test_Pass(msg: String) {
+    PrintLine("PASS:");
+    PrintLine(msg);
 }
 
 }

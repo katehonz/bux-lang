@@ -128,8 +128,31 @@ proc typeToC*(be: var CBackend, typ: Type): string =
     of "float64": return "double"
     of "bool": return "bool"
     else: return typ.name
-  of tkTuple: return "void*"  # TODO: proper tuple struct
-  of tkFunc: return "void*"  # TODO: function pointer
+  of tkTuple:
+    if typ.inner.len == 0:
+      return "Tuple_Empty"
+    var parts: seq[string] = @[]
+    for e in typ.inner:
+      var p = typeToC(be, e)
+      p = p.replace("const char*", "cstr").replace("unsigned int", "uint")
+      p = p.replace(" ", "_").replace("*", "Ptr").replace("(", "").replace(")", "").replace(",", "_")
+      parts.add(p)
+    let tname = "Tuple_" & parts.join("_")
+    # Ensure typedef is collected alongside slices
+    var already = false
+    for d in be.sliceTypeDefs:
+      if d.name == tname:
+        already = true
+        break
+    if not already:
+      # Reuse sliceTypeDefs as a generic "extra typedef" bag: elem holds field list markup
+      be.sliceTypeDefs.add((name: tname, elem: "/*tuple*/"))
+    return tname
+  of tkFunc:
+    if typ.inner.len == 0: return "void (*)(void)"
+    let params = typ.inner[0..^2].mapIt(typeToC(be, it)).join(", ")
+    let ret = typeToC(be, typ.inner[^1])
+    return ret & " (*)(" & params & ")"
   else:
     when defined(release):
       return "void*"
@@ -311,10 +334,11 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
       return &"({base}).data[{idx}]"
 
   of hTupleInit:
-    var elems: seq[string] = @[]
-    for e in node.tupleInitElements:
-      elems.add(be.emitExpr(e))
-    return &"{{{elems.join(\", \")}}}"
+    let typeName = typeToC(be, node.typ)
+    var fields: seq[string] = @[]
+    for i, e in node.tupleInitElements:
+      fields.add(&"._{i} = {be.emitExpr(e)}")
+    return &"(({typeName}){{{fields.join(\", \")}}})"
 
   of hCast:
     let operand = be.emitExpr(node.castOperand)

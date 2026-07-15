@@ -57,6 +57,22 @@ proc cEscape(s: string): string =
     of '\0': result.add("\\0")
     else: result.add(c)
 
+proc sanitizeCTypeNamePart(s: string): string =
+  ## Make a C type string safe for use inside a typedef name.
+  result = s
+  result = result.replace("const char*", "cstr")
+  result = result.replace("unsigned int", "uint")
+  result = result.replace(" ", "_")
+  result = result.replace("*", "Ptr")
+  result = result.replace("(", "")
+  result = result.replace(")", "")
+  result = result.replace(",", "_")
+  result = result.replace(".", "_")
+
+proc typeToCStr(typ: Type): string
+proc funcFatTypeName*(typ: Type): string
+proc funcCodePtrType*(typ: Type): string
+
 proc typeToCStr(typ: Type): string =
   ## Convert a Bux Type to a C type string.
   if typ == nil: return "int"
@@ -105,12 +121,43 @@ proc typeToCStr(typ: Type): string =
     of "float64": return "double"
     of "bool": return "bool"
     else: return typ.name
+  of tkTuple:
+    ## (T, U) → typedef struct { T _0; U _1; } Tuple_T_U;
+    if typ.inner.len == 0:
+      return "Tuple_Empty"
+    var parts: seq[string] = @[]
+    for e in typ.inner:
+      parts.add(sanitizeCTypeNamePart(typeToCStr(e)))
+    return "Tuple_" & parts.join("_")
   of tkFunc:
-    if typ.inner.len == 0: return "void (*)(void)"
-    let params = typ.inner[0..^2].mapIt(typeToCStr(it)).join(", ")
-    let ret = typeToCStr(typ.inner[^1])
-    return ret & " (*)(" & params & ")"
+    ## Fat function pointer: { code(env, args...), env }
+    ## Enables multi-instance closures with captures.
+    return funcFatTypeName(typ)
   else: return "int"
+
+proc funcFatTypeName*(typ: Type): string =
+  ## BuxFn_<ret>_<params...>  (sanitized)
+  if typ == nil or typ.kind != tkFunc:
+    return "BuxFn_void"
+  let ret = if typ.inner.len > 0: typeToCStr(typ.inner[^1]) else: "void"
+  var parts: seq[string] = @[sanitizeCTypeNamePart(ret)]
+  if typ.inner.len > 1:
+    for p in typ.inner[0 ..^ 2]:
+      parts.add(sanitizeCTypeNamePart(typeToCStr(p)))
+  else:
+    parts.add("void")
+  return "BuxFn_" & parts.join("_")
+
+proc funcCodePtrType*(typ: Type): string =
+  ## C type of the .code field: ret (*)(void* env, params...)
+  if typ == nil or typ.kind != tkFunc:
+    return "void (*)(void*)"
+  let ret = if typ.inner.len > 0: typeToCStr(typ.inner[^1]) else: "void"
+  var params: seq[string] = @["void* env"]
+  if typ.inner.len > 1:
+    for i, p in typ.inner[0 ..^ 2]:
+      params.add(typeToCStr(p))
+  return ret & " (*)(" & params.join(", ") & ")"
 
 proc hirTypeToC(ctx: var LowerToLirCtx, node: HirNode): string =
   if node == nil: return "int"
@@ -498,7 +545,12 @@ proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
     for e in node.tupleInitElements:
       elems.add(lowerExpr(ctx, e))
     let t = b.freshTemp()
-    b.emitRawC(&"/* tuple */ {t.strVal} = {{{elems.mapIt($it).join(\", \")}}};")
+    let typeName = typeToCStr(node.typ)
+    b.emitAlloca(t.strVal, typeName)
+    var fields: seq[string] = @[]
+    for i, e in elems:
+      fields.add(&"._{i} = {lirValToC(e)}")
+    b.emitRawC(&"{t.strVal} = ({typeName}){{{fields.join(\", \")}}};")
     return t
 
   # ── If expression (ternary) ──
@@ -779,6 +831,13 @@ proc lowerModuleToLir*(hirMod: HirModule): LirBuilder =
     let retCT = if f.retType != nil: typeToCStr(f.retType) else: "void"
     ctx.funcRetType = retCT
     ctx.builder.beginFunc(f.name, params, retCT, f.isPublic)
+
+    # Closure thunks: materialize env from fat-func env pointer (by-value copy)
+    if f.captureNames.len > 0 and f.envStructName.len > 0 and f.envInstanceName.len > 0:
+      ctx.builder.emitRawC(&"struct {f.envStructName} {f.envInstanceName} = *((struct {f.envStructName}*)__env);")
+    elif f.params.len > 0 and f.params[0].name == "__env":
+      # Capture-less closure thunk still receives env
+      ctx.builder.emitRawC("(void)__env;")
 
     if f.body != nil:
       if f.body.kind == hBlock:

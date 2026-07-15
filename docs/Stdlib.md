@@ -81,8 +81,19 @@ struct Array<T> {
 |----------|-----------|-------------|
 | `Array_New<T>` | `func Array_New<T>(cap: uint) -> Array<T>` | Create new array |
 | `Array_Push<T>` | `func Array_Push<T>(arr: *Array<T>, value: T)` | Append element |
+| `Array_Pop<T>` | `func Array_Pop<T>(arr: *Array<T>) -> T` | Remove and return last element |
+| `Array_Contains<T>` | `func Array_Contains<T>(arr: *Array<T>, value: T) -> bool` | Linear search for value |
+| `Array_IndexOf<T>` | `func Array_IndexOf<T>(arr: *Array<T>, value: T) -> int` | First index or -1 |
+| `Array_Extend<T>` | `func Array_Extend<T>(arr: *Array<T>, other: *Array<T>)` | Append all from other |
 | `Array_Get<T>` | `func Array_Get<T>(arr: *Array<T>, index: uint) -> T` | Get element at index |
+| `Array_Set<T>` | `func Array_Set<T>(arr: *Array<T>, index: uint, value: T)` | Set element at index |
+| `Array_First<T>` | `func Array_First<T>(arr: *Array<T>) -> T` | First element (bounds-checked) |
+| `Array_Last<T>` | `func Array_Last<T>(arr: *Array<T>) -> T` | Last element (bounds-checked) |
 | `Array_Len<T>` | `func Array_Len<T>(arr: *Array<T>) -> uint` | Get length |
+| `Array_Cap<T>` | `func Array_Cap<T>(arr: *Array<T>) -> uint` | Get capacity |
+| `Array_IsEmpty<T>` | `func Array_IsEmpty<T>(arr: *Array<T>) -> bool` | True if length is 0 |
+| `Array_Clear<T>` | `func Array_Clear<T>(arr: *Array<T>)` | Set length to 0 (keeps capacity) |
+| `Array_Reserve<T>` | `func Array_Reserve<T>(arr: *Array<T>, minCap: uint)` | Grow capacity if needed |
 | `Array_Free<T>` | `func Array_Free<T>(arr: *Array<T>)` | Free memory |
 
 ### Example
@@ -128,6 +139,9 @@ struct Iter<T> {
 | `Iter_Count<T>` | `func Iter_Count<T>(it: *Iter<T>) -> uint` | Count remaining elements |
 | `Iter_Skip<T>` | `func Iter_Skip<T>(it: *Iter<T>, n: uint)` | Skip N elements |
 | `Iter_Take<T>` | `func Iter_Take<T>(it: *Iter<T>, n: uint) -> Iter<T>` | Take first N elements as new iterator |
+| `Iter_AnyEq<T>` | `func Iter_AnyEq<T>(it: *Iter<T>, value: T) -> bool` | True if any remaining element equals value |
+| `Iter_AllEq<T>` | `func Iter_AllEq<T>(it: *Iter<T>, value: T) -> bool` | True if all remaining equal value |
+| `Iter_Collect<T>` | `func Iter_Collect<T>(it: *Iter<T>) -> Array<T>` | Collect remaining into a new Array |
 
 ### Example
 ```bux
@@ -200,8 +214,12 @@ String manipulation utilities.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `String_IsEmpty` | `func String_IsEmpty(s: String) -> bool` | True if length is 0 |
+| `String_IsBlank` | `func String_IsBlank(s: String) -> bool` | True if empty or only whitespace |
+| `String_Repeat` | `func String_Repeat(s: String, count: uint) -> String` | Repeat string N times |
 | `String_Find` | `func String_Find(haystack: String, needle: String) -> String` | Find substring (returns pointer; 0 = not found) |
 | `String_Replace` | `func String_Replace(s: String, old: String, new: String) -> String` | Replace first occurrence |
+| `String_ReplaceAll` | `func String_ReplaceAll(s: String, old: String, new: String) -> String` | Replace all non-overlapping occurrences |
 | `String_Format1` | `func String_Format1(pattern: String, a0: String) -> String` | Format with 1 arg (`{0}`) |
 | `String_Format2` | `func String_Format2(pattern: String, a0: String, a1: String) -> String` | Format with 2 args |
 | `String_Format3` | `func String_Format3(pattern: String, a0: String, a1: String, a2: String) -> String` | Format with 3 args |
@@ -322,6 +340,9 @@ struct Set<T> {
 | `Set_New<T>` | `func Set_New<T>(cap: uint) -> Set<T>` | Create set |
 | `Set_Add<T>` | `func Set_Add<T>(s: *Set<T>, value: T)` | Insert element (ignores duplicates) |
 | `Set_Has<T>` | `func Set_Has<T>(s: *Set<T>, value: T) -> bool` | Check membership |
+| `Set_Remove<T>` | `func Set_Remove<T>(s: *Set<T>, value: T) -> bool` | Remove value |
+| `Set_Clear<T>` | `func Set_Clear<T>(s: *Set<T>)` | Clear all elements |
+| `Set_IsEmpty<T>` | `func Set_IsEmpty<T>(s: *Set<T>) -> bool` | True if empty |
 | `Set_Len<T>` | `func Set_Len<T>(s: *Set<T>) -> uint` | Element count |
 | `Set_Free<T>` | `func Set_Free<T>(s: *Set<T>)` | Free memory |
 
@@ -371,6 +392,9 @@ struct Map<K, V> {
 | `Map_Set<K,V>` | `func Map_Set<K,V>(m: *Map<K,V>, key: K, value: V)` | Insert/update |
 | `Map_Get<K,V>` | `func Map_Get<K,V>(m: *Map<K,V>, key: K) -> V` | Get value (zero if missing) |
 | `Map_Has<K,V>` | `func Map_Has<K,V>(m: *Map<K,V>, key: K) -> bool` | Check key exists |
+| `Map_Remove<K,V>` | `func Map_Remove<K,V>(m: *Map<K,V>, key: K) -> bool` | Remove key (true if present) |
+| `Map_Clear<K,V>` | `func Map_Clear<K,V>(m: *Map<K,V>)` | Remove all entries (keeps capacity) |
+| `Map_IsEmpty<K,V>` | `func Map_IsEmpty<K,V>(m: *Map<K,V>) -> bool` | True if no entries |
 | `Map_Len<K,V>` | `func Map_Len<K,V>(m: *Map<K,V>) -> uint` | Entry count |
 | `Map_Free<K,V>` | `func Map_Free<K,V>(m: *Map<K,V>)` | Free memory |
 
@@ -419,6 +443,9 @@ struct StringMap<V> {
 | `StringMap_Set<V>` | `func StringMap_Set<V>(m: *StringMap<V>, key: String, value: V)` | Insert/update |
 | `StringMap_Get<V>` | `func StringMap_Get<V>(m: *StringMap<V>, key: String) -> V` | Get value |
 | `StringMap_Has<V>` | `func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool` | Check key exists |
+| `StringMap_Remove<V>` | `func StringMap_Remove<V>(m: *StringMap<V>, key: String) -> bool` | Remove key |
+| `StringMap_Clear<V>` | `func StringMap_Clear<V>(m: *StringMap<V>)` | Clear all entries |
+| `StringMap_IsEmpty<V>` | `func StringMap_IsEmpty<V>(m: *StringMap<V>) -> bool` | True if empty |
 | `StringMap_Len<V>` | `func StringMap_Len<V>(m: *StringMap<V>) -> uint` | Entry count |
 | `StringMap_Free<V>` | `func StringMap_Free<V>(m: *StringMap<V>)` | Free memory |
 
@@ -914,7 +941,7 @@ func Main() -> int {
 Operating system interface.
 
 ```bux
-import Std::Os::{Os_ArgsCount, Os_Args, Os_GetEnv, Os_SetEnv, Os_GetCwd, Os_Chdir};
+import Std::Os::{Os_ArgsCount, Os_Args, Os_GetEnv, Os_SetEnv, Os_GetCwd, Os_Chdir, Os_Exit};
 ```
 
 | Function | Signature | Description |
@@ -925,6 +952,28 @@ import Std::Os::{Os_ArgsCount, Os_Args, Os_GetEnv, Os_SetEnv, Os_GetCwd, Os_Chdi
 | `Os_SetEnv` | `func Os_SetEnv(name: String, value: String) -> bool` | Set environment variable |
 | `Os_GetCwd` | `func Os_GetCwd() -> String` | Get current working directory |
 | `Os_Chdir` | `func Os_Chdir(path: String) -> bool` | Change directory |
+| `Os_Exit` | `func Os_Exit(code: int)` | Terminate process with exit code |
+
+---
+
+## Std::Test
+
+Lightweight assertions for `bux test` and example programs.
+
+```bux
+import Std::Test::*;
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Test_Assert` | `func Test_Assert(cond: bool)` | Panic if false |
+| `Test_AssertTrue` / `Test_AssertFalse` | `func ...(cond: bool)` | Boolean asserts |
+| `Test_AssertEqInt` | `func Test_AssertEqInt(a: int, b: int)` | Integer equality |
+| `Test_AssertNeqInt` | `func Test_AssertNeqInt(a: int, b: int)` | Integer inequality |
+| `Test_AssertEqString` | `func Test_AssertEqString(a: String, b: String)` | String equality |
+| `Test_AssertEqBool` | `func Test_AssertEqBool(a: bool, b: bool)` | Boolean equality |
+| `Test_Fail` / `Test_Pass` | `func ...(msg: String)` | Explicit fail / log pass |
+| `Test_Exit` | `func Test_Exit(code: int)` | Exit with code |
 
 ---
 

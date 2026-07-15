@@ -58,4 +58,78 @@ func Array_operator_index_set<T>(self: *Array<T>, idx: uint, value: T) {
     Array_Set<T>(self, idx, value);
 }
 
+/* True if the array has no elements */
+func Array_IsEmpty<T>(self: *Array<T>) -> bool {
+    return self.len == 0;
+}
+
+/* Current capacity (not length) */
+func Array_Cap<T>(self: *Array<T>) -> uint {
+    return self.cap;
+}
+
+/* Drop length to zero; keeps allocated capacity */
+func Array_Clear<T>(self: *Array<T>) {
+    self.len = 0;
+}
+
+/* Ensure capacity is at least minCap (does not shrink) */
+func Array_Reserve<T>(self: *Array<T>, minCap: uint) {
+    if minCap <= self.cap {
+        return;
+    }
+    self.cap = minCap;
+    self.data = bux_realloc(self.data as *void, self.cap * sizeof(T)) as *T;
+}
+
+/* First element (panics if empty via bounds check) */
+func Array_First<T>(self: *Array<T>) -> T {
+    return Array_Get<T>(self, 0);
+}
+
+/* Last element (panics if empty via bounds check) */
+func Array_Last<T>(self: *Array<T>) -> T {
+    return Array_Get<T>(self, self.len - 1);
+}
+
+/* Remove and return the last element (panics if empty) */
+func Array_Pop<T>(self: *Array<T>) -> T {
+    bux_bounds_check(0, self.len);
+    self.len = self.len - 1;
+    return self.data[self.len];
+}
+
+/* Linear search: true if value is present (uses ==) */
+func Array_Contains<T>(self: *Array<T>, value: T) -> bool {
+    var i: uint = 0;
+    while i < self.len {
+        if self.data[i] == value {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+/* Index of first equal element, or -1 if not found */
+func Array_IndexOf<T>(self: *Array<T>, value: T) -> int {
+    var i: uint = 0;
+    while i < self.len {
+        if self.data[i] == value {
+            return i as int;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+/* Append all elements of other onto self */
+func Array_Extend<T>(self: *Array<T>, other: *Array<T>) {
+    var i: uint = 0;
+    while i < other.len {
+        Array_Push<T>(self, other.data[i]);
+        i = i + 1;
+    }
+}
+
 }

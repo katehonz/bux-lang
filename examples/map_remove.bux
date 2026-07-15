@@ -1,0 +1,60 @@
+// Map_Remove / Map_Clear / Set_Remove
+import Std::Io::{PrintLine, PrintInt};
+import Std::Map::{Map, Map_New, Map_Set, Map_Get, Map_Has, Map_Remove, Map_Clear, Map_Len, Map_IsEmpty, Map_Free};
+import Std::Set::{Set, Set_New, Set_Add, Set_Has, Set_Remove, Set_Len, Set_IsEmpty, Set_Free};
+import Std::Test::{Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_Pass};
+import Std::Result::{Result, Result_NewOk, Result_NewErr, Result_IsOk, Result_IsErr, Result_UnwrapOr, Result_Or, Result_UnwrapErr};
+import Std::Option::{Option, Option_NewSome, Option_NewNone, Option_IsSome, Option_Or, Option_UnwrapOr};
+import Std::String::{String_Eq};
+
+func Main() -> int {
+    // --- Map ---
+    var m: Map<int, int> = Map_New<int, int>(16);
+    Map_Set<int, int>(&m, 1, 100);
+    Map_Set<int, int>(&m, 2, 200);
+    Map_Set<int, int>(&m, 3, 300);
+    Test_AssertEqInt(Map_Len<int, int>(&m) as int, 3);
+    Test_AssertTrue(Map_Has<int, int>(&m, 2));
+    Test_AssertTrue(Map_Remove<int, int>(&m, 2));
+    Test_AssertFalse(Map_Has<int, int>(&m, 2));
+    Test_AssertEqInt(Map_Len<int, int>(&m) as int, 2);
+    Test_AssertEqInt(Map_Get<int, int>(&m, 1), 100);
+    Test_AssertEqInt(Map_Get<int, int>(&m, 3), 300);
+    Test_AssertFalse(Map_Remove<int, int>(&m, 99));
+    Map_Clear<int, int>(&m);
+    Test_AssertTrue(Map_IsEmpty<int, int>(&m));
+    Map_Free<int, int>(&m);
+
+    // --- Set ---
+    var s: Set<int> = Set_New<int>(16);
+    Set_Add<int>(&s, 10);
+    Set_Add<int>(&s, 20);
+    Set_Add<int>(&s, 30);
+    Test_AssertTrue(Set_Remove<int>(&s, 20));
+    Test_AssertFalse(Set_Has<int>(&s, 20));
+    Test_AssertTrue(Set_Has<int>(&s, 10));
+    Test_AssertEqInt(Set_Len<int>(&s) as int, 2);
+    Test_AssertFalse(Set_IsEmpty<int>(&s));
+    Set_Free<int>(&s);
+
+    // --- Result helpers ---
+    let ok: Result = Result_NewOk(42);
+    let err: Result = Result_NewErr("boom");
+    Test_AssertTrue(Result_IsOk(ok));
+    Test_AssertTrue(Result_IsErr(err));
+    Test_AssertEqInt(Result_UnwrapOr(err, -1), -1);
+    let recovered: Result = Result_Or(err, Result_NewOk(7));
+    Test_AssertEqInt(Result_UnwrapOr(recovered, 0), 7);
+    Test_AssertTrue(String_Eq(Result_UnwrapErr(err), "boom"));
+
+    // --- Option helpers ---
+    let some: Option = Option_NewSome(5);
+    let none: Option = Option_NewNone();
+    Test_AssertTrue(Option_IsSome(some));
+    let o2: Option = Option_Or(none, some);
+    Test_AssertEqInt(Option_UnwrapOr(o2, 0), 5);
+
+    PrintLine("map_remove: ok");
+    Test_Pass("map_remove + result helpers");
+    return 0;
+}

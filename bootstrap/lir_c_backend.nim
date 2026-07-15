@@ -149,14 +149,22 @@ proc emitInstr(be: var LirCBackend, instr: LirInstr) =
     be.emitLine(&"{v(instr.src)}({argsStr});")
 
   of lirCallIndirect:
+    ## Fat function pointer call: f.code(f.env, args...)
     var argsStr = ""
     for i, arg in instr.extra:
       if i > 0: argsStr.add(", ")
       argsStr.add(v(arg))
+    let callee = v(instr.src)
     if instr.dst.kind != lvkVoid:
-      be.emitLine(&"{v(instr.dst)} = ({v(instr.src)})({argsStr});")
+      if argsStr.len > 0:
+        be.emitLine(&"{v(instr.dst)} = ({callee}.code)({callee}.env, {argsStr});")
+      else:
+        be.emitLine(&"{v(instr.dst)} = ({callee}.code)({callee}.env);")
     else:
-      be.emitLine(&"({v(instr.src)})({argsStr});")
+      if argsStr.len > 0:
+        be.emitLine(&"({callee}.code)({callee}.env, {argsStr});")
+      else:
+        be.emitLine(&"({callee}.code)({callee}.env);")
 
   # ── Return ──
   of lirRet:
@@ -348,6 +356,21 @@ proc emitFunc(be: var LirCBackend, f: LirFunc, funcRetTypes: Table[string, strin
 
 # ── Struct/Enum emission (from HIR module) ──
 
+proc sanitizeCTypeNamePart(s: string): string =
+  result = s
+  result = result.replace("const char*", "cstr")
+  result = result.replace("unsigned int", "uint")
+  result = result.replace(" ", "_")
+  result = result.replace("*", "Ptr")
+  result = result.replace("(", "")
+  result = result.replace(")", "")
+  result = result.replace(",", "_")
+  result = result.replace(".", "_")
+
+proc typeToCStr(typ: Type): string
+proc funcFatTypeName(typ: Type): string
+proc funcCodePtrType(typ: Type): string
+
 proc typeToCStr(typ: Type): string =
   ## Duplicate from lir_lower for self-containedness
   if typ == nil: return "int"
@@ -396,12 +419,38 @@ proc typeToCStr(typ: Type): string =
     of "float64": return "double"
     of "bool": return "bool"
     else: return typ.name
+  of tkTuple:
+    if typ.inner.len == 0:
+      return "Tuple_Empty"
+    var parts: seq[string] = @[]
+    for e in typ.inner:
+      parts.add(sanitizeCTypeNamePart(typeToCStr(e)))
+    return "Tuple_" & parts.join("_")
   of tkFunc:
-    if typ.inner.len == 0: return "void (*)(void)"
-    let params = typ.inner[0..^2].mapIt(typeToCStr(it)).join(", ")
-    let ret = typeToCStr(typ.inner[^1])
-    return ret & " (*)(" & params & ")"
+    return funcFatTypeName(typ)
   else: return "int"
+
+proc funcFatTypeName(typ: Type): string =
+  if typ == nil or typ.kind != tkFunc:
+    return "BuxFn_void"
+  let ret = if typ.inner.len > 0: typeToCStr(typ.inner[^1]) else: "void"
+  var parts: seq[string] = @[sanitizeCTypeNamePart(ret)]
+  if typ.inner.len > 1:
+    for p in typ.inner[0 ..^ 2]:
+      parts.add(sanitizeCTypeNamePart(typeToCStr(p)))
+  else:
+    parts.add("void")
+  return "BuxFn_" & parts.join("_")
+
+proc funcCodePtrType(typ: Type): string =
+  if typ == nil or typ.kind != tkFunc:
+    return "void (*)(void*)"
+  let ret = if typ.inner.len > 0: typeToCStr(typ.inner[^1]) else: "void"
+  var params: seq[string] = @["void* env"]
+  if typ.inner.len > 1:
+    for p in typ.inner[0 ..^ 2]:
+      params.add(typeToCStr(p))
+  return ret & " (*)(" & params.join(", ") & ")"
 
 proc emitStructDef(be: var LirCBackend, name: string, fields: seq[tuple[name: string, typ: Type]]) =
   be.emitLine(&"typedef struct {name} {{")
@@ -481,10 +530,35 @@ proc collectValueDeps(typ: Type): seq[string] =
     return @[typ.name]
   of tkSlice:
     return @[typeToCStr(typ)]
-  of tkPointer, tkRef, tkMutRef, tkTuple, tkFunc:
+  of tkTuple:
+    var deps: seq[string] = @[]
+    for e in typ.inner:
+      for d in collectValueDeps(e):
+        if d notin deps:
+          deps.add(d)
+      if e != nil and e.kind == tkTuple:
+        let tn = typeToCStr(e)
+        if tn notin deps:
+          deps.add(tn)
+    return deps
+  of tkPointer, tkRef, tkMutRef, tkFunc:
     return @[]
   else:
     return @[]
+
+proc emitTupleDef(be: var LirCBackend, typ: Type) =
+  ## typedef struct { T0 _0; T1 _1; ... } Tuple_...;
+  let name = typeToCStr(typ)
+  be.emitLine(&"typedef struct {name} {{")
+  be.indent += 1
+  if typ.inner.len == 0:
+    be.emitLine("char _pad;")
+  else:
+    for i, e in typ.inner:
+      be.emitLine(&"{typeToCStr(e)} _{i};")
+  be.indent -= 1
+  be.emitLine(&"}} {name};")
+  be.emitLine("")
 
 proc emitSliceTypeDef(be: var LirCBackend, name: string, elem: string) =
   be.emitLine(&"typedef struct {{ {elem}* data; size_t len; }} {name};")
@@ -663,6 +737,104 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
     elif sliceMap.hasKey(name):
       be.emitSliceTypeDef(name, sliceMap[name])
 
+  # Collect and emit tuple typedefs used in the module (and nested tuples first).
+  var tupleTypes: seq[Type] = @[]
+  var tupleNames: HashSet[string]
+  proc registerTuple(t: Type) =
+    if t == nil: return
+    case t.kind
+    of tkTuple:
+      for e in t.inner:
+        registerTuple(e)
+      let name = typeToCStr(t)
+      if not tupleNames.contains(name):
+        tupleNames.incl(name)
+        tupleTypes.add(t)
+    of tkPointer, tkRef, tkMutRef, tkSlice:
+      if t.inner.len > 0:
+        registerTuple(t.inner[0])
+    of tkFunc:
+      for e in t.inner:
+        registerTuple(e)
+    else:
+      discard
+
+  for f in module.funcs:
+    registerTuple(f.retType)
+    for p in f.params:
+      registerTuple(p.typ)
+  for ef in module.externFuncs:
+    registerTuple(ef.retType)
+    for p in ef.params:
+      registerTuple(p.typ)
+  for s in module.structs:
+    for f in s.fields:
+      registerTuple(f.typ)
+  for e in module.enums:
+    for v in e.variants:
+      for ft in v.fields:
+        registerTuple(ft)
+      for nf in v.namedFields:
+        registerTuple(nf.typ)
+
+  if tupleTypes.len > 0:
+    be.emitLine("/* Tuple types */")
+    for tt in tupleTypes:
+      be.emitTupleDef(tt)
+
+  # Fat function-pointer typedefs (BuxFn_*) — before forward decls that use them
+  var fatTypes: seq[Type] = @[]
+  var fatNames: HashSet[string]
+  proc registerFat(t: Type) =
+    if t == nil: return
+    case t.kind
+    of tkFunc:
+      for e in t.inner: registerFat(e)
+      let n = funcFatTypeName(t)
+      if not fatNames.contains(n):
+        fatNames.incl(n)
+        fatTypes.add(t)
+    of tkPointer, tkRef, tkMutRef, tkSlice:
+      if t.inner.len > 0: registerFat(t.inner[0])
+    of tkTuple:
+      for e in t.inner: registerFat(e)
+    else: discard
+  for f in module.funcs:
+    registerFat(f.retType)
+    for p in f.params: registerFat(p.typ)
+  for ef in module.externFuncs:
+    registerFat(ef.retType)
+    for p in ef.params: registerFat(p.typ)
+  for a in module.funcAdapters:
+    registerFat(a.typ)
+  for t in module.seenFatTypes:
+    registerFat(t)
+  if fatTypes.len > 0:
+    be.emitLine("/* Fat function pointer types (code + env) */")
+    for ft in fatTypes:
+      let n = funcFatTypeName(ft)
+      let codeT = funcCodePtrType(ft)
+      be.emitLine(&"typedef struct {n} {{")
+      be.indent += 1
+      be.emitLine(cParamDecl(codeT, "code") & ";")
+      be.emitLine("void* env;")
+      be.indent -= 1
+      be.emitLine(&"}} {n};")
+      be.emitLine("")
+
+  # Env structs for closures with captures (heap-allocated per value)
+  for f in module.funcs:
+    if f.captureNames.len > 0 and f.envStructName != "":
+      be.emitLine(&"typedef struct {f.envStructName} {{")
+      be.indent += 1
+      for i in 0 ..< f.captureNames.len:
+        let capName = f.captureNames[i]
+        let capType = if i < f.captureTypes.len: typeToCStr(f.captureTypes[i]) else: "int"
+        be.emitLine(&"{capType} {capName};")
+      be.indent -= 1
+      be.emitLine(&"}} {f.envStructName};")
+      be.emitLine("")
+
   # Forward function declarations
   for f in module.funcs:
     let rt = typeToCStr(f.retType)
@@ -707,18 +879,28 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
     be.emitLine("};")
     be.emitLine("")
 
-  # Emit env structs for closures with captures
-  for f in module.funcs:
-    if f.captureNames.len > 0 and f.envStructName != "":
-      be.emitLine(&"struct {f.envStructName} {{")
+  # Adapters for named functions used as fat-func values (after forward decls)
+  if module.funcAdapters.len > 0:
+    be.emitLine("/* Fat-func adapters for named functions */")
+    for a in module.funcAdapters:
+      let ret = if a.typ.inner.len > 0: typeToCStr(a.typ.inner[^1]) else: "void"
+      var params: seq[string] = @["void* env"]
+      var argNames: seq[string] = @[]
+      if a.typ.inner.len > 1:
+        for i, p in a.typ.inner[0 ..^ 2]:
+          let pn = "a" & $i
+          params.add(typeToCStr(p) & " " & pn)
+          argNames.add(pn)
+      let argsStr = argNames.join(", ")
+      be.emitLine(&"static {ret} __adapt_{a.name}({params.join(\", \")}) {{")
       be.indent += 1
-      for i in 0 ..< f.captureNames.len:
-        let capName = f.captureNames[i]
-        let capType = if i < f.captureTypes.len: typeToCStr(f.captureTypes[i]) else: "int"
-        be.emitLine(&"{capType} {capName};")
+      be.emitLine("(void)env;")
+      if ret == "void":
+        be.emitLine(&"{a.name}({argsStr});")
+      else:
+        be.emitLine(&"return {a.name}({argsStr});")
       be.indent -= 1
-      be.emitLine("};")
-      be.emitLine(&"static struct {f.envStructName} {f.envInstanceName};")
+      be.emitLine("}")
       be.emitLine("")
 
   # Emit all LIR functions

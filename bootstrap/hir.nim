@@ -189,6 +189,10 @@ type
     consts*: seq[tuple[name: string, typ: Type, value: HirNode]]
     interfaces*: seq[tuple[name: string, hasAssocTypes: bool, methods: seq[tuple[name: string, params: seq[Type], ret: Type]]]]
     vtables*: seq[tuple[interfaceName: string, concreteType: string, methodNames: seq[string], hasAssocTypes: bool]]
+    ## Named functions used as values → need __adapt_ wrappers for fat-func ABI
+    funcAdapters*: seq[tuple[name: string, typ: Type]]
+    ## Extra func types seen in locals/closures that need BuxFn_* typedefs
+    seenFatTypes*: seq[Type]
 
 # Constructor helpers
 proc hirLit*(tok: Token, typ: Type, loc: SourceLocation): HirNode =

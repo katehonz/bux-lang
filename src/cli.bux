@@ -55,12 +55,44 @@ func Diagnostic_GetLine(path: String, lineNum: uint32) -> String {
     return bux_str_split_part(content, "\n", lineNum - 1);
 }
 
+/* Simple substring check for help hints */
+func Diagnostic_MsgContains(msg: String, needle: String) -> bool {
+    return bux_str_contains(msg, needle) != 0;
+}
+
+/* Actionable help for common error messages */
+func Diagnostic_Hint(msg: String) -> String {
+    if Diagnostic_MsgContains(msg, "cannot assign") {
+        return "ensure the right-hand side type matches the left-hand side";
+    }
+    if Diagnostic_MsgContains(msg, "undeclared identifier") {
+        return "check the spelling, or import the symbol from the right module";
+    }
+    if Diagnostic_MsgContains(msg, "too few arguments") {
+        return "compare the call with the function's parameter list";
+    }
+    if Diagnostic_MsgContains(msg, "too many arguments") {
+        return "compare the call with the function's parameter list";
+    }
+    if Diagnostic_MsgContains(msg, "use of moved value") {
+        return "the value was moved; clone it or restructure ownership";
+    }
+    if Diagnostic_MsgContains(msg, "expected expression") {
+        return "the previous statement may be incomplete (missing value or ';')";
+    }
+    if Diagnostic_MsgContains(msg, "duplicate symbol") {
+        return "rename one of the definitions or remove the duplicate";
+    }
+    return "";
+}
+
 /* Print a diagnostic in Rust-style format:
  *   error: <message>
  *     --> <path>:<line>:<col>
  *      |
  *   42 | <source_line>
  *      | <spaces>^
+ *      = help: <hint>
  */
 func Diagnostic_Print(diag: *Diagnostic, sourcePath: String) {
     /* Severity prefix */
@@ -94,14 +126,57 @@ func Diagnostic_Print(diag: *Diagnostic, sourcePath: String) {
         Print(" | ");
         PrintLine(lineText);
 
-        /* Underline */
+        /* Underline (multi-char for identifiers/string tokens) */
         Print("   | ");
         var i: uint32 = 0;
         while i < diag.column - 1 && i < 120 {
             Print(" ");
             i = i + 1;
         }
-        PrintLine("^");
+        /* Estimate token length from the source line */
+        var ulen: uint = 1;
+        let col0: uint = diag.column - 1;
+        let lineLen: uint = String_Len(lineText);
+        if col0 < lineLen {
+            let first: String = String_Chars(lineText, col0);
+            if String_Eq(first, "\"") || String_Eq(first, "`") || String_Eq(first, "'") {
+                var j: uint = col0 + 1;
+                while j < lineLen {
+                    let cj: String = String_Chars(lineText, j);
+                    if String_Eq(cj, first) {
+                        ulen = j - col0 + 1;
+                        break;
+                    }
+                    j = j + 1;
+                }
+            } else {
+                var j: uint = col0;
+                while j < lineLen {
+                    let cj: String = String_Chars(lineText, j);
+                    if String_Contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_", cj) {
+                        j = j + 1;
+                    } else {
+                        break;
+                    }
+                }
+                if j > col0 {
+                    ulen = j - col0;
+                }
+            }
+        }
+        var k: uint = 0;
+        while k < ulen {
+            Print("^");
+            k = k + 1;
+        }
+        PrintLine("");
+    }
+
+    /* Helpful hint when we recognize the error */
+    let hint: String = Diagnostic_Hint(diag.message);
+    if !String_Eq(hint, "") {
+        Print("   = help: ");
+        PrintLine(hint);
     }
 }
 

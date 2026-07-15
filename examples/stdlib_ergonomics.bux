@@ -1,0 +1,55 @@
+// Stdlib ergonomics demo: Array helpers, String_ReplaceAll, Test asserts
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::{
+    Array, Array_New, Array_Push, Array_Pop, Array_Clear, Array_IsEmpty,
+    Array_First, Array_Last, Array_Cap, Array_Reserve, Array_Len, Array_Get, Array_Free
+};
+import Std::String::{String_IsEmpty, String_ReplaceAll, String_Eq, String_Len};
+import Std::Test::{
+    Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_AssertEqString,
+    Test_AssertNeqInt, Test_AssertEqBool, Test_Pass
+};
+
+func Main() -> int {
+    // --- Array: Reserve / Push / First / Last / Pop / Clear ---
+    var arr: Array<int> = Array_New<int>(2);
+    Array_Reserve<int>(&arr, 8);
+    Test_AssertTrue(Array_Cap<int>(&arr) >= 8);
+    Test_AssertTrue(Array_IsEmpty<int>(&arr));
+
+    Array_Push<int>(&arr, 10);
+    Array_Push<int>(&arr, 20);
+    Array_Push<int>(&arr, 30);
+
+    Test_AssertFalse(Array_IsEmpty<int>(&arr));
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 3);
+    Test_AssertEqInt(Array_First<int>(&arr), 10);
+    Test_AssertEqInt(Array_Last<int>(&arr), 30);
+
+    let popped: int = Array_Pop<int>(&arr);
+    Test_AssertEqInt(popped, 30);
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 2);
+    Test_AssertEqInt(Array_Get<int>(&arr, 1), 20);
+
+    Array_Clear<int>(&arr);
+    Test_AssertTrue(Array_IsEmpty<int>(&arr));
+    Test_AssertTrue(Array_Cap<int>(&arr) >= 8);  // capacity retained
+    Array_Free<int>(&arr);
+
+    // --- String: IsEmpty / ReplaceAll ---
+    Test_AssertTrue(String_IsEmpty(""));
+    Test_AssertFalse(String_IsEmpty("x"));
+
+    let multi: String = String_ReplaceAll("a-b-a-b-a", "a", "X");
+    Test_AssertEqString(multi, "X-b-X-b-X");
+    Test_AssertNeqInt(String_Len(multi) as int, 0);
+
+    // Safe when replacement contains the needle (no infinite loop)
+    let safe: String = String_ReplaceAll("..", ".", "x.");
+    Test_AssertEqString(safe, "x.x.");
+
+    Test_AssertEqBool(true, true);
+    Test_Pass("stdlib ergonomics");
+    PrintLine("stdlib_ergonomics: all checks passed");
+    return 0;
+}

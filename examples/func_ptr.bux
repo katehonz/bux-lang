@@ -1,0 +1,27 @@
+// Function pointer types: func(T) -> U
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+func Apply(f: func(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+func Double(n: int) -> int {
+    return n * 2;
+}
+
+func Inc(n: int) -> int {
+    return n + 1;
+}
+
+func Main() -> int {
+    let g: func(int) -> int = Double;
+    Test_AssertEqInt(Apply(g, 21), 42);
+    Test_AssertEqInt(Apply(Double, 7), 14);
+    Test_AssertEqInt(Apply(Inc, 99), 100);
+
+    PrintInt(Apply(Double, 5));
+    PrintLine("");
+    Test_Pass("func_ptr");
+    return 0;
+}

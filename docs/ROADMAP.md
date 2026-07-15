@@ -153,7 +153,9 @@ Array_Filter(nums, |x| { return x > 10; });
   4. In thunk body: rewrite captured identifiers to `env_instance.x` via `hFieldAccess`.
   5. C backend: emit env struct definition + global instance before thunk function.
 
-**Limitations:** One global instance per closure AST node (no multiple instances). No loop/return support in closures yet.
+**Status:** Multi-instance capturing closures work in **both** bootstrap and selfhost via fat
+function pointers (`BuxFn { code, env }` + heap-allocated env per creation). Capture-less
+closures and named functions use the same ABI (`env = NULL`, adapters for named funcs).
 
 **Complexity:** High — touches parser, sema, type system, HIR/LIR backend.
 

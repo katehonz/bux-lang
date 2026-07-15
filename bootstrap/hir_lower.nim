@@ -1,4 +1,4 @@
-import std/[tables, sets, strutils]
+import std/[tables, sets, strutils, strformat]
 import ast, types, token, source_location, hir, sema, scope
 
 type
@@ -25,6 +25,11 @@ type
     closureDepth*: int
     currentClosureExpr*: Expr
     envInstanceName*: string
+    ## Named functions that must be wrapped as fat func values (multi-instance ABI)
+    funcAdapters*: HashSet[string]
+    funcAdapterSigs*: Table[string, Type]
+    ## All func types that need BuxFn_* typedefs (including locals)
+    seenFatTypes*: seq[Type]
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -159,6 +164,50 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.generatedFuncInsts = initTable[string, bool]()
   result.extraFuncs = @[]
   result.varTypeExprs = initTable[string, TypeExpr]()
+  result.funcAdapters = initHashSet[string]()
+  result.funcAdapterSigs = initTable[string, Type]()
+  result.seenFatTypes = @[]
+
+proc sanitizeFatPart(s: string): string =
+  result = s.replace("const char*", "cstr").replace("unsigned int", "uint")
+  result = result.replace(" ", "_").replace("*", "Ptr").replace("(", "").replace(")", "").replace(",", "_").replace(".", "_")
+
+proc typeNameForFat(typ: Type): string
+proc hirFuncFatTypeName*(typ: Type): string
+
+proc typeNameForFat(typ: Type): string =
+  ## Lightweight C-ish name for fat-func mangling (mirrors lir typeToCStr subset).
+  if typ == nil: return "void"
+  case typ.kind
+  of tkVoid: return "void"
+  of tkBool, tkBool8, tkBool16, tkBool32: return "bool"
+  of tkStr: return "cstr"
+  of tkInt, tkInt8, tkInt16, tkInt32, tkInt64: return "int"
+  of tkUInt, tkUInt8, tkUInt16, tkUInt32, tkUInt64: return "uint"
+  of tkFloat32: return "float"
+  of tkFloat64: return "double"
+  of tkPointer, tkRef, tkMutRef:
+    if typ.inner.len > 0: return sanitizeFatPart(typeNameForFat(typ.inner[0]) & "Ptr")
+    return "voidPtr"
+  of tkNamed:
+    case typ.name
+    of "String", "str": return "cstr"
+    else: return sanitizeFatPart(typ.name)
+  of tkFunc:
+    return hirFuncFatTypeName(typ)
+  else:
+    return "int"
+
+proc hirFuncFatTypeName*(typ: Type): string =
+  if typ == nil or typ.kind != tkFunc: return "BuxFn_void"
+  let ret = if typ.inner.len > 0: typeNameForFat(typ.inner[^1]) else: "void"
+  var parts: seq[string] = @[sanitizeFatPart(ret)]
+  if typ.inner.len > 1:
+    for p in typ.inner[0 ..^ 2]:
+      parts.add(sanitizeFatPart(typeNameForFat(p)))
+  else:
+    parts.add("void")
+  return "BuxFn_" & parts.join("_")
 
 proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
 
@@ -291,7 +340,14 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
   of tekOwn: return ctx.resolveTypeExpr(te.pointerPointee)
   of tekDynRef: return makeDynRef(te.dynInterface)
   of tekPointer: return makePointer(ctx.resolveTypeExpr(te.pointerPointee))
+  of tekRef: return makeRef(ctx.resolveTypeExpr(te.pointerPointee))
+  of tekMutRef: return makeMutRef(ctx.resolveTypeExpr(te.pointerPointee))
   of tekSlice: return makeSlice(ctx.resolveTypeExpr(te.sliceElement))
+  of tekTuple:
+    var elems: seq[Type] = @[]
+    for e in te.tupleElements:
+      elems.add(ctx.resolveTypeExpr(e))
+    return makeTuple(elems)
   of tekFunc:
     var params: seq[Type] = @[]
     for p in te.funcParams:
@@ -523,6 +579,18 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
     return makeVoid()
   of ekBorrow:
     return ctx.resolveExprType(expr.exprBorrowOperand)
+  of ekClosure:
+    var params: seq[Type] = @[]
+    for p in expr.exprClosureParams:
+      if p.ptype != nil:
+        params.add(ctx.resolveTypeExpr(p.ptype))
+      else:
+        params.add(makeUnknown())
+    let ret = if expr.exprClosureReturnType != nil:
+      ctx.resolveTypeExpr(expr.exprClosureReturnType)
+    else:
+      makeVoid()
+    return makeFunc(params, ret)
   else: return makeUnknown()
 
 proc extractGenericStructInfo(ctx: LowerCtx, te: TypeExpr): tuple[baseName: string, typeArgs: seq[TypeExpr]] =
@@ -742,9 +810,26 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         let capType = if idx < ctx.currentClosureExpr.captureTypeKinds.len: Type(kind: TypeKind(ctx.currentClosureExpr.captureTypeKinds[idx])) else: makeInt()
         let base = hirVar(ctx.envInstanceName, makeNamed(""), loc)
         return HirNode(kind: hFieldAccess, fieldAccessName: name, fieldAccessBase: base, typ: capType, loc: loc)
+    var resolvedName = name
     if ctx.importTable.hasKey(name):
-      return hirVar(ctx.importTable[name], typ, loc)
-    return hirVar(name, typ, loc)
+      resolvedName = ctx.importTable[name]
+    # Named function used as a value → fat function pointer via adapter
+    if typ != nil and typ.kind == tkFunc:
+      let sym = ctx.globalScope.lookup(name)
+      let sym2 = if sym == nil: ctx.globalScope.lookup(resolvedName) else: sym
+      if sym2 != nil and sym2.kind == skFunc:
+        let adaptName = "__adapt_" & resolvedName
+        ctx.funcAdapters.incl(resolvedName)
+        ctx.funcAdapterSigs[resolvedName] = typ
+        let fatName = hirFuncFatTypeName(typ)
+        let nullEnv = HirNode(kind: hCast,
+          castOperand: hirLit(Token(kind: tkIntLiteral, text: "0", loc: loc), makeInt(), loc),
+          castType: makePointer(makeVoid()), typ: makePointer(makeVoid()), loc: loc)
+        return HirNode(kind: hStructInit, structInitName: fatName, structInitFields: @[
+          (name: "code", value: hirVar(adaptName, makePointer(makeVoid()), loc)),
+          (name: "env", value: nullEnv)
+        ], typ: typ, loc: loc)
+    return hirVar(resolvedName, typ, loc)
 
   of ekPath:
     # Handle enum variants: Color::Red → Color_Red
@@ -756,6 +841,32 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     return hirSelf(typ, loc)
 
   of ekUnary:
+    # &NamedFunc used as func value → fat adapter (not a raw C function pointer)
+    if expr.exprUnaryOp == tkAmp and expr.exprUnaryOperand != nil and
+       expr.exprUnaryOperand.kind == ekIdent:
+      let fname = expr.exprUnaryOperand.exprIdent
+      var resolved = fname
+      if ctx.importTable.hasKey(fname):
+        resolved = ctx.importTable[fname]
+      let sym = ctx.globalScope.lookup(resolved)
+      if sym != nil and sym.kind == skFunc:
+        # Prefer declared func type on the symbol; fall back to expression type
+        var ftyp = if sym.typ != nil and sym.typ.kind == tkFunc: sym.typ else: typ
+        if ftyp == nil or ftyp.kind != tkFunc:
+          ftyp = ctx.resolveExprType(expr.exprUnaryOperand)
+        if ftyp != nil and ftyp.kind == tkFunc:
+          let adaptName = "__adapt_" & resolved
+          ctx.funcAdapters.incl(resolved)
+          ctx.funcAdapterSigs[resolved] = ftyp
+          ctx.seenFatTypes.add(ftyp)
+          let fatName = hirFuncFatTypeName(ftyp)
+          let nullEnv = HirNode(kind: hCast,
+            castOperand: hirLit(Token(kind: tkIntLiteral, text: "0", loc: loc), makeInt(), loc),
+            castType: makePointer(makeVoid()), typ: makePointer(makeVoid()), loc: loc)
+          return HirNode(kind: hStructInit, structInitName: fatName, structInitFields: @[
+            (name: "code", value: hirVar(adaptName, makePointer(makeVoid()), loc)),
+            (name: "env", value: nullEnv)
+          ], typ: ftyp, loc: loc)
     let operand = ctx.lowerExpr(expr.exprUnaryOperand)
     return hirUnary(expr.exprUnaryOp, operand, typ, loc)
 
@@ -883,6 +994,16 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       calleeName = expr.exprCallCallee.exprPath.join("_")
     let args = ctx.lowerCallArgs(expr.exprCallCallee, expr.exprCallArgs)
     if calleeName != "":
+      # Named global function → direct call
+      let sym = ctx.globalScope.lookup(calleeName)
+      if sym != nil and sym.kind == skFunc:
+        return hirCall(calleeName, args, typ, loc)
+      # Variable holding a fat function pointer → indirect call
+      let ct = ctx.resolveExprType(expr.exprCallCallee)
+      if ct != nil and ct.kind == tkFunc:
+        let callee = hirVar(calleeName, ct, loc)
+        return HirNode(kind: hCallIndirect, callIndirectCallee: callee,
+                       callIndirectArgs: args, typ: typ, loc: loc)
       return hirCall(calleeName, args, typ, loc)
     else:
       let callee = ctx.lowerExpr(expr.exprCallCallee)
@@ -1236,7 +1357,32 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
 
   of ekClosure:
     let f = ctx.lowerClosureFunc(expr)
-    return hirUnary(tkAmp, hirVar(f.name, makeFunc(@[], makeVoid()), loc), typ, loc)
+    if typ != nil and typ.kind == tkFunc:
+      ctx.seenFatTypes.add(typ)
+    let fatName = hirFuncFatTypeName(typ)
+    if expr.captureCount > 0 and f.envStructName.len > 0:
+      # Heap-allocate a fresh env so each closure value is independent
+      let envTmp = "__envp_" & $ctx.varCounter
+      inc ctx.varCounter
+      let fatTmp = "__fat_" & $ctx.varCounter
+      inc ctx.varCounter
+      var code = ""
+      code.add(&"{f.envStructName}* {envTmp} = ({f.envStructName}*)bux_alloc(sizeof({f.envStructName}));\n")
+      for i in 0 ..< expr.captureCount:
+        let capName = expr.captureNames[i]
+        code.add(&"{envTmp}->{capName} = {capName};\n")
+      code.add(&"{fatName} {fatTmp} = {{ .code = {f.name}, .env = {envTmp} }};")
+      ctx.pendingStmts.add(HirNode(kind: hEmit, emitCode: code, typ: makeVoid(), loc: loc))
+      return hirVar(fatTmp, typ, loc)
+    else:
+      # Capture-less: fat pointer with NULL env
+      let nullEnv = HirNode(kind: hCast,
+        castOperand: hirLit(Token(kind: tkIntLiteral, text: "0", loc: loc), makeInt(), loc),
+        castType: makePointer(makeVoid()), typ: makePointer(makeVoid()), loc: loc)
+      return HirNode(kind: hStructInit, structInitName: fatName, structInitFields: @[
+        (name: "code", value: hirVar(f.name, makePointer(makeVoid()), loc)),
+        (name: "env", value: nullEnv)
+      ], typ: typ, loc: loc)
 
   else:
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
@@ -1255,28 +1401,14 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     if stmt.stmtLetInit != nil:
       initHir = ctx.lowerExpr(stmt.stmtLetInit)
     let allocaType = if stmt.stmtLetType != nil:
-      case stmt.stmtLetType.kind
-      of tekNamed:
-        ctx.resolveTypeExpr(stmt.stmtLetType)
-      of tekOwn:
-        ctx.resolveTypeExpr(stmt.stmtLetType.pointerPointee)
-      of tekPointer:
-        let pointeeType = ctx.resolveTypeExpr(stmt.stmtLetType.pointerPointee)
-        makePointer(pointeeType)
-      of tekSlice:
-        let elemType = ctx.resolveTypeExpr(stmt.stmtLetType.sliceElement)
-        makeSlice(elemType)
-      of tekFunc:
-        var params: seq[Type] = @[]
-        for p in stmt.stmtLetType.funcParams:
-          params.add(ctx.resolveTypeExpr(p))
-        let ret = if stmt.stmtLetType.funcRet != nil: ctx.resolveTypeExpr(stmt.stmtLetType.funcRet) else: makeVoid()
-        makeFunc(params, ret)
-      else: makeUnknown()
+      # Full resolve covers named, pointer, slice, tuple, func, refs, etc.
+      ctx.resolveTypeExpr(stmt.stmtLetType)
     elif stmt.stmtLetInit != nil:
       ctx.resolveExprType(stmt.stmtLetInit)
     else:
       makeUnknown()
+    if allocaType != nil and allocaType.kind == tkFunc:
+      ctx.seenFatTypes.add(allocaType)
 
     let alloca = hirAlloca(stmt.stmtLetName, allocaType, loc)
     let varNode = hirVar(stmt.stmtLetName, makePointer(allocaType), loc)
@@ -1296,22 +1428,7 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     if initHir != nil:
       let store = hirStore(varNode, initHir, loc)
       stmts.add(store)
-    # If init is a closure with captures, emit capture assignments
-    if stmt.stmtLetInit != nil and stmt.stmtLetInit.kind == ekClosure and stmt.stmtLetInit.captureCount > 0:
-      let closureIdx = ctx.varCounter - 1
-      let envInst = "__closure_env_instance_" & $closureIdx
-      var capStmts: seq[HirNode] = @[]
-      for i in 0 ..< stmt.stmtLetInit.captureCount:
-        let capName = stmt.stmtLetInit.captureNames[i]
-        let capType = if i < stmt.stmtLetInit.captureTypeKinds.len: Type(kind: TypeKind(stmt.stmtLetInit.captureTypeKinds[i])) else: makeInt()
-        let base = hirVar(envInst, makeNamed(""), loc)
-        let field = HirNode(kind: hFieldAccess, fieldAccessName: capName, fieldAccessBase: base, typ: capType, loc: loc)
-        let val = hirVar(capName, capType, loc)
-        capStmts.add(hirAssign(field, val, loc))
-      # Prepend capture assignments before the let
-      var allStmts = capStmts
-      allStmts.add(stmts)
-      return hirBlock(allStmts, nil, makeVoid(), loc)
+    # Capture filling for closures is done at the ekClosure site (heap env).
     return hirBlock(stmts, nil, makeVoid(), loc)
 
   of skReturn:
@@ -1723,6 +1840,8 @@ proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc =
   let name = "__closure_" & $ctx.varCounter
   inc ctx.varCounter
   var f = HirFunc(name: name, isPublic: false)
+  # Always take a leading env pointer (fat-func ABI); may be unused.
+  f.params.add((name: "__env", typ: makePointer(makeVoid())))
   # Copy capture metadata
   if expr.captureCount > 0:
     f.captureNames = expr.captureNames
@@ -1730,7 +1849,7 @@ proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc =
       f.captureTypes.add(Type(kind: TypeKind(tk)))
     f.envStructName = "__closure_env_" & $(ctx.varCounter - 1)
     f.envInstanceName = "__closure_env_instance_" & $(ctx.varCounter - 1)
-  # Params
+  # User params
   for p in expr.exprClosureParams:
     f.params.add((name: p.name, typ: if p.ptype != nil: ctx.resolveTypeExpr(p.ptype) else: makeUnknown()))
   # Return type
@@ -1935,4 +2054,8 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       if allFound:
         vtableInfos.add((ifaceName, typeName, methodNames, hasAssoc))
 
-  result = HirModule(funcs: funcs, externFuncs: externFuncs, structs: structs, enums: enums, consts: consts, interfaces: ifaceInfos, vtables: vtableInfos)
+  var adapters: seq[tuple[name: string, typ: Type]] = @[]
+  for name in ctx.funcAdapters:
+    let t = if ctx.funcAdapterSigs.hasKey(name): ctx.funcAdapterSigs[name] else: makeFunc(@[makeInt()], makeInt())
+    adapters.add((name, t))
+  result = HirModule(funcs: funcs, externFuncs: externFuncs, structs: structs, enums: enums, consts: consts, interfaces: ifaceInfos, vtables: vtableInfos, funcAdapters: adapters, seenFatTypes: ctx.seenFatTypes)

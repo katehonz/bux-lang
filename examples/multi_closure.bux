@@ -1,0 +1,37 @@
+// Multi-instance closures: each capturing closure gets its own heap env
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+func MakeAdder(base: int) -> func(int) -> int {
+    return |a: int| -> int {
+        return a + base;
+    };
+}
+
+func Apply(f: func(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+func Main() -> int {
+    let a10: func(int) -> int = MakeAdder(10);
+    let a20: func(int) -> int = MakeAdder(20);
+
+    // Independent instances — not a single global env
+    Test_AssertEqInt(a10(1), 11);
+    Test_AssertEqInt(a20(1), 21);
+    Test_AssertEqInt(a10(5), 15);
+    Test_AssertEqInt(Apply(a20, 3), 23);
+
+    // Capture-less still works
+    let add: func(int, int) -> int = |x: int, y: int| -> int {
+        return x + y;
+    };
+    Test_AssertEqInt(add(2, 3), 5);
+
+    PrintInt(a10(1));
+    PrintLine("");
+    PrintInt(a20(1));
+    PrintLine("");
+    Test_Pass("multi_closure");
+    return 0;
+}

@@ -1,5 +1,6 @@
 import std/[os, strutils, terminal, strformat, osproc, sets]
 import lexer, parser, ast, sema, manifest, hir_lower, lir_lower, lir_c_backend
+import source_location
 
 type
   ColorMode* = enum
@@ -88,6 +89,203 @@ proc printInfo(msg: string, useColor: bool) =
     stdout.writeLine(msg)
   else:
     echo("info: " & msg)
+
+# ---------------------------------------------------------------------------
+# Rust-style diagnostics (snippet + optional help hint)
+# ---------------------------------------------------------------------------
+
+proc getSourceLine(path: string, lineNum: uint32): string =
+  ## Read a single 1-based line from path. Empty if unavailable.
+  if path.len == 0 or lineNum == 0 or not fileExists(path):
+    return ""
+  try:
+    let content = readFile(path)
+    var n: uint32 = 1
+    for line in content.splitLines():
+      if n == lineNum:
+        return line
+      inc n
+  except CatchableError:
+    discard
+  return ""
+
+proc extractQuotedName(msg: string): string =
+  ## Pull the first 'name' from messages like: undeclared identifier 'foo'
+  let a = msg.find('\'')
+  if a < 0: return ""
+  let b = msg.find('\'', a + 1)
+  if b <= a + 1: return ""
+  return msg[a + 1 .. b - 1]
+
+proc underlineLength(lineText: string, col: uint32, message: string): int =
+  ## Multi-character underline under the token at `col` (1-based).
+  ## Falls back to scanning a source token, or matching a quoted name in the message.
+  if lineText.len == 0:
+    return 1
+  let start = if col > 0: int(col) - 1 else: 0
+  if start < 0 or start >= lineText.len:
+    return 1
+
+  # Prefer highlighting the quoted identifier/token from the message when it
+  # appears on this line (e.g. undeclared identifier 'foo').
+  let quoted = extractQuotedName(message)
+  if quoted.len > 0:
+    let idx = lineText.find(quoted)
+    if idx >= 0:
+      # If caret is on/near that token, use its full length
+      if abs(idx - start) <= quoted.len:
+        return quoted.len
+
+  let c0 = lineText[start]
+  # String / char / backtick literals
+  if c0 == '"' or c0 == '\'' or c0 == '`':
+    let quote = c0
+    var i = start + 1
+    while i < lineText.len:
+      if lineText[i] == '\\' and i + 1 < lineText.len:
+        i += 2
+        continue
+      if lineText[i] == quote:
+        return i - start + 1
+      inc i
+    return max(1, lineText.len - start)
+
+  # Identifier or keyword
+  if c0.isAlphaAscii or c0 == '_':
+    var i = start
+    while i < lineText.len and (lineText[i].isAlphaNumeric or lineText[i] == '_'):
+      inc i
+    return max(1, i - start)
+
+  # Number literal
+  if c0.isDigit:
+    var i = start
+    while i < lineText.len and (lineText[i].isDigit or lineText[i] in {'.', 'x', 'X', 'b', 'B', 'o', 'O', 'a'..'f', 'A'..'F', '_'}):
+      inc i
+    # optional type suffix: 42i64, 1.0f
+    while i < lineText.len and lineText[i] in {'i', 'u', 'f', 'I', 'U', 'F', '0'..'9'}:
+      inc i
+    return max(1, i - start)
+
+  # Multi-char operators starting at caret
+  const multiOps = ["<<=", ">>=", "**", "++", "--", "==", "!=", "<=", ">=",
+                    "&&", "||", "<<", ">>", "+=", "-=", "*=", "/=", "%=",
+                    "&=", "|=", "^=", "=>", "..", "->"]
+  for op in multiOps:
+    if start + op.len <= lineText.len and lineText[start .. start + op.len - 1] == op:
+      return op.len
+
+  return 1
+
+proc hintForMessage(msg: string): string =
+  ## Actionable help text for common compiler errors.
+  let m = msg.toLowerAscii()
+  if "cannot assign" in m:
+    return "ensure the right-hand side type matches the left-hand side"
+  if "undeclared identifier" in m:
+    return "check the spelling, or import the symbol from the right module"
+  if "too few arguments" in m or "too many arguments" in m:
+    return "compare the call with the function's parameter list"
+  if "missing argument for parameter" in m:
+    return "provide the missing argument (positional or named)"
+  if "use of moved value" in m:
+    return "the value was moved; clone it or restructure ownership"
+  if "shared reference" in m or "checked function" in m:
+    return "use '&mut T' for mutation, or drop @[Checked] for unchecked code"
+  if "double mutable borrow" in m or "already mutably borrowed" in m:
+    return "only one active '&mut' borrow is allowed at a time"
+  if "expected expression" in m:
+    return "the previous statement may be incomplete (missing value or ';')"
+  if "expected type" in m:
+    return "write a type name such as 'int', 'String', or 'Array<int>'"
+  if "expected field name" in m:
+    return "after '.' use an identifier or a tuple index (.0, .1, ...)"
+  if "does not implement trait" in m:
+    return "add an 'extend Type for Trait { ... }' block, or pick another type"
+  if "duplicate symbol" in m:
+    return "rename one of the definitions or remove the duplicate"
+  if "unterminated" in m:
+    return "check for a missing closing quote, backtick, or comment delimiter"
+  return ""
+
+proc printDiagnostic*(severity: string, message: string, loc: SourceLocation,
+                      useColor: bool, fallbackFile: string = "") =
+  ## Print a Rust-style diagnostic:
+  ##   error: message
+  ##     --> file:line:col
+  ##      |
+  ##   42 | source line
+  ##      |        ^
+  ##      = help: hint
+  let isError = severity == "error"
+  if useColor:
+    stdout.setForegroundColor(if isError: fgRed else: fgYellow)
+    stdout.write(severity & ": ")
+    stdout.resetAttributes()
+    stdout.writeLine(message)
+  else:
+    let stream = if isError: stderr else: stdout
+    stream.writeLine(severity & ": " & message)
+
+  let file = if loc.file.len > 0: loc.file else: fallbackFile
+  if loc.line > 0:
+    let locStr = if file.len > 0:
+      &"{file}:{loc.line}:{loc.column}"
+    else:
+      &"{loc.line}:{loc.column}"
+    if useColor:
+      stdout.setForegroundColor(fgCyan)
+      stdout.write("  --> ")
+      stdout.resetAttributes()
+      stdout.writeLine(locStr)
+    else:
+      stderr.writeLine("  --> " & locStr)
+
+    let lineText = getSourceLine(file, loc.line)
+    if lineText.len > 0:
+      let gutter = $loc.line
+      let pad = " ".repeat(max(gutter.len, 3))
+      # If message names a quoted token, prefer caret at that token's start
+      var col = loc.column
+      let quoted = extractQuotedName(message)
+      if quoted.len > 0:
+        let idx = lineText.find(quoted)
+        if idx >= 0:
+          col = uint32(idx + 1)
+      let ulen = underlineLength(lineText, col, message)
+      stdout.writeLine(pad & " |")
+      stdout.writeLine(" " & gutter & " | " & lineText)
+      # Multi-char underline under the token (1-based column)
+      var caretPad = ""
+      if col > 0:
+        caretPad = " ".repeat(int(col) - 1)
+      let marks = "^".repeat(max(1, ulen))
+      stdout.writeLine(pad & " | " & caretPad & marks)
+
+  let hint = hintForMessage(message)
+  if hint.len > 0:
+    if useColor:
+      stdout.setForegroundColor(fgGreen)
+      stdout.write("   = help: ")
+      stdout.resetAttributes()
+      stdout.writeLine(hint)
+    else:
+      stdout.writeLine("   = help: " & hint)
+
+proc printLexerDiags(diags: seq[LexerDiagnostic], useColor: bool, fallbackFile = "") =
+  for d in diags:
+    let sev = if d.severity == ldsError: "error" else: "warning"
+    printDiagnostic(sev, d.message, d.loc, useColor, fallbackFile)
+
+proc printParserDiags(diags: seq[ParserDiagnostic], useColor: bool, fallbackFile = "") =
+  for d in diags:
+    let sev = if d.severity == pdsError: "error" else: "warning"
+    printDiagnostic(sev, d.message, d.loc, useColor, fallbackFile)
+
+proc printSemaDiags(diags: seq[SemaDiagnostic], useColor: bool, fallbackFile = "") =
+  for d in diags:
+    let sev = if d.severity == sdsError: "error" else: "warning"
+    printDiagnostic(sev, d.message, d.loc, useColor, fallbackFile)
 
 # ---------------------------------------------------------------------------
 # Commands
@@ -304,14 +502,12 @@ proc prepareProject(root: string, useColor: bool, opts: GlobalOptions): (Project
       let lexRes = tokenize(source, path)
       if lexRes.hasErrors:
         printError(&"lex errors in {path}", useColor)
-        for d in lexRes.diagnostics:
-          echo $d
+        printLexerDiags(lexRes.diagnostics, useColor, path)
         return (pctx, 1)
       let parseRes = parse(lexRes.tokens, path)
       if parseRes.diagnostics.len > 0:
         printError(&"parse errors in {path}", useColor)
-        for d in parseRes.diagnostics:
-          echo &"error: {d.message} at {d.loc}"
+        printParserDiags(parseRes.diagnostics, useColor, path)
         return (pctx, 1)
       for decl in parseRes.module.items:
         if decl.kind == dkModule:
@@ -345,9 +541,7 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   let semaRes = analyze(unifiedModule)
   if semaRes.hasErrors:
     printError("type errors in project", useColor)
-    for d in semaRes.diagnostics:
-      let sev = if d.severity == sdsError: "error" else: "warning"
-      echo &"{sev}: {d.message} at {d.loc}"
+    printSemaDiags(semaRes.diagnostics, useColor)
     return 1
   if not opts.quiet:
     printInfo("check passed", useColor)
@@ -448,9 +642,7 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let (semaRes, semaCtx) = analyzeFull(unifiedModule)
   if semaRes.hasErrors:
     printError("type errors in project", useColor)
-    for d in semaRes.diagnostics:
-      let sev = if d.severity == sdsError: "error" else: "warning"
-      echo &"{sev}: {d.message} at {d.loc}"
+    printSemaDiags(semaRes.diagnostics, useColor)
     return 1
   
   let hirMod = lowerModule(unifiedModule, semaCtx)

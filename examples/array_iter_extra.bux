@@ -1,0 +1,46 @@
+// Array_Contains / IndexOf / Extend + Iter_Collect / AnyEq
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::{
+    Array, Array_New, Array_Push, Array_Contains, Array_IndexOf,
+    Array_Extend, Array_Len, Array_Get, Array_Free
+};
+import Std::Iter::{Array_Iter, Iter, Iter_Collect, Iter_AnyEq, Iter_AllEq, Iter_HasNext, Iter_Next};
+import Std::Test::{Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_Pass};
+
+func Main() -> int {
+    var a: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&a, 10);
+    Array_Push<int>(&a, 20);
+    Array_Push<int>(&a, 30);
+
+    Test_AssertTrue(Array_Contains<int>(&a, 20));
+    Test_AssertFalse(Array_Contains<int>(&a, 99));
+    Test_AssertEqInt(Array_IndexOf<int>(&a, 30), 2);
+    Test_AssertEqInt(Array_IndexOf<int>(&a, 99), -1);
+
+    var b: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&b, 40);
+    Array_Push<int>(&b, 50);
+    Array_Extend<int>(&a, &b);
+    Test_AssertEqInt(Array_Len<int>(&a) as int, 5);
+    Test_AssertEqInt(Array_Get<int>(&a, 4), 50);
+
+    var it: Iter<int> = Array_Iter<int>(&a);
+    Test_AssertTrue(Iter_AnyEq<int>(&it, 10));
+    Test_AssertFalse(Iter_AllEq<int>(&it, 10));
+
+    // Skip first two via advancing, collect rest
+    discard Iter_Next<int>(&it);
+    discard Iter_Next<int>(&it);
+    var rest: Array<int> = Iter_Collect<int>(&it);
+    Test_AssertEqInt(Array_Len<int>(&rest) as int, 3);
+    Test_AssertEqInt(Array_Get<int>(&rest, 0), 30);
+
+    Array_Free<int>(&a);
+    Array_Free<int>(&b);
+    Array_Free<int>(&rest);
+
+    PrintLine("array_iter_extra: ok");
+    Test_Pass("array + iter extras");
+    return 0;
+}

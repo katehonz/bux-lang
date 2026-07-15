@@ -277,6 +277,7 @@ func lexKeywordKind(text: String) -> int {
     if String_Eq(text, "switch") { return tkSwitch; }
     if String_Eq(text, "case") { return tkCase; }
     if String_Eq(text, "default") { return tkDefault; }
+    if String_Eq(text, "unsafe") { return tkUnsafe; }
     if String_Eq(text, "async") { return tkAsync; }
     if String_Eq(text, "await") { return tkAwait; }
     if String_Eq(text, "spawn") { return tkSpawn; }

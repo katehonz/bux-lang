@@ -67,4 +67,44 @@ func Iter_Take<T>(it: *Iter<T>, n: uint) -> Iter<T> {
     return Iter<T> { data: it.data, len: endPos, pos: it.pos };
 }
 
+/* True if any remaining element equals value */
+func Iter_AnyEq<T>(it: *Iter<T>, value: T) -> bool {
+    var i: uint = it.pos;
+    while i < it.len {
+        if it.data[i] == value {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+/* True if every remaining element equals value (true if empty) */
+func Iter_AllEq<T>(it: *Iter<T>, value: T) -> bool {
+    var i: uint = it.pos;
+    while i < it.len {
+        if it.data[i] != value {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+/* Collect remaining elements into a new Array */
+func Iter_Collect<T>(it: *Iter<T>) -> Array<T> {
+    let remaining: uint = it.len - it.pos;
+    var cap: uint = remaining;
+    if cap == 0 {
+        cap = 1;
+    }
+    var arr: Array<T> = Array_New<T>(cap);
+    var i: uint = it.pos;
+    while i < it.len {
+        Array_Push<T>(&arr, it.data[i]);
+        i = i + 1;
+    }
+    return arr;
+}
+
 }

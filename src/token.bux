@@ -142,6 +142,7 @@ const tkDefer: int = 106;
 const tkSwitch: int = 107;
 const tkCase: int = 108;
 const tkDefault: int = 109;
+const tkUnsafe: int = 110;
 
 // ---------------------------------------------------------------------------
 // Token struct
@@ -165,6 +166,7 @@ func Token_IsKeyword(kind: int) -> bool {
     if kind >= tkFunc && kind <= tkExtern { return true; }
     if kind >= tkAs && kind <= tkSuper { return true; }
     if kind == tkSizeOf { return true; }
+    if kind >= tkDefer && kind <= tkUnsafe { return true; }
     if kind >= tkAsync && kind <= tkSpawn { return true; }
     return false;
 }
@@ -215,6 +217,15 @@ func Token_KeywordKind(text: String) -> int {
     if String_Eq(text, "self") { return tkSelf; }
     if String_Eq(text, "super") { return tkSuper; }
     if String_Eq(text, "sizeof") { return tkSizeOf; }
+    if String_Eq(text, "defer") { return tkDefer; }
+    if String_Eq(text, "switch") { return tkSwitch; }
+    if String_Eq(text, "case") { return tkCase; }
+    if String_Eq(text, "default") { return tkDefault; }
+    if String_Eq(text, "unsafe") { return tkUnsafe; }
+    if String_Eq(text, "discard") { return tkDiscard; }
+    if String_Eq(text, "async") { return tkAsync; }
+    if String_Eq(text, "await") { return tkAwait; }
+    if String_Eq(text, "spawn") { return tkSpawn; }
     if String_Eq(text, "true") { return tkBoolLiteral; }
     if String_Eq(text, "false") { return tkBoolLiteral; }
     return tkIdent;
@@ -259,6 +270,15 @@ func Token_KindName(kind: int) -> String {
     if kind == tkNull { return "null"; }
     if kind == tkSelf { return "self"; }
     if kind == tkSuper { return "super"; }
+    if kind == tkUnsafe { return "unsafe"; }
+    if kind == tkDefer { return "defer"; }
+    if kind == tkSwitch { return "switch"; }
+    if kind == tkCase { return "case"; }
+    if kind == tkDefault { return "default"; }
+    if kind == tkAsync { return "async"; }
+    if kind == tkAwait { return "await"; }
+    if kind == tkSpawn { return "spawn"; }
+    if kind == tkDiscard { return "discard"; }
     if kind == tkLParen { return "("; }
     if kind == tkRParen { return ")"; }
     if kind == tkLBrace { return "{"; }

@@ -43,30 +43,7 @@ struct LowerCtx {
 // ---------------------------------------------------------------------------
 
 func Lcx_ResolveTypeKindFromName(name: String) -> int {
-    if String_Eq(name, "void") { return tyVoid; }
-    if String_Eq(name, "bool") { return tyBool; }
-    if String_Eq(name, "bool8") { return tyBool8; }
-    if String_Eq(name, "bool16") { return tyBool16; }
-    if String_Eq(name, "bool32") { return tyBool32; }
-    if String_Eq(name, "char8") { return tyChar8; }
-    if String_Eq(name, "char16") { return tyChar16; }
-    if String_Eq(name, "char32") { return tyChar32; }
-    if String_Eq(name, "String") { return tyStr; }
-    if String_Eq(name, "str") { return tyStr; }
-    if String_Eq(name, "int8") { return tyInt8; }
-    if String_Eq(name, "int16") { return tyInt16; }
-    if String_Eq(name, "int32") { return tyInt32; }
-    if String_Eq(name, "int64") { return tyInt64; }
-    if String_Eq(name, "int") { return tyInt; }
-    if String_Eq(name, "uint8") { return tyUInt8; }
-    if String_Eq(name, "uint16") { return tyUInt16; }
-    if String_Eq(name, "uint32") { return tyUInt32; }
-    if String_Eq(name, "uint64") { return tyUInt64; }
-    if String_Eq(name, "uint") { return tyUInt; }
-    if String_Eq(name, "float32") { return tyFloat32; }
-    if String_Eq(name, "float64") { return tyFloat64; }
-    if String_Eq(name, "float") { return tyFloat64; }
-    return tyNamed;
+    return Type_FromName(name);
 }
 
 func Lcx_TypeKindToName(kind: int) -> String {
@@ -178,38 +155,58 @@ func Lcx_SubstituteType(ctx: *LowerCtx, te: *TypeExpr) -> *TypeExpr {
     return te;
 }
 
-// Build C function-pointer type string from a tekFunc TypeExpr, e.g. "int (*)(int)"
-func Lcx_BuildFuncTypeName(te: *TypeExpr) -> String {
-    if te == null as *TypeExpr || te.kind != tekFunc { return "void (*)(void)"; }
-    var retName: String = "void";
-    if te.funcRet != null as *TypeExpr {
-        if te.funcRet.kind == tekPointer && te.funcRet.pointerPointee != null as *TypeExpr {
-            retName = String_Concat(te.funcRet.pointerPointee.typeName, "*");
-        } else {
-            retName = te.funcRet.typeName;
-        }
-        if String_Eq(retName, "") { retName = "int"; }
+// Sanitize a C type fragment for use inside BuxFn_* mangled names
+func Lcx_SanitizeFatPart(s: String) -> String {
+    var r: String = s;
+    if String_Eq(r, "String") || String_Eq(r, "str") || String_Eq(r, "const char*") {
+        return "cstr";
     }
-    var result: String = retName;
-    result = String_Concat(result, " (*)(");
+    if String_Eq(r, "unsigned int") { return "uint"; }
+    // crude replacements for * and spaces
+    r = String_ReplaceAll(r, "*", "Ptr");
+    r = String_ReplaceAll(r, " ", "_");
+    r = String_ReplaceAll(r, "(", "");
+    r = String_ReplaceAll(r, ")", "");
+    r = String_ReplaceAll(r, ",", "_");
+    if String_Eq(r, "") { return "int"; }
+    return r;
+}
+
+func Lcx_TypeExprFatPart(te: *TypeExpr) -> String {
+    if te == null as *TypeExpr { return "void"; }
+    if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+        return Lcx_SanitizeFatPart(String_Concat(te.pointerPointee.typeName, "Ptr"));
+    }
+    if te.kind == tekFunc {
+        return Lcx_SanitizeFatPart(Lcx_BuildFuncTypeName(te));
+    }
+    var n: String = te.typeName;
+    if String_Eq(n, "") { n = "int"; }
+    return Lcx_SanitizeFatPart(n);
+}
+
+// Fat function-pointer type name: BuxFn_<ret>_<p0>_<p1>...
+// Enables multi-instance closures (code + env).
+func Lcx_BuildFuncTypeName(te: *TypeExpr) -> String {
+    if te == null as *TypeExpr || te.kind != tekFunc {
+        return "BuxFn_void_void";
+    }
+    var retPart: String = "void";
+    if te.funcRet != null as *TypeExpr {
+        retPart = Lcx_TypeExprFatPart(te.funcRet);
+    }
+    var result: String = String_Concat("BuxFn_", retPart);
     var cur: *TypeExprList = te.funcParams;
-    var first: bool = true;
+    var anyParam: bool = false;
     while cur != null as *TypeExprList {
-        if !first {
-            result = String_Concat(result, ", ");
-        }
-        var pName: String = "int";
-        if cur.te.kind == tekPointer && cur.te.pointerPointee != null as *TypeExpr {
-            pName = String_Concat(cur.te.pointerPointee.typeName, "*");
-        } else {
-            pName = cur.te.typeName;
-        }
-        if String_Eq(pName, "") { pName = "int"; }
-        result = String_Concat(result, pName);
-        first = false;
+        result = String_Concat(result, "_");
+        result = String_Concat(result, Lcx_TypeExprFatPart(cur.te));
+        anyParam = true;
         cur = cur.next;
     }
-    result = String_Concat(result, ")");
+    if !anyParam {
+        result = String_Concat(result, "_void");
+    }
     return result;
 }
 
@@ -469,9 +466,44 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
                 return n;
             }
         }
+        let sym: Symbol = Scope_Lookup(ctx.scope, expr.strValue);
+        // Named function used as a value → fat pointer via __adapt_ wrapper
+        if sym.kind == skFunc {
+            var fatName: String = "BuxFn_int_int";
+            if sym.refType != null as *TypeExpr && sym.refType.kind == tekFunc {
+                fatName = Lcx_BuildFuncTypeName(sym.refType);
+            } else if !String_Eq(sym.typeName, "") && String_StartsWith(sym.typeName, "BuxFn_") {
+                fatName = sym.typeName;
+            }
+            n.kind = hStructInit;
+            n.strValue = fatName;
+            n.typeKind = tyFunc;
+            n.typeName = fatName;
+            let codeField: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            codeField.kind = hBlock;
+            codeField.strValue = "code";
+            let codeVal: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            codeVal.kind = hVar;
+            codeVal.strValue = String_Concat("__adapt_", expr.strValue);
+            codeField.child1 = codeVal;
+            let envField: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            envField.kind = hBlock;
+            envField.strValue = "env";
+            let nullEnv: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            nullEnv.kind = hCast;
+            nullEnv.typeName = "void*";
+            let zero: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            zero.kind = hLit;
+            zero.intValue = tkIntLiteral;
+            zero.strValue = "0";
+            nullEnv.child1 = zero;
+            envField.child1 = nullEnv;
+            codeField.child3 = envField;
+            n.child1 = codeField;
+            return n;
+        }
         n.kind = hVar;
         n.strValue = expr.strValue;
-        let sym: Symbol = Scope_Lookup(ctx.scope, expr.strValue);
         n.typeKind = sym.typeKind;
 
         if expr.refType != null as *TypeExpr {
@@ -566,6 +598,30 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             }
         }
 
+        // Overflow checking: in @[Checked] mode, lower +, -, * on signed integers to checked calls
+        if ctx.checkedFunc && !ctx.releaseFunc {
+            var opKind: int = expr.intValue;
+            var isArithOp: bool = opKind == tkPlus || opKind == tkMinus || opKind == tkStar;
+            var isSignedInt: bool = false;
+            if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+                let lhsKind: int = Lcx_ResolveTypeKind(expr.child1.refType);
+                isSignedInt = Type_IsSigned(lhsKind);
+            }
+            if isArithOp && isSignedInt {
+                var checkedFunc: String = "";
+                if opKind == tkPlus { checkedFunc = "bux_add_i64_checked"; }
+                else if opKind == tkMinus { checkedFunc = "bux_sub_i64_checked"; }
+                else if opKind == tkStar { checkedFunc = "bux_mul_i64_checked"; }
+                if !String_Eq(checkedFunc, "") {
+                    n.kind = hCall;
+                    n.strValue = checkedFunc;
+                    n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+                    n.child2 = Lcx_LowerExpr(ctx, expr.child2);
+                    return n;
+                }
+            }
+        }
+
         n.kind = hBinary;
         n.intValue = expr.intValue; // operator
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
@@ -575,6 +631,20 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Unary
     if kind == ekUnary {
+        // Overflow checking: in @[Checked] mode, lower negation on signed integers to checked call
+        if ctx.checkedFunc && !ctx.releaseFunc && expr.intValue == tkMinus {
+            var isSignedInt: bool = false;
+            if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+                let operandKind: int = Lcx_ResolveTypeKind(expr.child1.refType);
+                isSignedInt = Type_IsSigned(operandKind);
+            }
+            if isSignedInt {
+                n.kind = hCall;
+                n.strValue = "bux_neg_i64_checked";
+                n.child1 = Lcx_LowerExpr(ctx, expr.child1);
+                return n;
+            }
+        }
         n.kind = hUnary;
         n.intValue = expr.intValue;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1);
@@ -1132,20 +1202,85 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         return n;
     }
 
-    // Closure: generate function and return address-of
+    // Closure: fat function pointer (multi-instance via heap env + maker)
     if kind == ekClosure {
         let f: *HirFunc = Lcx_LowerClosureFunc(ctx, expr);
-        n.kind = hUnary;
-        n.intValue = tkAmp;
-        let varNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-        varNode.kind = hVar;
-        varNode.strValue = f.name;
-        varNode.typeKind = tyFunc;
-        n.child1 = varNode;
-        n.typeKind = tyFunc;
-        if expr.refType != null as *TypeExpr {
-            n.typeName = Lcx_BuildFuncTypeName(expr.refType);
+        var fatName: String = "BuxFn_int_int";
+        if expr.refType != null as *TypeExpr && expr.refType.kind == tekFunc {
+            fatName = Lcx_BuildFuncTypeName(expr.refType);
+        } else if f.paramCount >= 2 {
+            // thunk has __env + user params; approximate from ret + user arity
+            fatName = "BuxFn_int_int";
+            if f.paramCount == 3 { fatName = "BuxFn_int_int_int"; }
+            if f.paramCount == 1 { fatName = "BuxFn_int_void"; }
         }
+        if f.captureCount > 0 {
+            // Call __make_<closure>(captures...) which heap-allocs env
+            n.kind = hCall;
+            n.strValue = String_Concat("__make_", f.name);
+            n.typeKind = tyFunc;
+            n.typeName = fatName;
+            var ci: int = 0;
+            while ci < f.captureCount {
+                var capName: String = "";
+                if ci == 0 { capName = f.captureName0; }
+                else if ci == 1 { capName = f.captureName1; }
+                else if ci == 2 { capName = f.captureName2; }
+                else if ci == 3 { capName = f.captureName3; }
+                else if ci == 4 { capName = f.captureName4; }
+                else if ci == 5 { capName = f.captureName5; }
+                else if ci == 6 { capName = f.captureName6; }
+                else if ci == 7 { capName = f.captureName7; }
+                let capVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                capVar.kind = hVar;
+                capVar.strValue = capName;
+                if ci == 0 { n.child1 = capVar; }
+                else if ci == 1 { n.child2 = capVar; }
+                else if ci == 2 {
+                    let firstExtra: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                    firstExtra.node = capVar;
+                    firstExtra.next = null as *HirArgList;
+                    n.extraData = firstExtra as *void;
+                    n.extraCount = 1;
+                } else {
+                    var cur: *HirArgList = n.extraData as *HirArgList;
+                    while cur.next != null as *HirArgList { cur = cur.next; }
+                    let newNode: *HirArgList = bux_alloc(sizeof(HirArgList)) as *HirArgList;
+                    newNode.node = capVar;
+                    newNode.next = null as *HirArgList;
+                    cur.next = newNode;
+                    n.extraCount = n.extraCount + 1;
+                }
+                ci = ci + 1;
+            }
+            return n;
+        }
+        // Capture-less: compound literal fat pointer with NULL env
+        n.kind = hStructInit;
+        n.strValue = fatName;
+        n.typeKind = tyFunc;
+        n.typeName = fatName;
+        let codeField: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        codeField.kind = hBlock;
+        codeField.strValue = "code";
+        let codeVal: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        codeVal.kind = hVar;
+        codeVal.strValue = f.name;
+        codeField.child1 = codeVal;
+        let envField: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        envField.kind = hBlock;
+        envField.strValue = "env";
+        let nullEnv: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        nullEnv.kind = hCast;
+        nullEnv.typeName = "void*";
+        let zero: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        zero.kind = hLit;
+        zero.intValue = tkIntLiteral;
+        zero.strValue = "0";
+        nullEnv.child1 = zero;
+        envField.child1 = nullEnv;
+        codeField.child3 = envField;
+        n.child1 = codeField;
         return n;
     }
 
@@ -1224,6 +1359,25 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             field = field.child3;
         }
         n.child1 = firstField;
+        return n;
+    }
+
+    // Block expression (boolValue = true means unsafe block)
+    if kind == ekBlock {
+        if expr.refBlock != null as *Block {
+            if expr.boolValue {
+                let oldChecked: bool = ctx.checkedFunc;
+                let oldRelease: bool = ctx.releaseFunc;
+                ctx.checkedFunc = false;
+                ctx.releaseFunc = false;
+                let blockNode: *HirNode = Lcx_LowerBlock(ctx, expr.refBlock, -1);
+                ctx.checkedFunc = oldChecked;
+                ctx.releaseFunc = oldRelease;
+                return blockNode;
+            } else {
+                return Lcx_LowerBlock(ctx, expr.refBlock, -1);
+            }
+        }
         return n;
     }
 
@@ -1461,71 +1615,8 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
             }
         }
 
-        // If init is a closure with captures, emit capture assignments before the let
-        if stmt.child1 != null as *Expr && stmt.child1.kind == ekClosure && stmt.child1.captureCount > 0 {
-            let closureIdx: int = ctx.funcCount - 1;
-            let envInst: String = String_Concat("__closure_env_instance_", String_FromInt(closureIdx));
-            // Build a block: capture assignments + let store
-            let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-            blockNode.kind = hBlock;
-            blockNode.line = line;
-            blockNode.column = col;
-            var firstStmt: *HirNode = null as *HirNode;
-            var lastStmt: *HirNode = null as *HirNode;
-            var ci: int = 0;
-            while ci < stmt.child1.captureCount {
-                var capName: String = "";
-                if ci == 0 { capName = stmt.child1.captureName0; }
-                else if ci == 1 { capName = stmt.child1.captureName1; }
-                else if ci == 2 { capName = stmt.child1.captureName2; }
-                else if ci == 3 { capName = stmt.child1.captureName3; }
-                else if ci == 4 { capName = stmt.child1.captureName4; }
-                else if ci == 5 { capName = stmt.child1.captureName5; }
-                else if ci == 6 { capName = stmt.child1.captureName6; }
-                else if ci == 7 { capName = stmt.child1.captureName7; }
-                // Build: envInst.capName = capName;
-                let assignNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                assignNode.kind = hAssign;
-                assignNode.line = line;
-                assignNode.column = col;
-                let fieldNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                fieldNode.kind = hFieldAccess;
-                fieldNode.strValue = capName;
-                let baseNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                baseNode.kind = hVar;
-                baseNode.strValue = envInst;
-                fieldNode.child1 = baseNode;
-                let valNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                valNode.kind = hVar;
-                valNode.strValue = capName;
-                assignNode.child1 = fieldNode;
-                assignNode.child2 = valNode;
-                if firstStmt == null as *HirNode {
-                    firstStmt = assignNode;
-                    lastStmt = assignNode;
-                } else {
-                    lastStmt.child3 = assignNode;
-                    lastStmt = assignNode;
-                }
-                ci = ci + 1;
-            }
-            // Append the let store
-            if firstStmt == null as *HirNode {
-                firstStmt = storeNode;
-                lastStmt = storeNode;
-            } else {
-                lastStmt.child3 = storeNode;
-                lastStmt = storeNode;
-            }
-            // Append auto-Drop defer if present
-            if deferNode != null as *HirNode {
-                lastStmt.child3 = deferNode;
-                lastStmt = deferNode;
-            }
-            blockNode.child1 = firstStmt;
-            return blockNode;
-        }
-        // Non-closure: wrap with defer if present
+        // Capturing closures allocate env via __make_* at ekClosure site.
+        // Wrap with defer if present
         if deferNode != null as *HirNode {
             storeNode.child3 = deferNode;
             let blockNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
@@ -2244,8 +2335,16 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
 
     let retTe: *TypeExpr = Lcx_SubstituteType(ctx, decl.retType);
     if retTe != null as *TypeExpr {
-        f.retTypeName = retTe.typeName;
         f.retTypeKind = Lcx_ResolveTypeKind(retTe);
+        if retTe.kind == tekFunc {
+            f.retTypeName = Lcx_BuildFuncTypeName(retTe);
+        } else if !String_Eq(retTe.typeName, "") {
+            f.retTypeName = retTe.typeName;
+        } else if retTe.kind == tekPointer && retTe.pointerPointee != null as *TypeExpr {
+            f.retTypeName = String_Concat(retTe.pointerPointee.typeName, "*");
+        } else {
+            f.retTypeName = "";
+        }
     } else {
         f.retTypeName = "";
         f.retTypeKind = 0;
@@ -2320,25 +2419,36 @@ func Lcx_LowerClosureFunc(ctx: *LowerCtx, expr: *Expr) -> *HirFunc {
     f.isPublic = false;
 
     let params: *Decl = expr.closureParams;
-    if params != null as *Decl {
-        f.paramCount = params.paramCount;
-        if params.paramCount > 0 { f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param0, &params.param0, ctx); }
-        if params.paramCount > 1 { f.param1 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param1, &params.param1, ctx); }
-        if params.paramCount > 2 { f.param2 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param2, &params.param2, ctx); }
-        if params.paramCount > 3 { f.param3 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param3, &params.param3, ctx); }
-        if params.paramCount > 4 { f.param4 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param4, &params.param4, ctx); }
-        if params.paramCount > 5 { f.param5 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param5, &params.param5, ctx); }
-        if params.paramCount > 6 { f.param6 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param6, &params.param6, ctx); }
-        if params.paramCount > 7 { f.param7 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param7, &params.param7, ctx); }
-        if params.paramCount > 8 { f.param8 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param8, &params.param8, ctx); }
-    }
+    // Fat-func ABI: leading void* __env, then user params
+    var userCount: int = 0;
+    if params != null as *Decl { userCount = params.paramCount; }
+    f.paramCount = userCount + 1;
+    f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam;
+    f.param0.name = "__env";
+    f.param0.typeKind = tyPointer;
+    f.param0.typeName = "void*";
+    if userCount > 0 { f.param1 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param1, &params.param0, ctx); }
+    if userCount > 1 { f.param2 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param2, &params.param1, ctx); }
+    if userCount > 2 { f.param3 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param3, &params.param2, ctx); }
+    if userCount > 3 { f.param4 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param4, &params.param3, ctx); }
+    if userCount > 4 { f.param5 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param5, &params.param4, ctx); }
+    if userCount > 5 { f.param6 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param6, &params.param5, ctx); }
+    if userCount > 6 { f.param7 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param7, &params.param6, ctx); }
+    if userCount > 7 { f.param8 = bux_alloc(sizeof(HirParam)) as *HirParam; Lcx_LowerParam(f.param8, &params.param7, ctx); }
 
-    if expr.refType != null as *TypeExpr && expr.refType.kind == tekFunc && expr.refType.funcRet != null as *TypeExpr {
-        f.retTypeName = expr.refType.funcRet.typeName;
-        f.retTypeKind = Lcx_ResolveTypeKind(expr.refType.funcRet);
+    if expr.refType != null as *TypeExpr && expr.refType.kind == tekFunc {
+        // Return type of the *thunk* is the closure's return type (not the fat type)
+        if expr.refType.funcRet != null as *TypeExpr {
+            f.retTypeName = expr.refType.funcRet.typeName;
+            if String_Eq(f.retTypeName, "") { f.retTypeName = "int"; }
+            f.retTypeKind = Lcx_ResolveTypeKind(expr.refType.funcRet);
+        } else {
+            f.retTypeName = "void";
+            f.retTypeKind = tyVoid;
+        }
     } else {
-        f.retTypeName = "";
-        f.retTypeKind = 0;
+        f.retTypeName = "int";
+        f.retTypeKind = tyInt;
     }
 
     // Copy capture metadata from AST

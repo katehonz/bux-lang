@@ -61,6 +61,43 @@ func Set_Len<T>(s: *Set<T>) -> uint {
     return s.len;
 }
 
+func Set_IsEmpty<T>(s: *Set<T>) -> bool {
+    return s.len == 0;
+}
+
+/* Remove value if present. Rebuilds the table to keep open-addressing correct. */
+func Set_Remove<T>(s: *Set<T>, value: T) -> bool {
+    if !Set_Has<T>(s, value) {
+        return false;
+    }
+    var fresh: Set<T> = Set_New<T>(s.cap);
+    var i: uint = 0;
+    while i < s.cap {
+        if s.entries[i].occupied {
+            var entryPtr: *T = &s.entries[i].value;
+            var valuePtr: *T = &value;
+            if bux_mem_eq(entryPtr as *void, valuePtr as *void, sizeof(T)) == 0 {
+                Set_Add<T>(&fresh, s.entries[i].value);
+            }
+        }
+        i = i + 1;
+    }
+    bux_free(s.entries as *void);
+    s.entries = fresh.entries;
+    s.cap = fresh.cap;
+    s.len = fresh.len;
+    return true;
+}
+
+func Set_Clear<T>(s: *Set<T>) {
+    var i: uint = 0;
+    while i < s.cap {
+        s.entries[i].occupied = false;
+        i = i + 1;
+    }
+    s.len = 0;
+}
+
 func Set_Free<T>(s: *Set<T>) {
     bux_free(s.entries as *void);
     s.entries = null as *SetEntry<T>;

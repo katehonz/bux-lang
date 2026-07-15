@@ -6,6 +6,7 @@ extern func bux_getenv(name: String) -> String;
 extern func bux_setenv(name: String, value: String) -> int;
 extern func bux_getcwd() -> String;
 extern func bux_chdir(path: String) -> int;
+extern func bux_exit(code: int);
 
 func Os_ArgsCount() -> int {
     return bux_argc();
@@ -29,6 +30,11 @@ func Os_GetCwd() -> String {
 
 func Os_Chdir(path: String) -> bool {
     return bux_chdir(path) == 0;
+}
+
+/* Terminate the process with the given exit code */
+func Os_Exit(code: int) {
+    bux_exit(code);
 }
 
 }

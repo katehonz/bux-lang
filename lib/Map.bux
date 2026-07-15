@@ -80,6 +80,41 @@ func Map_Len<K, V>(m: *Map<K, V>) -> uint {
     return m.len;
 }
 
+func Map_IsEmpty<K, V>(m: *Map<K, V>) -> bool {
+    return m.len == 0;
+}
+
+/* Remove key if present. Rebuilds the table to keep open-addressing correct. */
+func Map_Remove<K, V>(m: *Map<K, V>, key: K) -> bool {
+    if !Map_Has<K, V>(m, key) {
+        return false;
+    }
+    var fresh: Map<K, V> = Map_New<K, V>(m.cap);
+    var i: uint = 0;
+    while i < m.cap {
+        if m.entries[i].occupied {
+            if m.entries[i].key != key {
+                Map_Set<K, V>(&fresh, m.entries[i].key, m.entries[i].value);
+            }
+        }
+        i = i + 1;
+    }
+    bux_free(m.entries as *void);
+    m.entries = fresh.entries;
+    m.cap = fresh.cap;
+    m.len = fresh.len;
+    return true;
+}
+
+func Map_Clear<K, V>(m: *Map<K, V>) {
+    var i: uint = 0;
+    while i < m.cap {
+        m.entries[i].occupied = false;
+        i = i + 1;
+    }
+    m.len = 0;
+}
+
 func Map_Free<K, V>(m: *Map<K, V>) {
     bux_free(m.entries as *void);
     m.entries = null as *MapEntry<K, V>;
@@ -161,6 +196,40 @@ func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool {
 
 func StringMap_Len<V>(m: *StringMap<V>) -> uint {
     return m.len;
+}
+
+func StringMap_IsEmpty<V>(m: *StringMap<V>) -> bool {
+    return m.len == 0;
+}
+
+func StringMap_Remove<V>(m: *StringMap<V>, key: String) -> bool {
+    if !StringMap_Has<V>(m, key) {
+        return false;
+    }
+    var fresh: StringMap<V> = StringMap_New<V>(m.cap);
+    var i: uint = 0;
+    while i < m.cap {
+        if m.entries[i].occupied {
+            if !String_Eq(m.entries[i].key, key) {
+                StringMap_Set<V>(&fresh, m.entries[i].key, m.entries[i].value);
+            }
+        }
+        i = i + 1;
+    }
+    bux_free(m.entries as *void);
+    m.entries = fresh.entries;
+    m.cap = fresh.cap;
+    m.len = fresh.len;
+    return true;
+}
+
+func StringMap_Clear<V>(m: *StringMap<V>) {
+    var i: uint = 0;
+    while i < m.cap {
+        m.entries[i].occupied = false;
+        i = i + 1;
+    }
+    m.len = 0;
 }
 
 func StringMap_Free<V>(m: *StringMap<V>) {

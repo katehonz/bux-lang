@@ -1,0 +1,32 @@
+// Tuple types: (T, U), return, field access via .0 / .1
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+func MakePair(a: int, b: int) -> (int, int) {
+    return (a, b);
+}
+
+func Swap(t: (int, int)) -> (int, int) {
+    return (t.1, t.0);
+}
+
+func Main() -> int {
+    let t: (int, int) = MakePair(10, 20);
+    Test_AssertEqInt(t.0, 10);
+    Test_AssertEqInt(t.1, 20);
+
+    let s: (int, int) = Swap(t);
+    Test_AssertEqInt(s.0, 20);
+    Test_AssertEqInt(s.1, 10);
+
+    let lit: (int, int) = (7, 8);
+    Test_AssertEqInt(lit.0, 7);
+    Test_AssertEqInt(lit.1, 8);
+
+    PrintInt(t.0);
+    PrintLine("");
+    PrintInt(t.1);
+    PrintLine("");
+    Test_Pass("tuples");
+    return 0;
+}

@@ -1,0 +1,7 @@
+[Package]
+Name    = "type_mismatch"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"

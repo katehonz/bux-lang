@@ -143,6 +143,64 @@ int64_t bux_mod_i64(int64_t a, int64_t b) {
     return a % b;
 }
 
+/* Integer overflow checks (debug mode) */
+int64_t bux_add_i64_checked(int64_t a, int64_t b) {
+#if defined(__GNUC__) || defined(__clang__)
+    int64_t result;
+    if (__builtin_add_overflow(a, b, &result)) {
+        bux_panic("integer overflow in addition");
+    }
+    return result;
+#else
+    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) {
+        bux_panic("integer overflow in addition");
+    }
+    return a + b;
+#endif
+}
+
+int64_t bux_sub_i64_checked(int64_t a, int64_t b) {
+#if defined(__GNUC__) || defined(__clang__)
+    int64_t result;
+    if (__builtin_sub_overflow(a, b, &result)) {
+        bux_panic("integer overflow in subtraction");
+    }
+    return result;
+#else
+    if ((b > 0 && a < INT64_MIN + b) || (b < 0 && a > INT64_MAX + b)) {
+        bux_panic("integer overflow in subtraction");
+    }
+    return a - b;
+#endif
+}
+
+int64_t bux_mul_i64_checked(int64_t a, int64_t b) {
+#if defined(__GNUC__) || defined(__clang__)
+    int64_t result;
+    if (__builtin_mul_overflow(a, b, &result)) {
+        bux_panic("integer overflow in multiplication");
+    }
+    return result;
+#else
+    if (a != 0 && b != 0) {
+        if ((a > 0 && b > 0 && a > INT64_MAX / b) ||
+            (a > 0 && b < 0 && b < INT64_MIN / a) ||
+            (a < 0 && b > 0 && a < INT64_MIN / b) ||
+            (a < 0 && b < 0 && a < INT64_MAX / b)) {
+            bux_panic("integer overflow in multiplication");
+        }
+    }
+    return a * b;
+#endif
+}
+
+int64_t bux_neg_i64_checked(int64_t a) {
+    if (a == INT64_MIN) {
+        bux_panic("integer overflow in negation");
+    }
+    return -a;
+}
+
 /* String operations */
 typedef struct {
     const char* data;
@@ -187,6 +245,15 @@ void bux_bounds_check(size_t index, size_t len) {
         fprintf(stderr, "bux panic: index out of bounds (index %zu, len %zu)\n", index, len);
         abort();
     }
+}
+
+/* Bounds check that returns the index (usable in expressions) */
+size_t bux_index_check(size_t index, size_t len) {
+    if (index >= len) {
+        fprintf(stderr, "bux panic: index out of bounds (index %zu, len %zu)\n", index, len);
+        abort();
+    }
+    return index;
 }
 
 /* String wrappers with Bux-compatible signatures */

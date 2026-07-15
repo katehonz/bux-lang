@@ -1249,6 +1249,20 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     # Auto-dereference pointer/reference types for field access
     if objType.kind in {tkPointer, tkRef, tkMutRef} and objType.inner.len > 0:
       objType = objType.inner[0]
+    if objType.kind == tkTuple:
+      # Tuple fields: .0 / .1 → stored as "_0" / "_1"
+      var idx = -1
+      let fname = expr.exprFieldName
+      if fname.len > 0 and fname[0] == '_':
+        try: idx = parseInt(fname[1..^1])
+        except ValueError: idx = -1
+      else:
+        try: idx = parseInt(fname)
+        except ValueError: idx = -1
+      if idx >= 0 and idx < objType.inner.len:
+        return objType.inner[idx]
+      sema.emitError(expr.loc, &"tuple has no element '{fname}' (tuple arity {objType.inner.len})")
+      return makeUnknown()
     if objType.kind == tkNamed:
       # Check if this is a _Data union field access
       if objType.name.endsWith("_Data"):
@@ -1468,7 +1482,8 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
       initType = sema.checkExpr(stmt.stmtLetInit, scope)
     let declaredType = if stmt.stmtLetType != nil: sema.resolveType(stmt.stmtLetType) else: initType
     if stmt.stmtLetInit != nil and stmt.stmtLetType != nil and not initType.isAssignableTo(declaredType) and not (initType.kind in {TypeKind.tkUnknown, TypeKind.tkNamed, TypeKind.tkTypeParam}):
-      sema.emitError(stmt.loc, &"cannot assign {initType.toString} to {declaredType.toString}")
+      # Point at the initializer expression for a clearer caret
+      sema.emitError(stmt.stmtLetInit.loc, &"cannot assign {initType.toString} to {declaredType.toString}")
     if stmt.stmtLetInit == nil and stmt.stmtLetType == nil:
       sema.emitError(stmt.loc, "variable must have either type annotation or initializer")
     let isOwnVar = stmt.stmtLetType != nil and stmt.stmtLetType.kind == tekOwn

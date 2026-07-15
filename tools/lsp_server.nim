@@ -4,7 +4,7 @@
 # Usage: bux-lsp
 # The editor spawns this binary and communicates via stdin/stdout.
 
-import std/[json, os, strutils, streams, tables]
+import std/[json, os, strutils, streams, tables, osproc]
 
 # ---------------------------------------------------------------------------
 # JSON-RPC Transport
@@ -175,19 +175,150 @@ proc analyzeFile(path: string, content: string): DocumentState =
     i += 1
 
 # ---------------------------------------------------------------------------
-# Diagnostics (placeholder — emits empty diagnostics)
+# Diagnostics — run `buxc check` when available and parse Rust-style errors
 # ---------------------------------------------------------------------------
 
-proc publishDiagnostics(stream: FileStream, uri: string) =
+type
+  LspDiag = object
+    line: int        ## 0-based for LSP
+    col: int         ## 0-based
+    endCol: int      ## 0-based exclusive
+    severity: int    ## 1=error, 2=warning
+    message: string
+
+proc findBuxc(): string =
+  ## Prefer buxc next to the LSP binary, then PATH.
+  let beside = getAppDir() / "buxc"
+  if fileExists(beside): return beside
+  let beside2 = getCurrentDir() / "buxc"
+  if fileExists(beside2): return beside2
+  result = findExe("buxc")
+
+proc parseBuxcDiagnostics(output, sourcePath: string): seq[LspDiag] =
+  ## Parse lines like:
+  ##   error: cannot assign String to int
+  ##     --> /path/Main.bux:4:18
+  result = @[]
+  let lines = output.splitLines()
+  var i = 0
+  while i < lines.len:
+    let line = lines[i]
+    var sev = 0
+    var msg = ""
+    if line.startsWith("error: "):
+      sev = 1
+      msg = line[7..^1]
+    elif line.startsWith("warning: "):
+      sev = 2
+      msg = line[9..^1]
+    else:
+      inc i
+      continue
+
+    # Skip aggregate headers like "type errors in project"
+    if msg.startsWith("type errors") or msg.startsWith("parse errors") or
+       msg.startsWith("lex errors"):
+      inc i
+      continue
+
+    var fileLine = 1
+    var fileCol = 1
+    if i + 1 < lines.len and lines[i + 1].strip().startsWith("-->"):
+      let locPart = lines[i + 1].strip()[3..^1].strip()
+      # path:line:col
+      let parts = locPart.rsplit(':', maxsplit = 2)
+      if parts.len >= 3:
+        try:
+          fileLine = parseInt(parts[^2])
+          fileCol = parseInt(parts[^1])
+        except: discard
+      # Optionally filter to the open document
+      let pathPart = if parts.len >= 3: parts[0] else: ""
+      if sourcePath.len > 0 and pathPart.len > 0:
+        if not pathPart.endsWith(sourcePath.extractFilename) and
+           pathPart != sourcePath:
+          i += 1
+          continue
+    # Estimate end column from message quote or single caret width
+    var endCol = fileCol
+    let q = msg.find('\'')
+    if q >= 0:
+      let q2 = msg.find('\'', q + 1)
+      if q2 > q + 1:
+        endCol = fileCol + (q2 - q - 1)
+    if endCol <= fileCol:
+      endCol = fileCol + 1
+
+    result.add(LspDiag(
+      line: max(0, fileLine - 1),
+      col: max(0, fileCol - 1),
+      endCol: max(0, endCol - 1),
+      severity: sev,
+      message: msg
+    ))
+    inc i
+
+proc runBuxcDiagnostics(sourcePath, content: string): seq[LspDiag] =
+  result = @[]
+  let buxc = findBuxc()
+  if buxc.len == 0:
+    return
+
+  # Prefer package root if this file lives under src/
+  var projectDir = sourcePath.parentDir
+  if projectDir.endsWith("src"):
+    projectDir = projectDir.parentDir
+  let toml = projectDir / "bux.toml"
+
+  var cmd: string
+  var workDir: string
+  if fileExists(toml):
+    workDir = projectDir
+    cmd = buxc & " check --color off"
+  else:
+    # Temp package for free-standing buffers
+    let tmp = getTempDir() / "bux-lsp-" & $getCurrentProcessId()
+    createDir(tmp / "src")
+    writeFile(tmp / "bux.toml", """[Package]
+Name = "lsp_tmp"
+Version = "0.0.0"
+Type = "bin"
+[Build]
+Output = "Bin"
+""")
+    writeFile(tmp / "src" / "Main.bux", content)
+    workDir = tmp
+    cmd = buxc & " check --color off"
+
+  try:
+    let (output, _) = execCmdEx(cmd, workingDir = workDir)
+    result = parseBuxcDiagnostics(output, sourcePath)
+  except CatchableError:
+    discard
+
+proc publishDiagnostics(stream: FileStream, uri: string, diags: seq[LspDiag] = @[]) =
+  var arr = newJArray()
+  for d in diags:
+    arr.add(%*{
+      "range": {
+        "start": {"line": d.line, "character": d.col},
+        "end": {"line": d.line, "character": d.endCol}
+      },
+      "severity": d.severity,
+      "source": "buxc",
+      "message": d.message
+    })
   sendNotification(stream, "textDocument/publishDiagnostics", %*{
     "uri": uri,
-    "diagnostics": []
+    "diagnostics": arr
   })
 
 proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
-  let updated = analyzeFile(uriToPath(doc.uri), doc.content)
+  let path = uriToPath(doc.uri)
+  let updated = analyzeFile(path, doc.content)
   doc.symbols = updated.symbols
-  publishDiagnostics(stream, doc.uri)
+  let diags = runBuxcDiagnostics(path, doc.content)
+  publishDiagnostics(stream, doc.uri, diags)
 
 # ---------------------------------------------------------------------------
 # Completion

@@ -1,6 +1,8 @@
 module Std::Result {
 import Std::Io::{PrintLine};
 
+extern func bux_exit(code: int);
+
 enum Result {
     Ok(int),
     Err(String),
@@ -39,6 +41,32 @@ func Result_UnwrapOr(r: Result, fallback: int) -> int {
         return r.data.Ok_0;
     }
     return fallback;
+}
+
+/* Unwrap Ok or panic with a custom message */
+func Result_Expect(r: Result, msg: String) -> int {
+    if r.tag != Result_Ok {
+        PrintLine(msg);
+        bux_exit(1);
+    }
+    return r.data.Ok_0;
+}
+
+/* Extract Err payload (panics if Ok) */
+func Result_UnwrapErr(r: Result) -> String {
+    if r.tag != Result_Err {
+        PrintLine("panic: unwrap_err on Ok");
+        return "";
+    }
+    return r.data.Err_0;
+}
+
+/* If r is Ok return it, otherwise return other */
+func Result_Or(r: Result, other: Result) -> Result {
+    if r.tag == Result_Ok {
+        return r;
+    }
+    return other;
 }
 
 }

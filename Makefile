@@ -3,9 +3,9 @@ SRC := bootstrap/main.nim
 OUT := buxc
 BUILD_DIR := build
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ctfe async concurrency os_time process json iter trait_bounds channel sync jwt
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure
 
-.PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden selfhost-loop lsp
+.PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden test-errors selfhost-loop lsp
 
 all: build
 
@@ -19,7 +19,7 @@ dev:
 debug: dev
 	@echo "Debug binary: buxc_debug"
 
-test: build test-examples
+test: build test-examples test-errors
 	@echo "Running lexer tests..."
 	$(NIM) c -r tests/lexer_test.nim
 	@echo "Running parser tests..."
@@ -99,6 +99,11 @@ test-golden: build
 	done; \
 	echo "Golden tests: $$passed passed, $$failed failed"; \
 	if [ $$failed -gt 0 ]; then exit 1; fi
+
+test-errors: build
+	@echo "=== Error diagnostic golden tests ==="
+	@chmod +x tests/error_golden/run.sh
+	@tests/error_golden/run.sh ./$(OUT)
 
 selfhost-loop: build
 	@echo "=== Selfhost loop: bootstrap determinism check ==="

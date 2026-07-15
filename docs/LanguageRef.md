@@ -105,9 +105,49 @@ f"Hello, {name}"  // Interpolated string — expressions inside {}
 own T           // Owned value (move semantics)
 T[]             // Slice (unsized)
 T[N]            // Fixed-size array
-(T1, T2, T3)    // Tuple
-func(T1) -> T2  // Function type
+(T1, T2, T3)    // Tuple — access fields with .0, .1, .2
+func(T1) -> T2  // Function pointer type
 ```
+
+### Tuples
+```bux
+func Pair(a: int, b: int) -> (int, int) {
+    return (a, b);
+}
+
+func Main() -> int {
+    let t: (int, int) = Pair(10, 20);
+    PrintInt(t.0);  // 10
+    PrintInt(t.1);  // 20
+    return 0;
+}
+```
+
+### Function pointers and closures
+```bux
+func Apply(f: func(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+func Double(n: int) -> int { return n * 2; }
+
+func MakeAdder(base: int) -> func(int) -> int {
+    // Each call allocates its own capture environment
+    return |a: int| -> int { return a + base; };
+}
+
+func Main() -> int {
+    let g: func(int) -> int = Double;   // named func → fat pointer
+    let a10 = MakeAdder(10);
+    let a20 = MakeAdder(20);
+    // a10 and a20 are independent instances
+    return Apply(g, 21) + a10(1) + a20(1);  // 42 + 11 + 21
+}
+```
+
+`func(T) -> R` values are **fat pointers** `{ code, env }`:
+- capturing closures store captures in a heap env
+- capture-less closures and named functions use `env = null`
 
 ### Structs
 ```bux

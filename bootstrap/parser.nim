@@ -660,11 +660,15 @@ proc parsePostfix(p: var Parser): Expr =
       discard p.expect(tkRBracket, "expected ']' to close index")
       left = Expr(kind: ekIndex, loc: loc, exprIndexObj: left, exprIndexIdx: idx, exprIndexBoundsCheck: false)
     of tkDot:
-      # Field expression or .await
+      # Field expression, tuple index (.0, .1), or .await
       discard p.advance()
       if p.check(tkAwait):
         discard p.advance()
         left = Expr(kind: ekAwait, loc: loc, exprAwaitOperand: left)
+      elif p.check(tkIntLiteral):
+        # Tuple element access: t.0 → field "_0"
+        let idxText = p.advance().text
+        left = Expr(kind: ekField, loc: loc, exprFieldObj: left, exprFieldName: "_" & idxText)
       else:
         let fieldName = p.expectIdentOrKeyword("expected field name after '.'").text
         left = Expr(kind: ekField, loc: loc, exprFieldObj: left, exprFieldName: fieldName)
