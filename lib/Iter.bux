@@ -107,4 +107,99 @@ func Iter_Collect<T>(it: *Iter<T>) -> Array<T> {
     return arr;
 }
 
+// ---------------------------------------------------------------------------
+// Higher-order helpers (int-specialized; take fat func pointers / closures)
+// ---------------------------------------------------------------------------
+
+/* Map each remaining int through f, collect into a new Array */
+func Iter_MapInt(it: *Iter<int>, f: func(int) -> int) -> Array<int> {
+    let remaining: uint = it.len - it.pos;
+    var cap: uint = remaining;
+    if cap == 0 {
+        cap = 1;
+    }
+    var out: Array<int> = Array_New<int>(cap);
+    var i: uint = it.pos;
+    while i < it.len {
+        let mapped: int = f(it.data[i]);
+        Array_Push<int>(&out, mapped);
+        i = i + 1;
+    }
+    return out;
+}
+
+/* Keep remaining ints for which pred returns true */
+func Iter_FilterInt(it: *Iter<int>, pred: func(int) -> bool) -> Array<int> {
+    let remaining: uint = it.len - it.pos;
+    var cap: uint = remaining;
+    if cap == 0 {
+        cap = 1;
+    }
+    var out: Array<int> = Array_New<int>(cap);
+    var i: uint = it.pos;
+    while i < it.len {
+        let v: int = it.data[i];
+        if pred(v) {
+            Array_Push<int>(&out, v);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+/* Left-fold remaining ints: f(f(...f(init, x0), x1), ...) */
+func Iter_FoldInt(it: *Iter<int>, init: int, f: func(int, int) -> int) -> int {
+    var acc: int = init;
+    var i: uint = it.pos;
+    while i < it.len {
+        acc = f(acc, it.data[i]);
+        i = i + 1;
+    }
+    return acc;
+}
+
+/* Call f for each remaining int (side effects; f's return is ignored) */
+func Iter_ForEachInt(it: *Iter<int>, f: func(int) -> int) {
+    var i: uint = it.pos;
+    while i < it.len {
+        let _ignored: int = f(it.data[i]);
+        i = i + 1;
+    }
+}
+
+/* True if any remaining element satisfies pred */
+func Iter_AnyInt(it: *Iter<int>, pred: func(int) -> bool) -> bool {
+    var i: uint = it.pos;
+    while i < it.len {
+        if pred(it.data[i]) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+/* True if all remaining elements satisfy pred (true if empty) */
+func Iter_AllInt(it: *Iter<int>, pred: func(int) -> bool) -> bool {
+    var i: uint = it.pos;
+    while i < it.len {
+        if !pred(it.data[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+/* Sum remaining ints (specialized fold) */
+func Iter_SumInt(it: *Iter<int>) -> int {
+    var total: int = 0;
+    var i: uint = it.pos;
+    while i < it.len {
+        total = total + it.data[i];
+        i = i + 1;
+    }
+    return total;
+}
+
 }

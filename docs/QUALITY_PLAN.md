@@ -48,7 +48,7 @@
 | A.2 | String: IsEmpty, ReplaceAll | Чести операции; само first-replace досега | ✅ (тази сесия) |
 | A.3 | Os_Exit + Test_AssertEqString / richer asserts | Тестове и CLI без raw `bux_exit` | ✅ (тази сесия) |
 | A.4 | Map_Remove / Set polish | Completeness на колекциите | ✅ (тази сесия) |
-| A.5 | Iter: map/filter/fold върху closures | Higher-order без boilerplate | ⏳ |
+| A.5 | Iter: map/filter/fold върху closures | Higher-order без boilerplate | ✅ Iter_Map/Filter/FoldInt |
 | A.6 | Result helpers: Expect, UnwrapErr, Or | По-малко match boilerplate | ✅ (тази сесия) |
 
 ### B — Compiler Correctness (P0)

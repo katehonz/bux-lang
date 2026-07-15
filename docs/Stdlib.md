@@ -143,6 +143,20 @@ struct Iter<T> {
 | `Iter_AllEq<T>` | `func Iter_AllEq<T>(it: *Iter<T>, value: T) -> bool` | True if all remaining equal value |
 | `Iter_Collect<T>` | `func Iter_Collect<T>(it: *Iter<T>) -> Array<T>` | Collect remaining into a new Array |
 
+### Higher-order (int-specialized)
+
+Take fat function pointers / closures (`func(int) -> int`, `func(int) -> bool`, …).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Iter_MapInt` | `func Iter_MapInt(it: *Iter<int>, f: func(int) -> int) -> Array<int>` | Map each element |
+| `Iter_FilterInt` | `func Iter_FilterInt(it: *Iter<int>, pred: func(int) -> bool) -> Array<int>` | Keep matching elements |
+| `Iter_FoldInt` | `func Iter_FoldInt(it: *Iter<int>, init: int, f: func(int, int) -> int) -> int` | Left fold |
+| `Iter_ForEachInt` | `func Iter_ForEachInt(it: *Iter<int>, f: func(int) -> int)` | Side-effect per element |
+| `Iter_AnyInt` | `func Iter_AnyInt(it: *Iter<int>, pred: func(int) -> bool) -> bool` | Any matches pred |
+| `Iter_AllInt` | `func Iter_AllInt(it: *Iter<int>, pred: func(int) -> bool) -> bool` | All match pred |
+| `Iter_SumInt` | `func Iter_SumInt(it: *Iter<int>) -> int` | Sum remaining ints |
+
 ### Example
 ```bux
 import Std::Array::*;

@@ -1,0 +1,102 @@
+// Higher-order Iter helpers: Map / Filter / Fold with closures
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::{
+    Array, Array_New, Array_Push, Array_Get, Array_Len, Array_Free
+};
+import Std::Iter::{
+    Array_Iter, Iter, Iter_MapInt, Iter_FilterInt, Iter_FoldInt,
+    Iter_AnyInt, Iter_AllInt, Iter_SumInt, Iter_ForEachInt
+};
+import Std::Test::{Test_AssertEqInt, Test_AssertTrue, Test_AssertFalse, Test_Pass};
+
+func Double(x: int) -> int {
+    return x * 2;
+}
+
+func IsEven(x: int) -> bool {
+    return (x % 2) == 0;
+}
+
+func Add(acc: int, x: int) -> int {
+    return acc + x;
+}
+
+func Main() -> int {
+    var nums: Array<int> = Array_New<int>(8);
+    Array_Push<int>(&nums, 1);
+    Array_Push<int>(&nums, 2);
+    Array_Push<int>(&nums, 3);
+    Array_Push<int>(&nums, 4);
+    Array_Push<int>(&nums, 5);
+
+    // Map with named function
+    let it1: Iter<int> = Array_Iter<int>(&nums);
+    var doubled: Array<int> = Iter_MapInt(&it1, Double);
+    Test_AssertEqInt(Array_Len<int>(&doubled) as int, 5);
+    Test_AssertEqInt(Array_Get<int>(&doubled, 0), 2);
+    Test_AssertEqInt(Array_Get<int>(&doubled, 4), 10);
+
+    // Filter with named predicate
+    let it2: Iter<int> = Array_Iter<int>(&nums);
+    var evens: Array<int> = Iter_FilterInt(&it2, IsEven);
+    Test_AssertEqInt(Array_Len<int>(&evens) as int, 2);
+    Test_AssertEqInt(Array_Get<int>(&evens, 0), 2);
+    Test_AssertEqInt(Array_Get<int>(&evens, 1), 4);
+
+    // Fold with named combiner
+    let it3: Iter<int> = Array_Iter<int>(&nums);
+    let sum: int = Iter_FoldInt(&it3, 0, Add);
+    Test_AssertEqInt(sum, 15);
+    let itSum: Iter<int> = Array_Iter<int>(&nums);
+    Test_AssertEqInt(Iter_SumInt(&itSum), 15);
+
+    // Map with capturing closure
+    let scale: int = 10;
+    let it4: Iter<int> = Array_Iter<int>(&nums);
+    var scaled: Array<int> = Iter_MapInt(&it4, |x: int| -> int {
+        return x * scale;
+    });
+    Test_AssertEqInt(Array_Get<int>(&scaled, 0), 10);
+    Test_AssertEqInt(Array_Get<int>(&scaled, 2), 30);
+
+    // Filter with closure
+    let minVal: int = 3;
+    let it5: Iter<int> = Array_Iter<int>(&nums);
+    var big: Array<int> = Iter_FilterInt(&it5, |x: int| -> bool {
+        return x >= minVal;
+    });
+    Test_AssertEqInt(Array_Len<int>(&big) as int, 3);
+    Test_AssertEqInt(Array_Get<int>(&big, 0), 3);
+
+    // Fold with closure
+    let it6: Iter<int> = Array_Iter<int>(&nums);
+    let prod: int = Iter_FoldInt(&it6, 1, |a: int, b: int| -> int {
+        return a * b;
+    });
+    Test_AssertEqInt(prod, 120);  // 1*2*3*4*5
+
+    // Any / All
+    let itAny: Iter<int> = Array_Iter<int>(&nums);
+    Test_AssertTrue(Iter_AnyInt(&itAny, IsEven));
+    let itAll: Iter<int> = Array_Iter<int>(&nums);
+    Test_AssertFalse(Iter_AllInt(&itAll, IsEven));
+    let itEv: Iter<int> = Array_Iter<int>(&evens);
+    Test_AssertTrue(Iter_AllInt(&itEv, IsEven));
+
+    // ForEach (print via side-effect free assert path — just call Double)
+    let it7: Iter<int> = Array_Iter<int>(&nums);
+    Iter_ForEachInt(&it7, Double);
+
+    PrintInt(sum);
+    PrintLine("");
+    PrintInt(prod);
+    PrintLine("");
+    Test_Pass("iter_hof");
+
+    Array_Free<int>(&nums);
+    Array_Free<int>(&doubled);
+    Array_Free<int>(&evens);
+    Array_Free<int>(&scaled);
+    Array_Free<int>(&big);
+    return 0;
+}

@@ -525,10 +525,24 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
-    // Field access on value (direct dot): obj.field
+    // Field access: obj.field — use -> if base is a pointer
     if kind == hFieldAccess {
         CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ".");
+        var isPtr: bool = false;
+        if node.child1 != null as *HirNode {
+            let childType: String = CBE_GetExprTypeName(cbe.mod, node.child1);
+            if String_EndsWith(childType, "*") {
+                isPtr = true;
+            }
+            if node.child1.kind == hVar && node.child1.typeKind == tyPointer {
+                isPtr = true;
+            }
+        }
+        if isPtr {
+            StringBuilder_Append(&cbe.sb, "->");
+        } else {
+            StringBuilder_Append(&cbe.sb, ".");
+        }
         StringBuilder_Append(&cbe.sb, node.strValue);
         return;
     }
@@ -565,7 +579,7 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     }
 
     // Index: arr[idx] — emit as arr[idx]
-    // For Array<T> desugar pattern (fieldPtr "data"), emit bounds-checked access
+    // For Array/Iter desugar pattern (fieldPtr "data"), emit bounds-checked access
     if kind == hIndexPtr {
         var isArrayAccess: bool = false;
         if node.child1 != null as *HirNode {
@@ -574,12 +588,27 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
             }
         }
         if isArrayAccess {
-            CBE_EmitExpr(cbe, node.child1.child1);
-            StringBuilder_Append(&cbe.sb, ".data[bux_index_check(");
+            // self.data[i] is a raw pointer index; Bux source inserts
+            // bux_bounds_check explicitly where needed (Array_Get). Do NOT
+            // re-check against .len here — Push writes at index == len.
+            let base: *HirNode = node.child1.child1;
+            var isPtr: bool = false;
+            if base != null as *HirNode {
+                let childType: String = CBE_GetExprTypeName(cbe.mod, base);
+                if String_EndsWith(childType, "*") {
+                    isPtr = true;
+                }
+                if base.kind == hVar && base.typeKind == tyPointer {
+                    isPtr = true;
+                }
+            }
+            let sep: String = ".";
+            if isPtr { sep = "->"; }
+            CBE_EmitExpr(cbe, base);
+            StringBuilder_Append(&cbe.sb, sep);
+            StringBuilder_Append(&cbe.sb, "data[");
             CBE_EmitExpr(cbe, node.child2);
-            StringBuilder_Append(&cbe.sb, ", ");
-            CBE_EmitExpr(cbe, node.child1.child1);
-            StringBuilder_Append(&cbe.sb, ".len)]");
+            StringBuilder_Append(&cbe.sb, "]");
         } else {
             CBE_EmitExpr(cbe, node.child1);
             StringBuilder_Append(&cbe.sb, "[");
@@ -755,6 +784,11 @@ func CBE_EmitFatFuncTypedefs(cbe: *CEmitter, mod: *HirModule) {
     StringBuilder_Append(&cbe.sb, "    int (*code)(void* env, int a0, int a1);\n");
     StringBuilder_Append(&cbe.sb, "    void* env;\n");
     StringBuilder_Append(&cbe.sb, "} BuxFn_int_int_int;\n");
+    // (int)->bool
+    StringBuilder_Append(&cbe.sb, "typedef struct BuxFn_bool_int {\n");
+    StringBuilder_Append(&cbe.sb, "    bool (*code)(void* env, int a0);\n");
+    StringBuilder_Append(&cbe.sb, "    void* env;\n");
+    StringBuilder_Append(&cbe.sb, "} BuxFn_bool_int;\n");
     // ()->void
     StringBuilder_Append(&cbe.sb, "typedef struct BuxFn_void_void {\n");
     StringBuilder_Append(&cbe.sb, "    void (*code)(void* env);\n");
@@ -795,6 +829,7 @@ func CBE_MaybeEmitExtraFat(cbe: *CEmitter, name: String) {
     // Skip ones we already emit as built-ins
     if String_Eq(name, "BuxFn_int_int") { return; }
     if String_Eq(name, "BuxFn_int_int_int") { return; }
+    if String_Eq(name, "BuxFn_bool_int") { return; }
     if String_Eq(name, "BuxFn_void_void") { return; }
     if String_Eq(name, "BuxFn_int_void") { return; }
     CBE_EmitOneFatTypedef(cbe, name);
