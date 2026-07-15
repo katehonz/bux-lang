@@ -145,6 +145,11 @@ func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
         return tyFunc;
     }
 
+    if te.kind == tekTuple {
+        // Tuples lower to named C structs (Tuple_int_int, ...)
+        return tyNamed;
+    }
+
     return Type_FromName(te.typeName);
 }
 
@@ -688,9 +693,41 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         return tyNamed;
     }
 
+    // Tuple expression (a, b, ...)
+    if kind == ekTuple {
+        var cur: *ExprList = expr.callArgs;
+        while cur != null as *ExprList {
+            discard Sema_CheckExpr(sema, cur.expr);
+            cur = cur.next;
+        }
+        // Build Tuple_* type name from element types (default int)
+        var tname: String = "Tuple";
+        var i: int = 0;
+        while i < expr.callArgCount {
+            tname = String_Concat(tname, "_int");
+            i = i + 1;
+        }
+        if expr.callArgCount == 0 { tname = "Tuple_Empty"; }
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekTuple;
+        te.typeName = tname;
+        te.tupleCount = expr.callArgCount;
+        expr.refType = te;
+        return tyNamed;
+    }
+
     // Field access
     if kind == ekField {
         discard Sema_CheckExpr(sema, expr.child1);
+        // Tuple field .0 / .1 stored as "_0" / "_1" → element type (int for now)
+        if String_StartsWith(expr.strValue, "_") {
+            // Propagate element type as int; real C type is Tuple field
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            te.typeName = "int";
+            expr.refType = te;
+            return tyInt;
+        }
         return tyUnknown;
     }
 

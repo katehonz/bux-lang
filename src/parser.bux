@@ -231,6 +231,57 @@ func parserParseType(p: *Parser) -> *TypeExpr {
         return te;
     }
 
+    // (T, U, ...) tuple type
+    if kindTok == tkLParen {
+        discard parserAdvance(p);
+        var elems: *TypeExprList = null as *TypeExprList;
+        var elemsTail: *TypeExprList = null as *TypeExprList;
+        var count: int = 0;
+        var typeName: String = "Tuple";
+        while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+            let elemTe: *TypeExpr = parserParseType(p);
+            let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
+            node.te = elemTe;
+            node.next = null as *TypeExprList;
+            if elems == null as *TypeExprList {
+                elems = node;
+            } else {
+                elemsTail.next = node;
+            }
+            elemsTail = node;
+            count = count + 1;
+            // Build mangled name: Tuple_int_int
+            var part: String = "int";
+            if elemTe != null as *TypeExpr {
+                if !String_Eq(elemTe.typeName, "") {
+                    part = elemTe.typeName;
+                } else if elemTe.kind == tekPointer && elemTe.pointerPointee != null as *TypeExpr {
+                    part = String_Concat(elemTe.pointerPointee.typeName, "Ptr");
+                }
+            }
+            if String_Eq(part, "String") || String_Eq(part, "str") { part = "cstr"; }
+            typeName = String_Concat(typeName, "_");
+            typeName = String_Concat(typeName, part);
+            if parserCheck(p, tkComma) {
+                discard parserAdvance(p);
+            } else {
+                break;
+            }
+        }
+        discard parserExpect(p, tkRParen, "expected ')' to close tuple type");
+        if count == 0 {
+            typeName = "Tuple_Empty";
+        }
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekTuple;
+        te.line = line;
+        te.column = col;
+        te.tupleElems = elems;
+        te.tupleCount = count;
+        te.typeName = typeName;
+        return te;
+    }
+
     // name
     let nameTok: LexToken = parserExpect(p, tkIdent, "expected type name");
     // self / Self -> tekSelf
@@ -386,12 +437,43 @@ func parserParsePrimary(p: *Parser) -> *Expr {
         return e;
     }
 
-    // ( expr )
+    // ( expr ) or (a, b, ...) tuple
     if kind == tkLParen {
         discard parserAdvance(p);
-        let e: *Expr = parserParseExpr(p);
+        // Empty tuple ()
+        if parserCheck(p, tkRParen) {
+            discard parserAdvance(p);
+            let te: *Expr = parserMakeExpr(ekTuple, line, col);
+            te.callArgCount = 0;
+            return te;
+        }
+        let first: *Expr = parserParseExpr(p);
+        if parserCheck(p, tkComma) {
+            // Tuple expression
+            let te: *Expr = parserMakeExpr(ekTuple, line, col);
+            var firstArg: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+            firstArg.expr = first;
+            firstArg.next = null as *ExprList;
+            var lastArg: *ExprList = firstArg;
+            var count: int = 1;
+            while parserCheck(p, tkComma) {
+                discard parserAdvance(p);
+                if parserCheck(p, tkRParen) { break; }
+                let elem: *Expr = parserParseExpr(p);
+                let node: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                node.expr = elem;
+                node.next = null as *ExprList;
+                lastArg.next = node;
+                lastArg = node;
+                count = count + 1;
+            }
+            discard parserExpect(p, tkRParen, "expected ')' to close tuple");
+            te.callArgs = firstArg;
+            te.callArgCount = count;
+            return te;
+        }
         discard parserExpect(p, tkRParen, "expected ')'");
-        return e;
+        return first;
     }
 
     // Closure: |params| -> Ret { body }
@@ -586,11 +668,20 @@ func parserParsePostfixExpr(p: *Parser) -> *Expr {
             }
         }
 
-        // Field: expr.name
+        // Field: expr.name or tuple index expr.0 / expr.1
         if kind == tkDot {
             discard parserAdvance(p);
             let line: uint32 = parserCurToken(p).line;
             let col: uint32 = parserCurToken(p).column;
+            if parserCheck(p, tkIntLiteral) {
+                let idxTok: LexToken = parserCurToken(p);
+                discard parserAdvance(p);
+                let e: *Expr = parserMakeExpr(ekField, line, col);
+                e.child1 = left;
+                e.strValue = String_Concat("_", idxTok.text);
+                left = e;
+                continue;
+            }
             let name: LexToken = parserExpectIdentOrKeyword(p, "expected field name");
             let e: *Expr = parserMakeExpr(ekField, line, col);
             e.child1 = left;

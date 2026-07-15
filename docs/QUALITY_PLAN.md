@@ -55,8 +55,8 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| B.1 | Proper tuple types в C backend | `(T,U)` → `Tuple_T_U` struct + `.0`/`.1` | ✅ |
-| B.2 | Function pointer types | `func(T)->U` вече работи в LIR backend | ✅ |
+| B.1 | Proper tuple types в C backend | `(T,U)` → `Tuple_T_U` struct + `.0`/`.1` | ✅ bootstrap + selfhost |
+| B.2 | Function pointer types | `func(T)->U` fat ABI | ✅ bootstrap + selfhost |
 | B.3 | Match expression до край в C (не `return "0"`) | Expression-context match |
 | B.4 | Closures: multi-instance + loop/return в body | Реални higher-order callbacks |
 | B.5 | По-добри diagnostics (snippet + hint) | DX #1 за нови потребители | ✅ |
@@ -160,4 +160,12 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 4. Calls through func values: `f.code(f.env, args...)`
 5. Example `multi_closure.bux` — MakeAdder(10)/MakeAdder(20) yield 11 and 21
 6. **Selfhost parity:** same fat ABI in `src/hir_lower.bux` + `src/c_backend.bux` (makers, adapters)
+
+## Сесия 6 (selfhost tuples)
+
+1. Parser: `(T, U)` types, `(a, b)` exprs, field access `.0`/`.1`
+2. Sema: tekTuple / ekTuple
+3. HIR lower → `hStructInit` of `Tuple_int_int`
+4. C backend: `typedef struct Tuple_int_int { int _0; int _1; }`
+5. Verified with `buxc2` on `examples/tuples.bux`
 ```

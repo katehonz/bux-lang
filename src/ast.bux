@@ -52,6 +52,8 @@ struct TypeExpr {
     funcParams: *TypeExprList, // for tekFunc
     funcRet: *TypeExpr,        // for tekFunc
     funcParamCount: int,       // for tekFunc
+    tupleElems: *TypeExprList, // for tekTuple
+    tupleCount: int,           // for tekTuple
 }
 
 // ---------------------------------------------------------------------------

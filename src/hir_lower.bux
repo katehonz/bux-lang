@@ -74,7 +74,7 @@ func Lcx_ResolveTypeKind(te: *TypeExpr) -> int {
 
     if te.kind == tekPointer || te.kind == tekRef || te.kind == tekMutRef { return tyPointer; }
     if te.kind == tekSlice { return tySlice; }
-    if te.kind == tekTuple { return tyTuple; }
+    if te.kind == tekTuple { return tyNamed; /* Tuple_T_U is a C struct */ }
     if te.kind == tekFunc { return tyFunc; }
 
     return Lcx_ResolveTypeKindFromName(te.typeName);
@@ -1199,6 +1199,45 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         n.kind = hAssign;
         n.child1 = Lcx_LowerExpr(ctx, expr.child1); // target
         n.child2 = Lcx_LowerExpr(ctx, expr.child2); // value
+        return n;
+    }
+
+    // Tuple expression (a, b, ...) → struct init Tuple_int_int { ._0 = a, ._1 = b }
+    if kind == ekTuple {
+        var tname: String = "Tuple";
+        var ti: int = 0;
+        while ti < expr.callArgCount {
+            tname = String_Concat(tname, "_int");
+            ti = ti + 1;
+        }
+        if expr.callArgCount == 0 { tname = "Tuple_Empty"; }
+        if expr.refType != null as *TypeExpr && !String_Eq(expr.refType.typeName, "") {
+            tname = expr.refType.typeName;
+        }
+        n.kind = hStructInit;
+        n.strValue = tname;
+        n.typeKind = tyNamed;
+        n.typeName = tname;
+        var firstField: *HirNode = null as *HirNode;
+        var lastField: *HirNode = null as *HirNode;
+        var tcur: *ExprList = expr.callArgs;
+        var tidx: int = 0;
+        while tcur != null as *ExprList {
+            let fNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            fNode.kind = hBlock;
+            fNode.strValue = String_Concat("_", String_FromInt(tidx as int64));
+            fNode.child1 = Lcx_LowerExpr(ctx, tcur.expr);
+            if firstField == null as *HirNode {
+                firstField = fNode;
+                lastField = fNode;
+            } else {
+                lastField.child3 = fNode;
+                lastField = fNode;
+            }
+            tcur = tcur.next;
+            tidx = tidx + 1;
+        }
+        n.child1 = firstField;
         return n;
     }
 

@@ -1435,6 +1435,12 @@ func CBackend_Generate(mod: *HirModule) -> String {
     // Fat function-pointer typedefs (BuxFn_*) — before forward decls
     CBE_EmitFatFuncTypedefs(cbe, mod);
 
+    // Common tuple struct types
+    StringBuilder_Append(&cbe.sb, "/* Tuple types */\n");
+    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int {\n    int _0;\n    int _1;\n} Tuple_int_int;\n");
+    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int_int {\n    int _0;\n    int _1;\n    int _2;\n} Tuple_int_int_int;\n");
+    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_Empty {\n    char _pad;\n} Tuple_Empty;\n\n");
+
     // Env structs for capturing closures (no static instance — heap per value)
     var ei2: int = 0;
     while ei2 < mod.funcCount {
