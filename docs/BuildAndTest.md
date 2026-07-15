@@ -129,12 +129,20 @@ Use `--target <triple>` to cross-compile for a different platform. Bux generates
 
 ## Running Tests
 
+### Example suite
+```bash
+make test-examples   # all examples/ programs (40+)
+make test-errors     # golden Rust-style diagnostic output
+```
+
 ### Compiler Tests
 ```bash
 make test
 ```
 
 This runs:
+- Example suite (`test-examples`)
+- Error diagnostic goldens (`test-errors`)
 - Lexer unit tests
 - Parser unit tests
 - Semantic analysis unit tests

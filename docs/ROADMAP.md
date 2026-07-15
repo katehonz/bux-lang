@@ -1,6 +1,7 @@
 # Bux Language Roadmap — New Constructs
 
-> **Updated:** 2026-06-09 | **Status:** In Progress
+> **Updated:** 2026-07-15 | **Status:** In Progress  
+> Recent: multi-instance closures (fat `BuxFn`), tuples in selfhost, Iter map/filter/fold, Rust-style diagnostics.
 
 This document tracks planned language constructs beyond Phase 8 strategy.
 

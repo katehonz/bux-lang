@@ -2,13 +2,15 @@
 
 ![Bux Language](bux-lang-01.jpeg)
 
-> **Status:** v0.5.0 — Bootstrap compiler (`buxc`, Nim) and self-hosted compiler (`buxc2`, Bux) both compile `.bux` → C → native binary.
-> **Selfhost loop:** `buxc2` compiles itself → binary-identical `buxc3` ✅ Deterministic C codegen + ELF verified.
+> **Status:** v0.5.x — Bootstrap (`buxc`, Nim) and self-hosted (`buxc2`, Bux) both compile `.bux` → C → native binary.
+> **Selfhost loop:** deterministic C codegen + ELF verified.
 > **Gradual Ownership:** `@[Checked]` borrow checker, `@[Release]` zero-cost mode, `borrow &mut` expressions.
+> **Closures:** multi-instance capturing closures via fat function pointers (`BuxFn { code, env }`) in both compilers.
+> **Tuples:** `(T, U)` types and `.0`/`.1` field access (bootstrap + selfhost).
 > **Green Threads:** M:N scheduler with channels (Go-style goroutines without GC).
-> **All 26 examples pass.** Compiler successfully parses all 3 real-world apps (`apps/boko-framework`, `apps/jwt-pitbul`, `apps/nexus`).
+> **Examples:** 40+ programs pass (`make test-examples`). Apps: `boko-framework`, `jwt-pitbul`, `nexus`, `simpledb`.
 
-Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership (opt-in borrow checking), async/await, generics, algebraic enums, and a package manager.
+Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership (opt-in borrow checking), multi-instance closures, async/await, generics, algebraic enums, and a package manager.
 
 ---
 
@@ -185,22 +187,55 @@ func Main() -> int {
 }
 ```
 
+### Multi-instance closures
+```bux
+func MakeAdder(base: int) -> func(int) -> int {
+    return |a: int| -> int { return a + base; };
+}
+
+func Main() -> int {
+    let a10 = MakeAdder(10);
+    let a20 = MakeAdder(20);
+    // Independent capture environments
+    PrintInt(a10(1));  // 11
+    PrintInt(a20(1));  // 21
+    return 0;
+}
+```
+
+### Iter map / filter / fold
+```bux
+import Std::Iter::{Array_Iter, Iter_MapInt, Iter_FilterInt, Iter_FoldInt};
+
+func Main() -> int {
+    var nums: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&nums, 1);
+    Array_Push<int>(&nums, 2);
+    Array_Push<int>(&nums, 3);
+    let it = Array_Iter<int>(&nums);
+    let doubled = Iter_MapInt(&it, |x: int| -> int { return x * 2; });
+    return 0;
+}
+```
+
 ---
 
 ## Features
 
 | Feature | Status |
 |---------|--------|
-| **Types** | Primitives, pointers, slices, tuples, structs, enums, unions |
+| **Types** | Primitives, pointers, slices, tuples `(T,U)` + `.0`/`.1`, structs, enums, unions |
 | **Generics** | Generic functions (monomorphization) |
 | **Algebraic Enums** | Enums with data (`Result`, `Option`) |
 | **Pattern Matching** | `match` with guards |
 | **Methods** | `extend` blocks for struct methods |
 | **Interfaces** | `interface` + `extend` for trait-like behavior |
-| **Error Handling** | `Result<T,E>`, `Option<T>`, and the `?` operator |
-| **Standard Library** | `Io`, `Array`, `String`, `Map`, `Fs`, `Mem`, `Set`, `Path`, `Math`, `Task`, `Channel`, `Sync`, `Os`, `Time`, `Process` |
+| **Error Handling** | `Result`/`Option`, `?`, `Expect`/`UnwrapOr`/`Or` helpers |
+| **Closures** | Capture-less + capturing; **multi-instance** fat pointers (`BuxFn`) |
+| **Function pointers** | `func(T) -> R` as fat values; named funcs via adapters |
+| **Standard Library** | `Io`, `Array`, `String`, `Map`, `Set`, `Iter` (map/filter/fold), `Fs`, `Mem`, `Path`, `Math`, `Task`, `Channel`, `Sync`, `Os`, `Time`, `Process`, `Test`, … |
 | **Backend** | LIR → C transpiler (clean 3-address code, then gcc/clang) |
-| **Strings** | Raw multi-line backtick strings (`...`), C-string interop |
+| **Strings** | Raw multi-line backticks, `f"..."` interp (bootstrap), `ReplaceAll` / `IsBlank` / `Repeat` |
 | **Gradual Ownership** | `@[Checked]` + `@[Release]` + `@[Shared]` + `borrow &mut` / `borrow &` |
 | **Drop Trait** | Auto-drop for `@[Drop]` types (Array, Map, user-defined structs) |
 | **Green Threads** | M:N scheduler (ucontext + SIGVTALRM), work-stealing queues |
@@ -210,7 +245,8 @@ func Main() -> int {
 | **Trait Bounds** | `func Max<T: Comparable>(a: T, b: T) -> T` |
 | **Package Manager** | `bux add`, `bux install`, `bux.lock`, path + git deps |
 | **Cross-Compilation** | `--target <triple>` via clang (e.g. `aarch64-linux-gnu`) |
-| **Tooling** | `bux new`, `bux build`, `bux run`, `bux test`, `bux check` |
+| **Diagnostics** | Rust-style snippets, multi-char underlines, `= help:` hints |
+| **Tooling** | `bux new/build/run/test/check/fmt`, LSP (`tools/lsp_server.nim` + `buxc check`) |
 
 ---
 
@@ -255,11 +291,33 @@ bux/
 
 ---
 
+## Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [`docs/LanguageRef.md`](docs/LanguageRef.md) | Language reference |
+| [`docs/Stdlib.md`](docs/Stdlib.md) | Standard library API |
+| [`docs/BuildAndTest.md`](docs/BuildAndTest.md) | Build, test, and tooling |
+| [`docs/QUALITY_PLAN.md`](docs/QUALITY_PLAN.md) | Roadmap toward a “good” v1.0 |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Feature status (constructs) |
+| [`PLAN.md`](PLAN.md) | Long-form phase plan |
+
+---
+
 ## Build & Test
 
 ```bash
 # Build bootstrap compiler (Nim → C)
 make build
+
+# Run all example programs
+make test-examples
+
+# Golden diagnostic tests (Rust-style error format)
+make test-errors
+
+# Full unit + example suite
+make test
 
 # Build self-hosted compiler (Bux → C → native)
 make selfhost

@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
-> **Дата:** 2026-07-15  
-> **Текущо:** v0.5.0 — selfhost loop, gradual ownership, green threads, 26+ examples ✅  
+> **Дата:** 2026-07-15 (обновено вечерта)  
+> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **40+ examples** ✅  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -12,14 +12,14 @@
 |------|-----------|--------|
 | Frontend (lex/parse) | Пълен Pratt parser, recovery | ★★★★☆ |
 | Sema / generics | Monomorphization, trait bounds basic | ★★★★☆ |
-| HIR → C | Работи; tuples/func-ptr half-baked в bootstrap | ★★★☆☆ |
-| Selfhost (`src/`) | ~12k LOC, binary-identical loop | ★★★★★ |
+| HIR → C | Tuples + fat `func` ABI в bootstrap **и** selfhost | ★★★★☆ |
+| Selfhost (`src/`) | ~12k LOC, binary-identical loop, closures+tuples | ★★★★★ |
 | Gradual ownership | `@[Checked]`, `&`/`&mut`, move, Drop | ★★★☆☆ (basic) |
 | Concurrency | M:N tasks + channels + async | ★★★★☆ |
-| Stdlib | 25+ модула, но колекциите са минимални | ★★★☆☆ |
-| Tooling | `new/build/run/test/fmt`, LSP prototype, VSCode | ★★☆☆☆ |
+| Stdlib | Array/Map/Set/String/Iter HOF разширени | ★★★★☆ |
+| Tooling | `test-errors`, LSP diagnostics via `buxc check` | ★★★☆☆ |
 | Ecosystem / registry | path+git deps; няма централен registry | ★☆☆☆☆ |
-| Документация | Има, но drift (PLAN vs README версии) | ★★★☆☆ |
+| Документация | README + QUALITY_PLAN синхронизирани (2026-07-15) | ★★★★☆ |
 
 **Силна ниша:** gradual ownership (C-скорост на писане + opt-in Rust-safety).  
 **Слабо място:** ergonomics на stdlib + maturity на tooling + пълнота на borrow checker.
@@ -40,7 +40,7 @@
 
 ## Фази
 
-### A — Ergonomics & Stdlib (P0, сега) 🔄
+### A — Ergonomics & Stdlib (P0) ✅ (core done)
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
@@ -57,10 +57,11 @@
 |---|--------|------|--------|
 | B.1 | Proper tuple types в C backend | `(T,U)` → `Tuple_T_U` struct + `.0`/`.1` | ✅ bootstrap + selfhost |
 | B.2 | Function pointer types | `func(T)->U` fat ABI | ✅ bootstrap + selfhost |
-| B.3 | Match expression до край в C (не `return "0"`) | Expression-context match |
-| B.4 | Closures: multi-instance + loop/return в body | Реални higher-order callbacks |
+| B.3 | Match expression до край в C (не `return "0"`) | Expression-context match | ⏳ |
+| B.4 | Closures multi-instance | Fat `BuxFn` + heap env | ✅ bootstrap + selfhost |
+| B.4b | Closures: loop/return edge cases in body | По-сложни body control-flow | ⏳ |
 | B.5 | По-добри diagnostics (snippet + hint) | DX #1 за нови потребители | ✅ |
-| B.6 | Bootstrap ↔ selfhost feature parity | Operator overloading, string interp и в selfhost |
+| B.6 | Bootstrap ↔ selfhost feature parity | Tuples/closures done; string interp / ops still bootstrap-heavy | 🔄 |
 
 ### C — Gradual Ownership 2.0 (P1)
 
