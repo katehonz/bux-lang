@@ -13,6 +13,8 @@ func parserParsePrimary(p: *Parser) -> *Expr;
 func parserParsePostfixExpr(p: *Parser) -> *Expr;
 func parserParseUnary(p: *Parser) -> *Expr;
 func parserParseBinaryPrec(p: *Parser, minPrec: int) -> *Expr;
+func parserParsePattern(p: *Parser) -> *Pattern;
+func parserParseMatchExpr(p: *Parser) -> *Expr;
 
 // ---------------------------------------------------------------------------
 // Parser state
@@ -346,6 +348,8 @@ func parserMakeExpr(kind: int, line: uint32, col: uint32) -> *Expr {
     e.structFieldCount = 0;
     e.callArgs = null as *ExprList;
     e.callArgCount = 0;
+    e.matchArms = null as *MatchArm;
+    e.matchArmCount = 0;
     return e;
 }
 
@@ -490,8 +494,180 @@ func parserParsePrimary(p: *Parser) -> *Expr {
         return e;
     }
 
+    // match expr { arms }
+    if kind == tkMatch {
+        return parserParseMatchExpr(p);
+    }
+
     parserEmitDiag(p, line, col, "expected expression");
     return parserMakeExpr(ekLiteral, line, col);
+}
+
+// ---------------------------------------------------------------------------
+// Patterns (for match arms)
+// ---------------------------------------------------------------------------
+
+func parserMakePattern(kind: int, line: uint32, col: uint32) -> *Pattern {
+    let pat: *Pattern = bux_alloc(sizeof(Pattern)) as *Pattern;
+    pat.kind = kind;
+    pat.line = line;
+    pat.column = col;
+    pat.patIdent = "";
+    pat.patLitKind = 0;
+    pat.patLitText = "";
+    pat.patRangeInclusive = false;
+    pat.patEnumPath = "";
+    pat.patStructName = "";
+    pat.patChild1 = null as *Pattern;
+    pat.patChild2 = null as *Pattern;
+    return pat;
+}
+
+func parserParsePrimaryPattern(p: *Parser) -> *Pattern {
+    while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+    let tok: LexToken = parserCurToken(p);
+    let line: uint32 = tok.line;
+    let col: uint32 = tok.column;
+    let kind: int = tok.kind;
+
+    // _
+    if kind == tkUnderscore {
+        discard parserAdvance(p);
+        return parserMakePattern(pkWildcard, line, col);
+    }
+
+    // Literals
+    if kind == tkIntLiteral || kind == tkFloatLiteral || kind == tkStringLiteral
+        || kind == tkCharLiteral || kind == tkBoolLiteral {
+        discard parserAdvance(p);
+        let pat: *Pattern = parserMakePattern(pkLiteral, line, col);
+        pat.patLitKind = kind;
+        pat.patLitText = tok.text;
+        return pat;
+    }
+
+    // Ident / enum path / true|false as names
+    if kind == tkIdent {
+        discard parserAdvance(p);
+        let name: String = tok.text;
+        if String_Eq(name, "true") || String_Eq(name, "false") {
+            let pat: *Pattern = parserMakePattern(pkLiteral, line, col);
+            pat.patLitKind = tkBoolLiteral;
+            pat.patLitText = name;
+            return pat;
+        }
+        // Enum path: Enum::Variant or Enum::Variant(...)
+        if parserCheck(p, tkColonColon) {
+            var path: String = name;
+            while parserCheck(p, tkColonColon) {
+                discard parserAdvance(p);
+                let seg: LexToken = parserExpectIdentOrKeyword(p, "expected identifier in pattern path");
+                path = String_Concat(path, "::");
+                path = String_Concat(path, seg.text);
+            }
+            // Optional (args) for algebraic variants — parse and ignore bindings for now
+            if parserCheck(p, tkLParen) {
+                discard parserAdvance(p);
+                while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+                    discard parserParsePattern(p);
+                    if parserCheck(p, tkComma) { discard parserAdvance(p); }
+                    else { break; }
+                }
+                discard parserExpect(p, tkRParen, "expected ')' to close enum pattern");
+            }
+            let pat: *Pattern = parserMakePattern(pkEnum, line, col);
+            pat.patEnumPath = path;
+            return pat;
+        }
+        // Bare name with (args): Variant(...) treated as single-segment enum
+        if parserCheck(p, tkLParen) {
+            discard parserAdvance(p);
+            while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+                discard parserParsePattern(p);
+                if parserCheck(p, tkComma) { discard parserAdvance(p); }
+                else { break; }
+            }
+            discard parserExpect(p, tkRParen, "expected ')' to close pattern");
+            let pat: *Pattern = parserMakePattern(pkEnum, line, col);
+            pat.patEnumPath = name;
+            return pat;
+        }
+        // Ident binding / catch-all name
+        let pat: *Pattern = parserMakePattern(pkIdent, line, col);
+        pat.patIdent = name;
+        return pat;
+    }
+
+    parserEmitDiag(p, line, col, "expected pattern");
+    return parserMakePattern(pkWildcard, line, col);
+}
+
+func parserParsePattern(p: *Parser) -> *Pattern {
+    let locTok: LexToken = parserCurToken(p);
+    let line: uint32 = locTok.line;
+    let col: uint32 = locTok.column;
+    let left: *Pattern = parserParsePrimaryPattern(p);
+    // Range pattern: lo..hi or lo..=hi
+    if parserCheck(p, tkDotDot) || parserCheck(p, tkDotDotEqual) {
+        let inclusive: bool = parserCheck(p, tkDotDotEqual);
+        discard parserAdvance(p);
+        let right: *Pattern = parserParsePrimaryPattern(p);
+        let pat: *Pattern = parserMakePattern(pkRange, line, col);
+        pat.patRangeInclusive = inclusive;
+        pat.patChild1 = left;
+        pat.patChild2 = right;
+        return pat;
+    }
+    return left;
+}
+
+// match subject { pat => body, ... }
+func parserParseMatchExpr(p: *Parser) -> *Expr {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserAdvance(p); // match
+    p.structInitAllowed = false;
+    let subject: *Expr = parserParseExpr(p);
+    p.structInitAllowed = true;
+    discard parserExpect(p, tkLBrace, "expected '{' to start match body");
+
+    var firstArm: *MatchArm = null as *MatchArm;
+    var lastArm: *MatchArm = null as *MatchArm;
+    var armCount: int = 0;
+
+    while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+        while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+        if parserCheck(p, tkRBrace) || parserPeek(p, 0) == tkEndOfFile { break; }
+        let armLine: uint32 = parserCurToken(p).line;
+        let armCol: uint32 = parserCurToken(p).column;
+        let mp: int = p.pos;
+        let pat: *Pattern = parserParsePattern(p);
+        discard parserExpect(p, tkFatArrow, "expected '=>' in match arm");
+        let body: *Expr = parserParseExpr(p);
+        let arm: *MatchArm = bux_alloc(sizeof(MatchArm)) as *MatchArm;
+        arm.line = armLine;
+        arm.column = armCol;
+        arm.pattern = pat;
+        arm.body = body;
+        arm.next = null as *MatchArm;
+        if firstArm == null as *MatchArm {
+            firstArm = arm;
+            lastArm = arm;
+        } else {
+            lastArm.next = arm;
+            lastArm = arm;
+        }
+        armCount = armCount + 1;
+        if parserCheck(p, tkComma) { discard parserAdvance(p); }
+        if p.pos == mp { discard parserAdvance(p); }
+    }
+    discard parserExpect(p, tkRBrace, "expected '}' to close match");
+
+    let e: *Expr = parserMakeExpr(ekMatch, line, col);
+    e.child1 = subject;
+    e.matchArms = firstArm;
+    e.matchArmCount = armCount;
+    return e;
 }
 
 // ---------------------------------------------------------------------------
@@ -1117,29 +1293,14 @@ func parserParseStmt(p: *Parser) -> *Stmt {
         return s;
     }
 
-    // match
+    // match — expression statement (arms fully parsed)
     if kind == tkMatch {
-        discard parserAdvance(p);
-        p.structInitAllowed = false;
-        let subject: *Expr = parserParseExpr(p);
-        p.structInitAllowed = true;
-        discard parserExpect(p, tkLBrace, "expected '{' to start match body");
-        // Skip match body (simplified — just parse arms as empty)
-        while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
-            if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
-            let mp: int = p.pos;
-            discard parserParseExpr(p);  // pattern
-            if parserMatch(p, tkFatArrow) {
-                discard parserParseExpr(p);  // body
-            }
-            if p.pos == mp { discard parserAdvance(p); }
-        }
-        discard parserExpect(p, tkRBrace, "expected '}' to close match");
+        let matchExpr: *Expr = parserParseMatchExpr(p);
         let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
-        s.kind = skMatch;
+        s.kind = skExpr;
         s.line = line;
         s.column = col;
-        s.child1 = subject;
+        s.child1 = matchExpr;
         return s;
     }
 

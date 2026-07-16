@@ -1,0 +1,12 @@
+@[Checked]
+func Take(s: own String) -> own String {
+    return s;
+}
+
+@[Checked]
+func Main() -> int {
+    let a: own String = "hello";
+    let b: own String = Take(a);
+    let c: own String = a;
+    return 0;
+}

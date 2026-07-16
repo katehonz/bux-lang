@@ -75,8 +75,19 @@ struct Pattern {
     patLitKind: int,         // for pkLiteral (token kind)
     patLitText: String,      // for pkLiteral (token text)
     patRangeInclusive: bool, // for pkRange
-    patEnumPath: String,     // for pkEnum (path joined)
+    patEnumPath: String,     // for pkEnum: "Enum::Variant"
     patStructName: String,   // for pkStruct
+    patChild1: *Pattern,     // range lo / nested
+    patChild2: *Pattern,     // range hi / nested
+}
+
+// Match arm: pattern => body
+struct MatchArm {
+    line: uint32,
+    column: uint32,
+    pattern: *Pattern,
+    body: *Expr,
+    next: *MatchArm,
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +176,9 @@ struct Expr {
     // Call arguments (linked list for multi-arg support)
     callArgs: *ExprList,
     callArgCount: int,
+    // Match arms (for ekMatch)
+    matchArms: *MatchArm,
+    matchArmCount: int,
 }
 
 // ---------------------------------------------------------------------------

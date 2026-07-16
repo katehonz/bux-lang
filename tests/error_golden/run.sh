@@ -16,10 +16,13 @@ passed=0
 failed=0
 
 normalize() {
-  # Replace absolute path prefix with FILE, drop trailing blank lines
+  # Replace absolute paths with FILE (location markers and "in <path>" lines).
+  # Drop trailing blank lines.
   sed -E \
-    -e "s|$DIR/[^:]+:|FILE:|g" \
-    -e "s|$ROOT/[^:]+:|FILE:|g" \
+    -e "s|$DIR/[^:[:space:]]+:|FILE:|g" \
+    -e "s|$ROOT/[^:[:space:]]+:|FILE:|g" \
+    -e "s|$DIR/[^:[:space:]]+|FILE|g" \
+    -e "s|$ROOT/[^:[:space:]]+|FILE|g" \
     -e "s|//+|/|g" \
     | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
 }

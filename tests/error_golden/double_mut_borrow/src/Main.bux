@@ -1,0 +1,12 @@
+@[Checked]
+func TwoMut(a: &mut int, b: &mut int) {
+    *a = 1;
+    *b = 2;
+}
+
+@[Checked]
+func Main() -> int {
+    var x: int = 0;
+    TwoMut(&x, &x);
+    return 0;
+}

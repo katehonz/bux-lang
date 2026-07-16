@@ -55,14 +55,86 @@ proc enumHasDataVariants(ctx: var LowerCtx, enumName: string): bool =
         return true
   return false
 
+proc litTokenType(tok: Token): Type =
+  case tok.kind
+  of tkIntLiteral: makeInt()
+  of tkFloatLiteral: makeFloat64()
+  of tkStringLiteral: makeStr()
+  of tkCharLiteral: makeChar32()
+  of tkBoolLiteral: makeBool()
+  else: makeUnknown()
+
+proc patternLiteralNode(pat: Pattern, loc: SourceLocation): HirNode =
+  ## Convert a pkLiteral pattern into an hLit node, or nil if not a literal.
+  if pat == nil or pat.kind != pkLiteral:
+    return nil
+  return hirLit(pat.patLit, litTokenType(pat.patLit), loc)
+
+proc matchAlwaysTrue(loc: SourceLocation): HirNode =
+  hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc)
+
+proc matchPatternCond(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
+                      subjectEnumName: string, subjectHasData: bool,
+                      loc: SourceLocation): HirNode =
+  ## Build a boolean condition for a match pattern.
+  ## Returns nil for always-true arms (wildcard / catch-all).
+  if pattern == nil:
+    return nil
+  case pattern.kind
+  of pkWildcard, pkIdent:
+    return nil
+  of pkLiteral:
+    let litNode = patternLiteralNode(pattern, loc)
+    if litNode == nil:
+      return nil
+    return hirBinary(tkEq, subject, litNode, makeBool(), loc)
+  of pkRange:
+    let loNode = patternLiteralNode(pattern.patRangeLo, loc)
+    let hiNode = patternLiteralNode(pattern.patRangeHi, loc)
+    if loNode == nil or hiNode == nil:
+      # Non-literal range endpoints — treat as always-true (best-effort)
+      return nil
+    let loOk = hirBinary(tkGe, subject, loNode, makeBool(), loc)
+    let hiOp = if pattern.patRangeInclusive: tkLe else: tkLt
+    let hiOk = hirBinary(hiOp, subject, hiNode, makeBool(), loc)
+    return hirBinary(tkAmpAmp, loOk, hiOk, makeBool(), loc)
+  of pkEnum:
+    let path = pattern.patEnumPath
+    if path.len >= 2:
+      let enumName = path[0]
+      let variantName = path[^1]
+      let tagName = enumName & "_" & variantName
+      if subjectHasData and enumName == subjectEnumName:
+        # Algebraic enum: compare subject.tag
+        let tagField = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: "tag",
+                               typ: makePointer(makeNamed(enumName & "_Tag")), loc: loc)
+        let tagLoad = HirNode(kind: hLoad, loadPtr: tagField, typ: makeNamed(enumName & "_Tag"), loc: loc)
+        let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName & "_Tag"), loc)
+        return hirBinary(tkEq, tagLoad, tagConst, makeBool(), loc)
+      else:
+        # Simple enum or cross-enum match: compare subject directly
+        let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName), loc)
+        return hirBinary(tkEq, subject, tagConst, makeBool(), loc)
+    # Single-segment enum path — always-true fallback
+    return nil
+  of pkGuarded:
+    # Guard: inner pattern AND guard expression (lowered later if needed)
+    # For now only support always-true inner + guard as bool expr via lowerExpr path.
+    # Guards are not yet fully lowered here (require expr lowering of guard).
+    return nil
+  else:
+    # Struct/tuple patterns: not yet fully lowered — always-true
+    return nil
+
 proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ: Type, loc: SourceLocation): HirNode =
-  # Lower match expression to a block with if-else chain.
-  # For now, supports enum tag matching and wildcard/ident fallbacks.
+  ## Lower match expression to a block with if-else chain.
+  ## Supports: enum tags, integer/bool/char/string literals, ranges, wildcard/ident.
+  let hasResult = typ != nil and typ.kind != tkVoid and typ.kind != tkUnknown
   let resultName = ctx.freshName()
   var stmts: seq[HirNode] = @[]
 
-  # Allocate result variable
-  stmts.add(hirAlloca(resultName, typ, loc))
+  if hasResult:
+    stmts.add(hirAlloca(resultName, typ, loc))
 
   # Determine whether the matched enum has data variants (needs .tag access).
   var subjectEnumName = ""
@@ -71,81 +143,44 @@ proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ
     subjectEnumName = subject.typ.name
     subjectHasData = ctx.enumHasDataVariants(subjectEnumName)
 
+  proc makeArmBlock(body: HirNode): HirNode =
+    var armStmts: seq[HirNode] = @[]
+    if hasResult:
+      armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
+    elif body != nil:
+      # Void match: evaluate body for side effects
+      armStmts.add(body)
+    return hirBlock(armStmts, nil, makeVoid(), loc)
+
   # Build if-else chain from arms (last arm is the outermost else)
   var ifChain: HirNode = nil
 
   for i in countdown(arms.len - 1, 0):
     let arm = arms[i]
-    let body = arm.body
+    let armBlock = makeArmBlock(arm.body)
+    let cond = matchPatternCond(ctx, subject, arm.pattern, subjectEnumName, subjectHasData, loc)
 
-    case arm.pattern.kind
-    of pkEnum:
-      let path = arm.pattern.patEnumPath
-      if path.len >= 2:
-        let enumName = path[0]
-        let variantName = path[^1]
-        let tagName = enumName & "_" & variantName
-
-        var cond: HirNode
-        if subjectHasData and enumName == subjectEnumName:
-          # Algebraic enum: compare subject.tag
-          let tagField = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: "tag",
-                                 typ: makePointer(makeNamed(enumName & "_Tag")), loc: loc)
-          let tagLoad = HirNode(kind: hLoad, loadPtr: tagField, typ: makeNamed(enumName & "_Tag"), loc: loc)
-          let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName & "_Tag"), loc)
-          cond = hirBinary(tkEq, tagLoad, tagConst, makeBool(), loc)
-        else:
-          # Simple enum or cross-enum match: compare subject directly
-          let tagConst = hirLit(Token(kind: tkIdent, text: tagName, loc: loc), makeNamed(enumName), loc)
-          cond = hirBinary(tkEq, subject, tagConst, makeBool(), loc)
-
-        # body: result = arm_body
-        var armStmts: seq[HirNode] = @[]
-        armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
-        let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
-
-        if ifChain == nil:
-          ifChain = HirNode(kind: hIf, ifCond: cond, ifThen: armBlock, ifElse: nil,
-                            typ: makeVoid(), loc: loc)
-        else:
-          ifChain = HirNode(kind: hIf, ifCond: cond, ifThen: armBlock, ifElse: ifChain,
-                            typ: makeVoid(), loc: loc)
-      else:
-        var armStmts: seq[HirNode] = @[]
-        armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
-        let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
-        if ifChain == nil:
-          ifChain = armBlock
-        else:
-          ifChain = HirNode(kind: hIf,
-            ifCond: hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc),
-            ifThen: armBlock, ifElse: ifChain, typ: makeVoid(), loc: loc)
-    of pkWildcard, pkIdent:
-      # Default arm — always matches
-      var armStmts: seq[HirNode] = @[]
-      armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
-      let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
+    if cond == nil:
+      # Always-true arm (wildcard / incomplete pattern)
       if ifChain == nil:
         ifChain = armBlock
       else:
-        ifChain = HirNode(kind: hIf,
-          ifCond: hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc),
-          ifThen: armBlock, ifElse: ifChain, typ: makeVoid(), loc: loc)
+        ifChain = HirNode(kind: hIf, ifCond: matchAlwaysTrue(loc), ifThen: armBlock,
+                          ifElse: ifChain, typ: makeVoid(), loc: loc)
     else:
-      var armStmts: seq[HirNode] = @[]
-      armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
-      let armBlock = hirBlock(armStmts, nil, makeVoid(), loc)
       if ifChain == nil:
-        ifChain = armBlock
+        ifChain = HirNode(kind: hIf, ifCond: cond, ifThen: armBlock, ifElse: nil,
+                          typ: makeVoid(), loc: loc)
       else:
-        ifChain = HirNode(kind: hIf,
-          ifCond: hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc),
-          ifThen: armBlock, ifElse: ifChain, typ: makeVoid(), loc: loc)
+        ifChain = HirNode(kind: hIf, ifCond: cond, ifThen: armBlock, ifElse: ifChain,
+                          typ: makeVoid(), loc: loc)
 
-  stmts.add(ifChain)
+  if ifChain != nil:
+    stmts.add(ifChain)
 
-  # Return the result variable as the block expression
-  return hirBlock(stmts, hirVar(resultName, typ, loc), typ, loc)
+  if hasResult:
+    return hirBlock(stmts, hirVar(resultName, typ, loc), typ, loc)
+  return hirBlock(stmts, nil, makeVoid(), loc)
 
 proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.module = module
@@ -1672,8 +1707,8 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     var arms: seq[HirMatchArm] = @[]
     for arm in stmt.stmtMatchArms:
       arms.add(HirMatchArm(pattern: arm.pattern, body: ctx.lowerExpr(arm.body)))
-    return ctx.flushPending(HirNode(kind: hMatch, matchSubject: subject, matchArms: arms,
-                   typ: makeVoid(), loc: loc))
+    # Statement match: lower to if-else chain (void result)
+    return ctx.flushPending(lowerMatch(ctx, subject, arms, makeVoid(), loc))
 
   of skSwitch:
     let subject = ctx.lowerExpr(stmt.stmtSwitchExpr)

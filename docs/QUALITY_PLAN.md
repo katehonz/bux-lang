@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
-> **Дата:** 2026-07-15 (обновено вечерта)  
-> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **40+ examples** ✅  
+> **Дата:** 2026-07-16 (вечерта)  
+> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **40+ examples**, match expr **bootstrap+selfhost** ✅  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -57,11 +57,11 @@
 |---|--------|------|--------|
 | B.1 | Proper tuple types в C backend | `(T,U)` → `Tuple_T_U` struct + `.0`/`.1` | ✅ bootstrap + selfhost |
 | B.2 | Function pointer types | `func(T)->U` fat ABI | ✅ bootstrap + selfhost |
-| B.3 | Match expression до край в C (не `return "0"`) | Expression-context match | ⏳ |
+| B.3 | Match expression lowering (literals, ranges, enums) | Expression-context match → if-else | ✅ bootstrap + selfhost |
 | B.4 | Closures multi-instance | Fat `BuxFn` + heap env | ✅ bootstrap + selfhost |
 | B.4b | Closures: loop/return edge cases in body | По-сложни body control-flow | ⏳ |
 | B.5 | По-добри diagnostics (snippet + hint) | DX #1 за нови потребители | ✅ |
-| B.6 | Bootstrap ↔ selfhost feature parity | Tuples/closures done; string interp / ops still bootstrap-heavy | 🔄 |
+| B.6 | Bootstrap ↔ selfhost feature parity | Tuples/closures/**match** done; string interp / some ops still bootstrap-heavy | 🔄 |
 
 ### C — Gradual Ownership 2.0 (P1)
 
@@ -177,13 +177,37 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 3. Example `iter_hof.bux` (sum=15, product=120)
 4. Selfhost fix: pointer `->` field access; no bogus bounds check on `arr.data[len]` (Push)
 
+## Сесия 8 (match expression + error goldens)
+
+1. **Match expression lowering** (B.3): `pkLiteral`, `pkRange` (`a..b` / `a..=b`), enum tags, wildcard
+   - Bugfix: literal arms were always-true (`else` branch) → `match 1 { 1=>10, 2=>20 }` returned 10 for all
+   - `skMatch` now also lowers via `lowerMatch` (void result)
+2. Expanded `examples/pattern_matching.bux` (enums + classify ranges + string arms)
+3. **Error golden cases** (`tests/error_golden/`):
+   - `parse_error` — incomplete `let x = ;`
+   - `use_after_move` — `@[Checked]` + `own String`
+   - `double_mut_borrow` — two `&mut` of same var
+4. `run.sh` normalize: absolute paths in "parse errors in …" lines
+
+## Сесия 9 (selfhost match — B.6 parity)
+
+1. **AST:** `MatchArm` linked list; `Pattern.patChild1/2` for ranges; `Expr.matchArms`
+2. **Parser:** full `parserParsePattern` / `parserParseMatchExpr` (was skip-arms stub)
+   - literals, `_`, ident, `Enum::Variant` / `Enum::Variant(...)`, ranges
+   - statement `match` → `skExpr` + `ekMatch`
+3. **Sema:** type-check subject + arms; propagate first-arm type to `expr.refType`
+4. **HIR lower:** `Lcx_LowerMatch` → alloca result + if-else stores (enum `.tag` / simple / literal / range)
+5. **Last-expr return:** `Lcx_LowerBlock` converts final `skExpr` into `return` (needed for `func F() -> T { match ... }`)
+6. Verified: `pattern_matching` via **buxc2**; simple enum + ranges; **selfhost-loop IDENTICAL ✓**
+
 ---
 
-## Утре — предложени следващи стъпки
+## Следващи стъпки
 
-1. **Match expression** lowering докрай (B.3)
-2. **Още error golden cases** (parse error, use-after-move)
-3. **LSP hover / go-to-def** (над текущите diagnostics)
-4. **Generic Iter map** (не само int), ако monomorphization с `func` params е стабилна
-5. **Selfhost-loop** re-check след fat-func + tuples промените
+1. **LSP hover / go-to-def** (над текущите diagnostics)
+2. **Generic Iter map** (не само int), ако monomorphization с `func` params е стабилна
+3. **Closures B.4b** — loop/return edge cases in closure body
+4. Struct/tuple patterns + pattern bindings (`Some(value)` binds `value`)
+5. `let x = match ...` multi-stmt yield (beyond tail-position return)
+6. String interpolation / remaining bootstrap-only features (B.6)
 

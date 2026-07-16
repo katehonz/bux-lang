@@ -1,0 +1,7 @@
+[Package]
+Name    = "parse_error"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"

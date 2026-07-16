@@ -1,0 +1,6 @@
+error: type errors in project
+error: mutable borrow conflict: arguments 1 and 2 both borrow '&mut x'
+  --> FILE:10:11
+    |
+ 10 |     TwoMut(&x, &x);
+    |           ^

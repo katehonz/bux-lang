@@ -1,0 +1,7 @@
+error: parse errors in FILE
+error: expected expression
+  --> FILE:2:13
+    |
+ 2 |     let x = ;
+    |             ^
+   = help: the previous statement may be incomplete (missing value or ';')

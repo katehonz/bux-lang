@@ -1,0 +1,7 @@
+[Package]
+Name    = "use_after_move"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"

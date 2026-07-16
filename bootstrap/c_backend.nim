@@ -401,7 +401,8 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     return "0"
 
   of hMatch:
-    return "0"  # TODO: match expression lowering
+    # Match should be desugared in hir_lower to if-else. Fallback: 0.
+    return "0"
 
   else:
     return "0"

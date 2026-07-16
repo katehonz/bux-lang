@@ -1,4 +1,4 @@
-// Pattern Matching - Match expressions with algebraic enums
+// Pattern Matching — enum tags, literals, ranges, wildcard
 import Std::Io::{PrintLine, PrintInt};
 
 
@@ -14,19 +14,52 @@ func GetValue(opt: Option) -> int {
     }
 }
 
+func Classify(n: int) -> int {
+    // literal arms + exclusive range + inclusive range + wildcard
+    match n {
+        0 => 100,
+        1 => 101,
+        2..5 => 200,
+        6..=10 => 300,
+        _ => -1
+    }
+}
+
+func ColorName(c: int) -> String {
+    match c {
+        1 => "red",
+        2 => "green",
+        3 => "blue",
+        _ => "unknown"
+    }
+}
+
 func Main() -> int {
     let opt1: Option = Option { tag: Option_Some };
     opt1.data.Some_0 = 42;
-    
+
     let opt2: Option = Option { tag: Option_None };
-    
+
     PrintLine("opt1 value: ");
     PrintInt(GetValue(opt1));
     PrintLine("");
-    
+
     PrintLine("opt2 value: ");
     PrintInt(GetValue(opt2));
     PrintLine("");
-    
+
+    PrintLine("classify:");
+    PrintInt(Classify(0));
+    PrintLine("");
+    PrintInt(Classify(3));
+    PrintLine("");
+    PrintInt(Classify(8));
+    PrintLine("");
+    PrintInt(Classify(99));
+    PrintLine("");
+
+    PrintLine("color:");
+    PrintLine(ColorName(2));
+
     return 0;
 }

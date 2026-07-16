@@ -407,6 +407,251 @@ func Lcx_GetArrayElemType(te: *TypeExpr) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Match lowering helpers
+// ---------------------------------------------------------------------------
+
+func Lcx_EnumHasData(ctx: *LowerCtx, enumName: String) -> bool {
+    if String_Eq(enumName, "") { return false; }
+    let sym: Symbol = Scope_Lookup(ctx.scope, enumName);
+    if sym.decl == null as *Decl || sym.decl.kind != dkEnum { return false; }
+    if sym.decl.variantCount > 0 && sym.decl.variant0.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 1 && sym.decl.variant1.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 2 && sym.decl.variant2.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 3 && sym.decl.variant3.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 4 && sym.decl.variant4.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 5 && sym.decl.variant5.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 6 && sym.decl.variant6.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 7 && sym.decl.variant7.fieldCount > 0 { return true; }
+    if sym.decl.variantCount > 8 && sym.decl.variant8.fieldCount > 0 { return true; }
+    return false;
+}
+
+func Lcx_MakeLitHir(litKind: int, litText: String, line: uint32, col: uint32) -> *HirNode {
+    let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    n.kind = hLit;
+    n.line = line;
+    n.column = col;
+    n.intValue = litKind;
+    n.strValue = litText;
+    return n;
+}
+
+func Lcx_MakeBinHir(op: int, left: *HirNode, right: *HirNode, line: uint32, col: uint32) -> *HirNode {
+    let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    n.kind = hBinary;
+    n.line = line;
+    n.column = col;
+    n.intValue = op;
+    n.child1 = left;
+    n.child2 = right;
+    return n;
+}
+
+func Lcx_MakeTrueHir(line: uint32, col: uint32) -> *HirNode {
+    return Lcx_MakeLitHir(tkBoolLiteral, "true", line, col);
+}
+
+// Build condition HirNode for a match pattern. Returns null = always-true.
+func Lcx_PatternCond(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
+                     subjectEnumName: String, subjectHasData: bool,
+                     line: uint32, col: uint32) -> *HirNode {
+    if pat == null as *Pattern { return null as *HirNode; }
+    let kind: int = pat.kind;
+
+    if kind == pkWildcard || kind == pkIdent {
+        return null as *HirNode;
+    }
+
+    if kind == pkLiteral {
+        let lit: *HirNode = Lcx_MakeLitHir(pat.patLitKind, pat.patLitText, line, col);
+        return Lcx_MakeBinHir(tkEq, subject, lit, line, col);
+    }
+
+    if kind == pkRange {
+        let loPat: *Pattern = pat.patChild1;
+        let hiPat: *Pattern = pat.patChild2;
+        if loPat == null as *Pattern || hiPat == null as *Pattern { return null as *HirNode; }
+        if loPat.kind != pkLiteral || hiPat.kind != pkLiteral { return null as *HirNode; }
+        let lo: *HirNode = Lcx_MakeLitHir(loPat.patLitKind, loPat.patLitText, line, col);
+        let hi: *HirNode = Lcx_MakeLitHir(hiPat.patLitKind, hiPat.patLitText, line, col);
+        let loOk: *HirNode = Lcx_MakeBinHir(tkGe, subject, lo, line, col);
+        var hiOp: int = tkLt;
+        if pat.patRangeInclusive { hiOp = tkLe; }
+        let hiOk: *HirNode = Lcx_MakeBinHir(hiOp, subject, hi, line, col);
+        return Lcx_MakeBinHir(tkAmpAmp, loOk, hiOk, line, col);
+    }
+
+    if kind == pkEnum {
+        let path: String = pat.patEnumPath;
+        // path is "Enum::Variant" or just "Variant"
+        var enumName: String = "";
+        var variantName: String = path;
+        if String_Contains(path, "::") {
+            enumName = String_SplitPart(path, "::", 0);
+            variantName = String_SplitPart(path, "::", 1);
+        }
+        let tagName: String = String_Concat(String_Concat(enumName, "_"), variantName);
+        // Prefer subject enum name when path is full
+        var useEnum: String = enumName;
+        if String_Eq(useEnum, "") { useEnum = subjectEnumName; }
+        let fullTag: String = String_Concat(String_Concat(useEnum, "_"), variantName);
+
+        if subjectHasData && (String_Eq(enumName, subjectEnumName) || String_Eq(enumName, "")) {
+            // Algebraic: subject.tag == Enum_Variant
+            let tagPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tagPtr.kind = hFieldPtr;
+            tagPtr.line = line;
+            tagPtr.column = col;
+            tagPtr.strValue = "tag";
+            tagPtr.child1 = subject;
+            let tagLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tagLoad.kind = hLoad;
+            tagLoad.line = line;
+            tagLoad.column = col;
+            tagLoad.child1 = tagPtr;
+            let tagConst: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tagConst.kind = hVar;
+            tagConst.line = line;
+            tagConst.column = col;
+            tagConst.strValue = fullTag;
+            return Lcx_MakeBinHir(tkEq, tagLoad, tagConst, line, col);
+        } else {
+            // Simple enum: subject == Enum_Variant
+            let tagConst: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tagConst.kind = hVar;
+            tagConst.line = line;
+            tagConst.column = col;
+            if !String_Eq(enumName, "") {
+                tagConst.strValue = fullTag;
+            } else {
+                tagConst.strValue = tagName;
+            }
+            return Lcx_MakeBinHir(tkEq, subject, tagConst, line, col);
+        }
+    }
+
+    return null as *HirNode;
+}
+
+// Lower match expr → hBlock: alloca result; if-else stores; strValue = result name
+func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
+    let line: uint32 = expr.line;
+    let col: uint32 = expr.column;
+    let subject: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
+
+    ctx.varCounter = ctx.varCounter + 1;
+    let resultName: String = String_Concat("__match_", String_FromInt(ctx.varCounter as int64));
+
+    // Result type from sema refType, default int
+    var typeName: String = "int";
+    if expr.refType != null as *TypeExpr && !String_Eq(expr.refType.typeName, "") {
+        typeName = expr.refType.typeName;
+    }
+
+    // Subject enum info
+    var subjectEnumName: String = "";
+    var subjectHasData: bool = false;
+    if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+        if expr.child1.refType.kind == tekNamed {
+            subjectEnumName = expr.child1.refType.typeName;
+            subjectHasData = Lcx_EnumHasData(ctx, subjectEnumName);
+        }
+    }
+
+    // Alloca result
+    let allocaNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    allocaNode.kind = hAlloca;
+    allocaNode.line = line;
+    allocaNode.column = col;
+    allocaNode.strValue = resultName;
+    allocaNode.typeName = typeName;
+
+    // Collect arms into a temporary array via reverse build of if-chain
+    // First count arms and build from last to first
+    var armCount: int = 0;
+    var arm: *MatchArm = expr.matchArms;
+    while arm != null as *MatchArm {
+        armCount = armCount + 1;
+        arm = arm.next;
+    }
+
+    // Build if-else from last arm to first
+    var ifChain: *HirNode = null as *HirNode;
+    var ai: int = armCount - 1;
+    while ai >= 0 {
+        // Find arm at index ai
+        var cur: *MatchArm = expr.matchArms;
+        var j: int = 0;
+        while j < ai && cur != null as *MatchArm {
+            cur = cur.next;
+            j = j + 1;
+        }
+        if cur == null as *MatchArm {
+            ai = ai - 1;
+            continue;
+        }
+
+        let bodyHir: *HirNode = Lcx_LowerExpr(ctx, cur.body);
+        // result = body
+        let storeNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        storeNode.kind = hStore;
+        storeNode.line = line;
+        storeNode.column = col;
+        let resVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        resVar.kind = hVar;
+        resVar.strValue = resultName;
+        storeNode.child1 = resVar;
+        storeNode.child2 = bodyHir;
+
+        let armBlock: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        armBlock.kind = hBlock;
+        armBlock.line = line;
+        armBlock.column = col;
+        armBlock.child1 = storeNode;
+
+        let cond: *HirNode = Lcx_PatternCond(ctx, subject, cur.pattern, subjectEnumName, subjectHasData, line, col);
+        if cond == null as *HirNode {
+            // Always-true arm
+            if ifChain == null as *HirNode {
+                ifChain = armBlock;
+            } else {
+                let ifNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                ifNode.kind = hIf;
+                ifNode.line = line;
+                ifNode.column = col;
+                ifNode.child1 = Lcx_MakeTrueHir(line, col);
+                ifNode.child2 = armBlock;
+                ifNode.extraData = ifChain as *void;
+                ifChain = ifNode;
+            }
+        } else {
+            let ifNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            ifNode.kind = hIf;
+            ifNode.line = line;
+            ifNode.column = col;
+            ifNode.child1 = cond;
+            ifNode.child2 = armBlock;
+            ifNode.extraData = ifChain as *void;
+            ifChain = ifNode;
+        }
+        ai = ai - 1;
+    }
+
+    // Chain: alloca → ifChain
+    allocaNode.child3 = ifChain;
+
+    let block: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    block.kind = hBlock;
+    block.line = line;
+    block.column = col;
+    block.child1 = allocaNode;
+    // Yield marker: strValue = result var name for last-expr return / let init
+    block.strValue = resultName;
+    block.typeName = typeName;
+    return block;
+}
+
+// ---------------------------------------------------------------------------
 // Expression lowering
 // ---------------------------------------------------------------------------
 
@@ -421,6 +666,11 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     n.column = col;
 
     let kind: int = expr.kind;
+
+    // Match expression
+    if kind == ekMatch {
+        return Lcx_LowerMatch(ctx, expr);
+    }
 
     // Literal
     if kind == ekLiteral {
@@ -2286,8 +2536,54 @@ func Lcx_LowerBlock(ctx: *LowerCtx, block: *Block, retTypeKind: int) -> *HirNode
     var firstNode: *HirNode = null as *HirNode;
     var prevNode: *HirNode = null as *HirNode;
     var stmt: *Stmt = block.firstStmt;
+    var lastStmt: *Stmt = null as *Stmt;
     while stmt != null as *Stmt {
-        let lowered: *HirNode = Lcx_LowerStmt(ctx, stmt);
+        lastStmt = stmt;
+        let isLast: bool = stmt.nextStmt == null as *Stmt;
+        // Last expression statement in a non-void function → implicit return
+        // (supports `func F() -> T { match ... }` / bare value as body)
+        var lowered: *HirNode = null as *HirNode;
+        if isLast && retTypeKind != tyVoid && retTypeKind != tyUnknown && retTypeKind >= 0
+            && stmt.kind == skExpr && stmt.child1 != null as *Expr {
+            let exprNode: *HirNode = Lcx_LowerExpr(ctx, stmt.child1);
+            if exprNode != null as *HirNode {
+                // Match (and similar multi-stmt yields): hBlock with strValue = result var
+                if exprNode.kind == hBlock && !String_Eq(exprNode.strValue, "") {
+                    let retVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    retVar.kind = hVar;
+                    retVar.strValue = exprNode.strValue;
+                    let retNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    retNode.kind = hReturn;
+                    retNode.line = stmt.line;
+                    retNode.column = stmt.column;
+                    retNode.child1 = retVar;
+                    // Append return at end of match block's child3 chain
+                    var lastInBlock: *HirNode = exprNode.child1;
+                    if lastInBlock == null as *HirNode {
+                        exprNode.child1 = retNode;
+                    } else {
+                        while lastInBlock.child3 != null as *HirNode {
+                            lastInBlock = lastInBlock.child3;
+                        }
+                        lastInBlock.child3 = retNode;
+                    }
+                    // Clear yield marker so emit treats it as plain block
+                    exprNode.strValue = "";
+                    lowered = exprNode;
+                } else if exprNode.kind == hReturn {
+                    lowered = exprNode;
+                } else {
+                    let retNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    retNode.kind = hReturn;
+                    retNode.line = stmt.line;
+                    retNode.column = stmt.column;
+                    retNode.child1 = exprNode;
+                    lowered = retNode;
+                }
+            }
+        } else {
+            lowered = Lcx_LowerStmt(ctx, stmt);
+        }
         if lowered != null as *HirNode {
             if firstNode == null as *HirNode {
                 firstNode = lowered;
@@ -2430,11 +2726,11 @@ func Lcx_LowerFunc(ctx: *LowerCtx, decl: *Decl) -> *HirFunc {
         pi = pi + 1;
     }
 
-    // Lower body with function scope active
+    // Lower body with function scope active (pass ret kind for last-expr return)
     let prevScope: *Scope = ctx.scope;
     ctx.scope = &funcScope;
     if decl.refBody != null as *Block {
-        f.body = Lcx_LowerBlock(ctx, decl.refBody, -1);
+        f.body = Lcx_LowerBlock(ctx, decl.refBody, f.retTypeKind);
     } else {
         f.body = null as *HirNode;
     }

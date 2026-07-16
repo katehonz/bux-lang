@@ -1,0 +1,7 @@
+[Package]
+Name    = "double_mut_borrow"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"

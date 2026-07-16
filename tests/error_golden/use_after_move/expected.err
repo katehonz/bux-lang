@@ -1,0 +1,7 @@
+error: type errors in project
+error: use of moved value 'a'
+  --> FILE:10:25
+    |
+ 10 |     let c: own String = a;
+    |                         ^
+   = help: the value was moved; clone it or restructure ownership

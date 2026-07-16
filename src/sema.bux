@@ -783,6 +783,46 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
         return tyVoid;
     }
 
+    // Match expression
+    if kind == ekMatch {
+        discard Sema_CheckExpr(sema, expr.child1); // subject
+        var armType: int = tyUnknown;
+        var first: bool = true;
+        var arm: *MatchArm = expr.matchArms;
+        while arm != null as *MatchArm {
+            let bt: int = Sema_CheckExpr(sema, arm.body);
+            if first {
+                armType = bt;
+                first = false;
+            }
+            arm = arm.next;
+        }
+        // Propagate type of first arm for codegen (result temp type)
+        if armType == tyStr {
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            te.typeName = "String";
+            expr.refType = te;
+        } else if armType == tyBool {
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            te.typeName = "bool";
+            expr.refType = te;
+        } else if armType == tyInt || armType == tyUnknown {
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            te.typeName = "int";
+            expr.refType = te;
+            if armType == tyUnknown { armType = tyInt; }
+        } else {
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            te.typeName = "int";
+            expr.refType = te;
+        }
+        return armType;
+    }
+
     // Closure: |params| -> Ret { body }
     if kind == ekClosure {
         let savedRetType: int = sema.currentRetType;
@@ -1052,7 +1092,7 @@ func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
         return;
     }
 
-    // Match
+    // Match (legacy skMatch — prefer ekMatch via skExpr)
     if kind == skMatch {
         discard Sema_CheckExpr(sema, stmt.child1);
         return;
