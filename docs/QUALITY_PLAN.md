@@ -273,9 +273,21 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 16 (match block arms + block expressions)
+
+1. **Block-as-expression:** `let r = { let x = 1; x + 2 }` — last skExpr is the value
+2. **Multi-stmt match arms:** `1 => { PrintLine("…"); let a = 10; a + 1 }`
+3. Bootstrap: `lowerBlock(..., asExpr)` promotes last expression; nested enum/struct pattern bindings
+4. Selfhost: parse `{ … }` as `ekBlock`; yield temps `__blk_N`; fix `IsMatchYield` null-strValue false positive; retTypeKind `-2` for expr blocks
+5. Nested: `Shape::Dot(Point { x, y })` works on bootstrap; selfhost covers struct/tuple/enum + block arms
+6. Example: `examples/match_block.bux`
+7. Verified: bootstrap + **buxc2** + selfhost-loop IDENTICAL ✓
+
+---
+
 ## Следващи стъпки
 
-1. Match arm multi-stmt bodies (beyond single expr)
-2. Nested patterns deeper (`Some((a, b))`, `Point { x: (a, b) }`)
-3. LSP: wire hover types from real sema
-4. Generic type inference for `Iter_Map` without explicit `<T,U>`
+1. Deeper nested patterns (`Some((a, b))` with multi-field enum layout ergonomics)
+2. LSP: wire hover types from real sema
+3. Generic type inference for `Iter_Map` without explicit `<T,U>`
+4. Match arm guards (`p if cond => …`)

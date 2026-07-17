@@ -396,6 +396,21 @@ match p {
     Point { x, y } => x * 10 + y,
     _ => -1
 }
+
+// Multi-statement arm bodies (block expression; last expr is the value)
+match n {
+    1 => {
+        let a: int = 10;
+        a + 1
+    },
+    _ => 0
+}
+
+// Block as expression
+let r: int = {
+    let x: int = 5;
+    x + 6
+};
 ```
 
 ---

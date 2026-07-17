@@ -661,6 +661,14 @@ func parserParsePrimary(p: *Parser) -> *Expr {
         return parserParseClosure(p);
     }
 
+    // Block expression { stmts; value }
+    if kind == tkLBrace {
+        let e: *Expr = parserMakeExpr(ekBlock, line, col);
+        e.boolValue = false;
+        e.refBlock = parserParseBlock(p);
+        return e;
+    }
+
     // unsafe { ... } — unsafe block expression
     if kind == tkUnsafe {
         discard parserAdvance(p);

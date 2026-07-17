@@ -446,10 +446,10 @@ func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
         var arg: *Pattern = pat.patArgs;
         var ai: int = 0;
         while arg != null as *Pattern {
+            var ftype: String = "int";
+            if ai == 0 { ftype = fieldType0; }
+            else if ai == 1 { ftype = fieldType1; }
             if arg.kind == pkIdent {
-                var ftype: String = "int";
-                if ai == 0 { ftype = fieldType0; }
-                else if ai == 1 { ftype = fieldType1; }
                 var bsym: Symbol;
                 Sema_ZeroInitSymbol(&bsym);
                 bsym.kind = skVar;
@@ -467,6 +467,14 @@ func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
                 bsym.isPublic = false;
                 bsym.decl = null as *Decl;
                 discard Scope_Define(sema.scope, bsym);
+            } else {
+                // Nested pattern: synthesize a fake subject expr with payload type
+                let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                fte.kind = tekNamed;
+                fte.typeName = ftype;
+                fake.refType = fte;
+                Sema_BindPattern(sema, arg, fake);
             }
             arg = arg.patNext;
             ai = ai + 1;
@@ -478,19 +486,17 @@ func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
         var ei: int = 0;
         var elem: *Pattern = pat.patArgs;
         while elem != null as *Pattern {
-            if elem.kind == pkIdent {
-                var ety: String = "int";
-                // Tuple_int_int → fields are ints by default; prefer subject type args if present
-                if subject != null as *Expr && subject.refType != null as *TypeExpr {
-                    if subject.refType.kind == tekTuple {
-                        // typeArgName0 / typeArgName1 store element type names when available
-                        if ei == 0 && !String_Eq(subject.refType.typeArgName0, "") {
-                            ety = subject.refType.typeArgName0;
-                        } else if ei == 1 && !String_Eq(subject.refType.typeArgName1, "") {
-                            ety = subject.refType.typeArgName1;
-                        }
+            var ety: String = "int";
+            if subject != null as *Expr && subject.refType != null as *TypeExpr {
+                if subject.refType.kind == tekTuple {
+                    if ei == 0 && !String_Eq(subject.refType.typeArgName0, "") {
+                        ety = subject.refType.typeArgName0;
+                    } else if ei == 1 && !String_Eq(subject.refType.typeArgName1, "") {
+                        ety = subject.refType.typeArgName1;
                     }
                 }
+            }
+            if elem.kind == pkIdent {
                 var bsym: Symbol;
                 Sema_ZeroInitSymbol(&bsym);
                 bsym.kind = skVar;
@@ -505,6 +511,13 @@ func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
                 bsym.refType = te;
                 bsym.isMutable = false;
                 discard Scope_Define(sema.scope, bsym);
+            } else {
+                let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                fte.kind = tekNamed;
+                fte.typeName = ety;
+                fake.refType = fte;
+                Sema_BindPattern(sema, elem, fake);
             }
             elem = elem.patNext;
             ei = ei + 1;
@@ -519,23 +532,25 @@ func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
         }
         var field: *Pattern = pat.patArgs;
         while field != null as *Pattern {
-            if field.kind == pkIdent {
-                var ftype: String = "int";
-                if !String_Eq(structName, "") {
-                    let ssym: Symbol = Scope_Lookup(sema.scope, structName);
-                    if ssym.decl != null as *Decl && ssym.decl.kind == dkStruct && ssym.decl.fields != null as *StructField {
-                        var fi: int = 0;
-                        while fi < ssym.decl.fieldCount {
-                            let sf: StructField = ssym.decl.fields[fi];
-                            if String_Eq(sf.name, field.patFieldName) {
-                                if sf.refFieldType != null as *TypeExpr && !String_Eq(sf.refFieldType.typeName, "") {
-                                    ftype = sf.refFieldType.typeName;
-                                }
+            var ftype: String = "int";
+            if !String_Eq(structName, "") {
+                let ssym: Symbol = Scope_Lookup(sema.scope, structName);
+                if ssym.decl != null as *Decl && ssym.decl.kind == dkStruct && ssym.decl.fields != null as *StructField {
+                    var fi: int = 0;
+                    while fi < ssym.decl.fieldCount {
+                        let sf: StructField = ssym.decl.fields[fi];
+                        var fname: String = field.patFieldName;
+                        if String_Eq(fname, "") { fname = field.patIdent; }
+                        if String_Eq(sf.name, fname) {
+                            if sf.refFieldType != null as *TypeExpr && !String_Eq(sf.refFieldType.typeName, "") {
+                                ftype = sf.refFieldType.typeName;
                             }
-                            fi = fi + 1;
                         }
+                        fi = fi + 1;
                     }
                 }
+            }
+            if field.kind == pkIdent {
                 var bsym: Symbol;
                 Sema_ZeroInitSymbol(&bsym);
                 bsym.kind = skVar;
@@ -550,6 +565,13 @@ func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
                 bsym.refType = te;
                 bsym.isMutable = false;
                 discard Scope_Define(sema.scope, bsym);
+            } else {
+                let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                fte.kind = tekNamed;
+                fte.typeName = ftype;
+                fake.refType = fte;
+                Sema_BindPattern(sema, field, fake);
             }
             field = field.patNext;
         }

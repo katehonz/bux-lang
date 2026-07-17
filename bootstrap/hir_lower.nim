@@ -185,19 +185,23 @@ proc matchPatternBindings(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
                                typ: makePointer(variantStructTy), loc: loc)
       payloadBase = HirNode(kind: hLoad, loadPtr: variantPtr, typ: variantStructTy, loc: loc)
     for i, arg in pattern.patEnumArgs:
-      if arg == nil or arg.kind != pkIdent:
+      if arg == nil:
         continue
       let fieldName = variantName & "_" & $i
       let fieldTy = if i < fieldTypes.len: fieldTypes[i] else: makeInt()
       let fieldPtr = HirNode(kind: hFieldPtr, fieldPtrBase: payloadBase, fieldName: fieldName,
                              typ: makePointer(fieldTy), loc: loc)
       let fieldLoad = HirNode(kind: hLoad, loadPtr: fieldPtr, typ: fieldTy, loc: loc)
-      if arg.patIdent notin ctx.patternBoundNames:
-        result.add(hirAlloca(arg.patIdent, fieldTy, loc))
-        ctx.patternBoundNames.incl(arg.patIdent)
-      result.add(hirStore(hirVar(arg.patIdent, fieldTy, loc), fieldLoad, loc))
+      if arg.kind == pkIdent:
+        if arg.patIdent notin ctx.patternBoundNames:
+          result.add(hirAlloca(arg.patIdent, fieldTy, loc))
+          ctx.patternBoundNames.incl(arg.patIdent)
+        result.add(hirStore(hirVar(arg.patIdent, fieldTy, loc), fieldLoad, loc))
+      else:
+        # Nested: Option::Some((a, b)), Pair::Two(Point { x, y })
+        result.add(ctx.matchPatternBindings(fieldLoad, arg, subjectEnumName, subjectHasData, loc))
     for nf in pattern.patEnumNamed:
-      if nf.pattern == nil or nf.pattern.kind != pkIdent:
+      if nf.pattern == nil:
         continue
       var fieldTy = makeInt()
       for entry in namedFields:
@@ -211,10 +215,13 @@ proc matchPatternBindings(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
       let fieldPtr = HirNode(kind: hFieldPtr, fieldPtrBase: variantLoad, fieldName: nf.name,
                              typ: makePointer(fieldTy), loc: loc)
       let fieldLoad = HirNode(kind: hLoad, loadPtr: fieldPtr, typ: fieldTy, loc: loc)
-      if nf.pattern.patIdent notin ctx.patternBoundNames:
-        result.add(hirAlloca(nf.pattern.patIdent, fieldTy, loc))
-        ctx.patternBoundNames.incl(nf.pattern.patIdent)
-      result.add(hirStore(hirVar(nf.pattern.patIdent, fieldTy, loc), fieldLoad, loc))
+      if nf.pattern.kind == pkIdent:
+        if nf.pattern.patIdent notin ctx.patternBoundNames:
+          result.add(hirAlloca(nf.pattern.patIdent, fieldTy, loc))
+          ctx.patternBoundNames.incl(nf.pattern.patIdent)
+        result.add(hirStore(hirVar(nf.pattern.patIdent, fieldTy, loc), fieldLoad, loc))
+      else:
+        result.add(ctx.matchPatternBindings(fieldLoad, nf.pattern, subjectEnumName, subjectHasData, loc))
   of pkGuarded:
     result.add(ctx.matchPatternBindings(subject, pattern.patGuardedInner, subjectEnumName, subjectHasData, loc))
   of pkTuple:
@@ -536,7 +543,7 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
 # Forward declarations
 proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode
 proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode
-proc lowerBlock(ctx: var LowerCtx, blk: Block): HirNode
+proc lowerBlock(ctx: var LowerCtx, blk: Block, asExpr = false): HirNode
 proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc
 
 proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
@@ -1339,7 +1346,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                    typ: typ, loc: loc)
 
   of ekBlock:
-    return ctx.lowerBlock(expr.exprBlock)
+    return ctx.lowerBlock(expr.exprBlock, asExpr = true)
 
   of ekPostfix:
     let operand = ctx.lowerExpr(expr.exprPostfixOperand)
@@ -1926,26 +1933,37 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
                    typ: makeVoid(), loc: loc)
 
-proc lowerBlock(ctx: var LowerCtx, blk: Block): HirNode =
+proc lowerBlock(ctx: var LowerCtx, blk: Block, asExpr = false): HirNode =
+  ## asExpr=true: block is used as a value (`let x = { ... }`, match arm body).
+  ## Last skExpr becomes the block result. Statement blocks (func body, if/while)
+  ## keep asExpr=false so trailing void calls stay as statements.
   if blk == nil: return nil
   var stmts: seq[HirNode] = @[]
   for s in blk.stmts:
     let hir = ctx.lowerStmt(s)
     if hir != nil:
       stmts.add(hir)
-  # If the last statement is an expression, make it the block's result expression
   var expr: HirNode = nil
-  if stmts.len > 0 and stmts[^1].kind == hBlock and stmts[^1].blockExpr != nil:
-    # Nested block expression (e.g., from match lowering) — lift it
+  if asExpr and stmts.len > 0 and blk.stmts.len > 0 and blk.stmts[^1].kind == skExpr:
+    let last = stmts[^1]
+    if last.kind == hBlock and last.blockExpr != nil:
+      # Nested yield block (match, block-expr) — lift result, keep side-effect stmts
+      stmts[^1] = hirBlock(last.blockStmts, nil, makeVoid(), last.loc)
+      expr = last.blockExpr
+    elif last.kind in {hIf, hWhile, hLoop, hReturn, hBreak, hContinue, hAlloca, hStore, hAssign}:
+      discard
+    else:
+      # hBinary, hCall, hLit, hVar, hLoad, … — value expression
+      expr = last
+      discard stmts.pop()
+  elif stmts.len > 0 and stmts[^1].kind == hBlock and stmts[^1].blockExpr != nil:
+    # Nested block expression (e.g., match) inside statement context — lift for
+    # function last-expr return via blockExpr when present
     let last = stmts[^1]
     stmts[^1] = hirBlock(last.blockStmts, nil, makeVoid(), last.loc)
     expr = last.blockExpr
-  elif stmts.len > 0 and stmts[^1].kind != hBlock:
-    # Last stmt is a simple expression-like node — we can't easily extract it,
-    # but for hVar/hLit/hCall etc. we could treat them as block expr.
-    # For now, leave as-is to avoid breaking control-flow statements.
-    discard
-  return hirBlock(stmts, expr, if expr != nil: expr.typ else: makeVoid(), blk.loc, isScope = true)
+  let typ = if expr != nil and expr.typ != nil: expr.typ else: makeVoid()
+  return hirBlock(stmts, expr, typ, blk.loc, isScope = true)
 
 proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   # Set up type substitution for generic functions

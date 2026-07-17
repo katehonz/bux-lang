@@ -1,0 +1,81 @@
+// Multi-stmt match arms (block bodies) + block-as-expression
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+enum Option {
+    Some(int),
+    None
+}
+
+func Classify(n: int) -> int {
+    match n {
+        1 => {
+            let a: int = 10;
+            a + 1
+        },
+        2 => {
+            PrintLine("two");
+            let b: int = 20;
+            b * 2
+        },
+        _ => 0
+    }
+}
+
+func Main() -> int {
+    Test_AssertEqInt(Classify(1), 11);
+    Test_AssertEqInt(Classify(2), 40);
+    Test_AssertEqInt(Classify(9), 0);
+
+    // Block as expression outside match
+    let r: int = {
+        let x: int = 5;
+        let y: int = 6;
+        x + y
+    };
+    Test_AssertEqInt(r, 11);
+
+    // Tuple pattern + block body
+    let t: (int, int) = (3, 4);
+    let u: int = match t {
+        (a, b) => {
+            let prod: int = a * b;
+            prod
+        },
+        _ => 0
+    };
+    Test_AssertEqInt(u, 12);
+
+    // Struct pattern + block body
+    let p: Point = Point { x: 2, y: 5 };
+    let z: int = match p {
+        Point { x: px, y: py } => {
+            let sum: int = px + py;
+            sum
+        },
+        _ => -1
+    };
+    Test_AssertEqInt(z, 7);
+
+    // Enum payload + block
+    let opt: Option = Option { tag: Option_Some };
+    opt.data.Some_0 = 7;
+    let v: int = match opt {
+        Option::Some(n) => {
+            let doubled: int = n + n;
+            doubled
+        },
+        Option::None => 0
+    };
+    Test_AssertEqInt(v, 14);
+
+    PrintInt(Classify(2));
+    PrintLine("");
+    Test_Pass("match_block");
+    return 0;
+}
