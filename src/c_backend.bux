@@ -774,32 +774,17 @@ func CBE_FatPartToC(part: String) -> String {
 // Emit typedefs for common BuxFn_* shapes (fat function pointers)
 func CBE_EmitFatFuncTypedefs(cbe: *CEmitter, mod: *HirModule) {
     StringBuilder_Append(&cbe.sb, "/* Fat function pointer types (code + env) */\n");
-    // (int)->int
-    StringBuilder_Append(&cbe.sb, "typedef struct BuxFn_int_int {\n");
-    StringBuilder_Append(&cbe.sb, "    int (*code)(void* env, int a0);\n");
-    StringBuilder_Append(&cbe.sb, "    void* env;\n");
-    StringBuilder_Append(&cbe.sb, "} BuxFn_int_int;\n");
-    // (int,int)->int
-    StringBuilder_Append(&cbe.sb, "typedef struct BuxFn_int_int_int {\n");
-    StringBuilder_Append(&cbe.sb, "    int (*code)(void* env, int a0, int a1);\n");
-    StringBuilder_Append(&cbe.sb, "    void* env;\n");
-    StringBuilder_Append(&cbe.sb, "} BuxFn_int_int_int;\n");
-    // (int)->bool
-    StringBuilder_Append(&cbe.sb, "typedef struct BuxFn_bool_int {\n");
-    StringBuilder_Append(&cbe.sb, "    bool (*code)(void* env, int a0);\n");
-    StringBuilder_Append(&cbe.sb, "    void* env;\n");
-    StringBuilder_Append(&cbe.sb, "} BuxFn_bool_int;\n");
-    // ()->void
-    StringBuilder_Append(&cbe.sb, "typedef struct BuxFn_void_void {\n");
-    StringBuilder_Append(&cbe.sb, "    void (*code)(void* env);\n");
-    StringBuilder_Append(&cbe.sb, "    void* env;\n");
-    StringBuilder_Append(&cbe.sb, "} BuxFn_void_void;\n");
-    // ()->int
-    StringBuilder_Append(&cbe.sb, "typedef struct BuxFn_int_void {\n");
-    StringBuilder_Append(&cbe.sb, "    int (*code)(void* env);\n");
-    StringBuilder_Append(&cbe.sb, "    void* env;\n");
-    StringBuilder_Append(&cbe.sb, "} BuxFn_int_void;\n");
-    // Scan module for any other BuxFn_* names
+    // Always emit core shapes
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int_int");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_bool_int");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_void_void");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_void");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_cstr_int");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_cstr");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_bool_cstr");
+    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int_cstr");
+    // Scan module for any other BuxFn_* names (deduped via #ifndef in EmitOne)
     var i: int = 0;
     while i < mod.funcCount {
         CBE_MaybeEmitExtraFat(cbe, mod.funcs[i].retTypeName);
@@ -826,12 +811,6 @@ func CBE_EmitFatFuncTypedefs(cbe: *CEmitter, mod: *HirModule) {
 func CBE_MaybeEmitExtraFat(cbe: *CEmitter, name: String) {
     if String_Eq(name, "") { return; }
     if !String_StartsWith(name, "BuxFn_") { return; }
-    // Skip ones we already emit as built-ins
-    if String_Eq(name, "BuxFn_int_int") { return; }
-    if String_Eq(name, "BuxFn_int_int_int") { return; }
-    if String_Eq(name, "BuxFn_bool_int") { return; }
-    if String_Eq(name, "BuxFn_void_void") { return; }
-    if String_Eq(name, "BuxFn_int_void") { return; }
     CBE_EmitOneFatTypedef(cbe, name);
 }
 
@@ -859,6 +838,13 @@ func CBE_EmitOneFatTypedef(cbe: *CEmitter, fatName: String) {
     let retPart: String = String_SplitPart(rest, "_", 0);
     let retC: String = CBE_FatPartToC(retPart);
 
+    // Guard against redefinition if the same name is emitted twice
+    StringBuilder_Append(&cbe.sb, "#ifndef ");
+    StringBuilder_Append(&cbe.sb, fatName);
+    StringBuilder_Append(&cbe.sb, "_DEFINED\n#define ");
+    StringBuilder_Append(&cbe.sb, fatName);
+    StringBuilder_Append(&cbe.sb, "_DEFINED\n");
+
     StringBuilder_Append(&cbe.sb, "typedef struct ");
     StringBuilder_Append(&cbe.sb, fatName);
     StringBuilder_Append(&cbe.sb, " {\n    ");
@@ -876,7 +862,7 @@ func CBE_EmitOneFatTypedef(cbe: *CEmitter, fatName: String) {
     }
     StringBuilder_Append(&cbe.sb, ");\n    void* env;\n} ");
     StringBuilder_Append(&cbe.sb, fatName);
-    StringBuilder_Append(&cbe.sb, ";\n");
+    StringBuilder_Append(&cbe.sb, ";\n#endif\n");
 }
 
 func CBE_EmitMakerDecl(cbe: *CEmitter, f: *HirFunc) {

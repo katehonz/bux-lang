@@ -48,7 +48,7 @@
 | A.2 | String: IsEmpty, ReplaceAll | Чести операции; само first-replace досега | ✅ (тази сесия) |
 | A.3 | Os_Exit + Test_AssertEqString / richer asserts | Тестове и CLI без raw `bux_exit` | ✅ (тази сесия) |
 | A.4 | Map_Remove / Set polish | Completeness на колекциите | ✅ (тази сесия) |
-| A.5 | Iter: map/filter/fold върху closures | Higher-order без boilerplate | ✅ Iter_Map/Filter/FoldInt |
+| A.5 | Iter: map/filter/fold върху closures | Higher-order без boilerplate | ✅ generic `Iter_Map`/`Filter`/`Fold` + Int aliases |
 | A.6 | Result helpers: Expect, UnwrapErr, Or | По-малко match boilerplate | ✅ (тази сесия) |
 
 ### B — Compiler Correctness (P0)
@@ -246,10 +246,24 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 14 (generic Iter map/filter/fold)
+
+1. **`Iter_Map<T,U>` / `Filter<T>` / `Fold<T,Acc>` / `Any` / `All` / `ForEach`** — fat `func` params + monomorphization
+2. **Int aliases** keep working: `Iter_MapInt` → `Iter_Map<int,int>`, …
+3. **Bootstrap fixes:**
+   - call return type for local fat-func (`f: func(T)->U`) after mono (was always `int` → String map truncated pointers)
+   - generic call `Foo<T>(…)` now type-checks args (closures get capture analysis)
+4. **Selfhost fixes:**
+   - `Lcx_SubstituteType` recurses into `tekFunc` (was leaving `BuxFn_U_T`)
+   - fat typedef emit covers cstr shapes + `#ifndef` guards
+5. Example: `examples/iter_generic.bux` (int↔String map, filter, fold, closures)
+6. Verified: bootstrap + **buxc2** + selfhost-loop IDENTICAL ✓
+
+---
+
 ## Следващи стъпки
 
-1. **Generic Iter map** (не само int), ако monomorphization с `func` params е стабилна
-2. Struct/tuple patterns (`Point { x, y }`, `(a, b)`) + nested bindings
-3. Match arm multi-stmt bodies (beyond single expr)
-4. LSP: wire hover types from real sema (replace lightweight index where possible)
-
+1. Struct/tuple patterns (`Point { x, y }`, `(a, b)`) + nested bindings
+2. Match arm multi-stmt bodies (beyond single expr)
+3. LSP: wire hover types from real sema (replace lightweight index where possible)
+4. Generic type inference for `Iter_Map` without explicit `<T,U>`

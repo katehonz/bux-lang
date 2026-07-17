@@ -1063,31 +1063,34 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       sema.emitError(expr.loc, "internal error: nil callee in call expression")
       return makeUnknown()
 
-    # Check for generic function call: Max<int>(10, 20)
+    # Check for generic function call: Max<int>(10, 20) or Iter_Map<int, String>(…)
     if expr.exprCallCallee.kind == ekGenericCall:
       let sym = scope.lookup(expr.exprCallCallee.exprGenericCallee)
       if sym == nil:
         sema.emitError(expr.loc, &"undeclared identifier '{expr.exprCallCallee.exprGenericCallee}'")
         return makeUnknown()
-      if sym.typ != nil and sym.typ.kind == tkFunc:
-        let retType = sym.typ.inner[^1]
-        let sym2 = sema.globalScope.lookup(expr.exprCallCallee.exprGenericCallee)
-        if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkFunc and
-           sym2.decl.declFuncTypeParams.len > 0 and
-           sym2.decl.declFuncReturnType != nil:
-          let typeParams = sym2.decl.declFuncTypeParams
-          var added: seq[string] = @[]
-          for i, tp in typeParams:
-            if i < expr.exprCallCallee.exprGenericTypeArgs.len:
-              let concrete = sema.resolveType(expr.exprCallCallee.exprGenericTypeArgs[i])
-              sema.typeTable[tp.name] = concrete
-              added.add(tp.name)
-          let resolvedRet = sema.resolveType(sym2.decl.declFuncReturnType)
-          for tp in added:
-            sema.typeTable.del(tp)
-          return resolvedRet
-        return retType
-      return makeUnknown()
+      # Still type-check args (closures need capture analysis, etc.)
+      # Bind type params while checking so `func(T)->U` params resolve.
+      let sym2 = sema.globalScope.lookup(expr.exprCallCallee.exprGenericCallee)
+      var added: seq[string] = @[]
+      if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkFunc and
+         sym2.decl.declFuncTypeParams.len > 0:
+        let typeParams = sym2.decl.declFuncTypeParams
+        for i, tp in typeParams:
+          if i < expr.exprCallCallee.exprGenericTypeArgs.len:
+            let concrete = sema.resolveType(expr.exprCallCallee.exprGenericTypeArgs[i])
+            sema.typeTable[tp.name] = concrete
+            added.add(tp.name)
+      discard sema.checkExprList(expr.exprCallArgs, scope)
+      var resolvedRet = makeUnknown()
+      if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkFunc and
+         sym2.decl.declFuncReturnType != nil:
+        resolvedRet = sema.resolveType(sym2.decl.declFuncReturnType)
+      elif sym.typ != nil and sym.typ.kind == tkFunc and sym.typ.inner.len > 0:
+        resolvedRet = sym.typ.inner[^1]
+      for tp in added:
+        sema.typeTable.del(tp)
+      return resolvedRet
 
     # Check for method call: obj.method(args)
     if expr.exprCallCallee.kind == ekField:

@@ -1,0 +1,113 @@
+// Generic Iter_Map / Filter / Fold / Any / All (not just int)
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::{
+    Array, Array_New, Array_Push, Array_Get, Array_Len, Array_Free
+};
+import Std::String::{String_FromInt, String_Len, String_Eq};
+import Std::Iter::{
+    Array_Iter, Iter,
+    Iter_Map, Iter_Filter, Iter_Fold, Iter_Any, Iter_All,
+    Iter_MapInt, Iter_SumInt
+};
+import Std::Test::{
+    Test_AssertEqInt, Test_AssertTrue, Test_AssertFalse, Test_AssertEqString, Test_Pass
+};
+
+func Double(x: int) -> int {
+    return x * 2;
+}
+
+func IsEven(x: int) -> bool {
+    return (x % 2) == 0;
+}
+
+func IntToString(x: int) -> String {
+    return String_FromInt(x);
+}
+
+func StringLenAsInt(s: String) -> int {
+    return String_Len(s) as int;
+}
+
+func AddLens(acc: int, s: String) -> int {
+    return acc + (String_Len(s) as int);
+}
+
+func IsNonEmpty(s: String) -> bool {
+    return String_Len(s) > 0;
+}
+
+func Main() -> int {
+    var nums: Array<int> = Array_New<int>(8);
+    Array_Push<int>(&nums, 1);
+    Array_Push<int>(&nums, 2);
+    Array_Push<int>(&nums, 3);
+    Array_Push<int>(&nums, 4);
+    Array_Push<int>(&nums, 5);
+
+    // Generic Map int → int
+    let itA: Iter<int> = Array_Iter<int>(&nums);
+    var doubled: Array<int> = Iter_Map<int, int>(&itA, Double);
+    Test_AssertEqInt(Array_Get<int>(&doubled, 0), 2);
+    Test_AssertEqInt(Array_Get<int>(&doubled, 4), 10);
+
+    // Generic Map int → String
+    let itB: Iter<int> = Array_Iter<int>(&nums);
+    var asStr: Array<String> = Iter_Map<int, String>(&itB, IntToString);
+    Test_AssertEqInt(Array_Len<String>(&asStr) as int, 5);
+    Test_AssertEqString(Array_Get<String>(&asStr, 0), "1");
+    Test_AssertEqString(Array_Get<String>(&asStr, 4), "5");
+
+    // Map String → int (lengths)
+    let itC: Iter<String> = Array_Iter<String>(&asStr);
+    var lens: Array<int> = Iter_Map<String, int>(&itC, StringLenAsInt);
+    Test_AssertEqInt(Array_Get<int>(&lens, 0), 1);
+    Test_AssertEqInt(Array_Get<int>(&lens, 4), 1);
+
+    // Filter generic
+    let itD: Iter<int> = Array_Iter<int>(&nums);
+    var evens: Array<int> = Iter_Filter<int>(&itD, IsEven);
+    Test_AssertEqInt(Array_Len<int>(&evens) as int, 2);
+    Test_AssertEqInt(Array_Get<int>(&evens, 0), 2);
+    Test_AssertEqInt(Array_Get<int>(&evens, 1), 4);
+
+    // Fold String lengths
+    let itE: Iter<String> = Array_Iter<String>(&asStr);
+    let totalChars: int = Iter_Fold<String, int>(&itE, 0, AddLens);
+    Test_AssertEqInt(totalChars, 5);  // "1"+"2"+"3"+"4"+"5"
+
+    // Any / All on String
+    let itF: Iter<String> = Array_Iter<String>(&asStr);
+    Test_AssertTrue(Iter_Any<String>(&itF, IsNonEmpty));
+    let itG: Iter<String> = Array_Iter<String>(&asStr);
+    Test_AssertTrue(Iter_All<String>(&itG, IsNonEmpty));
+
+    // Closures with generic Map
+    let scale: int = 100;
+    let itH: Iter<int> = Array_Iter<int>(&nums);
+    var scaled: Array<int> = Iter_Map<int, int>(&itH, |x: int| -> int {
+        return x * scale;
+    });
+    Test_AssertEqInt(Array_Get<int>(&scaled, 0), 100);
+    Test_AssertEqInt(Array_Get<int>(&scaled, 2), 300);
+
+    // Int aliases still work
+    let itI: Iter<int> = Array_Iter<int>(&nums);
+    var d2: Array<int> = Iter_MapInt(&itI, Double);
+    Test_AssertEqInt(Array_Get<int>(&d2, 1), 4);
+    let itJ: Iter<int> = Array_Iter<int>(&nums);
+    Test_AssertEqInt(Iter_SumInt(&itJ), 15);
+
+    PrintInt(totalChars);
+    PrintLine("");
+    Test_Pass("iter_generic");
+
+    Array_Free<int>(&nums);
+    Array_Free<int>(&doubled);
+    Array_Free<String>(&asStr);
+    Array_Free<int>(&lens);
+    Array_Free<int>(&evens);
+    Array_Free<int>(&scaled);
+    Array_Free<int>(&d2);
+    return 0;
+}

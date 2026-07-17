@@ -548,9 +548,15 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
       return makeUnknown()
     else: return ctx.resolveExprType(expr.exprUnaryOperand)
   of ekCall:
+    # Local / param fat-func values (after monomorphization typeSubst) — e.g. f: func(T)->U
+    # Must run before the global-only lookup so generic HOFs get the correct return type.
+    if expr.exprCallCallee.kind in {ekIdent, ekPath}:
+      let calType = ctx.resolveExprType(expr.exprCallCallee)
+      if calType != nil and calType.kind == tkFunc and calType.inner.len > 0:
+        return calType.inner[^1]
     if expr.exprCallCallee.kind == ekIdent:
       let sym = ctx.globalScope.lookup(expr.exprCallCallee.exprIdent)
-      if sym != nil and sym.typ != nil and sym.typ.kind == tkFunc:
+      if sym != nil and sym.typ != nil and sym.typ.kind == tkFunc and sym.typ.inner.len > 0:
         return sym.typ.inner[^1]
     if expr.exprCallCallee.kind == ekField:
       let recvType = ctx.resolveExprType(expr.exprCallCallee.exprFieldObj)

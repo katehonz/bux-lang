@@ -152,6 +152,35 @@ func Lcx_SubstituteType(ctx: *LowerCtx, te: *TypeExpr) -> *TypeExpr {
         return r;
     }
 
+    // Fat function type: func(T)->U — substitute params and return
+    if te.kind == tekFunc {
+        let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        r.kind = tekFunc;
+        r.line = te.line;
+        r.column = te.column;
+        r.funcParamCount = te.funcParamCount;
+        r.funcRet = Lcx_SubstituteType(ctx, te.funcRet);
+        var head: *TypeExprList = null as *TypeExprList;
+        var tail: *TypeExprList = null as *TypeExprList;
+        var cur: *TypeExprList = te.funcParams;
+        while cur != null as *TypeExprList {
+            let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
+            node.te = Lcx_SubstituteType(ctx, cur.te);
+            node.next = null as *TypeExprList;
+            if head == null as *TypeExprList {
+                head = node;
+                tail = node;
+            } else {
+                tail.next = node;
+                tail = node;
+            }
+            cur = cur.next;
+        }
+        r.funcParams = head;
+        r.typeName = Lcx_BuildFuncTypeName(r);
+        return r;
+    }
+
     return te;
 }
 

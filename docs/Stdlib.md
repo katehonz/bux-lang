@@ -143,18 +143,19 @@ struct Iter<T> {
 | `Iter_AllEq<T>` | `func Iter_AllEq<T>(it: *Iter<T>, value: T) -> bool` | True if all remaining equal value |
 | `Iter_Collect<T>` | `func Iter_Collect<T>(it: *Iter<T>) -> Array<T>` | Collect remaining into a new Array |
 
-### Higher-order (int-specialized)
+### Higher-order (generic + int aliases)
 
-Take fat function pointers / closures (`func(int) -> int`, `func(int) -> bool`, …).
+Take fat function pointers / closures. Prefer the generic forms; `*Int` aliases remain for compatibility.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `Iter_MapInt` | `func Iter_MapInt(it: *Iter<int>, f: func(int) -> int) -> Array<int>` | Map each element |
-| `Iter_FilterInt` | `func Iter_FilterInt(it: *Iter<int>, pred: func(int) -> bool) -> Array<int>` | Keep matching elements |
-| `Iter_FoldInt` | `func Iter_FoldInt(it: *Iter<int>, init: int, f: func(int, int) -> int) -> int` | Left fold |
-| `Iter_ForEachInt` | `func Iter_ForEachInt(it: *Iter<int>, f: func(int) -> int)` | Side-effect per element |
-| `Iter_AnyInt` | `func Iter_AnyInt(it: *Iter<int>, pred: func(int) -> bool) -> bool` | Any matches pred |
-| `Iter_AllInt` | `func Iter_AllInt(it: *Iter<int>, pred: func(int) -> bool) -> bool` | All match pred |
+| `Iter_Map<T,U>` | `func Iter_Map<T,U>(it: *Iter<T>, f: func(T) -> U) -> Array<U>` | Map `T → U` |
+| `Iter_Filter<T>` | `func Iter_Filter<T>(it: *Iter<T>, pred: func(T) -> bool) -> Array<T>` | Keep matching |
+| `Iter_Fold<T,Acc>` | `func Iter_Fold<T,Acc>(it: *Iter<T>, init: Acc, f: func(Acc, T) -> Acc) -> Acc` | Left fold |
+| `Iter_ForEach<T>` | `func Iter_ForEach<T>(it: *Iter<T>, f: func(T) -> int)` | Side-effect per element |
+| `Iter_Any<T>` | `func Iter_Any<T>(it: *Iter<T>, pred: func(T) -> bool) -> bool` | Any matches pred |
+| `Iter_All<T>` | `func Iter_All<T>(it: *Iter<T>, pred: func(T) -> bool) -> bool` | All match pred |
+| `Iter_MapInt` … | wrappers → `Iter_Map<int,int>` etc. | Back-compat |
 | `Iter_SumInt` | `func Iter_SumInt(it: *Iter<int>) -> int` | Sum remaining ints |
 
 ### Example
