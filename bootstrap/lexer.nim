@@ -228,6 +228,9 @@ proc scanEscapeSequence(lex: var Lexer): string =
   of 'r': result = "\r"
   of 't': result = "\t"
   of '0': result = "\0"
+  of '{', '}':
+    # Preserve \{ and \} so f"..." interpolation can treat them as literal braces
+    result = "\\" & $c
   of 'x':
     var hexVal = ""
     for _ in 0..<2:

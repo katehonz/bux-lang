@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
-> **Дата:** 2026-07-16 (вечерта)  
-> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **40+ examples**, match expr **bootstrap+selfhost** ✅  
+> **Дата:** 2026-07-18  
+> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **41+ examples**, match + pattern bindings + **`f"..."` interp** bootstrap+selfhost ✅  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -58,10 +58,11 @@
 | B.1 | Proper tuple types в C backend | `(T,U)` → `Tuple_T_U` struct + `.0`/`.1` | ✅ bootstrap + selfhost |
 | B.2 | Function pointer types | `func(T)->U` fat ABI | ✅ bootstrap + selfhost |
 | B.3 | Match expression lowering (literals, ranges, enums) | Expression-context match → if-else | ✅ bootstrap + selfhost |
+| B.3b | Pattern bindings (`Some(value) => value`) | Payload idents bound in arm body | ✅ bootstrap + selfhost |
 | B.4 | Closures multi-instance | Fat `BuxFn` + heap env | ✅ bootstrap + selfhost |
-| B.4b | Closures: loop/return edge cases in body | По-сложни body control-flow | ⏳ |
+| B.4b | Closures: `\|\|` empty params + loop/return body | Lexer `\|\|` vs empty closure; while/break/return | ✅ bootstrap + selfhost |
 | B.5 | По-добри diagnostics (snippet + hint) | DX #1 за нови потребители | ✅ |
-| B.6 | Bootstrap ↔ selfhost feature parity | Tuples/closures/**match** done; string interp / some ops still bootstrap-heavy | 🔄 |
+| B.6 | Bootstrap ↔ selfhost feature parity | empty `\|\|`, match-as-expr, **string interp `f"..."`** bootstrap+selfhost | ✅ |
 
 ### C — Gradual Ownership 2.0 (P1)
 
@@ -200,14 +201,44 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 5. **Last-expr return:** `Lcx_LowerBlock` converts final `skExpr` into `return` (needed for `func F() -> T { match ... }`)
 6. Verified: `pattern_matching` via **buxc2**; simple enum + ranges; **selfhost-loop IDENTICAL ✓**
 
+## Сесия 10 (pattern bindings — B.3b)
+
+1. **Bootstrap sema:** `extractPatternBindings` resolves enum payload field types from variant decl
+2. **Bootstrap HIR:** `matchPatternBindings` → `alloca name; name = subject.data.Variant_i` before arm body
+3. **Match result type:** fall back to `currentFuncRetType` when arm bodies only use bindings
+4. **Multi-field enum layout:** positional `fields.len > 1` → nested struct in `_Data` union (no overlay)
+5. **Selfhost:** parse `patArgs` linked list; `Sema_BindPattern`; `Lcx_PatternBindings` in match arms
+6. **Example:** `pattern_matching.bux` uses `Option::Some(value) => value` (real binding, not `opt.data.Some_0`)
+7. Verified: bootstrap + **buxc2** + all examples + error goldens + **selfhost-loop IDENTICAL ✓**
+
+## Сесия 11 (empty `||` closures + match-as-expr — B.4b)
+
+1. **Bug:** `|| -> int { ... }` lexed as `tkPipePipe` (logical-or), not two `tkPipe` → empty-param closures failed to parse
+2. **Fix bootstrap:** primary `of tkPipePipe:` → zero-param `ekClosure`
+3. **Fix selfhost:** `parserParseEmptyClosure` for `tkPipePipe`
+4. **Match-as-expr:** expression-form match now skips newlines (same as statement form) → `let x = match n { ... }` works
+5. **Verified control-flow in closure body:** while/break, early return from loop, multi-return if-chain
+6. **Pattern bind reuse:** one alloca per binding name per function (`patternBoundNames`) so two matches can both use `v`
+7. **Selfhost match-as-expr:** let-init + binary operands expand yield blocks (`Lcx_IsMatchYield` / `__binop_N`)
+8. Examples: `closure_control.bux`, `match_let.bux`
+9. Verified: bootstrap + **buxc2** + all examples + error goldens + **selfhost-loop IDENTICAL ✓**
+
+## Сесия 12 (string interpolation selfhost — B.6)
+
+1. **Selfhost parser:** `parserParseStringInterp` — interleaved lit/expr parts in `callArgs`, nested fragment parse via `Lexer_Tokenize` + sub-parser
+2. **Selfhost sema/HIR:** `ekStringInterp` → `String_Concat` + `String_FromInt`/`FromBool`/`FromFloat`
+3. **Bootstrap fix:** `f"plain"` no longer keeps the `f` prefix in the literal; `\{`/`\}` preserved by lexer and unescaped by interp parser
+4. **Lexer:** `\{` / `\}` allowed (bootstrap + selfhost) so LanguageRef escape rules work
+5. **Compiler hygiene:** original dense `&&`/`||` in the large interp loop caused bootstrap OOM (~27 GB) when compiling `parser.bux` — rewrite with simpler control flow
+6. Example: `examples/string_interp.bux` (name/int/bool/plain/escaped braces)
+7. Verified: bootstrap + **buxc2** + all 41 examples + error goldens + **selfhost-loop IDENTICAL ✓**
+
 ---
 
 ## Следващи стъпки
 
 1. **LSP hover / go-to-def** (над текущите diagnostics)
 2. **Generic Iter map** (не само int), ако monomorphization с `func` params е стабилна
-3. **Closures B.4b** — loop/return edge cases in closure body
-4. Struct/tuple patterns + pattern bindings (`Some(value)` binds `value`)
-5. `let x = match ...` multi-stmt yield (beyond tail-position return)
-6. String interpolation / remaining bootstrap-only features (B.6)
+3. Struct/tuple patterns (`Point { x, y }`, `(a, b)`) + nested bindings
+4. Match arm multi-stmt bodies (beyond single expr)
 

@@ -757,26 +757,67 @@ proc checkTraitBounds(sema: var Sema, funcDecl: Decl, inferredTypes: seq[Type], 
         if not sema.typeImplements(inferredTypes[i], bound):
           sema.emitError(loc, &"type '{inferredTypes[i].toString}' does not implement trait '{bound}'")
 
-proc extractPatternBindings(sema: var Sema, pat: Pattern, scope: Scope) =
-  ## Add pattern-bound identifiers to scope with unknown type (best-effort)
+proc extractPatternBindings(sema: var Sema, pat: Pattern, scope: Scope, subjectType: Type = nil) =
+  ## Add pattern-bound identifiers to scope. For enum payloads, resolve field types
+  ## from the matched enum variant so arm bodies type-check correctly.
   if pat == nil: return
   case pat.kind
   of pkIdent:
-    let sym = Symbol(kind: skVar, name: pat.patIdent, typ: makeUnknown(), isMutable: false)
+    let bindTy = if subjectType != nil and not subjectType.isUnknown: subjectType else: makeUnknown()
+    let sym = Symbol(kind: skVar, name: pat.patIdent, typ: bindTy, isMutable: false)
     discard scope.define(sym)
   of pkEnum:
-    for arg in pat.patEnumArgs:
-      sema.extractPatternBindings(arg, scope)
+    # Resolve variant field types from enum declaration
+    var enumName = ""
+    var variantName = ""
+    if pat.patEnumPath.len >= 2:
+      enumName = pat.patEnumPath[0]
+      variantName = pat.patEnumPath[^1]
+    elif pat.patEnumPath.len == 1:
+      variantName = pat.patEnumPath[0]
+      if subjectType != nil and subjectType.kind == tkNamed:
+        enumName = subjectType.name
+    var fieldTypes: seq[Type] = @[]
+    var namedFieldTypes: Table[string, Type]
+    if enumName != "":
+      let enumSym = sema.globalScope.lookup(enumName)
+      if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+        for v in enumSym.decl.declEnumVariants:
+          if v.name == variantName:
+            for f in v.fields:
+              fieldTypes.add(sema.resolveType(f))
+            for nf in v.namedFields:
+              namedFieldTypes[nf.name] = sema.resolveType(nf.ftype)
+            break
+    for i, arg in pat.patEnumArgs:
+      let argTy = if i < fieldTypes.len: fieldTypes[i] else: makeUnknown()
+      if arg.kind == pkIdent:
+        let sym = Symbol(kind: skVar, name: arg.patIdent, typ: argTy, isMutable: false)
+        discard scope.define(sym)
+      else:
+        sema.extractPatternBindings(arg, scope, argTy)
     for nf in pat.patEnumNamed:
-      sema.extractPatternBindings(nf.pattern, scope)
+      let argTy = if namedFieldTypes.hasKey(nf.name): namedFieldTypes[nf.name] else: makeUnknown()
+      if nf.pattern.kind == pkIdent:
+        let sym = Symbol(kind: skVar, name: nf.pattern.patIdent, typ: argTy, isMutable: false)
+        discard scope.define(sym)
+      else:
+        sema.extractPatternBindings(nf.pattern, scope, argTy)
   of pkTuple:
-    for elem in pat.patTupleElements:
-      sema.extractPatternBindings(elem, scope)
+    for i, elem in pat.patTupleElements:
+      let elemTy = if subjectType != nil and subjectType.kind == tkTuple and i < subjectType.inner.len:
+                     subjectType.inner[i]
+                   else: makeUnknown()
+      if elem.kind == pkIdent:
+        let sym = Symbol(kind: skVar, name: elem.patIdent, typ: elemTy, isMutable: false)
+        discard scope.define(sym)
+      else:
+        sema.extractPatternBindings(elem, scope, elemTy)
   of pkStruct:
     for f in pat.patStructFields:
       sema.extractPatternBindings(f.pattern, scope)
   of pkGuarded:
-    sema.extractPatternBindings(pat.patGuardedInner, scope)
+    sema.extractPatternBindings(pat.patGuardedInner, scope, subjectType)
   else:
     discard
 
@@ -1381,11 +1422,11 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       lastType = sema.checkStmt(stmt, blockScope)
     return lastType
   of ekMatch:
-    discard sema.checkExpr(expr.exprMatchSubject, scope)
+    let subjectType = sema.checkExpr(expr.exprMatchSubject, scope)
     var resultType = makeUnknown()
     for arm in expr.exprMatchArms:
       var armScope = newScope(scope)
-      sema.extractPatternBindings(arm.pattern, armScope)
+      sema.extractPatternBindings(arm.pattern, armScope, subjectType)
       let armType = sema.checkExpr(arm.body, armScope)
       if resultType.isUnknown:
         resultType = armType
@@ -1541,9 +1582,11 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
     discard sema.checkStmt(Stmt(kind: skExpr, loc: stmt.stmtForBody.loc, stmtExpr: Expr(kind: ekBlock, loc: stmt.stmtForBody.loc, exprBlock: stmt.stmtForBody)), forScope)
     return makeVoid()
   of skMatch:
-    discard sema.checkExpr(stmt.stmtMatchSubject, scope)
+    let subjectType = sema.checkExpr(stmt.stmtMatchSubject, scope)
     for arm in stmt.stmtMatchArms:
-      discard sema.checkExpr(arm.body, scope)
+      var armScope = newScope(scope)
+      sema.extractPatternBindings(arm.pattern, armScope, subjectType)
+      discard sema.checkExpr(arm.body, armScope)
     return makeVoid()
   of skReturn:
     if stmt.stmtReturnValue != nil:

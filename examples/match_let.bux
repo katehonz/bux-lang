@@ -1,0 +1,43 @@
+// Match as expression: let-init, inline arms, combined with operators
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+enum Option {
+    Some(int),
+    None
+}
+
+func Main() -> int {
+    let opt: Option = Option { tag: Option_Some };
+    opt.data.Some_0 = 21;
+
+    let x: int = match opt {
+        Option::Some(v) => v + v,
+        Option::None => 0
+    };
+    Test_AssertEqInt(x, 42);
+
+    let n: int = 3;
+    let y: int = match n {
+        0 => 100,
+        1..5 => 200,
+        _ => -1
+    };
+    Test_AssertEqInt(y, 200);
+
+    let z: int = match n { 3 => 1, _ => 0 } + match n { 3 => 2, _ => 0 };
+    Test_AssertEqInt(z, 3);
+
+    let none: Option = Option { tag: Option_None };
+    // Same binding name as above — one alloca, reassigned per arm
+    let w: int = match none {
+        Option::Some(v) => v,
+        Option::None => -7
+    };
+    Test_AssertEqInt(w, -7);
+
+    PrintInt(x);
+    PrintLine("");
+    Test_Pass("match_let");
+    return 0;
+}

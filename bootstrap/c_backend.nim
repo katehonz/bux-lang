@@ -595,11 +595,19 @@ proc emitEnum*(be: var CBackend, name: string, variants: seq[HirEnumVariant]) =
     be.emitLine(&"typedef union {{")
     inc be.indent
     for v in variants:
-      if v.fields.len > 0:
-        # Positional fields
+      if v.fields.len == 1:
+        # Single positional field — flat union member (compat: data.Variant_0)
+        let typ = typeToC(be, v.fields[0])
+        be.emitLine(&"{typ} {v.name}_0;")
+      elif v.fields.len > 1:
+        # Multi positional fields — nested struct so fields don't overlay
+        be.emitLine(&"struct {{")
+        inc be.indent
         for i, f in v.fields:
           let typ = typeToC(be, f)
           be.emitLine(&"{typ} {v.name}_{i};")
+        dec be.indent
+        be.emitLine(&"}} {v.name};")
       elif v.namedFields.len > 0:
         # Named fields - generate as struct
         be.emitLine(&"struct {{")

@@ -496,9 +496,17 @@ proc emitEnumDef(be: var LirCBackend, name: string, variants: seq[HirEnumVariant
     be.emitLine(&"typedef union {{")
     be.indent += 1
     for v in variants:
-      if v.fields.len > 0:
+      if v.fields.len == 1:
+        # Single positional field — flat (compat: data.Variant_0)
+        be.emitLine(&"{typeToCStr(v.fields[0])} {v.name}_0;")
+      elif v.fields.len > 1:
+        # Multi positional — nested struct so fields don't share union storage
+        be.emitLine(&"struct {{")
+        be.indent += 1
         for i, f in v.fields:
           be.emitLine(&"{typeToCStr(f)} {v.name}_{i};")
+        be.indent -= 1
+        be.emitLine(&"}} {v.name};")
       elif v.namedFields.len > 0:
         be.emitLine(&"struct {{")
         be.indent += 1

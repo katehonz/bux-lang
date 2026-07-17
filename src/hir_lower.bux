@@ -533,6 +533,202 @@ func Lcx_PatternCond(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
     return null as *HirNode;
 }
 
+// Emit binding stmts for pattern payload: Option::Some(value) → alloca value; value = subject.data.Some_0
+// Returns head of child3-linked list of HirNodes (may be null).
+func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
+                         subjectEnumName: String, subjectHasData: bool,
+                         line: uint32, col: uint32) -> *HirNode {
+    if pat == null as *Pattern { return null as *HirNode; }
+    if pat.kind == pkIdent {
+        let ty: String = "int";
+        if subject != null as *HirNode && !String_Eq(subject.typeName, "") {
+            // keep int default for catch-all unless subject has a type name
+        }
+        let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        alloca.kind = hAlloca;
+        alloca.line = line;
+        alloca.column = col;
+        alloca.strValue = pat.patIdent;
+        alloca.typeName = ty;
+        let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        store.kind = hStore;
+        store.line = line;
+        store.column = col;
+        let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        v.kind = hVar;
+        v.strValue = pat.patIdent;
+        store.child1 = v;
+        store.child2 = subject;
+        alloca.child3 = store;
+        return alloca;
+    }
+    if pat.kind != pkEnum || !subjectHasData { return null as *HirNode; }
+
+    var enumName: String = "";
+    var variantName: String = pat.patEnumPath;
+    if String_Contains(pat.patEnumPath, "::") {
+        enumName = String_SplitPart(pat.patEnumPath, "::", 0);
+        variantName = String_SplitPart(pat.patEnumPath, "::", 1);
+    } else {
+        enumName = subjectEnumName;
+    }
+    if String_Eq(enumName, "") || String_Eq(variantName, "") { return null as *HirNode; }
+
+    // Look up field type names from enum decl
+    var fieldType0: String = "int";
+    var fieldType1: String = "int";
+    var fieldCount: int = 0;
+    let enumSym: Symbol = Scope_Lookup(ctx.scope, enumName);
+    if enumSym.decl != null as *Decl && enumSym.decl.kind == dkEnum {
+        var vi: int = 0;
+        while vi < enumSym.decl.variantCount {
+            var vv: *EnumVariant = null as *EnumVariant;
+            if vi == 0 { vv = &enumSym.decl.variant0; }
+            else if vi == 1 { vv = &enumSym.decl.variant1; }
+            else if vi == 2 { vv = &enumSym.decl.variant2; }
+            else if vi == 3 { vv = &enumSym.decl.variant3; }
+            else if vi == 4 { vv = &enumSym.decl.variant4; }
+            else if vi == 5 { vv = &enumSym.decl.variant5; }
+            else if vi == 6 { vv = &enumSym.decl.variant6; }
+            else if vi == 7 { vv = &enumSym.decl.variant7; }
+            else if vi == 8 { vv = &enumSym.decl.variant8; }
+            if vv != null as *EnumVariant && String_Eq(vv.name, variantName) {
+                fieldCount = vv.fieldCount;
+                if !String_Eq(vv.fieldTypeName0, "") { fieldType0 = vv.fieldTypeName0; }
+                if !String_Eq(vv.fieldTypeName1, "") { fieldType1 = vv.fieldTypeName1; }
+            }
+            vi = vi + 1;
+        }
+    }
+
+    // dataLoad = subject.data
+    let dataPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    dataPtr.kind = hFieldPtr;
+    dataPtr.line = line;
+    dataPtr.column = col;
+    dataPtr.strValue = "data";
+    dataPtr.child1 = subject;
+    let dataLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    dataLoad.kind = hLoad;
+    dataLoad.line = line;
+    dataLoad.column = col;
+    dataLoad.child1 = dataPtr;
+    dataLoad.typeName = String_Concat(enumName, "_Data");
+
+    // Multi-field: nested struct data.Variant; single-field: flat data.Variant_0
+    var payloadBase: *HirNode = dataLoad;
+    if fieldCount > 1 {
+        let vPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        vPtr.kind = hFieldPtr;
+        vPtr.line = line;
+        vPtr.column = col;
+        vPtr.strValue = variantName;
+        vPtr.child1 = dataLoad;
+        let vLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        vLoad.kind = hLoad;
+        vLoad.line = line;
+        vLoad.column = col;
+        vLoad.child1 = vPtr;
+        vLoad.typeName = variantName;
+        payloadBase = vLoad;
+    }
+
+    var head: *HirNode = null as *HirNode;
+    var tail: *HirNode = null as *HirNode;
+    var arg: *Pattern = pat.patArgs;
+    var ai: int = 0;
+    while arg != null as *Pattern {
+        if arg.kind == pkIdent {
+            var ftype: String = "int";
+            if ai == 0 { ftype = fieldType0; }
+            else if ai == 1 { ftype = fieldType1; }
+            let fieldName: String = String_Concat(String_Concat(variantName, "_"), String_FromInt(ai as int64));
+
+            let fPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            fPtr.kind = hFieldPtr;
+            fPtr.line = line;
+            fPtr.column = col;
+            fPtr.strValue = fieldName;
+            fPtr.child1 = payloadBase;
+            let fLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            fLoad.kind = hLoad;
+            fLoad.line = line;
+            fLoad.column = col;
+            fLoad.child1 = fPtr;
+            fLoad.typeName = ftype;
+
+            let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            alloca.kind = hAlloca;
+            alloca.line = line;
+            alloca.column = col;
+            alloca.strValue = arg.patIdent;
+            alloca.typeName = ftype;
+
+            let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            store.kind = hStore;
+            store.line = line;
+            store.column = col;
+            let bv: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            bv.kind = hVar;
+            bv.strValue = arg.patIdent;
+            store.child1 = bv;
+            store.child2 = fLoad;
+            alloca.child3 = store;
+
+            // Define in scope so body idents resolve
+            var bsym: Symbol;
+            bsym.kind = skVar;
+            bsym.name = arg.patIdent;
+            bsym.typeKind = tyInt;
+            bsym.typeName = ftype;
+            bsym.refType = null as *TypeExpr;
+            bsym.isMutable = false;
+            bsym.isPublic = false;
+            bsym.decl = null as *Decl;
+            discard Scope_Define(ctx.scope, bsym);
+
+            if head == null as *HirNode {
+                head = alloca;
+                tail = store;
+            } else {
+                tail.child3 = alloca;
+                tail = store;
+            }
+        }
+        arg = arg.patNext;
+        ai = ai + 1;
+    }
+    return head;
+}
+
+// True when n is a multi-stmt yield block (match result, etc.)
+func Lcx_IsMatchYield(n: *HirNode) -> bool {
+    if n == null as *HirNode { return false; }
+    if n.kind != hBlock { return false; }
+    return !String_Eq(n.strValue, "");
+}
+
+func Lcx_YieldVarOf(n: *HirNode) -> *HirNode {
+    let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    v.kind = hVar;
+    v.strValue = n.strValue;
+    v.typeName = n.typeName;
+    return v;
+}
+
+// Append `node` at the end of a child3-linked chain starting at `head` (or its child1 if head is hBlock).
+func Lcx_AppendToChain(head: *HirNode, node: *HirNode) {
+    if head == null as *HirNode || node == null as *HirNode { return; }
+    var cur: *HirNode = head;
+    if head.kind == hBlock && head.child1 != null as *HirNode {
+        cur = head.child1;
+    }
+    while cur.child3 != null as *HirNode {
+        cur = cur.child3;
+    }
+    cur.child3 = node;
+}
+
 // Lower match expr → hBlock: alloca result; if-else stores; strValue = result name
 func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     let line: uint32 = expr.line;
@@ -591,6 +787,8 @@ func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             continue;
         }
 
+        // Pattern bindings before body (so body idents resolve)
+        let bindHead: *HirNode = Lcx_PatternBindings(ctx, subject, cur.pattern, subjectEnumName, subjectHasData, line, col);
         let bodyHir: *HirNode = Lcx_LowerExpr(ctx, cur.body);
         // result = body
         let storeNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
@@ -603,11 +801,22 @@ func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         storeNode.child1 = resVar;
         storeNode.child2 = bodyHir;
 
+        // armBlock = bindings... → storeNode
         let armBlock: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         armBlock.kind = hBlock;
         armBlock.line = line;
         armBlock.column = col;
-        armBlock.child1 = storeNode;
+        if bindHead != null as *HirNode {
+            armBlock.child1 = bindHead;
+            // find tail of bind chain
+            var bt: *HirNode = bindHead;
+            while bt.child3 != null as *HirNode {
+                bt = bt.child3;
+            }
+            bt.child3 = storeNode;
+        } else {
+            armBlock.child1 = storeNode;
+        }
 
         let cond: *HirNode = Lcx_PatternCond(ctx, subject, cur.pattern, subjectEnumName, subjectHasData, line, col);
         if cond == null as *HirNode {
@@ -670,6 +879,72 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     // Match expression
     if kind == ekMatch {
         return Lcx_LowerMatch(ctx, expr);
+    }
+
+    // String interpolation: desugar to String_Concat + String_FromInt/Bool/Float
+    // Parts in callArgs are interleaved text lits and expressions.
+    if kind == ekStringInterp {
+        var result: *HirNode = null as *HirNode;
+        var part: *ExprList = expr.callArgs;
+        while part != null as *ExprList {
+            let pe: *Expr = part.expr;
+            var piece: *HirNode = null as *HirNode;
+            if pe != null as *Expr && pe.kind == ekLiteral && pe.tokKind == tkStringLiteral {
+                piece = Lcx_LowerExpr(ctx, pe);
+            } else {
+                let lowered: *HirNode = Lcx_LowerExpr(ctx, pe);
+                // Convert non-string to String
+                var needConv: bool = true;
+                var convName: String = "String_FromInt";
+                if pe != null as *Expr && pe.refType != null as *TypeExpr {
+                    let tn: String = pe.refType.typeName;
+                    if String_Eq(tn, "String") || String_Eq(tn, "str") {
+                        needConv = false;
+                    } else if String_Eq(tn, "bool") {
+                        convName = "String_FromBool";
+                    } else if String_Eq(tn, "float64") || String_Eq(tn, "float") || String_Eq(tn, "float32") {
+                        convName = "String_FromFloat";
+                    } else {
+                        convName = "String_FromInt";
+                    }
+                }
+                if needConv {
+                    let callN: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    callN.kind = hCall;
+                    callN.line = line;
+                    callN.column = col;
+                    callN.strValue = convName;
+                    callN.child1 = lowered;
+                    piece = callN;
+                } else {
+                    piece = lowered;
+                }
+            }
+            if result == null as *HirNode {
+                result = piece;
+            } else {
+                let cat: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                cat.kind = hCall;
+                cat.line = line;
+                cat.column = col;
+                cat.strValue = "String_Concat";
+                cat.child1 = result;
+                cat.child2 = piece;
+                result = cat;
+            }
+            part = part.next;
+        }
+        if result == null as *HirNode {
+            // empty f""
+            let empty: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            empty.kind = hLit;
+            empty.line = line;
+            empty.column = col;
+            empty.intValue = tkStringLiteral;
+            empty.strValue = "\"\"";
+            return empty;
+        }
+        return result;
     }
 
     // Literal
@@ -874,8 +1149,69 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
         n.kind = hBinary;
         n.intValue = expr.intValue; // operator
-        n.child1 = Lcx_LowerExpr(ctx, expr.child1);
-        n.child2 = Lcx_LowerExpr(ctx, expr.child2);
+        let leftHir: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
+        let rightHir: *HirNode = Lcx_LowerExpr(ctx, expr.child2);
+        // If either side is a match yield block, expand to:
+        //   match stmts...; int __binop_N = leftVal op rightVal; yield __binop_N
+        if Lcx_IsMatchYield(leftHir) || Lcx_IsMatchYield(rightHir) {
+            ctx.varCounter = ctx.varCounter + 1;
+            let tmpName: String = String_Concat("__binop_", String_FromInt(ctx.varCounter as int64));
+            var leftVal: *HirNode = leftHir;
+            var rightVal: *HirNode = rightHir;
+            let outer: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            outer.kind = hBlock;
+            outer.line = line;
+            outer.column = col;
+            outer.strValue = tmpName;
+            outer.typeName = "int";
+            var first: *HirNode = null as *HirNode;
+            if Lcx_IsMatchYield(leftHir) {
+                leftVal = Lcx_YieldVarOf(leftHir);
+                leftHir.strValue = "";
+                first = leftHir;
+            }
+            if Lcx_IsMatchYield(rightHir) {
+                rightVal = Lcx_YieldVarOf(rightHir);
+                rightHir.strValue = "";
+                if first == null as *HirNode {
+                    first = rightHir;
+                } else {
+                    Lcx_AppendToChain(first, rightHir);
+                }
+            }
+            let tmpAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tmpAlloca.kind = hAlloca;
+            tmpAlloca.line = line;
+            tmpAlloca.column = col;
+            tmpAlloca.strValue = tmpName;
+            tmpAlloca.typeName = "int";
+            let binNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            binNode.kind = hBinary;
+            binNode.line = line;
+            binNode.column = col;
+            binNode.intValue = expr.intValue;
+            binNode.child1 = leftVal;
+            binNode.child2 = rightVal;
+            let tmpStore: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tmpStore.kind = hStore;
+            tmpStore.line = line;
+            tmpStore.column = col;
+            let tmpVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            tmpVar.kind = hVar;
+            tmpVar.strValue = tmpName;
+            tmpStore.child1 = tmpVar;
+            tmpStore.child2 = binNode;
+            tmpAlloca.child3 = tmpStore;
+            if first == null as *HirNode {
+                outer.child1 = tmpAlloca;
+            } else {
+                outer.child1 = first;
+                Lcx_AppendToChain(first, tmpAlloca);
+            }
+            return outer;
+        }
+        n.child1 = leftHir;
+        n.child2 = rightHir;
         return n;
     }
 
@@ -1875,6 +2211,26 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
         sym.isPublic = false;
         sym.decl = null as *Decl;
         discard Scope_Define(ctx.scope, sym);
+
+        // Match (or other multi-stmt yield) as let initializer:
+        //   match stmts...; Type x = __match_N;
+        // instead of illegal `Type x = <block>;`
+        if Lcx_IsMatchYield(init) {
+            let yieldName: String = init.strValue;
+            init.strValue = "";
+            let yieldVar: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            yieldVar.kind = hVar;
+            yieldVar.strValue = yieldName;
+            let storeNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            storeNode.kind = hStore;
+            storeNode.line = line;
+            storeNode.column = col;
+            storeNode.child1 = alloca;
+            storeNode.child2 = yieldVar;
+            Lcx_AppendToChain(init, storeNode);
+            return init;
+        }
+
         // store the init value
         let storeNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         storeNode.kind = hStore;
@@ -3365,11 +3721,12 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
                     hm.enums[ei].variants[vi].name = v.name;
                     hm.enums[ei].variants[vi].fieldCount = v.fieldCount;
                     if v.fieldCount > 0 {
-                        hm.enums[ei].variants[vi].fieldName0 = "value";
+                        // Positional field names: Variant_0, Variant_1 (matches data.Variant_i / nested struct)
+                        hm.enums[ei].variants[vi].fieldName0 = String_Concat(v.name, "_0");
                         hm.enums[ei].variants[vi].fieldType0 = Lcx_ResolveTypeKindFromName(v.fieldTypeName0);
                     }
                     if v.fieldCount > 1 {
-                        hm.enums[ei].variants[vi].fieldName1 = "value2";
+                        hm.enums[ei].variants[vi].fieldName1 = String_Concat(v.name, "_1");
                         hm.enums[ei].variants[vi].fieldType1 = Lcx_ResolveTypeKindFromName(v.fieldTypeName1);
                     }
                 }

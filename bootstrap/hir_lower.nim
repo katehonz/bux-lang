@@ -30,6 +30,9 @@ type
     funcAdapterSigs*: Table[string, Type]
     ## All func types that need BuxFn_* typedefs (including locals)
     seenFatTypes*: seq[Type]
+    ## Pattern-binding names already alloca'd in the current function
+    ## (avoids `int v;` twice when two matches bind the same name)
+    patternBoundNames*: HashSet[string]
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -72,6 +75,8 @@ proc patternLiteralNode(pat: Pattern, loc: SourceLocation): HirNode =
 
 proc matchAlwaysTrue(loc: SourceLocation): HirNode =
   hirLit(Token(kind: tkBoolLiteral, text: "true", loc: loc), makeBool(), loc)
+
+proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
 
 proc matchPatternCond(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
                       subjectEnumName: string, subjectHasData: bool,
@@ -126,9 +131,99 @@ proc matchPatternCond(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
     # Struct/tuple patterns: not yet fully lowered — always-true
     return nil
 
+proc matchPatternBindings(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
+                          subjectEnumName: string, subjectHasData: bool,
+                          loc: SourceLocation): seq[HirNode] =
+  ## Emit alloca+store for identifiers bound by a match pattern.
+  ## Enum payload: `Option::Some(value)` → `value = subject.data.Some_0`
+  ## Ident catch-all: `x` → `x = subject`
+  result = @[]
+  if pattern == nil: return
+  case pattern.kind
+  of pkIdent:
+    let ty = if subject.typ != nil: subject.typ else: makeUnknown()
+    if pattern.patIdent notin ctx.patternBoundNames:
+      result.add(hirAlloca(pattern.patIdent, ty, loc))
+      ctx.patternBoundNames.incl(pattern.patIdent)
+    result.add(hirStore(hirVar(pattern.patIdent, ty, loc), subject, loc))
+  of pkEnum:
+    if not subjectHasData:
+      return
+    var enumName = ""
+    var variantName = ""
+    if pattern.patEnumPath.len >= 2:
+      enumName = pattern.patEnumPath[0]
+      variantName = pattern.patEnumPath[^1]
+    elif pattern.patEnumPath.len == 1:
+      variantName = pattern.patEnumPath[0]
+      enumName = subjectEnumName
+    if enumName == "" or variantName == "":
+      return
+    # Look up field types from enum declaration
+    var fieldTypes: seq[Type] = @[]
+    var namedFields: seq[tuple[name: string, typ: Type]] = @[]
+    let enumSym = ctx.globalScope.lookup(enumName)
+    if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+      for v in enumSym.decl.declEnumVariants:
+        if v.name == variantName:
+          for f in v.fields:
+            fieldTypes.add(ctx.resolveTypeExpr(f))
+          for nf in v.namedFields:
+            namedFields.add((nf.name, ctx.resolveTypeExpr(nf.ftype)))
+          break
+    let dataType = makeNamed(enumName & "_Data")
+    let dataPtr = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: "data",
+                          typ: makePointer(dataType), loc: loc)
+    let dataLoad = HirNode(kind: hLoad, loadPtr: dataPtr, typ: dataType, loc: loc)
+    # Multi-field positional variants live in a nested struct data.Variant.{Variant_i}
+    # Single-field stay flat as data.Variant_0 for ABI compat.
+    let multiField = fieldTypes.len > 1
+    var payloadBase = dataLoad
+    if multiField:
+      let variantStructTy = makeNamed(variantName)
+      let variantPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: variantName,
+                               typ: makePointer(variantStructTy), loc: loc)
+      payloadBase = HirNode(kind: hLoad, loadPtr: variantPtr, typ: variantStructTy, loc: loc)
+    for i, arg in pattern.patEnumArgs:
+      if arg == nil or arg.kind != pkIdent:
+        continue
+      let fieldName = variantName & "_" & $i
+      let fieldTy = if i < fieldTypes.len: fieldTypes[i] else: makeInt()
+      let fieldPtr = HirNode(kind: hFieldPtr, fieldPtrBase: payloadBase, fieldName: fieldName,
+                             typ: makePointer(fieldTy), loc: loc)
+      let fieldLoad = HirNode(kind: hLoad, loadPtr: fieldPtr, typ: fieldTy, loc: loc)
+      if arg.patIdent notin ctx.patternBoundNames:
+        result.add(hirAlloca(arg.patIdent, fieldTy, loc))
+        ctx.patternBoundNames.incl(arg.patIdent)
+      result.add(hirStore(hirVar(arg.patIdent, fieldTy, loc), fieldLoad, loc))
+    for nf in pattern.patEnumNamed:
+      if nf.pattern == nil or nf.pattern.kind != pkIdent:
+        continue
+      var fieldTy = makeInt()
+      for entry in namedFields:
+        if entry.name == nf.name:
+          fieldTy = entry.typ
+          break
+      # Named payload fields live under data.VariantName.name
+      let variantPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: variantName,
+                               typ: makePointer(makeNamed(variantName)), loc: loc)
+      let variantLoad = HirNode(kind: hLoad, loadPtr: variantPtr, typ: makeNamed(variantName), loc: loc)
+      let fieldPtr = HirNode(kind: hFieldPtr, fieldPtrBase: variantLoad, fieldName: nf.name,
+                             typ: makePointer(fieldTy), loc: loc)
+      let fieldLoad = HirNode(kind: hLoad, loadPtr: fieldPtr, typ: fieldTy, loc: loc)
+      if nf.pattern.patIdent notin ctx.patternBoundNames:
+        result.add(hirAlloca(nf.pattern.patIdent, fieldTy, loc))
+        ctx.patternBoundNames.incl(nf.pattern.patIdent)
+      result.add(hirStore(hirVar(nf.pattern.patIdent, fieldTy, loc), fieldLoad, loc))
+  of pkGuarded:
+    result.add(ctx.matchPatternBindings(subject, pattern.patGuardedInner, subjectEnumName, subjectHasData, loc))
+  else:
+    discard
+
 proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ: Type, loc: SourceLocation): HirNode =
   ## Lower match expression to a block with if-else chain.
-  ## Supports: enum tags, integer/bool/char/string literals, ranges, wildcard/ident.
+  ## Supports: enum tags + payload bindings, integer/bool/char/string literals,
+  ## ranges, wildcard/ident catch-all.
   let hasResult = typ != nil and typ.kind != tkVoid and typ.kind != tkUnknown
   let resultName = ctx.freshName()
   var stmts: seq[HirNode] = @[]
@@ -143,8 +238,8 @@ proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ
     subjectEnumName = subject.typ.name
     subjectHasData = ctx.enumHasDataVariants(subjectEnumName)
 
-  proc makeArmBlock(body: HirNode): HirNode =
-    var armStmts: seq[HirNode] = @[]
+  proc makeArmBlock(body: HirNode, bindStmts: seq[HirNode]): HirNode =
+    var armStmts: seq[HirNode] = bindStmts
     if hasResult:
       armStmts.add(hirStore(hirVar(resultName, typ, loc), body, loc))
     elif body != nil:
@@ -157,7 +252,8 @@ proc lowerMatch(ctx: var LowerCtx, subject: HirNode, arms: seq[HirMatchArm], typ
 
   for i in countdown(arms.len - 1, 0):
     let arm = arms[i]
-    let armBlock = makeArmBlock(arm.body)
+    let binds = matchPatternBindings(ctx, subject, arm.pattern, subjectEnumName, subjectHasData, loc)
+    let armBlock = makeArmBlock(arm.body, binds)
     let cond = matchPatternCond(ctx, subject, arm.pattern, subjectEnumName, subjectHasData, loc)
 
     if cond == nil:
@@ -202,6 +298,7 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.funcAdapters = initHashSet[string]()
   result.funcAdapterSigs = initTable[string, Type]()
   result.seenFatTypes = @[]
+  result.patternBoundNames = initHashSet[string]()
 
 proc sanitizeFatPart(s: string): string =
   result = s.replace("const char*", "cstr").replace("unsigned int", "uint")
@@ -243,8 +340,6 @@ proc hirFuncFatTypeName*(typ: Type): string =
   else:
     parts.add("void")
   return "BuxFn_" & parts.join("_")
-
-proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
 
 proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type]): Type =
   if te == nil: return makeUnknown()
@@ -1314,10 +1409,51 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
 
   of ekMatch:
     let subject = ctx.lowerExpr(expr.exprMatchSubject)
+    var subjectEnumName = ""
+    var subjectHasData = false
+    if subject.typ != nil and subject.typ.kind == tkNamed:
+      subjectEnumName = subject.typ.name
+      subjectHasData = ctx.enumHasDataVariants(subjectEnumName)
+    # Prefer resolved match type; fall back to function return type when arms
+    # only reference pattern bindings (not yet in varTypeExprs during resolve).
+    var matchTyp = typ
+    if matchTyp == nil or matchTyp.kind == tkUnknown:
+      if ctx.currentFuncRetType != nil and ctx.currentFuncRetType.kind notin {tkVoid, tkUnknown}:
+        matchTyp = ctx.currentFuncRetType
     var arms: seq[HirMatchArm] = @[]
     for arm in expr.exprMatchArms:
+      # Register bind types only (do NOT call matchPatternBindings here — that
+      # would mark names as already alloca'd and lowerMatch would skip them).
+      if arm.pattern != nil and arm.pattern.kind == pkEnum and subjectHasData:
+        var enumName = ""
+        var variantName = ""
+        if arm.pattern.patEnumPath.len >= 2:
+          enumName = arm.pattern.patEnumPath[0]
+          variantName = arm.pattern.patEnumPath[^1]
+        elif arm.pattern.patEnumPath.len == 1:
+          variantName = arm.pattern.patEnumPath[0]
+          enumName = subjectEnumName
+        var fieldTypes: seq[Type] = @[]
+        let enumSym = ctx.globalScope.lookup(enumName)
+        if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+          for v in enumSym.decl.declEnumVariants:
+            if v.name == variantName:
+              for f in v.fields:
+                fieldTypes.add(ctx.resolveTypeExpr(f))
+              break
+        for i, arg in arm.pattern.patEnumArgs:
+          if arg != nil and arg.kind == pkIdent:
+            let ft = if i < fieldTypes.len: fieldTypes[i] else: makeInt()
+            ctx.varTypeExprs[arg.patIdent] = typeToTypeExpr(ft)
+      elif arm.pattern != nil and arm.pattern.kind == pkIdent:
+        let ty = if subject.typ != nil: subject.typ else: makeUnknown()
+        ctx.varTypeExprs[arm.pattern.patIdent] = typeToTypeExpr(ty)
       arms.add(HirMatchArm(pattern: arm.pattern, body: ctx.lowerExpr(arm.body)))
-    return lowerMatch(ctx, subject, arms, typ, loc)
+    # Re-resolve match type now that bindings are registered
+    if matchTyp == nil or matchTyp.kind == tkUnknown:
+      if arms.len > 0 and arms[0].body != nil and arms[0].body.typ != nil:
+        matchTyp = arms[0].body.typ
+    return lowerMatch(ctx, subject, arms, matchTyp, loc)
 
   of ekSizeOf:
     let ty = ctx.resolveTypeExpr(expr.exprSizeOfType)
@@ -1796,9 +1932,11 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   let oldFuncDecl = ctx.currentFuncDecl
   let oldFuncRetType = ctx.currentFuncRetType
   let oldVarTypeExprs = ctx.varTypeExprs
+  let oldPatternBound = ctx.patternBoundNames
   ctx.currentFuncRetType = retType
   ctx.currentFuncDecl = decl
   ctx.varTypeExprs = initTable[string, TypeExpr]()  # Clear local vars for new function
+  ctx.patternBoundNames = initHashSet[string]()
   # Add parameters to varTypeExprs after clearing so they are visible in the body.
   for p in funcParams:
     if p.ptype != nil:
@@ -1824,6 +1962,7 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   ctx.currentFuncDecl = oldFuncDecl
   ctx.currentFuncRetType = oldFuncRetType
   ctx.varTypeExprs = oldVarTypeExprs
+  ctx.patternBoundNames = oldPatternBound
 
   result = HirFunc(name: funcName, params: params, retType: retType,
                    body: body, isPublic: decl.isPublic)

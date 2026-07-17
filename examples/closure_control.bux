@@ -1,0 +1,63 @@
+// Closures with control flow: empty `||` params, while/break, early return
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+// Zero-param capturing closure written as `||` (not `| |`)
+func MakeCounter(limit: int) -> func() -> int {
+    return || -> int {
+        var sum: int = 0;
+        var i: int = 0;
+        while i < limit {
+            sum = sum + i;
+            i = i + 1;
+            if i == 3 {
+                break;
+            }
+        }
+        return sum;
+    };
+}
+
+func MakeClamp(n: int) -> func(int) -> int {
+    return |x: int| -> int {
+        if x < 0 {
+            return 0;
+        }
+        if x > n {
+            return n;
+        }
+        return x;
+    };
+}
+
+// return from inside a loop inside a closure
+func MakeLoopReturn(n: int) -> func() -> int {
+    return || -> int {
+        var i: int = 0;
+        while i < n {
+            if i == 2 {
+                return 99;
+            }
+            i = i + 1;
+        }
+        return i;
+    };
+}
+
+func Main() -> int {
+    let c: func() -> int = MakeCounter(10);
+    Test_AssertEqInt(c(), 3); // 0+1+2
+
+    let f: func(int) -> int = MakeClamp(5);
+    Test_AssertEqInt(f(-1), 0);
+    Test_AssertEqInt(f(3), 3);
+    Test_AssertEqInt(f(100), 5);
+
+    let g: func() -> int = MakeLoopReturn(10);
+    Test_AssertEqInt(g(), 99);
+
+    PrintInt(c());
+    PrintLine("");
+    Test_Pass("closure_control");
+    return 0;
+}

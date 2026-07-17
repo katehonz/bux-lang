@@ -361,21 +361,29 @@ func Main() -> int {
 ## Pattern Matching
 
 ```bux
-match opt {
-    Option::Some(value) => PrintInt(value),
-    Option::None => PrintLine("none")
+// Payload bindings: names in Variant(args) are bound in the arm body
+func GetValue(opt: Option) -> int {
+    match opt {
+        Option::Some(value) => value,
+        Option::None => 0
+    }
+}
+
+match n {
+    0 => 100,
+    1..5 => 200,
+    6..=10 => 300,
+    _ => -1
 }
 ```
 
 Supported patterns:
 - Wildcard: `_`
 - Literal: `42`, `"hello"`, `true`
-- Identifier: `name`
+- Identifier catch-all: `name` (binds whole subject)
 - Range: `1..9`, `1..=9`
-- Enum destructuring: `Shape::Circle(r)`
-- Struct destructuring: `Point { x: 0, y: 0 }`
-- Tuple: `(a, b, c)`
-- Guard: `t if t < 0`
+- Enum tags + **payload bindings**: `Option::Some(value)`, `Pair::Two(a, b)`
+- Struct / tuple / guard patterns: parsed; full lowering still evolving
 
 ---
 

@@ -1,0 +1,23 @@
+import Std::Io::{PrintLine};
+import Std::Test::{Test_AssertEqString, Test_Pass};
+
+func Main() -> int {
+    let name: String = "Bux";
+    let n: int = 42;
+    let msg: String = f"Hello, {name}! count={n}";
+    PrintLine(msg);
+    Test_AssertEqString(msg, "Hello, Bux! count=42");
+
+    let flag: bool = true;
+    let bmsg: String = f"flag={flag}";
+    Test_AssertEqString(bmsg, "flag=true");
+
+    let empty: String = f"plain";
+    Test_AssertEqString(empty, "plain");
+
+    let raw: String = f"use \{braces\} literally";
+    Test_AssertEqString(raw, "use {braces} literally");
+
+    Test_Pass("string_interp");
+    return 0;
+}

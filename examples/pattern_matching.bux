@@ -1,16 +1,38 @@
-// Pattern Matching — enum tags, literals, ranges, wildcard
+// Pattern Matching — enum tags, payload bindings, literals, ranges, wildcard
 import Std::Io::{PrintLine, PrintInt};
-
+import Std::Test::{Test_AssertEqInt, Test_Pass};
 
 enum Option {
     Some(int),
     None
 }
 
+enum Msg {
+    Quit,
+    Move(int),
+    Write(String)
+}
+
 func GetValue(opt: Option) -> int {
+    // Pattern binding: value is bound from Option::Some payload
     match opt {
-        Option::Some(value) => opt.data.Some_0,
+        Option::Some(value) => value,
         Option::None => 0
+    }
+}
+
+func DoubleSome(opt: Option) -> int {
+    match opt {
+        Option::Some(n) => n + n,
+        Option::None => -1
+    }
+}
+
+func MsgCode(m: Msg) -> int {
+    match m {
+        Msg::Quit => 0,
+        Msg::Move(x) => x,
+        Msg::Write(s) => 1
     }
 }
 
@@ -40,6 +62,15 @@ func Main() -> int {
 
     let opt2: Option = Option { tag: Option_None };
 
+    Test_AssertEqInt(GetValue(opt1), 42);
+    Test_AssertEqInt(GetValue(opt2), 0);
+    Test_AssertEqInt(DoubleSome(opt1), 84);
+    Test_AssertEqInt(DoubleSome(opt2), -1);
+
+    let m: Msg = Msg { tag: Msg_Move };
+    m.data.Move_0 = 7;
+    Test_AssertEqInt(MsgCode(m), 7);
+
     PrintLine("opt1 value: ");
     PrintInt(GetValue(opt1));
     PrintLine("");
@@ -61,5 +92,6 @@ func Main() -> int {
     PrintLine("color:");
     PrintLine(ColorName(2));
 
+    Test_Pass("pattern_matching");
     return 0;
 }

@@ -381,8 +381,8 @@ func lexScanBacktickString(lex: *Lexer) {
     lexEmitToken(lex, tkStringLiteral);
 }
 
-func lexScanString(lex: *Lexer) {
-    lexMarkStart(lex);
+// Assumes lex.startPos already marked (may include f/c8/… prefix before the quote).
+func lexScanStringFrom(lex: *Lexer) {
     // Collect the prefix (before opening quote) for the token text
     var prefix: String = "";
     var prefixLen: int = 0;
@@ -412,16 +412,24 @@ func lexScanString(lex: *Lexer) {
             discard lexAdvance(lex);
             if !lexIsAtEnd(lex) {
                 let ec: uint32 = lexAdvance(lex);
-                var rc: char8 = ec as char8;
-                if ec == 110 { rc = 10 as char8; }       // \n
-                else if ec == 114 { rc = 13 as char8; }  // \r
-                else if ec == 116 { rc = 9 as char8; }   // \t
-                else if ec == 48 { rc = 0 as char8; }    // \0
-                else if ec == 92 { rc = 92 as char8; }   // \\
-                else if ec == 34 { rc = 34 as char8; }   // \"
-                else if ec == 39 { rc = 39 as char8; }   // \'
-                resolved[rpos] = rc;
-                rpos = rpos + 1;
+                // Preserve \{ and \} as two chars for f"..." brace escaping
+                if ec == 123 || ec == 125 {
+                    resolved[rpos] = 92 as char8;
+                    rpos = rpos + 1;
+                    resolved[rpos] = ec as char8;
+                    rpos = rpos + 1;
+                } else {
+                    var rc: char8 = ec as char8;
+                    if ec == 110 { rc = 10 as char8; }       // \n
+                    else if ec == 114 { rc = 13 as char8; }  // \r
+                    else if ec == 116 { rc = 9 as char8; }   // \t
+                    else if ec == 48 { rc = 0 as char8; }    // \0
+                    else if ec == 92 { rc = 92 as char8; }   // \\
+                    else if ec == 34 { rc = 34 as char8; }   // \"
+                    else if ec == 39 { rc = 39 as char8; }   // \'
+                    resolved[rpos] = rc;
+                    rpos = rpos + 1;
+                }
             }
         } else {
             let c: uint32 = lexAdvance(lex);
@@ -448,6 +456,11 @@ func lexScanString(lex: *Lexer) {
     finalBuf[fi] = 34 as char8; fi = fi + 1; // closing "
     finalBuf[fi] = 0 as char8;
     lexSetLastTokenText(lex, finalBuf);
+}
+
+func lexScanString(lex: *Lexer) {
+    lexMarkStart(lex);
+    lexScanStringFrom(lex);
 }
 
 func lexScanChar(lex: *Lexer) {
@@ -678,10 +691,12 @@ func lexNextToken(lex: *Lexer) {
     }
 
     // String prefixes: f" c8" c16" c32"
+    // Keep `f` in token text so the parser can detect interpolating strings.
     if c == 102 && lexPeek(lex, 1) == 34 { // f"
-        discard lexAdvance(lex); // f
-        lexMarkStart(lex); // treat as plain string literal in selfhost
-        lexScanString(lex); return;
+        lexMarkStart(lex);          // start at 'f'
+        discard lexAdvance(lex);    // consume f; startPos still at f
+        lexScanStringFrom(lex);     // does not re-mark — prefix = "f"
+        return;
     }
     if c == 99 { // 'c'
         let d: uint32 = lexPeek(lex, 1);

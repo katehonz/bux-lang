@@ -79,6 +79,8 @@ struct Pattern {
     patStructName: String,   // for pkStruct
     patChild1: *Pattern,     // range lo / nested
     patChild2: *Pattern,     // range hi / nested
+    patArgs: *Pattern,       // pkEnum payload args (head)
+    patNext: *Pattern,       // next sibling in patArgs list
 }
 
 // Match arm: pattern => body

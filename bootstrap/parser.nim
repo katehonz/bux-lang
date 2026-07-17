@@ -463,7 +463,10 @@ proc parseStringInterpolation(p: var Parser, tok: Token): Expr =
     i += 1
   texts.add(currentText)
   if exprs.len == 0:
-    return newLiteralExpr(tok)
+    # f"plain" / f"use \{x\}" with no real {expr} — use processed text (escapes applied)
+    var litTok = tok
+    litTok.text = "\"" & texts[0] & "\""
+    return newLiteralExpr(litTok)
   return newStringInterpExpr(texts, exprs, tok.loc)
 
 proc parsePrimary(p: var Parser): Expr =
@@ -524,9 +527,16 @@ proc parsePrimary(p: var Parser): Expr =
     p.structInitAllowed = false
     let subject = p.parseExpr()
     p.structInitAllowed = true
+    # Same newline rules as statement-form match (needed for `let x = match ...`)
+    while p.check(tkNewLine):
+      discard p.advance()
     discard p.expect(tkLBrace, "expected '{' to start match")
     var arms: seq[MatchArm] = @[]
     while not p.check(tkRBrace) and not p.isAtEnd:
+      while p.check(tkNewLine):
+        discard p.advance()
+      if p.check(tkRBrace) or p.isAtEnd:
+        break
       let armLoc = p.currentLoc
       let pat = p.parsePattern()
       discard p.expect(tkFatArrow, "expected '=>' in match arm")
@@ -581,6 +591,17 @@ proc parsePrimary(p: var Parser): Expr =
   of tkNull:
     discard p.advance()
     return newLiteralExpr(Token(kind: tkNull, text: "null", loc: loc))
+  of tkPipePipe:
+    # Empty-param closure written as `||` — lexer merges two '|' into tkPipePipe.
+    # Disambiguate from logical-or (which only appears mid-expression): as a primary,
+    # `|| -> T { ... }` / `|| { ... }` is always a zero-param closure.
+    discard p.advance()  # ||
+    var retTypePP: TypeExpr = nil
+    if p.check(tkArrow):
+      discard p.advance()  # ->
+      retTypePP = p.parseType()
+    let bodyPP = p.parseBlock()
+    return Expr(kind: ekClosure, loc: loc, exprClosureParams: @[], exprClosureBody: bodyPP, exprClosureReturnType: retTypePP)
   of tkPipe:
     # Closure: |params| -> Ret { body }
     discard p.advance()  # |

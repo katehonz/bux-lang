@@ -4,6 +4,7 @@ module Parser {
 
 extern func bux_strlen(s: String) -> uint;
 extern func bux_str_to_int(s: String) -> int64;
+extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
 
 // Forward declarations for mutual recursion
 func parserParseExpr(p: *Parser) -> *Expr;
@@ -353,6 +354,171 @@ func parserMakeExpr(kind: int, line: uint32, col: uint32) -> *Expr {
     return e;
 }
 
+
+func parserMakeStringLitExpr(text: String, line: uint32, col: uint32) -> *Expr {
+    let quoted: String = String_Concat(String_Concat("\"", text), "\"");
+    let e: *Expr = parserMakeExpr(ekLiteral, line, col);
+    e.tokKind = tkStringLiteral;
+    e.tokText = quoted;
+    return e;
+}
+
+func parserParseInterpFragment(exprStr: String) -> *Expr {
+    let lex: *Lexer = Lexer_Tokenize(exprStr);
+    var sub: Parser;
+    sub.tokens = lex.tokens;
+    sub.tokenCount = lex.tokenCount;
+    sub.pos = 0;
+    sub.diagCount = 0;
+    sub.diags = null as *ParserDiag;
+    sub.structInitAllowed = true;
+    return parserParseExpr(&sub);
+}
+
+func parserAppendPart(head: *ExprList, tail: *ExprList, e: *Expr) -> *ExprList {
+    // returns new tail; head updated via pointer trick not possible — return pair as side effect on first arg using double pointer? 
+    // simpler: just inline in main
+    return tail;
+}
+
+func parserParseStringInterp(p: *Parser, tok: LexToken) -> *Expr {
+    let text: String = tok.text;
+    let tlen: uint = bux_strlen(text);
+    if tlen < 3 as uint {
+        let e: *Expr = parserMakeExpr(ekLiteral, tok.line, tok.column);
+        e.tokKind = tkStringLiteral;
+        e.tokText = text;
+        return e;
+    }
+    if text[0] as int != 102 {
+        let e: *Expr = parserMakeExpr(ekLiteral, tok.line, tok.column);
+        e.tokKind = tkStringLiteral;
+        e.tokText = text;
+        return e;
+    }
+    if text[1] as int != 34 {
+        let e: *Expr = parserMakeExpr(ekLiteral, tok.line, tok.column);
+        e.tokKind = tkStringLiteral;
+        e.tokText = text;
+        return e;
+    }
+    let inner: String = bux_str_slice(text, 2, tlen - 3);
+    let innerLen: uint = bux_strlen(inner);
+    var head: *ExprList = null as *ExprList;
+    var tail: *ExprList = null as *ExprList;
+    var currentText: String = "";
+    var i: uint = 0;
+    var partCount: int = 0;
+    while i < innerLen {
+        let ch: int = inner[i] as int;
+        var handled: bool = false;
+        if ch == 92 {
+            if i + 1 < innerLen {
+                let nch: int = inner[i + 1] as int;
+                if nch == 123 {
+                    currentText = String_Concat(currentText, "{");
+                    i = i + 2;
+                    handled = true;
+                } else {
+                    if nch == 125 {
+                        currentText = String_Concat(currentText, "}");
+                        i = i + 2;
+                        handled = true;
+                    }
+                }
+            }
+        }
+        if handled {
+            continue;
+        }
+        if ch == 123 {
+            let textPart: *Expr = parserMakeStringLitExpr(currentText, tok.line, tok.column);
+            let textNode: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+            textNode.expr = textPart;
+            textNode.next = null as *ExprList;
+            textNode.argName = "";
+            if head == null as *ExprList {
+                head = textNode;
+                tail = textNode;
+            } else {
+                tail.next = textNode;
+                tail = textNode;
+            }
+            partCount = partCount + 1;
+            currentText = "";
+            var j: uint = i + 1;
+            var depth: int = 1;
+            while j < innerLen {
+                if depth <= 0 {
+                    break;
+                }
+                let cj: int = inner[j] as int;
+                if cj == 123 {
+                    depth = depth + 1;
+                }
+                if cj == 125 {
+                    depth = depth - 1;
+                }
+                j = j + 1;
+            }
+            if depth != 0 {
+                parserEmitDiag(p, tok.line, tok.column, "unmatched brace in string interpolation");
+                let bad: *Expr = parserMakeExpr(ekLiteral, tok.line, tok.column);
+                bad.tokKind = tkStringLiteral;
+                bad.tokText = "\"\"";
+                return bad;
+            }
+            let exprLen: uint = j - i - 2;
+            let exprStr: String = bux_str_slice(inner, i + 1, exprLen);
+            if bux_strlen(exprStr) == 0 {
+                parserEmitDiag(p, tok.line, tok.column, "empty interpolation");
+                let bad: *Expr = parserMakeExpr(ekLiteral, tok.line, tok.column);
+                bad.tokKind = tkStringLiteral;
+                bad.tokText = "\"\"";
+                return bad;
+            }
+            let frag: *Expr = parserParseInterpFragment(exprStr);
+            let fragNode: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+            fragNode.expr = frag;
+            fragNode.next = null as *ExprList;
+            fragNode.argName = "";
+            if head == null as *ExprList {
+                head = fragNode;
+                tail = fragNode;
+            } else {
+                tail.next = fragNode;
+                tail = fragNode;
+            }
+            partCount = partCount + 1;
+            i = j;
+            continue;
+        }
+        let one: String = bux_str_slice(inner, i, 1);
+        currentText = String_Concat(currentText, one);
+        i = i + 1;
+    }
+    let lastPart: *Expr = parserMakeStringLitExpr(currentText, tok.line, tok.column);
+    let lastNode: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+    lastNode.expr = lastPart;
+    lastNode.next = null as *ExprList;
+    lastNode.argName = "";
+    if head == null as *ExprList {
+        head = lastNode;
+        tail = lastNode;
+    } else {
+        tail.next = lastNode;
+        tail = lastNode;
+    }
+    partCount = partCount + 1;
+    if partCount == 1 {
+        return head.expr;
+    }
+    let e: *Expr = parserMakeExpr(ekStringInterp, tok.line, tok.column);
+    e.callArgs = head;
+    e.callArgCount = partCount;
+    return e;
+}
+
 // ---------------------------------------------------------------------------
 // Primary expressions
 // ---------------------------------------------------------------------------
@@ -370,6 +536,10 @@ func parserParsePrimary(p: *Parser) -> *Expr {
     if kind == tkIntLiteral || kind == tkFloatLiteral || kind == tkStringLiteral
         || kind == tkCharLiteral || kind == tkBoolLiteral {
         discard parserAdvance(p);
+        if kind == tkStringLiteral && bux_strlen(tok.text) >= 2 as uint
+            && tok.text[0] as int == 102 && tok.text[1] as int == 34 {
+            return parserParseStringInterp(p, tok);
+        }
         let e: *Expr = parserMakeExpr(ekLiteral, line, col);
         e.tokKind = kind;
         e.tokText = tok.text;
@@ -480,6 +650,12 @@ func parserParsePrimary(p: *Parser) -> *Expr {
         return first;
     }
 
+    // Empty-param closure: `||` is lexed as tkPipePipe (logical-or token).
+    // As a primary it can only mean a zero-param closure: || -> T { ... }
+    if kind == tkPipePipe {
+        return parserParseEmptyClosure(p);
+    }
+
     // Closure: |params| -> Ret { body }
     if kind == tkPipe {
         return parserParseClosure(p);
@@ -520,6 +696,8 @@ func parserMakePattern(kind: int, line: uint32, col: uint32) -> *Pattern {
     pat.patStructName = "";
     pat.patChild1 = null as *Pattern;
     pat.patChild2 = null as *Pattern;
+    pat.patArgs = null as *Pattern;
+    pat.patNext = null as *Pattern;
     return pat;
 }
 
@@ -565,11 +743,20 @@ func parserParsePrimaryPattern(p: *Parser) -> *Pattern {
                 path = String_Concat(path, "::");
                 path = String_Concat(path, seg.text);
             }
-            // Optional (args) for algebraic variants — parse and ignore bindings for now
+            // Optional (args) for algebraic variants — store as patArgs linked list
+            var enumArgs: *Pattern = null as *Pattern;
+            var lastArg: *Pattern = null as *Pattern;
             if parserCheck(p, tkLParen) {
                 discard parserAdvance(p);
                 while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
-                    discard parserParsePattern(p);
+                    let argPat: *Pattern = parserParsePattern(p);
+                    if enumArgs == null as *Pattern {
+                        enumArgs = argPat;
+                        lastArg = argPat;
+                    } else {
+                        lastArg.patNext = argPat;
+                        lastArg = argPat;
+                    }
                     if parserCheck(p, tkComma) { discard parserAdvance(p); }
                     else { break; }
                 }
@@ -577,19 +764,30 @@ func parserParsePrimaryPattern(p: *Parser) -> *Pattern {
             }
             let pat: *Pattern = parserMakePattern(pkEnum, line, col);
             pat.patEnumPath = path;
+            pat.patArgs = enumArgs;
             return pat;
         }
         // Bare name with (args): Variant(...) treated as single-segment enum
         if parserCheck(p, tkLParen) {
             discard parserAdvance(p);
+            var bareArgs: *Pattern = null as *Pattern;
+            var bareLast: *Pattern = null as *Pattern;
             while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
-                discard parserParsePattern(p);
+                let argPat: *Pattern = parserParsePattern(p);
+                if bareArgs == null as *Pattern {
+                    bareArgs = argPat;
+                    bareLast = argPat;
+                } else {
+                    bareLast.patNext = argPat;
+                    bareLast = argPat;
+                }
                 if parserCheck(p, tkComma) { discard parserAdvance(p); }
                 else { break; }
             }
             discard parserExpect(p, tkRParen, "expected ')' to close pattern");
             let pat: *Pattern = parserMakePattern(pkEnum, line, col);
             pat.patEnumPath = name;
+            pat.patArgs = bareArgs;
             return pat;
         }
         // Ident binding / catch-all name
@@ -629,6 +827,8 @@ func parserParseMatchExpr(p: *Parser) -> *Expr {
     p.structInitAllowed = false;
     let subject: *Expr = parserParseExpr(p);
     p.structInitAllowed = true;
+    // Allow newline before '{' (needed for `let x = match n \n { ... }`)
+    while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
     discard parserExpect(p, tkLBrace, "expected '{' to start match body");
 
     var firstArm: *MatchArm = null as *MatchArm;
@@ -673,6 +873,24 @@ func parserParseMatchExpr(p: *Parser) -> *Expr {
 // ---------------------------------------------------------------------------
 // Closure: |params| -> Ret { body }
 // ---------------------------------------------------------------------------
+
+// Zero-param closure when written as `||` (single tkPipePipe token from lexer)
+func parserParseEmptyClosure(p: *Parser) -> *Expr {
+    let line: uint32 = parserCurToken(p).line;
+    let col: uint32 = parserCurToken(p).column;
+    discard parserAdvance(p); // ||
+    let e: *Expr = parserMakeExpr(ekClosure, line, col);
+    let params: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+    params.kind = dkFunc;
+    params.paramCount = 0;
+    e.closureParams = params;
+    if parserCheck(p, tkArrow) {
+        discard parserAdvance(p);
+        e.refType = parserParseType(p);
+    }
+    e.refBlock = parserParseBlock(p);
+    return e;
+}
 
 func parserParseClosure(p: *Parser) -> *Expr {
     let line: uint32 = parserCurToken(p).line;
