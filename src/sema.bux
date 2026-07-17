@@ -473,6 +473,88 @@ func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
         }
         return;
     }
+    // Tuple pattern: (a, b) — bind elements from subject tuple types
+    if pat.kind == pkTuple {
+        var ei: int = 0;
+        var elem: *Pattern = pat.patArgs;
+        while elem != null as *Pattern {
+            if elem.kind == pkIdent {
+                var ety: String = "int";
+                // Tuple_int_int → fields are ints by default; prefer subject type args if present
+                if subject != null as *Expr && subject.refType != null as *TypeExpr {
+                    if subject.refType.kind == tekTuple {
+                        // typeArgName0 / typeArgName1 store element type names when available
+                        if ei == 0 && !String_Eq(subject.refType.typeArgName0, "") {
+                            ety = subject.refType.typeArgName0;
+                        } else if ei == 1 && !String_Eq(subject.refType.typeArgName1, "") {
+                            ety = subject.refType.typeArgName1;
+                        }
+                    }
+                }
+                var bsym: Symbol;
+                Sema_ZeroInitSymbol(&bsym);
+                bsym.kind = skVar;
+                bsym.name = elem.patIdent;
+                bsym.typeName = ety;
+                bsym.typeKind = tyInt;
+                if String_Eq(ety, "String") || String_Eq(ety, "str") { bsym.typeKind = tyStr; }
+                else if String_Eq(ety, "bool") { bsym.typeKind = tyBool; }
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = ety;
+                bsym.refType = te;
+                bsym.isMutable = false;
+                discard Scope_Define(sema.scope, bsym);
+            }
+            elem = elem.patNext;
+            ei = ei + 1;
+        }
+        return;
+    }
+    // Struct pattern: Point { x: a, y: b }
+    if pat.kind == pkStruct {
+        var structName: String = pat.patStructName;
+        if String_Eq(structName, "") && subject != null as *Expr && subject.refType != null as *TypeExpr {
+            structName = subject.refType.typeName;
+        }
+        var field: *Pattern = pat.patArgs;
+        while field != null as *Pattern {
+            if field.kind == pkIdent {
+                var ftype: String = "int";
+                if !String_Eq(structName, "") {
+                    let ssym: Symbol = Scope_Lookup(sema.scope, structName);
+                    if ssym.decl != null as *Decl && ssym.decl.kind == dkStruct && ssym.decl.fields != null as *StructField {
+                        var fi: int = 0;
+                        while fi < ssym.decl.fieldCount {
+                            let sf: StructField = ssym.decl.fields[fi];
+                            if String_Eq(sf.name, field.patFieldName) {
+                                if sf.refFieldType != null as *TypeExpr && !String_Eq(sf.refFieldType.typeName, "") {
+                                    ftype = sf.refFieldType.typeName;
+                                }
+                            }
+                            fi = fi + 1;
+                        }
+                    }
+                }
+                var bsym: Symbol;
+                Sema_ZeroInitSymbol(&bsym);
+                bsym.kind = skVar;
+                bsym.name = field.patIdent;
+                bsym.typeName = ftype;
+                bsym.typeKind = tyInt;
+                if String_Eq(ftype, "String") || String_Eq(ftype, "str") { bsym.typeKind = tyStr; }
+                else if String_Eq(ftype, "bool") { bsym.typeKind = tyBool; }
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = ftype;
+                bsym.refType = te;
+                bsym.isMutable = false;
+                discard Scope_Define(sema.scope, bsym);
+            }
+            field = field.patNext;
+        }
+        return;
+    }
 }
 
 func Sema_IsMutRefDeref(target: *Expr) -> bool {

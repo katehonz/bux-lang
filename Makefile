@@ -3,7 +3,7 @@ SRC := bootstrap/main.nim
 OUT := buxc
 BUILD_DIR := build
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic struct_tuple_pat
 
 .PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden test-errors selfhost-loop lsp
 

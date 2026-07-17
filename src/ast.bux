@@ -76,10 +76,11 @@ struct Pattern {
     patLitText: String,      // for pkLiteral (token text)
     patRangeInclusive: bool, // for pkRange
     patEnumPath: String,     // for pkEnum: "Enum::Variant"
-    patStructName: String,   // for pkStruct
+    patStructName: String,   // for pkStruct (type name)
+    patFieldName: String,    // for struct field entry: field name in Point { x: a }
     patChild1: *Pattern,     // range lo / nested
     patChild2: *Pattern,     // range hi / nested
-    patArgs: *Pattern,       // pkEnum payload args (head)
+    patArgs: *Pattern,       // pkEnum/pkTuple/pkStruct field list (head)
     patNext: *Pattern,       // next sibling in patArgs list
 }
 

@@ -694,6 +694,7 @@ func parserMakePattern(kind: int, line: uint32, col: uint32) -> *Pattern {
     pat.patRangeInclusive = false;
     pat.patEnumPath = "";
     pat.patStructName = "";
+    pat.patFieldName = "";
     pat.patChild1 = null as *Pattern;
     pat.patChild2 = null as *Pattern;
     pat.patArgs = null as *Pattern;
@@ -767,6 +768,42 @@ func parserParsePrimaryPattern(p: *Parser) -> *Pattern {
             pat.patArgs = enumArgs;
             return pat;
         }
+        // Struct pattern: Point { x: a, y: b } or shorthand Point { x, y }
+        if parserCheck(p, tkLBrace) {
+            discard parserAdvance(p);
+            var fieldHead: *Pattern = null as *Pattern;
+            var fieldTail: *Pattern = null as *Pattern;
+            while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+                while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                if parserCheck(p, tkRBrace) { break; }
+                let ftok: LexToken = parserExpectIdentOrKeyword(p, "expected field name in struct pattern");
+                let fieldName: String = ftok.text;
+                var fieldPat: *Pattern = null as *Pattern;
+                if parserCheck(p, tkColon) {
+                    discard parserAdvance(p);
+                    fieldPat = parserParsePattern(p);
+                } else {
+                    // Shorthand { x } → { x: x }
+                    fieldPat = parserMakePattern(pkIdent, line, col);
+                    fieldPat.patIdent = fieldName;
+                }
+                fieldPat.patFieldName = fieldName;
+                if fieldHead == null as *Pattern {
+                    fieldHead = fieldPat;
+                    fieldTail = fieldPat;
+                } else {
+                    fieldTail.patNext = fieldPat;
+                    fieldTail = fieldPat;
+                }
+                if parserCheck(p, tkComma) { discard parserAdvance(p); }
+                else { break; }
+            }
+            discard parserExpect(p, tkRBrace, "expected '}' to close struct pattern");
+            let spat: *Pattern = parserMakePattern(pkStruct, line, col);
+            spat.patStructName = name;
+            spat.patArgs = fieldHead;
+            return spat;
+        }
         // Bare name with (args): Variant(...) treated as single-segment enum
         if parserCheck(p, tkLParen) {
             discard parserAdvance(p);
@@ -794,6 +831,29 @@ func parserParsePrimaryPattern(p: *Parser) -> *Pattern {
         let pat: *Pattern = parserMakePattern(pkIdent, line, col);
         pat.patIdent = name;
         return pat;
+    }
+
+    // Tuple pattern: (a, b)
+    if kind == tkLParen {
+        discard parserAdvance(p);
+        var head: *Pattern = null as *Pattern;
+        var tail: *Pattern = null as *Pattern;
+        while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+            let elem: *Pattern = parserParsePattern(p);
+            if head == null as *Pattern {
+                head = elem;
+                tail = elem;
+            } else {
+                tail.patNext = elem;
+                tail = elem;
+            }
+            if parserCheck(p, tkComma) { discard parserAdvance(p); }
+            else { break; }
+        }
+        discard parserExpect(p, tkRParen, "expected ')' to close tuple pattern");
+        let tpat: *Pattern = parserMakePattern(pkTuple, line, col);
+        tpat.patArgs = head;
+        return tpat;
     }
 
     parserEmitDiag(p, line, col, "expected pattern");

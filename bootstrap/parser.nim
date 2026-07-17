@@ -324,7 +324,7 @@ proc parsePrimaryPattern(p: var Parser): Pattern =
         return Pattern(kind: pkEnum, loc: loc, patEnumPath: path, patEnumArgs: args, patEnumNamed: named)
       return Pattern(kind: pkEnum, loc: loc, patEnumPath: path, patEnumArgs: @[], patEnumNamed: @[])
     elif p.check(tkLBrace):
-      # Struct pattern: Point { x: 0, y: 0 }
+      # Struct pattern: Point { x: px, y: py } or shorthand Point { x, y }
       discard p.advance()
       var fields: seq[tuple[name: string, pattern: Pattern]] = @[]
       while not p.check(tkRBrace) and not p.isAtEnd:
@@ -333,8 +333,12 @@ proc parsePrimaryPattern(p: var Parser): Pattern =
         if p.check(tkRBrace) or p.isAtEnd:
           break
         let fieldName = p.expect(tkIdent, "expected field name in struct pattern").text
-        discard p.expect(tkColon, "expected ':' after field name in pattern")
-        fields.add((fieldName, p.parsePattern()))
+        if p.check(tkColon):
+          discard p.advance()
+          fields.add((fieldName, p.parsePattern()))
+        else:
+          # Shorthand: { x } means { x: x }
+          fields.add((fieldName, Pattern(kind: pkIdent, loc: loc, patIdent: fieldName)))
         if p.check(tkComma):
           discard p.advance()
       discard p.expect(tkRBrace, "expected '}' to close struct pattern")

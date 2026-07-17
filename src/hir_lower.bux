@@ -569,9 +569,11 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
                          line: uint32, col: uint32) -> *HirNode {
     if pat == null as *Pattern { return null as *HirNode; }
     if pat.kind == pkIdent {
+        // `_` is wildcard, not a binding
+        if String_Eq(pat.patIdent, "_") { return null as *HirNode; }
         let ty: String = "int";
         if subject != null as *HirNode && !String_Eq(subject.typeName, "") {
-            // keep int default for catch-all unless subject has a type name
+            ty = subject.typeName;
         }
         let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         alloca.kind = hAlloca;
@@ -589,8 +591,144 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
         store.child1 = v;
         store.child2 = subject;
         alloca.child3 = store;
+        var bsym: Symbol;
+        bsym.kind = skVar;
+        bsym.name = pat.patIdent;
+        bsym.typeKind = tyInt;
+        bsym.typeName = ty;
+        bsym.refType = null as *TypeExpr;
+        bsym.isMutable = false;
+        bsym.isPublic = false;
+        bsym.decl = null as *Decl;
+        discard Scope_Define(ctx.scope, bsym);
         return alloca;
     }
+
+    // Tuple: (a, b) → a = subject._0; b = subject._1
+    if pat.kind == pkTuple {
+        var head: *HirNode = null as *HirNode;
+        var tail: *HirNode = null as *HirNode;
+        var ei: int = 0;
+        var elem: *Pattern = pat.patArgs;
+        while elem != null as *Pattern {
+            if elem.kind == pkIdent && !String_Eq(elem.patIdent, "_") {
+                var fieldName: String = "_0";
+                if ei == 1 { fieldName = "_1"; }
+                else if ei == 2 { fieldName = "_2"; }
+                else if ei == 3 { fieldName = "_3"; }
+                else if ei > 3 { fieldName = String_Concat("_", String_FromInt(ei as int64)); }
+                let fPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                fPtr.kind = hFieldPtr;
+                fPtr.line = line;
+                fPtr.column = col;
+                fPtr.strValue = fieldName;
+                fPtr.child1 = subject;
+                let fLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                fLoad.kind = hLoad;
+                fLoad.line = line;
+                fLoad.column = col;
+                fLoad.child1 = fPtr;
+                fLoad.typeName = "int";
+                let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                alloca.kind = hAlloca;
+                alloca.line = line;
+                alloca.column = col;
+                alloca.strValue = elem.patIdent;
+                alloca.typeName = "int";
+                let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                store.kind = hStore;
+                store.line = line;
+                store.column = col;
+                let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                v.kind = hVar;
+                v.strValue = elem.patIdent;
+                store.child1 = v;
+                store.child2 = fLoad;
+                alloca.child3 = store;
+                var bsym: Symbol;
+                bsym.kind = skVar;
+                bsym.name = elem.patIdent;
+                bsym.typeKind = tyInt;
+                bsym.typeName = "int";
+                bsym.refType = null as *TypeExpr;
+                bsym.isMutable = false;
+                bsym.isPublic = false;
+                bsym.decl = null as *Decl;
+                discard Scope_Define(ctx.scope, bsym);
+                if head == null as *HirNode {
+                    head = alloca;
+                    tail = store;
+                } else {
+                    tail.child3 = alloca;
+                    tail = store;
+                }
+            }
+            elem = elem.patNext;
+            ei = ei + 1;
+        }
+        return head;
+    }
+
+    // Struct: Point { x: a } → a = subject.x
+    if pat.kind == pkStruct {
+        var head: *HirNode = null as *HirNode;
+        var tail: *HirNode = null as *HirNode;
+        var field: *Pattern = pat.patArgs;
+        while field != null as *Pattern {
+            if field.kind == pkIdent && !String_Eq(field.patIdent, "_") {
+                var fname: String = field.patFieldName;
+                if String_Eq(fname, "") { fname = field.patIdent; }
+                let fPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                fPtr.kind = hFieldPtr;
+                fPtr.line = line;
+                fPtr.column = col;
+                fPtr.strValue = fname;
+                fPtr.child1 = subject;
+                let fLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                fLoad.kind = hLoad;
+                fLoad.line = line;
+                fLoad.column = col;
+                fLoad.child1 = fPtr;
+                fLoad.typeName = "int";
+                let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                alloca.kind = hAlloca;
+                alloca.line = line;
+                alloca.column = col;
+                alloca.strValue = field.patIdent;
+                alloca.typeName = "int";
+                let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                store.kind = hStore;
+                store.line = line;
+                store.column = col;
+                let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                v.kind = hVar;
+                v.strValue = field.patIdent;
+                store.child1 = v;
+                store.child2 = fLoad;
+                alloca.child3 = store;
+                var bsym: Symbol;
+                bsym.kind = skVar;
+                bsym.name = field.patIdent;
+                bsym.typeKind = tyInt;
+                bsym.typeName = "int";
+                bsym.refType = null as *TypeExpr;
+                bsym.isMutable = false;
+                bsym.isPublic = false;
+                bsym.decl = null as *Decl;
+                discard Scope_Define(ctx.scope, bsym);
+                if head == null as *HirNode {
+                    head = alloca;
+                    tail = store;
+                } else {
+                    tail.child3 = alloca;
+                    tail = store;
+                }
+            }
+            field = field.patNext;
+        }
+        return head;
+    }
+
     if pat.kind != pkEnum || !subjectHasData { return null as *HirNode; }
 
     var enumName: String = "";
@@ -1115,12 +1253,15 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
                 let refTe: *TypeExpr = expr.child1.refType;
                 if refTe.kind == tekNamed {
-                    receiverTypeName = refTe.typeName;
+                    if refTe.typeName != null as String { receiverTypeName = refTe.typeName; }
                 } else if refTe.kind == tekPointer && refTe.pointerPointee != null as *TypeExpr && refTe.pointerPointee.kind == tekNamed {
-                    receiverTypeName = refTe.pointerPointee.typeName;
+                    if refTe.pointerPointee.typeName != null as String {
+                        receiverTypeName = refTe.pointerPointee.typeName;
+                    }
                 }
             }
-            if !String_Eq(receiverTypeName, "") {
+            // Note: String_Eq(null, "") is false — must also reject null type names
+            if receiverTypeName != null as String && !String_Eq(receiverTypeName, "") {
                 let funcName: String = String_Concat(String_Concat(receiverTypeName, "_"), opMethodName);
                 let sym: Symbol = Scope_Lookup(ctx.scope, funcName);
                 if sym.kind == skFunc && sym.decl != null as *Decl {

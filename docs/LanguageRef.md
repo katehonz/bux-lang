@@ -383,7 +383,20 @@ Supported patterns:
 - Identifier catch-all: `name` (binds whole subject)
 - Range: `1..9`, `1..=9`
 - Enum tags + **payload bindings**: `Option::Some(value)`, `Pair::Two(a, b)`
-- Struct / tuple / guard patterns: parsed; full lowering still evolving
+- **Tuple patterns**: `(a, b)` → binds `subject._0`, `subject._1`
+- **Struct patterns**: `Point { x: px, y: py }` or shorthand `Point { x, y }`
+- Guard patterns: parsed; full lowering still evolving
+
+```bux
+match pair {
+    (a, b) => a + b,
+    _ => 0
+}
+match p {
+    Point { x, y } => x * 10 + y,
+    _ => -1
+}
+```
 
 ---
 

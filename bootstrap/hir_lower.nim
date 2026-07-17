@@ -217,6 +217,53 @@ proc matchPatternBindings(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
       result.add(hirStore(hirVar(nf.pattern.patIdent, fieldTy, loc), fieldLoad, loc))
   of pkGuarded:
     result.add(ctx.matchPatternBindings(subject, pattern.patGuardedInner, subjectEnumName, subjectHasData, loc))
+  of pkTuple:
+    # (a, b) => bind a = subject._0, b = subject._1
+    for i, elem in pattern.patTupleElements:
+      if elem == nil:
+        continue
+      let fieldName = "_" & $i
+      let fieldTy = if subject.typ != nil and subject.typ.kind == tkTuple and i < subject.typ.inner.len:
+                      subject.typ.inner[i]
+                    else: makeInt()
+      let fieldPtr = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: fieldName,
+                             typ: makePointer(fieldTy), loc: loc)
+      let fieldLoad = HirNode(kind: hLoad, loadPtr: fieldPtr, typ: fieldTy, loc: loc)
+      if elem.kind == pkIdent:
+        if elem.patIdent notin ctx.patternBoundNames:
+          result.add(hirAlloca(elem.patIdent, fieldTy, loc))
+          ctx.patternBoundNames.incl(elem.patIdent)
+        result.add(hirStore(hirVar(elem.patIdent, fieldTy, loc), fieldLoad, loc))
+      else:
+        # Nested patterns: recurse with field as subject
+        result.add(ctx.matchPatternBindings(fieldLoad, elem, subjectEnumName, subjectHasData, loc))
+  of pkStruct:
+    # Point { x: px, y: py } => px = subject.x, py = subject.y
+    var structName = pattern.patStructName
+    if structName.len == 0 and subject.typ != nil and subject.typ.kind == tkNamed:
+      structName = subject.typ.name
+    var fieldTypes = initTable[string, Type]()
+    if structName.len > 0:
+      let ssym = ctx.globalScope.lookup(structName)
+      if ssym != nil and ssym.decl != nil and ssym.decl.kind == dkStruct:
+        for f in ssym.decl.declStructFields:
+          fieldTypes[f.name] = ctx.resolveTypeExpr(f.ftype)
+    for entry in pattern.patStructFields:
+      let fname = entry.name
+      let fpat = entry.pattern
+      if fpat == nil:
+        continue
+      let fieldTy = if fieldTypes.hasKey(fname): fieldTypes[fname] else: makeInt()
+      let fieldPtr = HirNode(kind: hFieldPtr, fieldPtrBase: subject, fieldName: fname,
+                             typ: makePointer(fieldTy), loc: loc)
+      let fieldLoad = HirNode(kind: hLoad, loadPtr: fieldPtr, typ: fieldTy, loc: loc)
+      if fpat.kind == pkIdent:
+        if fpat.patIdent notin ctx.patternBoundNames:
+          result.add(hirAlloca(fpat.patIdent, fieldTy, loc))
+          ctx.patternBoundNames.incl(fpat.patIdent)
+        result.add(hirStore(hirVar(fpat.patIdent, fieldTy, loc), fieldLoad, loc))
+      else:
+        result.add(ctx.matchPatternBindings(fieldLoad, fpat, subjectEnumName, subjectHasData, loc))
   else:
     discard
 

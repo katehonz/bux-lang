@@ -261,9 +261,21 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 15 (struct/tuple patterns)
+
+1. **Tuple patterns:** `match t { (a, b) => a + b }` — bind `subject._0` / `._1`
+2. **Struct patterns:** `Point { x: px, y: py }` + shorthand `Point { x, y }`
+3. Bootstrap: `matchPatternBindings` for pkTuple/pkStruct; field types from struct decl; range registration of local tuple typedefs
+4. Selfhost: parse `()` / `Name { … }` patterns; `Sema_BindPattern` + `Lcx_PatternBindings` with Scope_Define
+5. Fix: operator-overload path treated `String_Eq(null, "")` as non-empty → crash on `a + b` after pattern bind
+6. Example: `examples/struct_tuple_pat.bux`
+7. Verified: bootstrap + **buxc2** + selfhost-loop IDENTICAL ✓
+
+---
+
 ## Следващи стъпки
 
-1. Struct/tuple patterns (`Point { x, y }`, `(a, b)`) + nested bindings
-2. Match arm multi-stmt bodies (beyond single expr)
-3. LSP: wire hover types from real sema (replace lightweight index where possible)
+1. Match arm multi-stmt bodies (beyond single expr)
+2. Nested patterns deeper (`Some((a, b))`, `Point { x: (a, b) }`)
+3. LSP: wire hover types from real sema
 4. Generic type inference for `Iter_Map` without explicit `<T,U>`

@@ -1,0 +1,53 @@
+// Struct and tuple patterns in match: (a, b), Point { x, y }
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+func SumPair(t: (int, int)) -> int {
+    match t {
+        (a, b) => a + b,
+        _ => 0
+    }
+}
+
+func PointCode(p: Point) -> int {
+    match p {
+        Point { x: px, y: py } => px * 10 + py,
+        _ => -1
+    }
+}
+
+func PointShorthand(p: Point) -> int {
+    // { x, y } means { x: x, y: y }
+    match p {
+        Point { x, y } => x + y,
+        _ => 0
+    }
+}
+
+func Main() -> int {
+    let t: (int, int) = (10, 20);
+    Test_AssertEqInt(SumPair(t), 30);
+
+    let lit: (int, int) = (7, 8);
+    let s: int = match lit {
+        (a, b) => a * b,
+        _ => 0
+    };
+    Test_AssertEqInt(s, 56);
+
+    let p: Point = Point { x: 3, y: 4 };
+    Test_AssertEqInt(PointCode(p), 34);
+    Test_AssertEqInt(PointShorthand(p), 7);
+
+    PrintInt(SumPair(t));
+    PrintLine("");
+    PrintInt(PointCode(p));
+    PrintLine("");
+    Test_Pass("struct_tuple_pat");
+    return 0;
+}

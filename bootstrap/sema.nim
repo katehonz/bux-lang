@@ -814,8 +814,23 @@ proc extractPatternBindings(sema: var Sema, pat: Pattern, scope: Scope, subjectT
       else:
         sema.extractPatternBindings(elem, scope, elemTy)
   of pkStruct:
-    for f in pat.patStructFields:
-      sema.extractPatternBindings(f.pattern, scope)
+    # Resolve field types from struct declaration when possible
+    var fieldTypes = initTable[string, Type]()
+    var structName = pat.patStructName
+    if structName.len == 0 and subjectType != nil and subjectType.kind == tkNamed:
+      structName = subjectType.name
+    if structName.len > 0:
+      let ssym = sema.globalScope.lookup(structName)
+      if ssym != nil and ssym.decl != nil and ssym.decl.kind == dkStruct:
+        for f in ssym.decl.declStructFields:
+          fieldTypes[f.name] = sema.resolveType(f.ftype)
+    for entry in pat.patStructFields:
+      let fty = if fieldTypes.hasKey(entry.name): fieldTypes[entry.name] else: makeUnknown()
+      if entry.pattern != nil and entry.pattern.kind == pkIdent:
+        let sym = Symbol(kind: skVar, name: entry.pattern.patIdent, typ: fty, isMutable: false)
+        discard scope.define(sym)
+      else:
+        sema.extractPatternBindings(entry.pattern, scope, fty)
   of pkGuarded:
     sema.extractPatternBindings(pat.patGuardedInner, scope, subjectType)
   else:

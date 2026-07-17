@@ -767,10 +767,60 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
     else:
       discard
 
+  proc walkHirForTuples(n: HirNode) =
+    if n == nil: return
+    registerTuple(n.typ)
+    case n.kind
+    of hAlloca:
+      registerTuple(n.allocaType)
+    of hBlock:
+      for s in n.blockStmts: walkHirForTuples(s)
+      walkHirForTuples(n.blockExpr)
+    of hIf:
+      walkHirForTuples(n.ifCond)
+      walkHirForTuples(n.ifThen)
+      walkHirForTuples(n.ifElse)
+    of hWhile:
+      walkHirForTuples(n.whileCond)
+      walkHirForTuples(n.whileBody)
+    of hLoop:
+      walkHirForTuples(n.loopBody)
+    of hReturn:
+      walkHirForTuples(n.returnValue)
+    of hStore:
+      walkHirForTuples(n.storePtr)
+      walkHirForTuples(n.storeValue)
+    of hAssign:
+      walkHirForTuples(n.assignTarget)
+      walkHirForTuples(n.assignValue)
+    of hBinary:
+      walkHirForTuples(n.binaryLeft)
+      walkHirForTuples(n.binaryRight)
+    of hUnary:
+      walkHirForTuples(n.unaryOperand)
+    of hCall:
+      for a in n.callArgs: walkHirForTuples(a)
+    of hCallIndirect:
+      walkHirForTuples(n.callIndirectCallee)
+      for a in n.callIndirectArgs: walkHirForTuples(a)
+    of hLoad:
+      walkHirForTuples(n.loadPtr)
+    of hFieldPtr:
+      walkHirForTuples(n.fieldPtrBase)
+    of hFieldAccess:
+      walkHirForTuples(n.fieldAccessBase)
+    of hStructInit:
+      for f in n.structInitFields: walkHirForTuples(f.value)
+    of hTupleInit:
+      for e in n.tupleInitElements: walkHirForTuples(e)
+    else:
+      discard
+
   for f in module.funcs:
     registerTuple(f.retType)
     for p in f.params:
       registerTuple(p.typ)
+    walkHirForTuples(f.body)
   for ef in module.externFuncs:
     registerTuple(ef.retType)
     for p in ef.params:
