@@ -1330,12 +1330,18 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
         if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
           # Look for the field in enum variants
           for variant in enumSym.decl.declEnumVariants:
-            # Check positional fields: Ok_0, Ok_1, etc.
+            # Multi-field / named-field variant: data.Variant → Enum_Variant_Payload
+            # (suffix avoids clashing with tag constant Enum_Variant)
+            if variant.fields.len > 1 and variant.name == expr.exprFieldName:
+              return makeNamed(enumName & "_" & variant.name & "_Payload")
+            if variant.namedFields.len > 0 and variant.name == expr.exprFieldName:
+              return makeNamed(enumName & "_" & variant.name & "_Payload")
+            # Single positional fields: Ok_0, Ok_1, etc. (flat on the union)
             for i, f in variant.fields:
               let fieldName = variant.name & "_" & $i
               if fieldName == expr.exprFieldName:
                 return sema.resolveType(f)
-            # Check named fields
+            # Named fields nested under data.Variant.name
             for nf in variant.namedFields:
               if nf.name == expr.exprFieldName:
                 return sema.resolveType(nf.ftype)
@@ -1378,7 +1384,28 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
           else:
             sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
         else:
-          sema.emitError(expr.loc, &"cannot access field on type {obj.toString}")
+          # Synthetic nested multi-field type Enum_Variant_Payload — generated for
+          # multi-field / named-field algebraic variants (not a user-declared type).
+          var foundNested = false
+          for (_, gsym) in sema.globalScope.table.pairs:
+            if gsym.decl == nil or gsym.decl.kind != dkEnum: continue
+            let ename = gsym.decl.declEnumName
+            for variant in gsym.decl.declEnumVariants:
+              let nestedName = ename & "_" & variant.name & "_Payload"
+              if nestedName != objType.name: continue
+              foundNested = true
+              for i, f in variant.fields:
+                let fieldName = variant.name & "_" & $i
+                if fieldName == expr.exprFieldName:
+                  return sema.resolveType(f)
+              for nf in variant.namedFields:
+                if nf.name == expr.exprFieldName:
+                  return sema.resolveType(nf.ftype)
+              sema.emitError(expr.loc, &"nested variant type '{objType.name}' has no field '{expr.exprFieldName}'")
+              return makeUnknown()
+          if not foundNested:
+            sema.emitError(expr.loc, &"undeclared type '{objType.name}'")
+          return makeUnknown()
     elif objType.kind == tkDynRef:
       # Trait object: methods come from the interface
       let ifaceName = objType.name

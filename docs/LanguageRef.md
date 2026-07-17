@@ -345,9 +345,20 @@ enum Result {
     Err(String)
 }
 
+enum Pair {
+    Two(int, int),   // multi-field → nested payload
+    One(int),        // single-field → flat data.One_0
+    None
+}
+
 func Main() -> int {
     let r: Result = Result { tag: Result_Ok };
     r.data.Ok_0 = 42;
+
+    // Multi-field construction: data.Variant.Variant_i
+    var p: Pair = Pair { tag: Pair_Two };
+    p.data.Two.Two_0 = 3;
+    p.data.Two.Two_1 = 4;
 
     if r.tag == Result_Ok {
         PrintInt(r.data.Ok_0);
@@ -355,6 +366,10 @@ func Main() -> int {
     return 0;
 }
 ```
+
+Layout notes:
+- Single positional field: flat union member `data.Variant_0`
+- Multi-field: nested payload `data.Variant.Variant_0` / `data.Variant.Variant_1` (C type `Enum_Variant_Payload`)
 
 ---
 
@@ -383,6 +398,7 @@ Supported patterns:
 - Identifier catch-all: `name` (binds whole subject)
 - Range: `1..9`, `1..=9`
 - Enum tags + **payload bindings**: `Option::Some(value)`, `Pair::Two(a, b)`
+- **Nested**: `Box::Val((a, b))`, `Shape::Dot(Point { x, y })`
 - **Tuple patterns**: `(a, b)` → binds `subject._0`, `subject._1`
 - **Struct patterns**: `Point { x: px, y: py }` or shorthand `Point { x, y }`
 - Guard patterns: parsed; full lowering still evolving
@@ -395,6 +411,14 @@ match pair {
 match p {
     Point { x, y } => x * 10 + y,
     _ => -1
+}
+match bx {
+    Box::Val((a, c)) => a + c,
+    Box::Empty => 0
+}
+match sh {
+    Shape::Dot(Point { x, y }) => x * 10 + y,
+    Shape::Empty => -1
 }
 
 // Multi-statement arm bodies (block expression; last expr is the value)

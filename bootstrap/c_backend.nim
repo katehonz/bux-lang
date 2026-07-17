@@ -600,23 +600,12 @@ proc emitEnum*(be: var CBackend, name: string, variants: seq[HirEnumVariant]) =
         let typ = typeToC(be, v.fields[0])
         be.emitLine(&"{typ} {v.name}_0;")
       elif v.fields.len > 1:
-        # Multi positional fields — nested struct so fields don't overlay
-        be.emitLine(&"struct {{")
-        inc be.indent
-        for i, f in v.fields:
-          let typ = typeToC(be, f)
-          be.emitLine(&"{typ} {v.name}_{i};")
-        dec be.indent
-        be.emitLine(&"}} {v.name};")
+        # Multi positional — named nested typedef Enum_Variant_Payload
+        let nestedName = name & "_" & v.name & "_Payload"
+        be.emitLine(&"{nestedName} {v.name};")
       elif v.namedFields.len > 0:
-        # Named fields - generate as struct
-        be.emitLine(&"struct {{")
-        inc be.indent
-        for nf in v.namedFields:
-          let typ = typeToC(be, nf.typ)
-          be.emitLine(&"{typ} {nf.name};")
-        dec be.indent
-        be.emitLine(&"}} {v.name};")
+        let nestedName = name & "_" & v.name & "_Payload"
+        be.emitLine(&"{nestedName} {v.name};")
     dec be.indent
     be.emitLine(&"}} {name}_Data;")
     be.emitLine("")
@@ -716,15 +705,27 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
   if module.structs.len > 0:
     be.emitLine("")
 
-  # Enum definitions (must come before structs that reference them)
+  # Nested multi-field enum payloads (Enum_Variant_Payload) must be fully
+  # defined before the algebraic enum union that embeds them by value.
+  var payloadStructNames: seq[string] = @[]
+  for e in module.enums:
+    for v in e.variants:
+      if v.fields.len > 1 or v.namedFields.len > 0:
+        payloadStructNames.add(e.name & "_" & v.name & "_Payload")
+  for s in module.structs:
+    if s.name in payloadStructNames:
+      be.emitStruct(s.name, s.fields)
+
+  # Enum definitions (after payload structs; before user structs that may use them)
   for e in module.enums:
     be.emitEnum(e.name, e.variants)
   if module.enums.len > 0:
     be.emitLine("")
 
-  # Struct definitions
+  # Remaining struct definitions (skip payloads already emitted)
   for s in module.structs:
-    be.emitStruct(s.name, s.fields)
+    if s.name notin payloadStructNames:
+      be.emitStruct(s.name, s.fields)
 
   # Slice fat-pointer typedefs
   if sliceTypes.len > 0:

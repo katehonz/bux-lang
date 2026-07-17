@@ -1309,6 +1309,42 @@ func CBackend_Generate(mod: *HirModule) -> String {
     }
     StringBuilder_Append(&cbe.sb, "\n");
 
+    // Tuple typedefs before enums/structs that embed them by value
+    StringBuilder_Append(&cbe.sb, "/* Tuple types */\n");
+    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int {\n    int _0;\n    int _1;\n} Tuple_int_int;\n");
+    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int_int {\n    int _0;\n    int _1;\n    int _2;\n} Tuple_int_int_int;\n");
+    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_Empty {\n    char _pad;\n} Tuple_Empty;\n\n");
+
+    // Struct definitions before enums (enums may embed structs by value, e.g. Shape::Dot(Point))
+    // Pass 1: emit structs with no value-typed struct fields (leaf structs)
+    si = 0;
+    while si < mod.structCount {
+        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
+            si = si + 1;
+            continue;
+        }
+        if CBE_StructHasValueStructField(&mod.structs[si]) {
+            si = si + 1;
+            continue;
+        }
+        CBE_EmitStructDef(cbe, &mod.structs[si]);
+        si = si + 1;
+    }
+    // Pass 2: emit structs that contain value-typed struct fields
+    si = 0;
+    while si < mod.structCount {
+        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
+            si = si + 1;
+            continue;
+        }
+        if !CBE_StructHasValueStructField(&mod.structs[si]) {
+            si = si + 1;
+            continue;
+        }
+        CBE_EmitStructDef(cbe, &mod.structs[si]);
+        si = si + 1;
+    }
+
     // Enum definitions
     var ei: int = 0;
     while ei < mod.enumCount {
@@ -1364,22 +1400,28 @@ func CBackend_Generate(mod: *HirModule) -> String {
             while vi < en.variantCount {
                 let ev: *HirEnumVariant = &en.variants[vi];
                 if ev.fieldCount > 0 {
+                    // Prefer stored C type name (handles Tuple_*, named types)
+                    var ft0: String = CBackend_TypeToC(ev.fieldType0);
+                    if !String_Eq(ev.fieldTypeName0, "") { ft0 = ev.fieldTypeName0; }
+                    var ft1: String = CBackend_TypeToC(ev.fieldType1);
+                    if !String_Eq(ev.fieldTypeName1, "") { ft1 = ev.fieldTypeName1; }
                     if ev.fieldCount == 1 {
                         StringBuilder_Append(&cbe.sb, "    ");
-                        StringBuilder_Append(&cbe.sb, CBackend_TypeToC(ev.fieldType0));
+                        StringBuilder_Append(&cbe.sb, ft0);
                         StringBuilder_Append(&cbe.sb, " ");
                         StringBuilder_Append(&cbe.sb, ev.name);
                         StringBuilder_Append(&cbe.sb, "_0;\n");
                     } else {
+                        // Nested anonymous struct (layout matches bootstrap data.Variant.Variant_i)
                         StringBuilder_Append(&cbe.sb, "    struct {\n");
                         StringBuilder_Append(&cbe.sb, "        ");
-                        StringBuilder_Append(&cbe.sb, CBackend_TypeToC(ev.fieldType0));
+                        StringBuilder_Append(&cbe.sb, ft0);
                         StringBuilder_Append(&cbe.sb, " ");
                         StringBuilder_Append(&cbe.sb, ev.fieldName0);
                         StringBuilder_Append(&cbe.sb, ";\n");
                         if ev.fieldCount > 1 {
                             StringBuilder_Append(&cbe.sb, "        ");
-                            StringBuilder_Append(&cbe.sb, CBackend_TypeToC(ev.fieldType1));
+                            StringBuilder_Append(&cbe.sb, ft1);
                             StringBuilder_Append(&cbe.sb, " ");
                             StringBuilder_Append(&cbe.sb, ev.fieldName1);
                             StringBuilder_Append(&cbe.sb, ";\n");
@@ -1423,44 +1465,8 @@ func CBackend_Generate(mod: *HirModule) -> String {
         StringBuilder_Append(&cbe.sb, "\n");
     }
 
-    // Struct definitions (skip generics)
-    // Pass 1: emit structs with no value-typed struct fields (leaf structs)
-    si = 0;
-    while si < mod.structCount {
-        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        if CBE_StructHasValueStructField(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        CBE_EmitStructDef(cbe, &mod.structs[si]);
-        si = si + 1;
-    }
-    // Pass 2: emit structs that contain value-typed struct fields
-    si = 0;
-    while si < mod.structCount {
-        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        if !CBE_StructHasValueStructField(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        CBE_EmitStructDef(cbe, &mod.structs[si]);
-        si = si + 1;
-    }
-
     // Fat function-pointer typedefs (BuxFn_*) — before forward decls
     CBE_EmitFatFuncTypedefs(cbe, mod);
-
-    // Common tuple struct types
-    StringBuilder_Append(&cbe.sb, "/* Tuple types */\n");
-    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int {\n    int _0;\n    int _1;\n} Tuple_int_int;\n");
-    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int_int {\n    int _0;\n    int _1;\n    int _2;\n} Tuple_int_int_int;\n");
-    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_Empty {\n    char _pad;\n} Tuple_Empty;\n\n");
 
     // Env structs for capturing closures (no static instance — heap per value)
     var ei2: int = 0;

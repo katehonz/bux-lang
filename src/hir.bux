@@ -126,8 +126,10 @@ struct HirEnumVariant {
     fieldCount: int;
     fieldType0: int;
     fieldName0: String;
+    fieldTypeName0: String;  // C type name (e.g. "int", "Tuple_int_int")
     fieldType1: int;
     fieldName1: String;
+    fieldTypeName1: String;
 }
 
 // ---------------------------------------------------------------------------

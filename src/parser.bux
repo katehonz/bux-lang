@@ -148,6 +148,28 @@ func parserExpectIdentOrKeyword(p: *Parser, msg: String) -> LexToken {
 // Type parsing
 // ---------------------------------------------------------------------------
 
+// C-friendly type name from a TypeExpr (named, tuple, pointer, …).
+func parserTypeExprCName(te: *TypeExpr) -> String {
+    if te == null as *TypeExpr { return "int"; }
+    if te.kind == tekTuple {
+        if !String_Eq(te.typeName, "") { return te.typeName; }
+        return "Tuple_Empty";
+    }
+    if te.kind == tekPointer || te.kind == tekRef || te.kind == tekMutRef {
+        if te.pointerPointee != null as *TypeExpr {
+            return String_Concat(parserTypeExprCName(te.pointerPointee), "*");
+        }
+        return "void*";
+    }
+    if !String_Eq(te.typeName, "") {
+        if String_Eq(te.typeName, "String") || String_Eq(te.typeName, "str") {
+            return "const char*";
+        }
+        return te.typeName;
+    }
+    return "int";
+}
+
 func parserParseType(p: *Parser) -> *TypeExpr {
     let line: uint32 = parserCurToken(p).line;
     let col: uint32 = parserCurToken(p).column;
@@ -1953,14 +1975,14 @@ func parserParseEnumDecl(p: *Parser, isPublic: bool) -> *Decl {
         v.fieldTypeName0 = "";
         v.fieldTypeName1 = "";
 
-        // Optional (Type, Type) data
+        // Optional payload: (Type, Type) or (Tuple, ...) — full type expressions
         if parserMatch(p, tkLParen) {
-            let t0: LexToken = parserExpect(p, tkIdent, "expected data type");
-            v.fieldTypeName0 = t0.text;
+            let te0: *TypeExpr = parserParseType(p);
+            v.fieldTypeName0 = parserTypeExprCName(te0);
             v.fieldCount = 1;
             if parserMatch(p, tkComma) {
-                let t1: LexToken = parserExpect(p, tkIdent, "expected data type");
-                v.fieldTypeName1 = t1.text;
+                let te1: *TypeExpr = parserParseType(p);
+                v.fieldTypeName1 = parserTypeExprCName(te1);
                 v.fieldCount = 2;
             }
             discard parserExpect(p, tkRParen, "expected ')'");

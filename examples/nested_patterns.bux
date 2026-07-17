@@ -1,0 +1,79 @@
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+enum Pair {
+    Two(int, int),
+    One(int),
+    None
+}
+
+enum Box {
+    Val((int, int)),
+    Empty
+}
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+enum Shape {
+    Dot(Point),
+    Empty
+}
+
+func SumPair(p: Pair) -> int {
+    match p {
+        Pair::Two(a, b) => a + b,
+        Pair::One(x) => x,
+        Pair::None => 0
+    }
+}
+
+func SumBox(bx: Box) -> int {
+    match bx {
+        Box::Val((a, c)) => a + c,
+        Box::Empty => 0
+    }
+}
+
+func SumShape(sh: Shape) -> int {
+    match sh {
+        Shape::Dot(Point { x, y }) => x * 10 + y,
+        Shape::Empty => -1
+    }
+}
+
+func Main() -> int {
+    var p: Pair = Pair { tag: Pair_Two };
+    p.data.Two.Two_0 = 3;
+    p.data.Two.Two_1 = 4;
+    Test_AssertEqInt(SumPair(p), 7);
+
+    var p1: Pair = Pair { tag: Pair_One };
+    p1.data.One_0 = 42;
+    Test_AssertEqInt(SumPair(p1), 42);
+
+    var bx: Box = Box { tag: Box_Val };
+    bx.data.Val_0 = (10, 20);
+    Test_AssertEqInt(SumBox(bx), 30);
+
+    let pt: Point = Point { x: 2, y: 5 };
+    var sh: Shape = Shape { tag: Shape_Dot };
+    sh.data.Dot_0 = pt;
+    Test_AssertEqInt(SumShape(sh), 25);
+
+    let z: int = match bx {
+        Box::Val((a, c)) => {
+            let s: int = a + c;
+            s * 2
+        },
+        Box::Empty => 0
+    };
+    Test_AssertEqInt(z, 60);
+
+    PrintInt(SumPair(p));
+    PrintLine("");
+    Test_Pass("nested_patterns");
+    return 0;
+}

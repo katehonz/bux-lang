@@ -782,9 +782,12 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
     dataLoad.child1 = dataPtr;
     dataLoad.typeName = String_Concat(enumName, "_Data");
 
-    // Multi-field: nested struct data.Variant; single-field: flat data.Variant_0
+    // Multi-field: nested struct data.Variant (anonymous or Enum_Variant_Payload);
+    // single-field: flat data.Variant_0
     var payloadBase: *HirNode = dataLoad;
     if fieldCount > 1 {
+        let nestedName: String = String_Concat(String_Concat(enumName, "_"),
+            String_Concat(variantName, "_Payload"));
         let vPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         vPtr.kind = hFieldPtr;
         vPtr.line = line;
@@ -796,7 +799,7 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
         vLoad.line = line;
         vLoad.column = col;
         vLoad.child1 = vPtr;
-        vLoad.typeName = variantName;
+        vLoad.typeName = nestedName;
         payloadBase = vLoad;
     }
 
@@ -3977,10 +3980,12 @@ func HirLower_LowerModule(mod: *Module, sema: *Sema) -> *HirModule {
                         // Positional field names: Variant_0, Variant_1 (matches data.Variant_i / nested struct)
                         hm.enums[ei].variants[vi].fieldName0 = String_Concat(v.name, "_0");
                         hm.enums[ei].variants[vi].fieldType0 = Lcx_ResolveTypeKindFromName(v.fieldTypeName0);
+                        hm.enums[ei].variants[vi].fieldTypeName0 = v.fieldTypeName0;
                     }
                     if v.fieldCount > 1 {
                         hm.enums[ei].variants[vi].fieldName1 = String_Concat(v.name, "_1");
                         hm.enums[ei].variants[vi].fieldType1 = Lcx_ResolveTypeKindFromName(v.fieldTypeName1);
+                        hm.enums[ei].variants[vi].fieldTypeName1 = v.fieldTypeName1;
                     }
                 }
                 vi = vi + 1;

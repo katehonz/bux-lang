@@ -285,9 +285,21 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 17 (deeper nested patterns + multi-field enum layout)
+
+1. **Multi-field payload type:** nested struct `Enum_Variant_Payload` (suffix avoids clash with tag `Enum_Variant`)
+2. Bootstrap: full `resolveTypeExpr` for enum field types (tuples/pointers); sema synthetic field lookup on payload types; `data.Two.Two_0` construction
+3. LIR C backend: emit tuple typedefs **before** enums that embed them; topo deps for `*_Payload`
+4. Selfhost: enum variants parse full types (`parserParseType`) — fixes `Val((int,int))`; store `fieldTypeName*`; structs before enums (e.g. `Dot(Point)`)
+5. Patterns: `Pair::Two(a, b)`, `Box::Val((a, c))`, `Shape::Dot(Point { x, y })` + block arms
+6. Example: `examples/nested_patterns.bux`
+7. Verified: bootstrap + **buxc2** + selfhost-loop IDENTICAL ✓
+
+---
+
 ## Следващи стъпки
 
-1. Deeper nested patterns (`Some((a, b))` with multi-field enum layout ergonomics)
-2. LSP: wire hover types from real sema
-3. Generic type inference for `Iter_Map` without explicit `<T,U>`
-4. Match arm guards (`p if cond => …`)
+1. LSP: wire hover types from real sema
+2. Generic type inference for `Iter_Map` without explicit `<T,U>`
+3. Match arm guards (`p if cond => …`)
+4. Pattern binding name shadowing (C locals are function-scoped)

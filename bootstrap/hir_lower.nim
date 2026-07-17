@@ -180,7 +180,9 @@ proc matchPatternBindings(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
     let multiField = fieldTypes.len > 1
     var payloadBase = dataLoad
     if multiField:
-      let variantStructTy = makeNamed(variantName)
+      # Nested struct type Enum_Variant_Payload (avoids clash with tag Enum_Variant)
+      let nestedName = enumName & "_" & variantName & "_Payload"
+      let variantStructTy = makeNamed(nestedName)
       let variantPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: variantName,
                                typ: makePointer(variantStructTy), loc: loc)
       payloadBase = HirNode(kind: hLoad, loadPtr: variantPtr, typ: variantStructTy, loc: loc)
@@ -208,10 +210,12 @@ proc matchPatternBindings(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
         if entry.name == nf.name:
           fieldTy = entry.typ
           break
-      # Named payload fields live under data.VariantName.name
+      # Named payload fields live under data.Variant.name on Enum_Variant_Payload
+      let nestedName = enumName & "_" & variantName & "_Payload"
+      let variantStructTy = makeNamed(nestedName)
       let variantPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: variantName,
-                               typ: makePointer(makeNamed(variantName)), loc: loc)
-      let variantLoad = HirNode(kind: hLoad, loadPtr: variantPtr, typ: makeNamed(variantName), loc: loc)
+                               typ: makePointer(variantStructTy), loc: loc)
+      let variantLoad = HirNode(kind: hLoad, loadPtr: variantPtr, typ: variantStructTy, loc: loc)
       let fieldPtr = HirNode(kind: hFieldPtr, fieldPtrBase: variantLoad, fieldName: nf.name,
                              typ: makePointer(fieldTy), loc: loc)
       let fieldLoad = HirNode(kind: hLoad, loadPtr: fieldPtr, typ: fieldTy, loc: loc)
@@ -2217,33 +2221,29 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
       for v in decl.declEnumVariants:
         var fields: seq[Type] = @[]
         for f in v.fields:
-          var fType = makeUnknown()
-          if f != nil and f.kind == tekNamed:
-            case f.typeName
-            of "int", "int32": fType = makeInt()
-            of "int64": fType = makeInt64()
-            of "float64": fType = makeFloat64()
-            of "float32": fType = makeFloat32()
-            of "bool": fType = makeBool()
-            of "String", "str": fType = makeStr()
-            else: fType = makeNamed(f.typeName)
-          fields.add(fType)
+          # Full resolve — supports tuples, pointers, named types, etc.
+          fields.add(if f != nil: ctx.resolveTypeExpr(f) else: makeUnknown())
         
         var namedFields: seq[tuple[name: string, typ: Type]] = @[]
         for nf in v.namedFields:
-          var fType = makeUnknown()
-          if nf.ftype != nil and nf.ftype.kind == tekNamed:
-            case nf.ftype.typeName
-            of "int", "int32": fType = makeInt()
-            of "int64": fType = makeInt64()
-            of "float64": fType = makeFloat64()
-            of "float32": fType = makeFloat32()
-            of "bool": fType = makeBool()
-            of "String", "str": fType = makeStr()
-            else: fType = makeNamed(nf.ftype.typeName)
+          let fType = if nf.ftype != nil: ctx.resolveTypeExpr(nf.ftype) else: makeUnknown()
           namedFields.add((nf.name, fType))
         
         variants.add(HirEnumVariant(name: v.name, fields: fields, namedFields: namedFields))
+        # Multi-field / named-field variants get a named nested struct type
+        # Enum_Variant_Payload (suffix avoids clash with tag constant Enum_Variant).
+        if fields.len > 1:
+          var nestedFields: seq[tuple[name: string, typ: Type]] = @[]
+          for i, ft in fields:
+            nestedFields.add((v.name & "_" & $i, ft))
+          let nestedName = decl.declEnumName & "_" & v.name & "_Payload"
+          structs.add((nestedName, nestedFields))
+        elif namedFields.len > 0:
+          var nestedFields: seq[tuple[name: string, typ: Type]] = @[]
+          for nf in namedFields:
+            nestedFields.add((nf.name, nf.typ))
+          let nestedName = decl.declEnumName & "_" & v.name & "_Payload"
+          structs.add((nestedName, nestedFields))
       enums.add((decl.declEnumName, variants))
     of dkConst:
       let value = ctx.lowerExpr(decl.declConstValue)
