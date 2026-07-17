@@ -17,7 +17,7 @@
 | Gradual ownership | `@[Checked]`, `&`/`&mut`, move, Drop | ★★★☆☆ (basic) |
 | Concurrency | M:N tasks + channels + async | ★★★★☆ |
 | Stdlib | Array/Map/Set/String/Iter HOF разширени | ★★★★☆ |
-| Tooling | `test-errors`, LSP diagnostics via `buxc check` | ★★★☆☆ |
+| Tooling | `test-errors`, LSP diagnostics + hover/def/outline | ★★★★☆ |
 | Ecosystem / registry | path+git deps; няма централен registry | ★☆☆☆☆ |
 | Документация | README + QUALITY_PLAN синхронизирани (2026-07-15) | ★★★★☆ |
 
@@ -75,13 +75,13 @@
 
 ### D — Tooling (P1)
 
-| # | Задача | Защо |
-|---|--------|------|
-| D.1 | LSP: hover, go-to-def, diagnostics (wire към sema) | IDE = adoption |
-| D.2 | `bux fmt` стабилен + CI check | Единен style |
-| D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly |
-| D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib |
-| D.5 | Golden tests за stdlib modules | Регресии без изненади |
+| # | Задача | Защо | Статус |
+|---|--------|------|--------|
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ hover/def/outline + `buxc` diags (lightweight index; full sema later) |
+| D.2 | `bux fmt` стабилен + CI check | Единен style | ⏳ |
+| D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ⏳ partial (`bux test` exists) |
+| D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ⏳ |
+| D.5 | Golden tests за stdlib modules | Регресии без изненади | ⏳ |
 
 ### E — Ecosystem & v1.0 (P2)
 
@@ -233,12 +233,23 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 6. Example: `examples/string_interp.bux` (name/int/bool/plain/escaped braces)
 7. Verified: bootstrap + **buxc2** + all 41 examples + error goldens + **selfhost-loop IDENTICAL ✓**
 
+## Сесия 13 (LSP hover / go-to-def / outline — D.1)
+
+1. **Richer symbol index:** `func` signatures (`params` + `-> Ret`), `let`/`var`/`const` with types, `struct`/`enum`/`union`/`interface`/`type`/`module`
+2. **Skip comments/strings** during scan (no false `func` hits)
+3. **Hover:** markdown ```bux signature``` + kind; accurate word range
+4. **Go-to-definition:** current file + workspace index (scan `.bux` under rootUri)
+5. **Document symbols** (outline) via `textDocument/documentSymbol`
+6. **didChange** refreshes symbols immediately; **didSave/didOpen** still run `buxc check` diagnostics
+7. **Fix:** responses write to **stdout** (was writing to stdin stream → broken pipe)
+8. Version `bux-lsp` **0.2.0**; smoke-tested via JSON-RPC
+
 ---
 
 ## Следващи стъпки
 
-1. **LSP hover / go-to-def** (над текущите diagnostics)
-2. **Generic Iter map** (не само int), ако monomorphization с `func` params е стабилна
-3. Struct/tuple patterns (`Point { x, y }`, `(a, b)`) + nested bindings
-4. Match arm multi-stmt bodies (beyond single expr)
+1. **Generic Iter map** (не само int), ако monomorphization с `func` params е стабилна
+2. Struct/tuple patterns (`Point { x, y }`, `(a, b)`) + nested bindings
+3. Match arm multi-stmt bodies (beyond single expr)
+4. LSP: wire hover types from real sema (replace lightweight index where possible)
 

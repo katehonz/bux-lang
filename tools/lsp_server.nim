@@ -43,11 +43,13 @@ proc readMessage(stream: FileStream): JsonNode =
     return nil
 
 proc sendMessage(stream: FileStream, msg: JsonNode) =
+  ## Always write responses on stdout (stream arg kept for call-site compatibility).
+  discard stream
   let body = $msg
   let header = "Content-Length: " & $body.len & "\r\n\r\n"
-  stream.write(header)
-  stream.write(body)
-  stream.flush()
+  stdout.write(header)
+  stdout.write(body)
+  stdout.flushFile()
 
 proc sendResponse(stream: FileStream, id: JsonNode, resultNode: JsonNode) =
   sendMessage(stream, %*{
@@ -75,17 +77,24 @@ proc sendNotification(stream: FileStream, methodName: string, paramsNode: JsonNo
 # ---------------------------------------------------------------------------
 
 type
-  SymbolInfo = tuple[line: int, col: int, kind: string, typeName: string]
+  SymbolInfo = object
+    line: int          ## 0-based
+    col: int           ## 0-based start of name
+    kind: string       ## function | variable | struct | enum | …
+    detail: string     ## signature / type annotation
+    container: string  ## optional parent (module / type)
   DocumentState = ref object
     uri: string
     content: string
     version: int
     symbols: Table[string, SymbolInfo]
+    ordered: seq[string]   ## declaration order for outline
 
 var
   documents = initTable[string, DocumentState]()
   rootPath = ""
   rootUri = ""
+  workspaceSymbols = initTable[string, tuple[uri: string, info: SymbolInfo]]()
 
 proc getDoc(uri: string): DocumentState =
   if not documents.hasKey(uri):
@@ -99,80 +108,223 @@ proc getDoc(uri: string): DocumentState =
 proc uriToPath(uri: string): string =
   if uri.startsWith("file://"):
     result = uri[7..^1]
+    # Decode minimal %XX (space)
+    result = result.replace("%20", " ")
   else:
     result = uri
 
+proc pathToUri(path: string): string =
+  if path.startsWith("file://"):
+    return path
+  result = "file://" & path
+
 # ---------------------------------------------------------------------------
-# Simple analysis: extract symbols via regex (no full compiler integration yet)
+# Symbol analysis — lightweight scan (not full sema; good enough for hover/def)
 # ---------------------------------------------------------------------------
 
-proc analyzeFile(path: string, content: string): DocumentState =
-  result = DocumentState(uri: "file://" & path, content: content)
-  
-  # Simple symbol extraction: find func/var/let/struct/enum declarations
-  var idx = 0
+proc isIdentChar(c: char): bool =
+  c in {'a'..'z', 'A'..'Z', '0'..'9', '_'}
+
+proc isIdentStart(c: char): bool =
+  c in {'a'..'z', 'A'..'Z', '_'}
+
+proc skipWs(s: string, i: var int) =
+  while i < s.len and s[i] in {' ', '\t', '\r'}:
+    inc i
+
+proc readIdent(s: string, i: var int): string =
+  result = ""
+  if i >= s.len or not isIdentStart(s[i]):
+    return
+  while i < s.len and isIdentChar(s[i]):
+    result.add(s[i])
+    inc i
+
+proc lineColAt(content: string, pos: int): tuple[line, col: int] =
   var line = 0
   var col = 0
-  for ch in content:
-    if ch == '\n':
-      line += 1
-      col = 0
-      idx += 1
-      continue
-    col += 1
-    idx += 1
-  
-  # Use string-based pattern matching for common Bux declarations
   var i = 0
-  var currLine = 0
-  var currCol = 0
+  while i < pos and i < content.len:
+    if content[i] == '\n':
+      inc line
+      col = 0
+    else:
+      inc col
+    inc i
+  (line, col)
+
+proc readTypeish(s: string, i: var int): string =
+  ## Read a rough type expression: Name, *Name, []Name, func(...)->T, generics
+  skipWs(s, i)
+  if i >= s.len:
+    return ""
+  result = ""
+  var depth = 0
+  while i < s.len:
+    let c = s[i]
+    if c in {'\n', ';', '{', '=', ','} and depth == 0:
+      break
+    if c == '(' or c == '[' or c == '<':
+      inc depth
+    elif c == ')' or c == ']' or c == '>':
+      if depth > 0: dec depth
+    result.add(c)
+    inc i
+  result = result.strip()
+
+proc addSymbol(doc: var DocumentState, name: string, info: SymbolInfo) =
+  if name.len == 0:
+    return
+  # Keep first declaration (don't overwrite outer with locals later — last wins for locals is OK for single-file)
+  doc.symbols[name] = info
+  if name notin doc.ordered:
+    doc.ordered.add(name)
+  workspaceSymbols[name] = (uri: doc.uri, info: info)
+
+proc analyzeFile(path: string, content: string): DocumentState =
+  result = DocumentState(uri: pathToUri(path), content: content)
+  result.symbols = initTable[string, SymbolInfo]()
+  result.ordered = @[]
+
+  var i = 0
+  var inLineComment = false
+  var inBlockComment = false
+  var inString = false
+  var stringDelim = '\0'
+  var escape = false
+
   while i < content.len:
     let c = content[i]
-    if c == '\n':
-      currLine += 1
-      currCol = 0
-      i += 1
+
+    # Comments / strings (best-effort skip so "func" in strings is ignored)
+    if inLineComment:
+      if c == '\n':
+        inLineComment = false
+      inc i
       continue
-    currCol += 1
-    
-    # Match "func Name"
-    if content[i..min(i+4, content.len-1)] == "func ":
-      var start = i + 5
-      var name = ""
-      while start < content.len and content[start] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
-        name &= content[start]
-        start += 1
-      if name != "":
-        result.symbols[name] = (line: currLine, col: currCol + 5, kind: "function", typeName: "")
-        i = start
+    if inBlockComment:
+      if c == '*' and i + 1 < content.len and content[i + 1] == '/':
+        inBlockComment = false
+        i += 2
         continue
-    
-    # Match "var Name" or "let Name"
-    if i + 3 < content.len and (content[i..i+2] == "var " or content[i..i+2] == "let "):
-      let kwEnd = if content[i] == 'v': i + 4 else: i + 4
-      var name = ""
-      var start = kwEnd
-      while start < content.len and content[start] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
-        name &= content[start]
-        start += 1
-      if name != "" and name != "":
-        result.symbols[name] = (line: currLine, col: currCol + kwEnd - i, kind: "variable", typeName: "")
-        i = start
-        continue
-    
-    # Match "struct Name"
-    if i + 6 < content.len and content[i..i+5] == "struct ":
-      var name = ""
-      var start = i + 7
-      while start < content.len and content[start] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
-        name &= content[start]
-        start += 1
-      if name != "":
-        result.symbols[name] = (line: currLine, col: currCol + 7, kind: "struct", typeName: "")
-        i = start
-        continue
-    
-    i += 1
+      inc i
+      continue
+    if inString:
+      if escape:
+        escape = false
+      elif c == '\\':
+        escape = true
+      elif c == stringDelim:
+        inString = false
+      inc i
+      continue
+
+    if c == '/' and i + 1 < content.len and content[i + 1] == '/':
+      inLineComment = true
+      i += 2
+      continue
+    if c == '/' and i + 1 < content.len and content[i + 1] == '*':
+      inBlockComment = true
+      i += 2
+      continue
+    if c in {'"', '`'} or (c == 'f' and i + 1 < content.len and content[i + 1] == '"'):
+      inString = true
+      if c == 'f':
+        stringDelim = '"'
+        i += 2
+      else:
+        stringDelim = c
+        inc i
+      continue
+
+    # Keyword must be at token boundary
+    template atWord(kw: string): bool =
+      (i + kw.len <= content.len and content[i ..< i + kw.len] == kw and
+       (i == 0 or not isIdentChar(content[i - 1])) and
+       (i + kw.len >= content.len or not isIdentChar(content[i + kw.len])))
+
+    if atWord("func"):
+      let kwPos = i
+      i += 4
+      skipWs(content, i)
+      let nameStart = i
+      let name = readIdent(content, i)
+      if name.len > 0:
+        let (line, col) = lineColAt(content, nameStart)
+        # signature: from "func" through params + optional return type, stop at '{'
+        var j = nameStart
+        var depth = 0
+        var sigEnd = j
+        while j < content.len:
+          let ch = content[j]
+          if ch == '(' : inc depth
+          elif ch == ')' :
+            if depth > 0: dec depth
+            if depth == 0:
+              sigEnd = j + 1
+              var k = j + 1
+              skipWs(content, k)
+              if k + 1 < content.len and content[k] == '-' and content[k + 1] == '>':
+                k += 2
+                discard readTypeish(content, k)
+                sigEnd = k
+              break
+          elif ch == '{' or ch == '\n' and depth == 0 and j > nameStart + name.len:
+            # no-param or broken — still capture name
+            if sigEnd <= nameStart:
+              sigEnd = i
+            break
+          inc j
+        var sig = content[kwPos ..< min(sigEnd, content.len)].strip()
+        # collapse whitespace
+        sig = sig.replace("\n", " ").multiReplace([("  ", " "), ("  ", " "), ("  ", " ")])
+        addSymbol(result, name, SymbolInfo(
+          line: line, col: col, kind: "function", detail: sig, container: ""))
+      continue
+
+    if atWord("let") or atWord("var") or atWord("const"):
+      let kw = if content[i] == 'l': "let" elif content[i] == 'c': "const" else: "var"
+      let kind = if kw == "const": "constant" else: "variable"
+      i += kw.len
+      skipWs(content, i)
+      let nameStart = i
+      let name = readIdent(content, i)
+      if name.len > 0:
+        let (line, col) = lineColAt(content, nameStart)
+        skipWs(content, i)
+        var typ = ""
+        if i < content.len and content[i] == ':':
+          inc i
+          typ = readTypeish(content, i)
+        let detail = if typ.len > 0: kw & " " & name & ": " & typ else: kw & " " & name
+        addSymbol(result, name, SymbolInfo(
+          line: line, col: col, kind: kind, detail: detail, container: ""))
+      continue
+
+    var matchedTypeKw = false
+    for (kw, kind) in [("struct", "struct"), ("enum", "enum"), ("union", "struct"),
+                       ("interface", "interface"), ("type", "type"), ("module", "module")]:
+      if atWord(kw):
+        matchedTypeKw = true
+        i += kw.len
+        skipWs(content, i)
+        let nameStart = i
+        let name = readIdent(content, i)
+        if name.len > 0:
+          let (line, col) = lineColAt(content, nameStart)
+          var detail = kw & " " & name
+          if kind == "type":
+            skipWs(content, i)
+            if i < content.len and content[i] == '=':
+              inc i
+              let rhs = readTypeish(content, i)
+              if rhs.len > 0:
+                detail = "type " & name & " = " & rhs
+          addSymbol(result, name, SymbolInfo(
+            line: line, col: col, kind: kind, detail: detail, container: ""))
+        break
+    if not matchedTypeKw:
+      inc i
 
 # ---------------------------------------------------------------------------
 # Diagnostics — run `buxc check` when available and parse Rust-style errors
@@ -317,8 +469,29 @@ proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
   let path = uriToPath(doc.uri)
   let updated = analyzeFile(path, doc.content)
   doc.symbols = updated.symbols
+  doc.ordered = updated.ordered
   let diags = runBuxcDiagnostics(path, doc.content)
   publishDiagnostics(stream, doc.uri, diags)
+
+proc scanWorkspace(dir: string, depth = 0) =
+  ## Index .bux files under the workspace for cross-file go-to-def / hover.
+  if depth > 4 or dir.len == 0 or not dirExists(dir):
+    return
+  let base = dir.extractFilename
+  if base in [".git", "build", "examples_pkg", "node_modules", "vendor"]:
+    return
+  try:
+    for kind, path in walkDir(dir):
+      if kind == pcDir:
+        scanWorkspace(path, depth + 1)
+      elif kind == pcFile and path.endsWith(".bux"):
+        try:
+          let content = readFile(path)
+          discard analyzeFile(path, content)
+        except CatchableError:
+          discard
+  except CatchableError:
+    discard
 
 # ---------------------------------------------------------------------------
 # Completion
@@ -337,37 +510,67 @@ proc findWordAt(content: string, lineNum: int, col: int): string =
   if start < endC:
     result = l[start..endC-1]
 
+proc ensureAnalyzed(doc: DocumentState) =
+  if doc.content.len == 0:
+    return
+  if doc.symbols.len == 0:
+    let updated = analyzeFile(uriToPath(doc.uri), doc.content)
+    doc.symbols = updated.symbols
+    doc.ordered = updated.ordered
+
+proc completionKind(kind: string): int =
+  case kind
+  of "function": 3
+  of "variable": 6
+  of "constant": 14
+  of "struct": 22
+  of "enum": 13
+  of "interface": 8
+  of "type": 25
+  of "module": 9
+  else: 6
+
 proc handleCompletion(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   let uri = paramsNode["textDocument"]["uri"].getStr()
   let position = paramsNode["position"]
   let lineNum = position["line"].getInt()
   let col = position["character"].getInt()
-  
+
   let doc = getDoc(uri)
   if doc.content == "":
     sendResponse(stream, id, %*{"isIncomplete": false, "items": []})
     return
-  
-  if doc.symbols.len == 0:
-    let updated = analyzeFile(uriToPath(uri), doc.content)
-    doc.symbols = updated.symbols
-  
+
+  ensureAnalyzed(doc)
   let prefix = findWordAt(doc.content, lineNum, col)
-  
+
   var items = newJArray()
   for name, info in doc.symbols.pairs:
     if prefix == "" or name.toLowerAscii().startsWith(prefix.toLowerAscii()):
       items.add(%*{
         "label": name,
-        "kind": 6,
-        "detail": info.typeName,
-        "documentation": info.kind & " [" & info.typeName & "]"
+        "kind": completionKind(info.kind),
+        "detail": info.detail,
+        "documentation": {"kind": "markdown", "value": "```bux\n" & info.detail & "\n```\n\n_" & info.kind & "_"}
       })
-  
+
+  # Also offer workspace symbols (other open / scanned files)
+  for name, ws in workspaceSymbols.pairs:
+    if doc.symbols.hasKey(name):
+      continue
+    if prefix == "" or name.toLowerAscii().startsWith(prefix.toLowerAscii()):
+      items.add(%*{
+        "label": name,
+        "kind": completionKind(ws.info.kind),
+        "detail": ws.info.detail & "  (workspace)",
+        "documentation": {"kind": "markdown", "value": "```bux\n" & ws.info.detail & "\n```"}
+      })
+
   let keywords = ["func", "var", "let", "if", "else", "while", "for", "return",
                   "struct", "enum", "union", "interface", "extend", "module",
                   "import", "true", "false", "null", "self", "match", "break",
-                  "continue", "async", "await", "spawn", "const", "type"]
+                  "continue", "async", "await", "spawn", "const", "type",
+                  "defer", "switch", "case", "default", "pub", "own"]
   for kw in keywords:
     if prefix == "" or kw.startsWith(prefix):
       items.add(%*{
@@ -375,7 +578,7 @@ proc handleCompletion(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
         "kind": 14,
         "detail": "keyword"
       })
-  
+
   sendResponse(stream, id, %*{"isIncomplete": false, "items": items})
 
 # ---------------------------------------------------------------------------
@@ -387,21 +590,21 @@ proc handleDefinition(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   let position = paramsNode["position"]
   let lineNum = position["line"].getInt()
   let col = position["character"].getInt()
-  
+
   let doc = getDoc(uri)
   if doc.content == "":
     sendResponse(stream, id, %*[])
     return
-  
-  if doc.symbols.len == 0:
-    let updated = analyzeFile(uriToPath(uri), doc.content)
-    doc.symbols = updated.symbols
-  
+
+  ensureAnalyzed(doc)
   let word = findWordAt(doc.content, lineNum, col)
-  
+  if word.len == 0:
+    sendResponse(stream, id, %*[])
+    return
+
+  var locs = newJArray()
   if doc.symbols.hasKey(word):
     let info = doc.symbols[word]
-    var locs = newJArray()
     locs.add(%*{
       "uri": uri,
       "range": {
@@ -409,41 +612,113 @@ proc handleDefinition(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
         "end": {"line": info.line, "character": info.col + word.len}
       }
     })
-    sendResponse(stream, id, locs)
-  else:
-    sendResponse(stream, id, %*[])
+  elif workspaceSymbols.hasKey(word):
+    let ws = workspaceSymbols[word]
+    locs.add(%*{
+      "uri": ws.uri,
+      "range": {
+        "start": {"line": ws.info.line, "character": ws.info.col},
+        "end": {"line": ws.info.line, "character": ws.info.col + word.len}
+      }
+    })
+  sendResponse(stream, id, locs)
 
 # ---------------------------------------------------------------------------
 # Hover
 # ---------------------------------------------------------------------------
 
 proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## Hover with accurate range for the word under the cursor.
   let uri = paramsNode["textDocument"]["uri"].getStr()
   let position = paramsNode["position"]
   let lineNum = position["line"].getInt()
   let col = position["character"].getInt()
-  
+
   let doc = getDoc(uri)
   if doc.content == "":
-    sendResponse(stream, id, %*{})
+    sendResponse(stream, id, newJNull())
     return
-  
-  if doc.symbols.len == 0:
-    let updated = analyzeFile(uriToPath(uri), doc.content)
-    doc.symbols = updated.symbols
-  
-  let word = findWordAt(doc.content, lineNum, col)
-  
+
+  ensureAnalyzed(doc)
+  let lines = doc.content.split("\n")
+  if lineNum >= lines.len:
+    sendResponse(stream, id, newJNull())
+    return
+  let l = lines[lineNum]
+  var start = min(col, l.len)
+  var endC = start
+  while start > 0 and l[start - 1] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+    dec start
+  while endC < l.len and l[endC] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+    inc endC
+  if start >= endC:
+    sendResponse(stream, id, newJNull())
+    return
+  let word = l[start ..< endC]
+
+  var info: SymbolInfo
+  var found = false
   if doc.symbols.hasKey(word):
-    let info = doc.symbols[word]
-    sendResponse(stream, id, %*{
-      "contents": {
-        "kind": "markdown",
-        "value": "**" & word & "**: " & info.typeName & "\n\n" & info.kind
+    info = doc.symbols[word]
+    found = true
+  elif workspaceSymbols.hasKey(word):
+    info = workspaceSymbols[word].info
+    found = true
+  if not found:
+    sendResponse(stream, id, newJNull())
+    return
+
+  let md = "```bux\n" & info.detail & "\n```\n\n_" & info.kind & "_"
+  sendResponse(stream, id, %*{
+    "contents": {"kind": "markdown", "value": md},
+    "range": {
+      "start": {"line": lineNum, "character": start},
+      "end": {"line": lineNum, "character": endC}
+    }
+  })
+
+# ---------------------------------------------------------------------------
+# Document symbols (outline)
+# ---------------------------------------------------------------------------
+
+proc symbolKindLsp(kind: string): int =
+  case kind
+  of "function": 12
+  of "variable": 13
+  of "constant": 14
+  of "struct": 23
+  of "enum": 10
+  of "interface": 11
+  of "type": 5
+  of "module": 2
+  else: 13
+
+proc handleDocumentSymbol(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let doc = getDoc(uri)
+  if doc.content == "":
+    sendResponse(stream, id, %*[])
+    return
+  ensureAnalyzed(doc)
+  var arr = newJArray()
+  for name in doc.ordered:
+    if not doc.symbols.hasKey(name):
+      continue
+    let info = doc.symbols[name]
+    arr.add(%*{
+      "name": name,
+      "detail": info.detail,
+      "kind": symbolKindLsp(info.kind),
+      "range": {
+        "start": {"line": info.line, "character": 0},
+        "end": {"line": info.line, "character": info.col + name.len}
+      },
+      "selectionRange": {
+        "start": {"line": info.line, "character": info.col},
+        "end": {"line": info.line, "character": info.col + name.len}
       }
     })
-  else:
-    sendResponse(stream, id, %*{})
+  sendResponse(stream, id, arr)
 
 # ---------------------------------------------------------------------------
 # Main message loop
@@ -462,19 +737,23 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
     sendResponse(stream, id, %*{
       "capabilities": {
         "textDocumentSync": 1,
-        "completionProvider": {"triggerCharacters": ["."]},
+        "completionProvider": {"triggerCharacters": [".", ":"]},
         "definitionProvider": true,
-        "hoverProvider": true
+        "hoverProvider": true,
+        "documentSymbolProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.1.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.2.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
     if paramsNode.hasKey("rootUri") and paramsNode["rootUri"].kind != JNull:
       rootUri = paramsNode["rootUri"].getStr()
-  
+      if rootPath.len == 0:
+        rootPath = uriToPath(rootUri)
+
   of "initialized":
-    discard
+    if rootPath.len > 0:
+      scanWorkspace(rootPath)
   
   of "shutdown":
     sendResponse(stream, id, %*{})
@@ -501,22 +780,29 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
       doc.content = changes[changes.len - 1]["text"].getStr()
     if td.hasKey("version"):
       doc.version = td["version"].getInt()
-  
+    # Refresh symbols immediately (no buxc — diagnostics on save)
+    let updated = analyzeFile(uriToPath(uri), doc.content)
+    doc.symbols = updated.symbols
+    doc.ordered = updated.ordered
+
   of "textDocument/didSave":
     let td = paramsNode["textDocument"]
     let uri = td["uri"].getStr()
     let doc = getDoc(uri)
     analyzeAndPublishDiagnostics(stream, doc)
-  
+
   of "textDocument/completion":
     handleCompletion(stream, id, paramsNode)
-  
+
   of "textDocument/definition":
     handleDefinition(stream, id, paramsNode)
-  
+
   of "textDocument/hover":
     handleHover(stream, id, paramsNode)
-  
+
+  of "textDocument/documentSymbol":
+    handleDocumentSymbol(stream, id, paramsNode)
+
   else:
     if id != nil:
       sendError(stream, id, -32601, "method not found: " & methodName)
