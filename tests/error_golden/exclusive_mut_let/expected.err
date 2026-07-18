@@ -1,0 +1,7 @@
+error: type errors in project
+error: cannot mutably borrow 'x': already mutably borrowed
+  --> FILE:5:23
+    |
+ 5 |     let b: &mut int = &x;
+    |                        ^
+   = help: only one active '&mut' borrow is allowed at a time; end the borrow before reuse

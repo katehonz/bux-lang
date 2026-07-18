@@ -1,0 +1,83 @@
+// Match arm guards: `p if cond => body`
+// Bindings from the pattern are in scope for the guard expression.
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+enum Option {
+    Some(int),
+    None
+}
+
+func Classify(n: int) -> int {
+    return match n {
+        x if x < 0 => -1,
+        x if x == 0 => 0,
+        x if x > 0 => 1,
+        _ => 99
+    };
+}
+
+func Main() -> int {
+    // Ident + guard
+    Test_AssertEqInt(Classify(-5), -1);
+    Test_AssertEqInt(Classify(0), 0);
+    Test_AssertEqInt(Classify(7), 1);
+
+    // Literal + guard (second arm only when n is even)
+    let n: int = 4;
+    let a: int = match n {
+        4 if n % 2 == 0 => 40,
+        4 => 41,
+        _ => -1
+    };
+    Test_AssertEqInt(a, 40);
+
+    let m: int = 4;
+    let b: int = match m {
+        4 if m % 2 != 0 => 40,
+        4 => 41,
+        _ => -1
+    };
+    Test_AssertEqInt(b, 41);
+
+    // Range + guard
+    let k: int = 5;
+    let c: int = match k {
+        1..10 if k % 2 == 0 => 100,
+        1..10 => 101,
+        _ => -1
+    };
+    Test_AssertEqInt(c, 101);
+
+    let j: int = 6;
+    let d: int = match j {
+        1..10 if j % 2 == 0 => 100,
+        1..10 => 101,
+        _ => -1
+    };
+    Test_AssertEqInt(d, 100);
+
+    // Enum payload binding used in guard
+    let opt: Option = Option { tag: Option_Some };
+    opt.data.Some_0 = 15;
+    let e: int = match opt {
+        Option::Some(v) if v > 10 => v * 2,
+        Option::Some(v) => v,
+        Option::None => 0
+    };
+    Test_AssertEqInt(e, 30);
+
+    let small: Option = Option { tag: Option_Some };
+    small.data.Some_0 = 3;
+    let f: int = match small {
+        Option::Some(v) if v > 10 => v * 2,
+        Option::Some(v) => v,
+        Option::None => 0
+    };
+    Test_AssertEqInt(f, 3);
+
+    PrintInt(e);
+    PrintLine("");
+    Test_Pass("match_guards");
+    return 0;
+}

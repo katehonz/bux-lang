@@ -66,6 +66,7 @@ const pkRange: int = 3;
 const pkEnum: int = 4;
 const pkStruct: int = 5;
 const pkTuple: int = 6;
+const pkGuarded: int = 7;    // `p if cond` — patChild1 = inner, patGuardExpr = condition
 
 struct Pattern {
     kind: int,
@@ -78,10 +79,11 @@ struct Pattern {
     patEnumPath: String,     // for pkEnum: "Enum::Variant"
     patStructName: String,   // for pkStruct (type name)
     patFieldName: String,    // for struct field entry: field name in Point { x: a }
-    patChild1: *Pattern,     // range lo / nested
+    patChild1: *Pattern,     // range lo / nested / guarded inner
     patChild2: *Pattern,     // range hi / nested
     patArgs: *Pattern,       // pkEnum/pkTuple/pkStruct field list (head)
     patNext: *Pattern,       // next sibling in patArgs list
+    patGuardExpr: *Expr,     // for pkGuarded: the `if` condition
 }
 
 // Match arm: pattern => body

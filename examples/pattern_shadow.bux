@@ -1,0 +1,50 @@
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+import Std::Io::{PrintInt, PrintLine};
+
+enum Option {
+    Some(int),
+    None
+}
+
+func Main() -> int {
+    let a: Option = Option { tag: Option_Some };
+    a.data.Some_0 = 10;
+    let b: Option = Option { tag: Option_Some };
+    b.data.Some_0 = 20;
+
+    // Same binding name `v` in two sequential matches
+    let x: int = match a {
+        Option::Some(v) => v + 1,
+        Option::None => 0
+    };
+    let y: int = match b {
+        Option::Some(v) => v + 2,
+        Option::None => 0
+    };
+    Test_AssertEqInt(x, 11);
+    Test_AssertEqInt(y, 22);
+
+    // Nested: outer and inner both bind `n`
+    let nested: int = match a {
+        Option::Some(n) => match b {
+            Option::Some(n) => n,  // should be b's payload (20), not a's
+            Option::None => -1
+        },
+        Option::None => -2
+    };
+    Test_AssertEqInt(nested, 20);
+
+    // Shadow outer let with pattern binding
+    let v: int = 99;
+    let z: int = match a {
+        Option::Some(v) => v,  // pattern v should be 10, not 99
+        Option::None => 0
+    };
+    Test_AssertEqInt(z, 10);
+    Test_AssertEqInt(v, 99);  // outer v unchanged
+
+    PrintInt(nested);
+    PrintLine("");
+    Test_Pass("pat_shadow");
+    return 0;
+}

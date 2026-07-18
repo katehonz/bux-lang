@@ -1,4 +1,4 @@
-import std/[strformat, tables, strutils]
+import std/[strformat, tables, strutils, sets]
 import ast, types, scope, source_location, token
 
 type
@@ -44,6 +44,12 @@ type
     checkedFunc*: bool  ## true inside @[Checked] function
     currentFuncIsAsync*: bool  ## true inside async func
     movedVars*: seq[string]  ## variables moved in current checked function
+    ## Active exclusive borrows: source var → borrow site (let-bound &mut lasts for rest of fn)
+    activeMutBorrows*: Table[string, SourceLocation]
+    ## Active shared borrows of a source var (count of live &T lets)
+    activeSharedBorrows*: Table[string, int]
+    ## When true, ekIdent skips use-while-borrowed (we're forming `&x` itself)
+    suppressUseWhileBorrow*: bool
     currentRetType*: Type    ## return type of the function being checked
     closureDepth*: int       ## nesting depth inside closures
     currentClosureExpr*: Expr  ## current closure being analyzed
@@ -100,6 +106,63 @@ proc hasErrors*(res: SemaResult): bool =
     if d.severity == sdsError:
       return true
   return false
+
+# ---------------------------------------------------------------------------
+# Borrow checker helpers (@[Checked] exclusive &mut / shared & data-flow)
+# ---------------------------------------------------------------------------
+
+proc extractBorrowedIdent*(e: Expr): string =
+  ## Identify the source variable of `&x`, `borrow x`, `borrow &mut x`, etc.
+  if e == nil: return ""
+  case e.kind
+  of ekUnary:
+    if e.exprUnaryOp == tkAmp and e.exprUnaryOperand != nil:
+      if e.exprUnaryOperand.kind == ekIdent:
+        return e.exprUnaryOperand.exprIdent
+      if e.exprUnaryOperand.kind == ekUnary and e.exprUnaryOperand.exprUnaryOp == tkAmp and
+         e.exprUnaryOperand.exprUnaryOperand != nil and
+         e.exprUnaryOperand.exprUnaryOperand.kind == ekIdent:
+        return e.exprUnaryOperand.exprUnaryOperand.exprIdent
+  of ekBorrow:
+    return extractBorrowedIdent(e.exprBorrowOperand)
+  else:
+    discard
+  return ""
+
+proc checkCreateBorrow(sema: var Sema, varName: string, isMut: bool, loc: SourceLocation) =
+  ## Register a long-lived (let-bound) borrow of `varName` in a @[Checked] function.
+  if not sema.checkedFunc or varName.len == 0:
+    return
+  if isMut:
+    if sema.activeMutBorrows.hasKey(varName):
+      sema.emitError(loc, &"cannot mutably borrow '{varName}': already mutably borrowed")
+      return
+    if sema.activeSharedBorrows.getOrDefault(varName, 0) > 0:
+      sema.emitError(loc, &"cannot mutably borrow '{varName}' while it is shared-borrowed")
+      return
+    sema.activeMutBorrows[varName] = loc
+  else:
+    if sema.activeMutBorrows.hasKey(varName):
+      sema.emitError(loc, &"cannot shared-borrow '{varName}' while it is mutably borrowed")
+      return
+    sema.activeSharedBorrows[varName] = sema.activeSharedBorrows.getOrDefault(varName, 0) + 1
+
+proc checkUseWhileBorrowed(sema: var Sema, varName: string, loc: SourceLocation, isWrite: bool) =
+  ## Reject uses of a variable that has an active exclusive (&mut) borrow.
+  if not sema.checkedFunc or varName.len == 0 or sema.suppressUseWhileBorrow:
+    return
+  if sema.activeMutBorrows.hasKey(varName):
+    let kind = if isWrite: "assign to" else: "use"
+    sema.emitError(loc, &"cannot {kind} '{varName}' while it is mutably borrowed")
+
+proc checkTempMutBorrow(sema: var Sema, varName: string, loc: SourceLocation) =
+  ## Temporary &mut in a call argument — conflict with existing long-lived borrows.
+  if not sema.checkedFunc or varName.len == 0:
+    return
+  if sema.activeMutBorrows.hasKey(varName):
+    sema.emitError(loc, &"cannot mutably borrow '{varName}': already mutably borrowed")
+  elif sema.activeSharedBorrows.getOrDefault(varName, 0) > 0:
+    sema.emitError(loc, &"cannot mutably borrow '{varName}' while it is shared-borrowed")
 
 # ---------------------------------------------------------------------------
 # Generic type inference helpers
@@ -172,6 +235,14 @@ proc typeToTypeExpr*(t: Type): TypeExpr =
     else:
       TypeExpr(kind: tekNamed, typeName: "void")
   of tkVoid: TypeExpr(kind: tekNamed, typeName: "void")
+  of tkFunc:
+    var params: seq[TypeExpr] = @[]
+    if t.inner.len > 0:
+      for i in 0 ..< t.inner.len - 1:
+        params.add(typeToTypeExpr(t.inner[i]))
+      let ret = typeToTypeExpr(t.inner[^1])
+      return TypeExpr(kind: tekFunc, funcParams: params, funcRet: ret)
+    TypeExpr(kind: tekNamed, typeName: "void")
   else: TypeExpr(kind: tekNamed, typeName: t.toString)
 
 proc substituteTypeInType(sema: var Sema, t: Type, subst: Table[string, Type]): Type =
@@ -213,58 +284,189 @@ proc substituteTypeInType(sema: var Sema, t: Type, subst: Table[string, Type]): 
   else:
     return t
 
+proc unifyTypeParam(sema: var Sema, pattern: TypeExpr, concrete: Type,
+                    tpNames: HashSet[string],
+                    bindings: var Table[string, Type],
+                    loc: SourceLocation): bool =
+  ## Structural match of a parameter TypeExpr against a concrete argument Type.
+  ## Binds type parameters (names in `tpNames`) into `bindings`.
+  ## Returns false on hard mismatch; true when matching succeeds (unknowns ok).
+  if pattern == nil:
+    return true
+  if concrete == nil or concrete.isUnknown:
+    return true
+
+  case pattern.kind
+  of tekNamed:
+    let name = pattern.typeName
+    # Bare type parameter: T
+    if name in tpNames and pattern.typeArgs.len == 0:
+      if bindings.hasKey(name):
+        let prev = bindings[name]
+        if prev == concrete:
+          return true
+        if concrete.isAssignableTo(prev):
+          return true
+        if prev.isAssignableTo(concrete):
+          bindings[name] = concrete
+          return true
+        sema.emitError(loc,
+          &"conflicting types for type parameter '{name}': " &
+          &"{prev.toString} vs {concrete.toString}")
+        return false
+      bindings[name] = concrete
+      return true
+    # Named type with type args: Iter<T>, Array<U>, Map<K,V>
+    if pattern.typeArgs.len > 0:
+      if concrete.kind != tkNamed:
+        return false
+      # Allow monomorphized names like Iter_int? Prefer structural Iter + inner.
+      if concrete.name != name and not concrete.name.startsWith(name & "_"):
+        return false
+      if concrete.name == name:
+        if concrete.inner.len < pattern.typeArgs.len:
+          return false
+        for i, ta in pattern.typeArgs:
+          if i >= concrete.inner.len: break
+          if not sema.unifyTypeParam(ta, concrete.inner[i], tpNames, bindings, loc):
+            return false
+        return true
+      # Monomorphized form Iter_int — best-effort: only if single type arg
+      if pattern.typeArgs.len == 1 and concrete.name.startsWith(name & "_"):
+        let suffix = concrete.name[name.len + 1 .. ^1]
+        # Only bind if pattern arg is a type param
+        let ta = pattern.typeArgs[0]
+        if ta != nil and ta.kind == tekNamed and ta.typeName in tpNames and ta.typeArgs.len == 0:
+          let mono = makeNamed(suffix)
+          # Prefer known primitives
+          let prim =
+            case suffix
+            of "int": makeInt()
+            of "bool": makeBool()
+            of "String", "str": makeStr()
+            of "float", "float64": makeFloat64()
+            else: mono
+          return sema.unifyTypeParam(ta, prim, tpNames, bindings, loc)
+      return false
+    # Concrete named type (not a param): int, String, Foo / primitives
+    let expected =
+      case name
+      of "int": makeInt()
+      of "int8": makeInt8()
+      of "int16": makeInt16()
+      of "int32": makeInt32()
+      of "int64": makeInt64()
+      of "uint": makeUInt()
+      of "uint8": makeUInt8()
+      of "uint16": makeUInt16()
+      of "uint32": makeUInt32()
+      of "uint64": makeUInt64()
+      of "bool": makeBool()
+      of "float", "float64": makeFloat64()
+      of "float32": makeFloat32()
+      of "String", "str": makeStr()
+      of "void": makeVoid()
+      else: makeNamed(name)
+    if concrete == expected:
+      return true
+    if concrete.kind == tkNamed and expected.kind == tkNamed:
+      return concrete.name == expected.name
+    return concrete.isAssignableTo(expected) or expected.isAssignableTo(concrete)
+
+  of tekPointer, tekOwn:
+    if not concrete.isPointer or concrete.inner.len == 0:
+      return false
+    return sema.unifyTypeParam(pattern.pointerPointee, concrete.inner[0], tpNames, bindings, loc)
+
+  of tekRef, tekMutRef:
+    if not concrete.isPointer or concrete.inner.len == 0:
+      return false
+    return sema.unifyTypeParam(pattern.pointerPointee, concrete.inner[0], tpNames, bindings, loc)
+
+  of tekFunc:
+    # concrete: tkFunc with inner = params ++ [ret]
+    if concrete.kind != tkFunc:
+      return false
+    let nParams = pattern.funcParams.len
+    if concrete.inner.len != nParams + 1:
+      # Allow fat-func mismatch length if unknown
+      return false
+    for i, p in pattern.funcParams:
+      if not sema.unifyTypeParam(p, concrete.inner[i], tpNames, bindings, loc):
+        return false
+    if pattern.funcRet != nil:
+      if not sema.unifyTypeParam(pattern.funcRet, concrete.inner[^1], tpNames, bindings, loc):
+        return false
+    return true
+
+  of tekSlice:
+    if not concrete.isSlice or concrete.inner.len == 0:
+      return false
+    return sema.unifyTypeParam(pattern.sliceElement, concrete.inner[0], tpNames, bindings, loc)
+
+  of tekTuple:
+    if concrete.kind != tkTuple or concrete.inner.len != pattern.tupleElements.len:
+      return false
+    for i, elem in pattern.tupleElements:
+      if not sema.unifyTypeParam(elem, concrete.inner[i], tpNames, bindings, loc):
+        return false
+    return true
+
+  of tekPath, tekDynRef, tekSelf:
+    return true  # best-effort skip
+
 proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
                    loc: SourceLocation): seq[TypeExpr] =
   ## Infer type arguments from argument types for a generic function call.
+  ## Uses structural matching so `*Iter<T>` + `func(T)->U` yield T and U.
   ## Returns empty seq if inference fails for any type parameter.
   result = @[]
+  var tpNames = initHashSet[string]()
   for tp in funcDecl.declFuncTypeParams:
-    let tpName = tp.name
-    # Lifetime params are inferred from ref lifetime positions
+    if not tp.isLifetime:
+      tpNames.incl(tp.name)
+
+  var bindings = initTable[string, Type]()
+
+  # Lifetime params: mark as found if any ref param uses them
+  for tp in funcDecl.declFuncTypeParams:
     if tp.isLifetime:
       var found = false
       for i, param in funcDecl.declFuncParams:
         if i >= argTypes.len: break
-        if param.ptype.kind in {tekRef, tekMutRef} and param.ptype.refLifetime == tpName:
+        if param.ptype.kind in {tekRef, tekMutRef} and param.ptype.refLifetime == tp.name:
           found = true
           break
-      if found:
-        result.add(TypeExpr(kind: tekNamed, typeName: "lifetime"))
-        continue
-      # If not found in refs, treat as uninferrable
+      if not found:
+        return @[]
+      # lifetimes don't go into monomorph name; placeholder
+      bindings[tp.name] = makeNamed("lifetime")
+
+  # Unify each param pattern with the corresponding argument type
+  for i, param in funcDecl.declFuncParams:
+    if i >= argTypes.len: break
+    if param.ptype == nil: continue
+    var refsTp = false
+    for n in tpNames:
+      if typeExprReferencesTypeParam(param.ptype, n):
+        refsTp = true
+        break
+    if not refsTp:
+      continue
+    if not sema.unifyTypeParam(param.ptype, argTypes[i], tpNames, bindings, loc):
       return @[]
-    var inferred: Type = nil
-    for i, param in funcDecl.declFuncParams:
-      if i >= argTypes.len: break
-      # Skip pointer params — type param is inside the pointee and we cannot
-      # structurally extract it (e.g., *Map<K,V> → arg is *Map<int,String>)
-      if param.ptype.kind in {tekOwn, tekPointer}:
-        continue
-      if typeExprReferencesTypeParam(param.ptype, tpName):
-        var argType = argTypes[i]
-        # If type param is inside a ref/pointer pointee, unwrap the arg type
-        if param.ptype.kind in {tekRef, tekMutRef, tekPointer} and
-           typeExprReferencesTypeParam(param.ptype.pointerPointee, tpName) and
-           argType.isPointer and argType.inner.len > 0:
-          argType = argType.inner[0]
-        if inferred == nil:
-          inferred = argType
-        elif inferred != argType:
-          # Check if one is assignable to the other (wider type wins)
-          if argTypes[i].isAssignableTo(inferred):
-            discard  # inferred stays the same
-          elif inferred.isAssignableTo(argTypes[i]):
-            inferred = argTypes[i]
-          else:
-            sema.emitError(loc,
-              &"conflicting types for type parameter '{tpName}': " &
-              &"{inferred.toString} vs {argType.toString}")
-            return @[]
-    if inferred != nil and not inferred.isUnknown:
-      result.add(typeToTypeExpr(inferred))
-    else:
-      # Cannot infer this type parameter from arguments
+
+  # Emit results in decl order
+  for tp in funcDecl.declFuncTypeParams:
+    if tp.isLifetime:
+      result.add(TypeExpr(kind: tekNamed, typeName: "lifetime"))
+      continue
+    if not bindings.hasKey(tp.name):
       return @[]
+    let t = bindings[tp.name]
+    if t == nil or t.isUnknown:
+      return @[]
+    result.add(typeToTypeExpr(t))
 
 # ---------------------------------------------------------------------------
 # Type resolution from AST TypeExpr
@@ -914,6 +1116,8 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     if sema.checkedFunc and expr.exprIdent in sema.movedVars:
       sema.emitError(expr.loc, &"use of moved value '{expr.exprIdent}'")
       return makeUnknown()
+    # Exclusive borrow: cannot read original while &mut is live
+    sema.checkUseWhileBorrowed(expr.exprIdent, expr.loc, isWrite = false)
     let sym = scope.lookup(expr.exprIdent)
     if sym == nil:
       sema.emitError(expr.loc, &"undeclared identifier '{expr.exprIdent}'")
@@ -946,7 +1150,15 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       return makeUnknown()
     return first.typ
   of ekUnary:
-    let operandType = sema.checkExpr(expr.exprUnaryOperand, scope)
+    # Forming `&x` must not count as a "use" of x (borrow creation is checked separately)
+    var operandType: Type
+    if expr.exprUnaryOp == tkAmp:
+      let savedSup = sema.suppressUseWhileBorrow
+      sema.suppressUseWhileBorrow = true
+      operandType = sema.checkExpr(expr.exprUnaryOperand, scope)
+      sema.suppressUseWhileBorrow = savedSup
+    else:
+      operandType = sema.checkExpr(expr.exprUnaryOperand, scope)
     case expr.exprUnaryOp
     of tkBang:
       if not operandType.isBool:
@@ -1035,7 +1247,16 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
       let movedIdx = sema.movedVars.find(expr.exprAssignTarget.exprIdent)
       if movedIdx >= 0:
         sema.movedVars.delete(movedIdx)
-    let target = sema.checkExpr(expr.exprAssignTarget, scope)
+      # Cannot assign to var while it is mutably borrowed (single message; suppress rvalue use-check)
+      sema.checkUseWhileBorrowed(expr.exprAssignTarget.exprIdent, expr.loc, isWrite = true)
+    var target: Type
+    if expr.exprAssignTarget != nil and expr.exprAssignTarget.kind == ekIdent:
+      let savedSup = sema.suppressUseWhileBorrow
+      sema.suppressUseWhileBorrow = true
+      target = sema.checkExpr(expr.exprAssignTarget, scope)
+      sema.suppressUseWhileBorrow = savedSup
+    else:
+      target = sema.checkExpr(expr.exprAssignTarget, scope)
     let value = sema.checkExpr(expr.exprAssignValue, scope)
     if not value.isAssignableTo(target):
       sema.emitError(expr.loc, &"cannot assign {value.toString} to {target.toString}")
@@ -1207,8 +1428,16 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
           for i in 0 ..< argTypes.len:
             if expectedParams[i].isMutRef and i < expr.exprCallArgs.len:
               let arg = expr.exprCallArgs[i]
-              if arg.kind == ekUnary and arg.exprUnaryOp == tkAmp and arg.exprUnaryOperand.kind == ekIdent:
-                mutRefArgs.add((idx: i, name: arg.exprUnaryOperand.exprIdent))
+              let bname = extractBorrowedIdent(arg)
+              if bname.len > 0:
+                mutRefArgs.add((idx: i, name: bname))
+                # Conflict with long-lived let-bound &mut
+                sema.checkTempMutBorrow(bname, arg.loc)
+            elif expectedParams[i].isRef and i < expr.exprCallArgs.len:
+              let bname = extractBorrowedIdent(expr.exprCallArgs[i])
+              if bname.len > 0 and sema.activeMutBorrows.hasKey(bname):
+                sema.emitError(expr.exprCallArgs[i].loc,
+                  &"cannot shared-borrow '{bname}' while it is mutably borrowed")
           for i in 0 ..< mutRefArgs.len:
             for j in i+1 ..< mutRefArgs.len:
               if mutRefArgs[i].name == mutRefArgs[j].name:
@@ -1472,6 +1701,11 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     for arm in expr.exprMatchArms:
       var armScope = newScope(scope)
       sema.extractPatternBindings(arm.pattern, armScope, subjectType)
+      # Type-check `p if guard` condition (must be bool; sees pattern bindings)
+      if arm.pattern != nil and arm.pattern.kind == pkGuarded and arm.pattern.patGuardedExpr != nil:
+        let guardTy = sema.checkExpr(arm.pattern.patGuardedExpr, armScope)
+        if not guardTy.isBool and not guardTy.isUnknown:
+          sema.emitError(arm.pattern.patGuardedExpr.loc, "match guard condition must be bool")
       let armType = sema.checkExpr(arm.body, armScope)
       if resultType.isUnknown:
         resultType = armType
@@ -1507,13 +1741,19 @@ proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
     return makePointer(makeVoid())
   of ekBorrow:
     let operand = sema.checkExpr(expr.exprBorrowOperand, scope)
-    # borrow &mut expr returns the same type as the original (reference)
-    # The borrow is tracked in the borrow checker
-    if sema.checkedFunc and expr.exprBorrowMutable:
-      # Track: variable "operand" is mutably borrowed here
-      # For now, just validate the type
-      discard
-    return operand
+    # Explicit `borrow` — track only when bound via let (checkCreateBorrow on skLet).
+    # Here we validate conflicts for free-standing borrow expressions used as temps.
+    if sema.checkedFunc:
+      let bname = extractBorrowedIdent(expr)
+      if bname.len > 0:
+        if expr.exprBorrowMutable:
+          sema.checkTempMutBorrow(bname, expr.loc)
+        elif sema.activeMutBorrows.hasKey(bname):
+          sema.emitError(expr.loc,
+            &"cannot shared-borrow '{bname}' while it is mutably borrowed")
+    if expr.exprBorrowMutable:
+      return makeMutRef(operand)
+    return makeRef(operand)
   of ekSpread:
     return sema.checkExpr(expr.exprSpreadOperand, scope)
   of ekStringInterp:
@@ -1582,6 +1822,19 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
       let initSym = scope.lookup(stmt.stmtLetInit.exprIdent)
       if initSym != nil and initSym.isOwn:
         sema.movedVars.add(stmt.stmtLetInit.exprIdent)
+    # Long-lived borrow: `let r: &mut T = &x` / `let r: &T = &x`
+    if sema.checkedFunc and stmt.stmtLetInit != nil:
+      let bname = extractBorrowedIdent(stmt.stmtLetInit)
+      if bname.len > 0:
+        var isMut = false
+        if declaredType.isMutRef:
+          isMut = true
+        elif declaredType.isRef:
+          isMut = false
+        else:
+          # Untyped let + `&x` is typed as &mut by unary lowering
+          isMut = initType.isMutRef
+        sema.checkCreateBorrow(bname, isMut, stmt.stmtLetInit.loc)
     return makeVoid()
   of skIf:
     let condType = sema.checkExpr(stmt.stmtIfCond, scope)
@@ -1631,6 +1884,10 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
     for arm in stmt.stmtMatchArms:
       var armScope = newScope(scope)
       sema.extractPatternBindings(arm.pattern, armScope, subjectType)
+      if arm.pattern != nil and arm.pattern.kind == pkGuarded and arm.pattern.patGuardedExpr != nil:
+        let guardTy = sema.checkExpr(arm.pattern.patGuardedExpr, armScope)
+        if not guardTy.isBool and not guardTy.isUnknown:
+          sema.emitError(arm.pattern.patGuardedExpr.loc, "match guard condition must be bool")
       discard sema.checkExpr(arm.body, armScope)
     return makeVoid()
   of skReturn:
@@ -1704,6 +1961,8 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   sema.currentFuncIsAsync = decl.declFuncIsAsync
   if sema.checkedFunc:
     sema.movedVars = @[]
+    sema.activeMutBorrows = initTable[string, SourceLocation]()
+    sema.activeSharedBorrows = initTable[string, int]()
   var funcScope = newScope(sema.globalScope)
   # Add type parameters to type table for resolution
   var addedTypeParams: seq[string] = @[]

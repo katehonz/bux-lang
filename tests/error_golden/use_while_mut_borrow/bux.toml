@@ -1,0 +1,6 @@
+[Package]
+Name = "use_while_mut_borrow"
+Version = "0.1.0"
+Type = "bin"
+[Build]
+Output = "Bin"

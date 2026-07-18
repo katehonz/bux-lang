@@ -1,0 +1,35 @@
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+func UncheckedInc(p: *int) {
+    *p = *p + 1;
+}
+
+@[Checked]
+func Inc(p: &mut int) {
+    *p = *p + 1;
+}
+
+@[Checked]
+func Get(p: &int) -> int {
+    return *p;
+}
+
+@[Checked]
+func OkBorrow() -> int {
+    var x: int = 10;
+    Inc(&x);
+    return Get(&x);
+}
+
+func Main() -> int {
+    var n: int = 1;
+    UncheckedInc(&n);
+    Test_AssertEqInt(n, 2);
+    let r: int = OkBorrow();
+    Test_AssertEqInt(r, 11);
+    PrintInt(r);
+    PrintLine("");
+    Test_Pass("ownership_checked");
+    return 0;
+}

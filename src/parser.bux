@@ -58,14 +58,27 @@ func parserPeek(p: *Parser, ahead: int) -> int {
     return tkEndOfFile;
 }
 
-// Lookahead to determine if '<' starts a type argument list.
+// Lookahead to determine if '<' starts a type argument list (`Foo<int>`).
+// Must not treat value comparisons `x < 0` as generics when a later `x > 0`
+// exists (e.g. multiple match arm guards).
 func parserIsTypeArgListAhead(p: *Parser) -> bool {
     if !parserCheck(p, tkLt) { return false; }
     var depth: int = 0;
     var ahead: int = 0;
     while true {
         let kind: int = parserPeek(p, ahead);
-        if kind == tkEndOfFile || kind == tkLBrace || kind == tkSemicolon {
+        // Hard stops: cannot appear inside <...> type args
+        if kind == tkEndOfFile || kind == tkLBrace || kind == tkRBrace || kind == tkSemicolon
+            || kind == tkFatArrow || kind == tkIf || kind == tkElse || kind == tkWhile
+            || kind == tkFor || kind == tkMatch || kind == tkReturn || kind == tkLet || kind == tkVar
+            || kind == tkEq || kind == tkNe || kind == tkLe || kind == tkGe
+            || kind == tkAmpAmp || kind == tkPipePipe || kind == tkAssign {
+            return false;
+        }
+        // Literals / arithmetic ⇒ value expression, not type args
+        if kind == tkIntLiteral || kind == tkFloatLiteral || kind == tkStringLiteral
+            || kind == tkCharLiteral || kind == tkBoolLiteral
+            || kind == tkPlus || kind == tkMinus || kind == tkSlash || kind == tkPercent {
             return false;
         }
         if kind == tkLt {
@@ -729,6 +742,7 @@ func parserMakePattern(kind: int, line: uint32, col: uint32) -> *Pattern {
     pat.patChild2 = null as *Pattern;
     pat.patArgs = null as *Pattern;
     pat.patNext = null as *Pattern;
+    pat.patGuardExpr = null as *Expr;
     return pat;
 }
 
@@ -904,6 +918,24 @@ func parserParsePattern(p: *Parser) -> *Pattern {
         pat.patRangeInclusive = inclusive;
         pat.patChild1 = left;
         pat.patChild2 = right;
+        // Range can still take a guard: `1..10 if x % 2 == 0`
+        if parserCheck(p, tkIf) {
+            discard parserAdvance(p);
+            let guard: *Expr = parserParseExpr(p);
+            let gpat: *Pattern = parserMakePattern(pkGuarded, line, col);
+            gpat.patChild1 = pat;
+            gpat.patGuardExpr = guard;
+            return gpat;
+        }
+        return pat;
+    }
+    // Guarded pattern: `p if cond` (bindings from p visible in cond)
+    if parserCheck(p, tkIf) {
+        discard parserAdvance(p);
+        let guard: *Expr = parserParseExpr(p);
+        let pat: *Pattern = parserMakePattern(pkGuarded, line, col);
+        pat.patChild1 = left;
+        pat.patGuardExpr = guard;
         return pat;
     }
     return left;

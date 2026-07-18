@@ -3,8 +3,12 @@
 #
 # Usage: bux-lsp
 # The editor spawns this binary and communicates via stdin/stdout.
+#
+# Hover uses real bootstrap sema types when possible (globals + stdlib);
+# completion/outline still use a fast lightweight scan.
 
-import std/[json, os, strutils, streams, tables, osproc]
+import std/[json, os, strutils, streams, tables, osproc, sequtils]
+import lexer, parser, ast, sema, types, scope, source_location
 
 # ---------------------------------------------------------------------------
 # JSON-RPC Transport
@@ -83,18 +87,25 @@ type
     kind: string       ## function | variable | struct | enum | …
     detail: string     ## signature / type annotation
     container: string  ## optional parent (module / type)
+    fromSema: bool     ## detail came from real type checker
   DocumentState = ref object
     uri: string
     content: string
     version: int
     symbols: Table[string, SymbolInfo]
     ordered: seq[string]   ## declaration order for outline
+    ## Full-project type index for hover (includes stdlib after sema enrich)
+    typeIndex: Table[string, string]   ## name → type / signature string
+    kindIndex: Table[string, string]   ## name → kind label
 
 var
   documents = initTable[string, DocumentState]()
   rootPath = ""
   rootUri = ""
   workspaceSymbols = initTable[string, tuple[uri: string, info: SymbolInfo]]()
+  cachedStdlibDir = ""
+  cachedStdlibDecls: seq[Decl] = @[]
+  stdlibLoaded = false
 
 proc getDoc(uri: string): DocumentState =
   if not documents.hasKey(uri):
@@ -327,6 +338,313 @@ proc analyzeFile(path: string, content: string): DocumentState =
       inc i
 
 # ---------------------------------------------------------------------------
+# Real sema types for hover
+# ---------------------------------------------------------------------------
+
+proc typeExprToStr(te: TypeExpr): string =
+  if te == nil: return "?"
+  case te.kind
+  of tekNamed:
+    result = te.typeName
+    if te.typeArgs.len > 0:
+      result &= "<" & te.typeArgs.mapIt(typeExprToStr(it)).join(", ") & ">"
+  of tekPath:
+    result = te.pathSegments.join("::")
+  of tekPointer:
+    result = "*" & typeExprToStr(te.pointerPointee)
+  of tekOwn:
+    result = "own " & typeExprToStr(te.pointerPointee)
+  of tekRef:
+    result = "&" & typeExprToStr(te.pointerPointee)
+  of tekMutRef:
+    result = "&mut " & typeExprToStr(te.pointerPointee)
+  of tekSlice:
+    result = typeExprToStr(te.sliceElement) & "[]"
+  of tekTuple:
+    result = "(" & te.tupleElements.mapIt(typeExprToStr(it)).join(", ") & ")"
+  of tekFunc:
+    let ps = te.funcParams.mapIt(typeExprToStr(it)).join(", ")
+    let ret = if te.funcRet != nil: typeExprToStr(te.funcRet) else: "void"
+    result = "func(" & ps & ") -> " & ret
+  of tekSelf:
+    result = "self"
+  of tekDynRef:
+    result = "&dyn " & te.dynInterface
+
+proc formatFuncDetail(name: string, decl: Decl): string =
+  if decl == nil or decl.kind != dkFunc:
+    return "func " & name
+  var parts: seq[string] = @[]
+  for p in decl.declFuncParams:
+    var s = p.name
+    if p.ptype != nil:
+      s &= ": " & typeExprToStr(p.ptype)
+    parts.add(s)
+  result = "func " & name & "(" & parts.join(", ") & ")"
+  if decl.declFuncTypeParams.len > 0:
+    let tps = decl.declFuncTypeParams.mapIt(it.name).join(", ")
+    result = "func " & name & "<" & tps & ">(" & parts.join(", ") & ")"
+  if decl.declFuncReturnType != nil:
+    result &= " -> " & typeExprToStr(decl.declFuncReturnType)
+
+proc symbolKindFromSema(sk: SymbolKind): string =
+  case sk
+  of skFunc: "function"
+  of skVar: "variable"
+  of skConst: "constant"
+  of skType: "type"
+  of skModule: "module"
+
+proc findStdlibDirLocal(root: string): string =
+  if root.len == 0: return ""
+  let candidates = @[
+    root / "lib",
+    root / ".." / "lib",
+    getAppDir() / "lib",
+    getAppDir() / ".." / "lib",
+    getCurrentDir() / "lib"
+  ]
+  for c in candidates:
+    if dirExists(c):
+      return c.absolutePath
+  # Walk up from root looking for lib/
+  var cur = root.absolutePath
+  for _ in 0 .. 6:
+    let lib = cur / "lib"
+    if dirExists(lib): return lib
+    let parent = cur.parentDir
+    if parent == cur: break
+    cur = parent
+  return ""
+
+proc loadStdlibDecls(stdlibDir: string): seq[Decl] =
+  result = @[]
+  if stdlibDir.len == 0 or not dirExists(stdlibDir):
+    return
+  for path in walkDirRec(stdlibDir):
+    if not path.endsWith(".bux"): continue
+    try:
+      let source = readFile(path)
+      let lexRes = tokenize(source, path)
+      if lexRes.hasErrors: continue
+      let parseRes = parse(lexRes.tokens, path)
+      if parseRes.diagnostics.len > 0: continue
+      for item in parseRes.module.items:
+        if item.kind == dkModule:
+          for sub in item.declModuleItems:
+            result.add(sub)
+        else:
+          result.add(item)
+    except:
+      discard
+
+proc ensureStdlibCached() =
+  if stdlibLoaded: return
+  stdlibLoaded = true
+  cachedStdlibDir = findStdlibDirLocal(rootPath)
+  if cachedStdlibDir.len == 0:
+    # try from open document path later
+    return
+  cachedStdlibDecls = loadStdlibDecls(cachedStdlibDir)
+
+proc enrichWithSema(doc: DocumentState) =
+  ## Run real bootstrap sema (file + stdlib) and fill typeIndex + upgrade symbols.
+  if doc.content.len == 0: return
+  let path = uriToPath(doc.uri)
+  ensureStdlibCached()
+  if cachedStdlibDecls.len == 0 and rootPath.len == 0:
+    # Try stdlib relative to the file
+    let tryRoot = path.parentDir.parentDir  # …/src/Main.bux → package
+    cachedStdlibDir = findStdlibDirLocal(tryRoot)
+    if cachedStdlibDir.len > 0:
+      cachedStdlibDecls = loadStdlibDecls(cachedStdlibDir)
+
+  try:
+    let lexRes = tokenize(doc.content, path)
+    if lexRes.hasErrors:
+      return
+    let parseRes = parse(lexRes.tokens, path)
+    # Build unified module: stdlib first, then this file
+    var unified = newModule("lsp")
+    for d in cachedStdlibDecls:
+      unified.items.add(d)
+    for d in parseRes.module.items:
+      if d.kind == dkModule:
+        for sub in d.declModuleItems:
+          unified.items.add(sub)
+      else:
+        unified.items.add(d)
+
+    let (semaRes, semaCtx) = analyzeFull(unified)
+    discard semaRes  # diagnostics already published via buxc
+
+    doc.typeIndex = initTable[string, string]()
+    doc.kindIndex = initTable[string, string]()
+
+    # Index entire global scope for hover (includes stdlib)
+    if semaCtx.globalScope != nil:
+      for name, sym in semaCtx.globalScope.table.pairs:
+        if name.len == 0: continue
+        var detail = ""
+        var kind = symbolKindFromSema(sym.kind)
+        if sym.kind == skFunc and sym.decl != nil and sym.decl.kind == dkFunc:
+          detail = formatFuncDetail(name, sym.decl)
+        elif sym.typ != nil and not sym.typ.isUnknown:
+          detail = name & ": " & sym.typ.toString
+          if sym.kind == skFunc:
+            detail = sym.typ.toString  # already "func(...) -> T"
+            if not detail.startsWith("func"):
+              detail = "func " & name & " — " & detail
+            else:
+              # inject name: func name(...)
+              detail = detail.replace("func(", "func " & name & "(")
+          elif sym.kind == skConst:
+            detail = "const " & name & ": " & sym.typ.toString
+          elif sym.kind == skType:
+            detail = "type " & name
+            kind = "type"
+          else:
+            detail = (if sym.isMutable: "var " else: "let ") & name & ": " & sym.typ.toString
+        elif sym.decl != nil:
+          case sym.decl.kind
+          of dkStruct:
+            detail = "struct " & name
+            kind = "struct"
+          of dkEnum:
+            detail = "enum " & name
+            kind = "enum"
+          of dkUnion:
+            detail = "union " & name
+            kind = "struct"
+          of dkInterface:
+            detail = "interface " & name
+            kind = "interface"
+          of dkTypeAlias:
+            detail = "type " & name
+            if sym.decl.declAliasType != nil:
+              detail &= " = " & typeExprToStr(sym.decl.declAliasType)
+            kind = "type"
+          of dkFunc:
+            detail = formatFuncDetail(name, sym.decl)
+            kind = "function"
+          else:
+            detail = name
+        else:
+          detail = name
+
+        doc.typeIndex[name] = detail
+        doc.kindIndex[name] = kind
+
+        # Upgrade file-local symbols (already found by lightweight scan)
+        if doc.symbols.hasKey(name):
+          var info = doc.symbols[name]
+          info.detail = detail
+          info.kind = kind
+          info.fromSema = true
+          doc.symbols[name] = info
+
+    # Prefer THIS file's declarations over stdlib when names collide
+    # (e.g. user `Max<T>` vs lib/Math `Max(int64,int64)`).
+    for d in parseRes.module.items:
+      proc indexDecl(dd: Decl) =
+        case dd.kind
+        of dkFunc:
+          let n = dd.declFuncName
+          if n.len == 0: return
+          let detail = formatFuncDetail(n, dd)
+          doc.typeIndex[n] = detail
+          doc.kindIndex[n] = "function"
+          if doc.symbols.hasKey(n):
+            var info = doc.symbols[n]
+            info.detail = detail
+            info.kind = "function"
+            info.fromSema = true
+            doc.symbols[n] = info
+          else:
+            let line = max(0, int(dd.loc.line) - 1)
+            let col = max(0, int(dd.loc.column) - 1)
+            doc.symbols[n] = SymbolInfo(
+              line: line, col: col, kind: "function", detail: detail,
+              container: "", fromSema: true)
+            if n notin doc.ordered: doc.ordered.add(n)
+        of dkStruct:
+          let n = dd.declStructName
+          doc.typeIndex[n] = "struct " & n
+          doc.kindIndex[n] = "struct"
+        of dkEnum:
+          let n = dd.declEnumName
+          doc.typeIndex[n] = "enum " & n
+          doc.kindIndex[n] = "enum"
+        of dkTypeAlias:
+          let n = dd.declAliasName
+          var detail = "type " & n
+          if dd.declAliasType != nil:
+            detail &= " = " & typeExprToStr(dd.declAliasType)
+          doc.typeIndex[n] = detail
+          doc.kindIndex[n] = "type"
+        else:
+          discard
+      if d.kind == dkModule:
+        for sub in d.declModuleItems:
+          indexDecl(sub)
+      else:
+        indexDecl(d)
+
+    # Walk this file's AST for local lets with explicit types (function bodies)
+    proc walkBlock(blk: Block, container: string) =
+      if blk == nil: return
+      for stmt in blk.stmts:
+        case stmt.kind
+        of skLet:
+          let n = stmt.stmtLetName
+          if n.len == 0: continue
+          var typStr = ""
+          if stmt.stmtLetType != nil:
+            typStr = typeExprToStr(stmt.stmtLetType)
+          let kw = if stmt.stmtLetMut: "var" else: "let"
+          let detail = if typStr.len > 0: kw & " " & n & ": " & typStr else: kw & " " & n
+          let loc = stmt.loc
+          let line = max(0, int(loc.line) - 1)
+          let col = max(0, int(loc.column) - 1)
+          # Prefer sema-enriched detail if name already global; else add local
+          if not doc.symbols.hasKey(n) or not doc.symbols[n].fromSema:
+            doc.symbols[n] = SymbolInfo(
+              line: line, col: col, kind: "variable", detail: detail,
+              container: container, fromSema: typStr.len > 0)
+            if n notin doc.ordered:
+              doc.ordered.add(n)
+          if typStr.len > 0:
+            doc.typeIndex[n] = detail
+            doc.kindIndex[n] = "variable"
+        of skExpr:
+          if stmt.stmtExpr != nil and stmt.stmtExpr.kind == ekBlock:
+            walkBlock(stmt.stmtExpr.exprBlock, container)
+        of skIf:
+          walkBlock(stmt.stmtIfThen, container)
+          walkBlock(stmt.stmtIfElse, container)
+          for br in stmt.stmtIfElseIfs:
+            walkBlock(br.blk, container)
+        of skWhile:
+          walkBlock(stmt.stmtWhileBody, container)
+        of skFor:
+          walkBlock(stmt.stmtForBody, container)
+        of skLoop:
+          walkBlock(stmt.stmtLoopBody, container)
+        else:
+          discard
+
+    for d in parseRes.module.items:
+      if d.kind == dkFunc and d.declFuncBody != nil:
+        walkBlock(d.declFuncBody, d.declFuncName)
+      elif d.kind == dkModule:
+        for sub in d.declModuleItems:
+          if sub.kind == dkFunc and sub.declFuncBody != nil:
+            walkBlock(sub.declFuncBody, sub.declFuncName)
+
+  except:
+    discard  # sema failures must not crash the LSP
+
+# ---------------------------------------------------------------------------
 # Diagnostics — run `buxc check` when available and parse Rust-style errors
 # ---------------------------------------------------------------------------
 
@@ -470,6 +788,8 @@ proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
   let updated = analyzeFile(path, doc.content)
   doc.symbols = updated.symbols
   doc.ordered = updated.ordered
+  # Keep / refresh real types for hover (does not replace lightweight outline)
+  enrichWithSema(doc)
   let diags = runBuxcDiagnostics(path, doc.content)
   publishDiagnostics(stream, doc.uri, diags)
 
@@ -628,7 +948,7 @@ proc handleDefinition(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
 # ---------------------------------------------------------------------------
 
 proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
-  ## Hover with accurate range for the word under the cursor.
+  ## Hover with accurate range; prefer real sema types when available.
   let uri = paramsNode["textDocument"]["uri"].getStr()
   let position = paramsNode["position"]
   let lineNum = position["line"].getInt()
@@ -640,6 +960,10 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
     return
 
   ensureAnalyzed(doc)
+  # Lazy sema enrich on first hover if not yet run (e.g. only didChange so far)
+  if doc.typeIndex.len == 0 and doc.content.len > 0:
+    enrichWithSema(doc)
+
   let lines = doc.content.split("\n")
   if lineNum >= lines.len:
     sendResponse(stream, id, newJNull())
@@ -656,19 +980,41 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
     return
   let word = l[start ..< endC]
 
-  var info: SymbolInfo
+  var detail = ""
+  var kind = ""
   var found = false
+
+  # Prefer file-local symbol (may be sema-upgraded)
   if doc.symbols.hasKey(word):
-    info = doc.symbols[word]
+    let info = doc.symbols[word]
+    detail = info.detail
+    kind = info.kind
+    found = true
+    # Prefer pure sema typeIndex when richer
+    if doc.typeIndex.hasKey(word) and doc.typeIndex[word].len >= detail.len:
+      detail = doc.typeIndex[word]
+      if doc.kindIndex.hasKey(word):
+        kind = doc.kindIndex[word]
+  elif doc.typeIndex.hasKey(word):
+    detail = doc.typeIndex[word]
+    kind = if doc.kindIndex.hasKey(word): doc.kindIndex[word] else: "symbol"
     found = true
   elif workspaceSymbols.hasKey(word):
-    info = workspaceSymbols[word].info
+    let info = workspaceSymbols[word].info
+    detail = info.detail
+    kind = info.kind
     found = true
+
   if not found:
     sendResponse(stream, id, newJNull())
     return
 
-  let md = "```bux\n" & info.detail & "\n```\n\n_" & info.kind & "_"
+  var md = "```bux\n" & detail & "\n```\n\n_" & kind & "_"
+  if doc.symbols.hasKey(word) and doc.symbols[word].fromSema:
+    md &= " · sema"
+  elif doc.typeIndex.hasKey(word):
+    md &= " · sema"
+
   sendResponse(stream, id, %*{
     "contents": {"kind": "markdown", "value": md},
     "range": {
@@ -742,7 +1088,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "hoverProvider": true,
         "documentSymbolProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.2.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.3.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -750,10 +1096,14 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
       rootUri = paramsNode["rootUri"].getStr()
       if rootPath.len == 0:
         rootPath = uriToPath(rootUri)
+    # Preload stdlib for hover types
+    if rootPath.len > 0:
+      ensureStdlibCached()
 
   of "initialized":
     if rootPath.len > 0:
       scanWorkspace(rootPath)
+      ensureStdlibCached()
   
   of "shutdown":
     sendResponse(stream, id, %*{})
@@ -769,6 +1119,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
     doc.content = content
     if td.hasKey("version"):
       doc.version = td["version"].getInt()
+    # Lightweight scan + sema enrich + buxc diagnostics
     analyzeAndPublishDiagnostics(stream, doc)
   
   of "textDocument/didChange":
@@ -780,16 +1131,25 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
       doc.content = changes[changes.len - 1]["text"].getStr()
     if td.hasKey("version"):
       doc.version = td["version"].getInt()
-    # Refresh symbols immediately (no buxc — diagnostics on save)
+    # Fast path: lightweight symbols only; keep previous typeIndex until save/hover refresh
     let updated = analyzeFile(uriToPath(uri), doc.content)
     doc.symbols = updated.symbols
     doc.ordered = updated.ordered
+    # Re-apply typeIndex details onto matching names (don't drop sema types mid-edit)
+    for name, detail in doc.typeIndex.pairs:
+      if doc.symbols.hasKey(name):
+        var info = doc.symbols[name]
+        info.detail = detail
+        info.fromSema = true
+        if doc.kindIndex.hasKey(name):
+          info.kind = doc.kindIndex[name]
+        doc.symbols[name] = info
 
   of "textDocument/didSave":
     let td = paramsNode["textDocument"]
     let uri = td["uri"].getStr()
-    let doc = getDoc(uri)
-    analyzeAndPublishDiagnostics(stream, doc)
+    discard getDoc(uri)
+    analyzeAndPublishDiagnostics(stream, getDoc(uri))
 
   of "textDocument/completion":
     handleCompletion(stream, id, paramsNode)

@@ -388,6 +388,11 @@ func Sema_AddCapture(closureExpr: *Expr, name: String, typeKind: int) {
 // Enum payloads: Option::Some(value) → value:int (from variant field type).
 func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
     if pat == null as *Pattern { return; }
+    // Guarded: bind from inner pattern only (`p if cond`)
+    if pat.kind == pkGuarded {
+        Sema_BindPattern(sema, pat.patChild1, subject);
+        return;
+    }
     if pat.kind == pkIdent {
         var sym: Symbol;
         Sema_ZeroInitSymbol(&sym);
@@ -807,8 +812,7 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
                 ai = ai + 1;
             }
         }
-        // Trait bounds checking for explicit generic calls: Max<Circle>(...)
-        // Must happen before indirect/direct call returns
+        // Trait bounds + inference for generic calls: Max / Iter_Map / Array_Push
         if expr.child1.kind == ekIdent {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
             if sym.kind == skFunc && sym.decl != null as *Decl {
@@ -831,13 +835,21 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
                 return tyVoid;
             }
         }
-        // Direct call to named function
+        // Direct call to named function — substitute return type with inferred args
         if expr.child1.kind == ekIdent {
             let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
             if sym.kind == skFunc && sym.decl != null as *Decl {
                 if sym.decl.retType != null as *TypeExpr {
-                    expr.refType = sym.decl.retType;
-                    return Sema_ResolveType(sema, sym.decl.retType);
+                    var retTe: *TypeExpr = sym.decl.retType;
+                    // Substitute type params in return type when we inferred args
+                    if expr.child1.genericTypeArgCount > 0 {
+                        retTe = Sema_SubstTypeExpr(sym.decl.retType,
+                            sym.decl.typeParam0, expr.child1.genericTypeArg0,
+                            sym.decl.typeParam1, expr.child1.genericTypeArg1,
+                            expr.child1.genericTypeArgCount);
+                    }
+                    expr.refType = retTe;
+                    return Sema_ResolveType(sema, retTe);
                 }
             }
         }
@@ -851,6 +863,10 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
 
     // Cast — return target type
     if kind == ekCast {
+        // Must type-check the operand (enables generic inference on nested calls)
+        if expr.child1 != null as *Expr {
+            discard Sema_CheckExpr(sema, expr.child1);
+        }
         if expr.refType != null as *TypeExpr {
             return Sema_ResolveType(sema, expr.refType);
         }
@@ -990,6 +1006,16 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
             let savedScope: *Scope = sema.scope;
             sema.scope = &armScope;
             Sema_BindPattern(sema, arm.pattern, expr.child1);
+            // Type-check `p if guard` (must be bool; sees pattern bindings)
+            if arm.pattern != null as *Pattern && arm.pattern.kind == pkGuarded {
+                if arm.pattern.patGuardExpr != null as *Expr {
+                    let gt: int = Sema_CheckExpr(sema, arm.pattern.patGuardExpr);
+                    if gt != tyBool && gt != tyUnknown {
+                        Sema_EmitError(sema, arm.pattern.line, arm.pattern.column,
+                            "match guard condition must be bool");
+                    }
+                }
+            }
             let bt: int = Sema_CheckExpr(sema, arm.body);
             sema.scope = savedScope;
             if first {
@@ -1677,19 +1703,213 @@ func Sema_ExtractElemType(te: *TypeExpr) -> String {
     return "";
 }
 
-// Infer generic type argument from call arguments.
-// Supports Array_* and Iter_* stdlib functions.
+// Substitute type params in a TypeExpr (shallow clone). Used for call return types
+// after inference: Array<U> + U=String → Array with typeArgName0=String / Array_String.
+func Sema_SubstTypeExpr(te: *TypeExpr, p0: String, a0: String, p1: String, a1: String, argc: int) -> *TypeExpr {
+    if te == null as *TypeExpr { return null as *TypeExpr; }
+    let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+    r.kind = te.kind;
+    r.line = te.line;
+    r.column = te.column;
+    r.typeName = te.typeName;
+    r.pathStr = te.pathStr;
+    r.pathCount = te.pathCount;
+    r.typeArgName0 = te.typeArgName0;
+    r.typeArgName1 = te.typeArgName1;
+    r.typeArgCount = te.typeArgCount;
+    r.sliceElement = te.sliceElement;
+    r.pointerPointee = te.pointerPointee;
+    r.funcParams = te.funcParams;
+    r.funcRet = te.funcRet;
+    r.funcParamCount = te.funcParamCount;
+    r.tupleElems = te.tupleElems;
+    r.tupleCount = te.tupleCount;
+
+    if te.kind == tekNamed {
+        // Bare type param → concrete named type
+        if te.typeArgCount == 0 {
+            if argc >= 1 && String_Eq(te.typeName, p0) {
+                r.typeName = a0;
+                return r;
+            }
+            if argc >= 2 && String_Eq(te.typeName, p1) {
+                r.typeName = a1;
+                return r;
+            }
+        }
+        // Named with type args: Array<U> → Array_String (mangled) for downstream mono
+        if te.typeArgCount > 0 {
+            var na0: String = te.typeArgName0;
+            var na1: String = te.typeArgName1;
+            if argc >= 1 && String_Eq(na0, p0) { na0 = a0; }
+            if argc >= 2 && String_Eq(na0, p1) { na0 = a1; }
+            if argc >= 1 && String_Eq(na1, p0) { na1 = a0; }
+            if argc >= 2 && String_Eq(na1, p1) { na1 = a1; }
+            r.typeArgName0 = na0;
+            r.typeArgName1 = na1;
+            // Mangle for monomorphized struct name (Array_int, Iter_String)
+            if te.typeArgCount == 1 && !String_Eq(na0, "") {
+                r.typeName = String_Concat(String_Concat(te.typeName, "_"), na0);
+                r.typeArgCount = 0;
+                r.typeArgName0 = "";
+            } else if te.typeArgCount >= 2 {
+                r.typeName = String_Concat(String_Concat(te.typeName, "_"),
+                    String_Concat(na0, String_Concat("_", na1)));
+                r.typeArgCount = 0;
+                r.typeArgName0 = "";
+                r.typeArgName1 = "";
+            }
+            return r;
+        }
+    }
+    if te.kind == tekPointer || te.kind == tekRef || te.kind == tekMutRef {
+        r.pointerPointee = Sema_SubstTypeExpr(te.pointerPointee, p0, a0, p1, a1, argc);
+        return r;
+    }
+    if te.kind == tekFunc {
+        r.funcRet = Sema_SubstTypeExpr(te.funcRet, p0, a0, p1, a1, argc);
+        return r;
+    }
+    return r;
+}
+
+// Bind a type param name on the call callee if not already set.
+func Sema_BindInferredArg(expr: *Expr, funcDecl: *Decl, tpName: String, typeName: String) {
+    if String_Eq(tpName, "") || String_Eq(typeName, "") { return; }
+    if expr.child1 == null as *Expr { return; }
+    if funcDecl.typeParamCount >= 1 && String_Eq(tpName, funcDecl.typeParam0) {
+        if String_Eq(expr.child1.genericTypeArg0, "") {
+            expr.child1.genericTypeArg0 = typeName;
+        }
+        if expr.child1.genericTypeArgCount < 1 { expr.child1.genericTypeArgCount = 1; }
+    }
+    if funcDecl.typeParamCount >= 2 && String_Eq(tpName, funcDecl.typeParam1) {
+        if String_Eq(expr.child1.genericTypeArg1, "") {
+            expr.child1.genericTypeArg1 = typeName;
+        }
+        if expr.child1.genericTypeArgCount < 2 { expr.child1.genericTypeArgCount = 2; }
+    }
+}
+
+// Resolve concrete type name for a value expression (for bare type-param params).
+func Sema_ArgTypeName(argExpr: *Expr) -> String {
+    if argExpr == null as *Expr { return ""; }
+    var argType: *TypeExpr = argExpr.refType;
+    if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
+        if argExpr.child1 != null as *Expr { argType = argExpr.child1.refType; }
+    }
+    if argType == null as *TypeExpr { return ""; }
+    if argType.kind == tekNamed { return argType.typeName; }
+    if argType.kind == tekPointer && argType.pointerPointee != null as *TypeExpr {
+        if argType.pointerPointee.kind == tekNamed {
+            return argType.pointerPointee.typeName;
+        }
+    }
+    return "";
+}
+
+// Infer type args from a param TypeExpr pattern against a concrete arg TypeExpr.
+func Sema_UnifyInfer(expr: *Expr, funcDecl: *Decl, pattern: *TypeExpr, concrete: *TypeExpr) {
+    if pattern == null as *TypeExpr || concrete == null as *TypeExpr { return; }
+
+    // Bare type param: T / Acc / U
+    if pattern.kind == tekNamed && pattern.typeArgCount == 0 {
+        if String_Eq(pattern.typeName, funcDecl.typeParam0) || String_Eq(pattern.typeName, funcDecl.typeParam1) {
+            var cn: String = "";
+            if concrete.kind == tekNamed { cn = concrete.typeName; }
+            Sema_BindInferredArg(expr, funcDecl, pattern.typeName, cn);
+            return;
+        }
+    }
+
+    // *T / &T — unwrap pointer/ref on both sides
+    if pattern.kind == tekPointer || pattern.kind == tekRef || pattern.kind == tekMutRef {
+        var conc: *TypeExpr = concrete;
+        if concrete.kind == tekPointer || concrete.kind == tekRef || concrete.kind == tekMutRef {
+            conc = concrete.pointerPointee;
+        }
+        Sema_UnifyInfer(expr, funcDecl, pattern.pointerPointee, conc);
+        return;
+    }
+
+    // Named with type args: Iter<T>, Array<U>, Map<K,V>
+    if pattern.kind == tekNamed && pattern.typeArgCount > 0 {
+        // concrete may be Iter with typeArgName0, or mangled Iter_int
+        if concrete.kind == tekNamed {
+            if concrete.typeArgCount > 0 {
+                if pattern.typeArgCount >= 1 && !String_Eq(pattern.typeArgName0, "") {
+                    let te0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    te0.kind = tekNamed;
+                    te0.typeName = pattern.typeArgName0;
+                    te0.typeArgCount = 0;
+                    let ce0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    ce0.kind = tekNamed;
+                    ce0.typeName = concrete.typeArgName0;
+                    ce0.typeArgCount = 0;
+                    Sema_UnifyInfer(expr, funcDecl, te0, ce0);
+                }
+                if pattern.typeArgCount >= 2 && !String_Eq(pattern.typeArgName1, "") {
+                    let te1: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    te1.kind = tekNamed;
+                    te1.typeName = pattern.typeArgName1;
+                    te1.typeArgCount = 0;
+                    let ce1: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    ce1.kind = tekNamed;
+                    ce1.typeName = concrete.typeArgName1;
+                    ce1.typeArgCount = 0;
+                    Sema_UnifyInfer(expr, funcDecl, te1, ce1);
+                }
+            } else {
+                // Mangled Array_int / Iter_String
+                let elem: String = Sema_ExtractElemType(concrete);
+                if !String_Eq(elem, "") && pattern.typeArgCount >= 1 {
+                    let te0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    te0.kind = tekNamed;
+                    te0.typeName = pattern.typeArgName0;
+                    te0.typeArgCount = 0;
+                    let ce0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    ce0.kind = tekNamed;
+                    ce0.typeName = elem;
+                    ce0.typeArgCount = 0;
+                    Sema_UnifyInfer(expr, funcDecl, te0, ce0);
+                }
+            }
+        }
+        return;
+    }
+
+    // func(T)->U  vs  concrete function type
+    if pattern.kind == tekFunc {
+        var conc: *TypeExpr = concrete;
+        // Named function used as value: build tekFunc from its decl if needed — refType may already be tekFunc
+        if conc.kind == tekFunc {
+            // Params
+            var pp: *TypeExprList = pattern.funcParams;
+            var cp: *TypeExprList = conc.funcParams;
+            while pp != null as *TypeExprList && cp != null as *TypeExprList {
+                Sema_UnifyInfer(expr, funcDecl, pp.te, cp.te);
+                pp = pp.next;
+                cp = cp.next;
+            }
+            if pattern.funcRet != null as *TypeExpr && conc.funcRet != null as *TypeExpr {
+                Sema_UnifyInfer(expr, funcDecl, pattern.funcRet, conc.funcRet);
+            }
+        }
+        return;
+    }
+}
+
+// Infer generic type arguments from call arguments (structural).
+// Handles *Array<T>, *Iter<T>, func(T)->U, bare Acc, etc.
 func Sema_InferGenericArgs(sema: *Sema, funcDecl: *Decl, expr: *Expr) {
     if expr.callArgs == null as *ExprList { return; }
+    if expr.child1 == null as *Expr { return; }
     var argList: *ExprList = expr.callArgs;
     var pi: int = 0;
     while argList != null as *ExprList && pi < funcDecl.paramCount {
         let argExpr: *Expr = argList.expr;
         if argExpr == null as *Expr { argList = argList.next; pi = pi + 1; continue; }
-        var argType: *TypeExpr = argExpr.refType;
-        if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
-            argType = argExpr.child1.refType;
-        }
+
         var paramType: *TypeExpr = null as *TypeExpr;
         if pi == 0 { paramType = funcDecl.param0.refParamType; }
         else if pi == 1 { paramType = funcDecl.param1.refParamType; }
@@ -1701,20 +1921,29 @@ func Sema_InferGenericArgs(sema: *Sema, funcDecl: *Decl, expr: *Expr) {
         else if pi == 7 { paramType = funcDecl.param7.refParamType; }
         else if pi == 8 { paramType = funcDecl.param8.refParamType; }
 
-        if paramType != null as *TypeExpr && paramType.kind == tekNamed && argType != null as *TypeExpr {
-            let inferred: String = Sema_ExtractElemType(argType);
-            var typeName: String = inferred;
-            if String_Eq(typeName, "") && argType.kind == tekNamed {
-                typeName = argType.typeName;
+        var argType: *TypeExpr = argExpr.refType;
+        // &x → use type of x, wrap as pointer if pattern expects pointer
+        if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
+            if argExpr.child1 != null as *Expr {
+                argType = argExpr.child1.refType;
             }
-            if !String_Eq(typeName, "") {
-                if funcDecl.typeParamCount >= 1 && String_Eq(paramType.typeName, funcDecl.typeParam0) && String_Eq(expr.child1.genericTypeArg0, "") {
-                    expr.child1.genericTypeArg0 = typeName;
-                    if expr.child1.genericTypeArgCount < 1 { expr.child1.genericTypeArgCount = 1; }
-                }
-                if funcDecl.typeParamCount >= 2 && String_Eq(paramType.typeName, funcDecl.typeParam1) && String_Eq(expr.child1.genericTypeArg1, "") {
-                    expr.child1.genericTypeArg1 = typeName;
-                    if expr.child1.genericTypeArgCount < 2 { expr.child1.genericTypeArgCount = 2; }
+        }
+        // Named function as value: synthesize tekFunc from its declaration
+        if (argType == null as *TypeExpr || argType.kind != tekFunc) && argExpr.kind == ekIdent {
+            let fsym: Symbol = Scope_Lookup(sema.scope, argExpr.strValue);
+            if fsym.kind == skFunc && fsym.decl != null as *Decl {
+                argType = Sema_BuildFuncTypeExprFromDecl(fsym.decl);
+            }
+        }
+
+        if paramType != null as *TypeExpr && argType != null as *TypeExpr {
+            Sema_UnifyInfer(expr, funcDecl, paramType, argType);
+            // If pattern is *T and arg is bare T (from &x we unwrapped), re-wrap
+            if (paramType.kind == tekPointer || paramType.kind == tekRef || paramType.kind == tekMutRef)
+                && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
+                // already handled via unwrap of pattern against pointee type of variable
+                if argExpr.child1 != null as *Expr && argExpr.child1.refType != null as *TypeExpr {
+                    Sema_UnifyInfer(expr, funcDecl, paramType.pointerPointee, argExpr.child1.refType);
                 }
             }
         }

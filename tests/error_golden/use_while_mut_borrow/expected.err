@@ -1,0 +1,7 @@
+error: type errors in project
+error: cannot assign to 'x' while it is mutably borrowed
+  --> FILE:5:5
+    |
+ 5 |     x = 2;
+    |     ^
+   = help: only one active '&mut' borrow is allowed at a time; end the borrow before reuse

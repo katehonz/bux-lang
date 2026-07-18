@@ -1,0 +1,6 @@
+[Package]
+Name = "exclusive_mut_let"
+Version = "0.1.0"
+Type = "bin"
+[Build]
+Output = "Bin"

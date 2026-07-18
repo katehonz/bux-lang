@@ -34,6 +34,101 @@ struct LowerCtx {
     // Borrow checker state
     checkedFunc: bool,
     releaseFunc: bool,
+    // Pattern binding renames: source name → unique C local (shadowing-safe)
+    patMapCount: int,
+    patMapFrom0: String,
+    patMapTo0: String,
+    patMapFrom1: String,
+    patMapTo1: String,
+    patMapFrom2: String,
+    patMapTo2: String,
+    patMapFrom3: String,
+    patMapTo3: String,
+    patMapFrom4: String,
+    patMapTo4: String,
+    patMapFrom5: String,
+    patMapTo5: String,
+    patMapFrom6: String,
+    patMapTo6: String,
+    patMapFrom7: String,
+    patMapTo7: String,
+}
+
+func Lcx_PatLookup(ctx: *LowerCtx, src: String) -> String {
+    // Most recent rename wins (scan from end)
+    var i: int = ctx.patMapCount - 1;
+    while i >= 0 {
+        var from: String = "";
+        var to: String = "";
+        if i == 0 { from = ctx.patMapFrom0; to = ctx.patMapTo0; }
+        else if i == 1 { from = ctx.patMapFrom1; to = ctx.patMapTo1; }
+        else if i == 2 { from = ctx.patMapFrom2; to = ctx.patMapTo2; }
+        else if i == 3 { from = ctx.patMapFrom3; to = ctx.patMapTo3; }
+        else if i == 4 { from = ctx.patMapFrom4; to = ctx.patMapTo4; }
+        else if i == 5 { from = ctx.patMapFrom5; to = ctx.patMapTo5; }
+        else if i == 6 { from = ctx.patMapFrom6; to = ctx.patMapTo6; }
+        else if i == 7 { from = ctx.patMapFrom7; to = ctx.patMapTo7; }
+        if String_Eq(from, src) { return to; }
+        i = i - 1;
+    }
+    return "";
+}
+
+func Lcx_PatPush(ctx: *LowerCtx, src: String, dst: String) {
+    if ctx.patMapCount >= 8 { return; }
+    let i: int = ctx.patMapCount;
+    if i == 0 { ctx.patMapFrom0 = src; ctx.patMapTo0 = dst; }
+    else if i == 1 { ctx.patMapFrom1 = src; ctx.patMapTo1 = dst; }
+    else if i == 2 { ctx.patMapFrom2 = src; ctx.patMapTo2 = dst; }
+    else if i == 3 { ctx.patMapFrom3 = src; ctx.patMapTo3 = dst; }
+    else if i == 4 { ctx.patMapFrom4 = src; ctx.patMapTo4 = dst; }
+    else if i == 5 { ctx.patMapFrom5 = src; ctx.patMapTo5 = dst; }
+    else if i == 6 { ctx.patMapFrom6 = src; ctx.patMapTo6 = dst; }
+    else if i == 7 { ctx.patMapFrom7 = src; ctx.patMapTo7 = dst; }
+    ctx.patMapCount = ctx.patMapCount + 1;
+}
+
+func Lcx_FreshPatName(ctx: *LowerCtx, src: String) -> String {
+    ctx.varCounter = ctx.varCounter + 1;
+    var safe: String = src;
+    if String_Eq(src, "") || String_Eq(src, "_") { safe = "x"; }
+    return String_Concat(String_Concat("__p", String_FromInt(ctx.varCounter as int64)),
+        String_Concat("_", safe));
+}
+
+// Alloca unique C local + store + scope define + rename map for pattern binding.
+func Lcx_BindPatIdent(ctx: *LowerCtx, src: String, ty: String, value: *HirNode,
+                      line: uint32, col: uint32) -> *HirNode {
+    if String_Eq(src, "") || String_Eq(src, "_") { return null as *HirNode; }
+    let cName: String = Lcx_FreshPatName(ctx, src);
+    Lcx_PatPush(ctx, src, cName);
+    let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    alloca.kind = hAlloca;
+    alloca.line = line;
+    alloca.column = col;
+    alloca.strValue = cName;
+    alloca.typeName = ty;
+    let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    store.kind = hStore;
+    store.line = line;
+    store.column = col;
+    let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    v.kind = hVar;
+    v.strValue = cName;
+    store.child1 = v;
+    store.child2 = value;
+    alloca.child3 = store;
+    var bsym: Symbol;
+    bsym.kind = skVar;
+    bsym.name = src;
+    bsym.typeKind = tyInt;
+    bsym.typeName = ty;
+    bsym.refType = null as *TypeExpr;
+    bsym.isMutable = false;
+    bsym.isPublic = false;
+    bsym.decl = null as *Decl;
+    discard Scope_Define(ctx.scope, bsym);
+    return alloca;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +360,27 @@ func Lcx_FindGenericStruct(ctx: *LowerCtx, name: String) -> *Decl {
     return null as *Decl;
 }
 
+// Extract element type from mangled collection name: Array_int → int, Iter_String → String
+func Lcx_ExtractElemFromName(typeName: String) -> String {
+    if String_Eq(typeName, "") { return ""; }
+    let len: uint = bux_strlen(typeName);
+    // "Array_" prefix (6 chars)
+    if len > 6 {
+        let p: String = bux_str_slice(typeName, 0, 6);
+        if String_Eq(p, "Array_") {
+            return bux_str_slice(typeName, 6, len - 6);
+        }
+    }
+    // "Iter_" prefix (5 chars)
+    if len > 5 {
+        let p: String = bux_str_slice(typeName, 0, 5);
+        if String_Eq(p, "Iter_") {
+            return bux_str_slice(typeName, 5, len - 5);
+        }
+    }
+    return "";
+}
+
 func Lcx_MangleName(base: String, typeArg0: String, typeArg1: String, typeArgCount: int) -> String {
     let r: String = String_Concat(base, "_");
     r = String_Concat(r, typeArg0);
@@ -487,6 +603,11 @@ func Lcx_PatternCond(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
     if pat == null as *Pattern { return null as *HirNode; }
     let kind: int = pat.kind;
 
+    // Guarded: condition is only the inner pattern; guard applied after binds
+    if kind == pkGuarded {
+        return Lcx_PatternCond(ctx, subject, pat.patChild1, subjectEnumName, subjectHasData, line, col);
+    }
+
     if kind == pkWildcard || kind == pkIdent {
         return null as *HirNode;
     }
@@ -568,40 +689,16 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
                          subjectEnumName: String, subjectHasData: bool,
                          line: uint32, col: uint32) -> *HirNode {
     if pat == null as *Pattern { return null as *HirNode; }
+    // Guarded: bind from inner pattern
+    if pat.kind == pkGuarded {
+        return Lcx_PatternBindings(ctx, subject, pat.patChild1, subjectEnumName, subjectHasData, line, col);
+    }
     if pat.kind == pkIdent {
-        // `_` is wildcard, not a binding
-        if String_Eq(pat.patIdent, "_") { return null as *HirNode; }
         let ty: String = "int";
         if subject != null as *HirNode && !String_Eq(subject.typeName, "") {
             ty = subject.typeName;
         }
-        let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-        alloca.kind = hAlloca;
-        alloca.line = line;
-        alloca.column = col;
-        alloca.strValue = pat.patIdent;
-        alloca.typeName = ty;
-        let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-        store.kind = hStore;
-        store.line = line;
-        store.column = col;
-        let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-        v.kind = hVar;
-        v.strValue = pat.patIdent;
-        store.child1 = v;
-        store.child2 = subject;
-        alloca.child3 = store;
-        var bsym: Symbol;
-        bsym.kind = skVar;
-        bsym.name = pat.patIdent;
-        bsym.typeKind = tyInt;
-        bsym.typeName = ty;
-        bsym.refType = null as *TypeExpr;
-        bsym.isMutable = false;
-        bsym.isPublic = false;
-        bsym.decl = null as *Decl;
-        discard Scope_Define(ctx.scope, bsym);
-        return alloca;
+        return Lcx_BindPatIdent(ctx, pat.patIdent, ty, subject, line, col);
     }
 
     // Tuple: (a, b) → a = subject._0; b = subject._1
@@ -629,38 +726,16 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
                 fLoad.column = col;
                 fLoad.child1 = fPtr;
                 fLoad.typeName = "int";
-                let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                alloca.kind = hAlloca;
-                alloca.line = line;
-                alloca.column = col;
-                alloca.strValue = elem.patIdent;
-                alloca.typeName = "int";
-                let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                store.kind = hStore;
-                store.line = line;
-                store.column = col;
-                let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                v.kind = hVar;
-                v.strValue = elem.patIdent;
-                store.child1 = v;
-                store.child2 = fLoad;
-                alloca.child3 = store;
-                var bsym: Symbol;
-                bsym.kind = skVar;
-                bsym.name = elem.patIdent;
-                bsym.typeKind = tyInt;
-                bsym.typeName = "int";
-                bsym.refType = null as *TypeExpr;
-                bsym.isMutable = false;
-                bsym.isPublic = false;
-                bsym.decl = null as *Decl;
-                discard Scope_Define(ctx.scope, bsym);
-                if head == null as *HirNode {
-                    head = alloca;
-                    tail = store;
-                } else {
-                    tail.child3 = alloca;
-                    tail = store;
+                let bound: *HirNode = Lcx_BindPatIdent(ctx, elem.patIdent, "int", fLoad, line, col);
+                if bound != null as *HirNode {
+                    if head == null as *HirNode {
+                        head = bound;
+                        tail = bound;
+                        while tail.child3 != null as *HirNode { tail = tail.child3; }
+                    } else {
+                        tail.child3 = bound;
+                        while tail.child3 != null as *HirNode { tail = tail.child3; }
+                    }
                 }
             }
             elem = elem.patNext;
@@ -690,38 +765,16 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
                 fLoad.column = col;
                 fLoad.child1 = fPtr;
                 fLoad.typeName = "int";
-                let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                alloca.kind = hAlloca;
-                alloca.line = line;
-                alloca.column = col;
-                alloca.strValue = field.patIdent;
-                alloca.typeName = "int";
-                let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                store.kind = hStore;
-                store.line = line;
-                store.column = col;
-                let v: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                v.kind = hVar;
-                v.strValue = field.patIdent;
-                store.child1 = v;
-                store.child2 = fLoad;
-                alloca.child3 = store;
-                var bsym: Symbol;
-                bsym.kind = skVar;
-                bsym.name = field.patIdent;
-                bsym.typeKind = tyInt;
-                bsym.typeName = "int";
-                bsym.refType = null as *TypeExpr;
-                bsym.isMutable = false;
-                bsym.isPublic = false;
-                bsym.decl = null as *Decl;
-                discard Scope_Define(ctx.scope, bsym);
-                if head == null as *HirNode {
-                    head = alloca;
-                    tail = store;
-                } else {
-                    tail.child3 = alloca;
-                    tail = store;
+                let bound: *HirNode = Lcx_BindPatIdent(ctx, field.patIdent, "int", fLoad, line, col);
+                if bound != null as *HirNode {
+                    if head == null as *HirNode {
+                        head = bound;
+                        tail = bound;
+                        while tail.child3 != null as *HirNode { tail = tail.child3; }
+                    } else {
+                        tail.child3 = bound;
+                        while tail.child3 != null as *HirNode { tail = tail.child3; }
+                    }
                 }
             }
             field = field.patNext;
@@ -827,41 +880,16 @@ func Lcx_PatternBindings(ctx: *LowerCtx, subject: *HirNode, pat: *Pattern,
         fLoad.typeName = ftype;
 
         if arg.kind == pkIdent && !String_Eq(arg.patIdent, "_") {
-            let alloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-            alloca.kind = hAlloca;
-            alloca.line = line;
-            alloca.column = col;
-            alloca.strValue = arg.patIdent;
-            alloca.typeName = ftype;
-
-            let store: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-            store.kind = hStore;
-            store.line = line;
-            store.column = col;
-            let bv: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-            bv.kind = hVar;
-            bv.strValue = arg.patIdent;
-            store.child1 = bv;
-            store.child2 = fLoad;
-            alloca.child3 = store;
-
-            var bsym: Symbol;
-            bsym.kind = skVar;
-            bsym.name = arg.patIdent;
-            bsym.typeKind = tyInt;
-            bsym.typeName = ftype;
-            bsym.refType = null as *TypeExpr;
-            bsym.isMutable = false;
-            bsym.isPublic = false;
-            bsym.decl = null as *Decl;
-            discard Scope_Define(ctx.scope, bsym);
-
-            if head == null as *HirNode {
-                head = alloca;
-                tail = store;
-            } else {
-                tail.child3 = alloca;
-                tail = store;
+            let bound: *HirNode = Lcx_BindPatIdent(ctx, arg.patIdent, ftype, fLoad, line, col);
+            if bound != null as *HirNode {
+                if head == null as *HirNode {
+                    head = bound;
+                    tail = bound;
+                    while tail.child3 != null as *HirNode { tail = tail.child3; }
+                } else {
+                    tail.child3 = bound;
+                    while tail.child3 != null as *HirNode { tail = tail.child3; }
+                }
             }
         } else if arg.kind == pkTuple || arg.kind == pkStruct || arg.kind == pkEnum {
             // Nested pattern on payload field
@@ -913,7 +941,9 @@ func Lcx_AppendToChain(head: *HirNode, node: *HirNode) {
     cur.child3 = node;
 }
 
-// Lower match expr → hBlock: alloca result; if-else stores; strValue = result name
+// Lower match expr → sequential ifs with a found flag (no shared HIR DAG).
+// Each arm: if (!found) { if (cond) { binds; if (guard) { result=body; found=true; } } }
+// Guards see pattern bindings. Supports pkGuarded (`p if cond`).
 func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     let line: uint32 = expr.line;
     let col: uint32 = expr.column;
@@ -921,6 +951,8 @@ func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     ctx.varCounter = ctx.varCounter + 1;
     let resultName: String = String_Concat("__match_", String_FromInt(ctx.varCounter as int64));
+    ctx.varCounter = ctx.varCounter + 1;
+    let foundName: String = String_Concat("__found_", String_FromInt(ctx.varCounter as int64));
 
     // Result type from sema refType, default int
     var typeName: String = "int";
@@ -938,7 +970,7 @@ func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
         }
     }
 
-    // Alloca result
+    // Alloca result + found flag
     let allocaNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
     allocaNode.kind = hAlloca;
     allocaNode.line = line;
@@ -946,35 +978,48 @@ func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
     allocaNode.strValue = resultName;
     allocaNode.typeName = typeName;
 
-    // Collect arms into a temporary array via reverse build of if-chain
-    // First count arms and build from last to first
-    var armCount: int = 0;
-    var arm: *MatchArm = expr.matchArms;
-    while arm != null as *MatchArm {
-        armCount = armCount + 1;
-        arm = arm.next;
-    }
+    let foundAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    foundAlloca.kind = hAlloca;
+    foundAlloca.line = line;
+    foundAlloca.column = col;
+    foundAlloca.strValue = foundName;
+    foundAlloca.typeName = "bool";
+    allocaNode.child3 = foundAlloca;
 
-    // Build if-else from last arm to first
-    var ifChain: *HirNode = null as *HirNode;
-    var ai: int = armCount - 1;
-    while ai >= 0 {
-        // Find arm at index ai
-        var cur: *MatchArm = expr.matchArms;
-        var j: int = 0;
-        while j < ai && cur != null as *MatchArm {
-            cur = cur.next;
-            j = j + 1;
-        }
-        if cur == null as *MatchArm {
-            ai = ai - 1;
-            continue;
-        }
+    let foundInit: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    foundInit.kind = hStore;
+    foundInit.line = line;
+    foundInit.column = col;
+    let foundVar0: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+    foundVar0.kind = hVar;
+    foundVar0.strValue = foundName;
+    foundInit.child1 = foundVar0;
+    foundInit.child2 = Lcx_MakeLitHir(tkBoolLiteral, "false", line, col);
+    foundAlloca.child3 = foundInit;
 
-        // Pattern bindings before body (so body idents resolve)
-        let bindHead: *HirNode = Lcx_PatternBindings(ctx, subject, cur.pattern, subjectEnumName, subjectHasData, line, col);
+    // Chain of arm ifs (forward order), linked via child3
+    var tail: *HirNode = foundInit;
+    var cur: *MatchArm = expr.matchArms;
+    while cur != null as *MatchArm {
+        // Snapshot rename map so this arm's bindings don't leak to later arms
+        let savedMapCount: int = ctx.patMapCount;
+        var bindPat: *Pattern = cur.pattern;
+        var guardExpr: *Expr = null as *Expr;
+        if cur.pattern != null as *Pattern && cur.pattern.kind == pkGuarded {
+            bindPat = cur.pattern.patChild1;
+            guardExpr = cur.pattern.patGuardExpr;
+        }
+        // Bindings before guard/body so renames are active and allocas precede uses
+        let bindHead: *HirNode = Lcx_PatternBindings(ctx, subject, bindPat, subjectEnumName, subjectHasData, line, col);
+        var guardHirEarly: *HirNode = null as *HirNode;
+        if guardExpr != null as *Expr {
+            guardHirEarly = Lcx_LowerExpr(ctx, guardExpr);
+        }
         let bodyHir: *HirNode = Lcx_LowerExpr(ctx, cur.body);
-        // result = body (expand block/match yield: run stmts then store result var)
+        // Pop this arm's renames (nested matches already restored themselves)
+        ctx.patMapCount = savedMapCount;
+
+        // store result = body
         let storeNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         storeNode.kind = hStore;
         storeNode.line = line;
@@ -992,58 +1037,94 @@ func Lcx_LowerMatch(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             storeNode.child2 = bodyHir;
         }
 
-        // armBlock = bindings → body stmts → store
-        let armBlock: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-        armBlock.kind = hBlock;
-        armBlock.line = line;
-        armBlock.column = col;
-        var chainHead: *HirNode = bindHead;
-        if chainHead == null as *HirNode {
-            chainHead = bodyPrefix;
-        } else if bodyPrefix != null as *HirNode {
-            var bt0: *HirNode = chainHead;
-            while bt0.child3 != null as *HirNode { bt0 = bt0.child3; }
-            bt0.child3 = bodyPrefix;
-        }
-        if chainHead != null as *HirNode {
-            armBlock.child1 = chainHead;
-            var bt: *HirNode = chainHead;
-            while bt.child3 != null as *HirNode { bt = bt.child3; }
-            bt.child3 = storeNode;
+        // found = true
+        let foundSet: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        foundSet.kind = hStore;
+        foundSet.line = line;
+        foundSet.column = col;
+        let foundVar1: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        foundVar1.kind = hVar;
+        foundVar1.strValue = foundName;
+        foundSet.child1 = foundVar1;
+        foundSet.child2 = Lcx_MakeLitHir(tkBoolLiteral, "true", line, col);
+        storeNode.child3 = foundSet;
+
+        // success block: bodyPrefix → store → found=true
+        let successBlock: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        successBlock.kind = hBlock;
+        successBlock.line = line;
+        successBlock.column = col;
+        if bodyPrefix != null as *HirNode {
+            successBlock.child1 = bodyPrefix;
+            var sbt: *HirNode = bodyPrefix;
+            while sbt.child3 != null as *HirNode { sbt = sbt.child3; }
+            sbt.child3 = storeNode;
         } else {
-            armBlock.child1 = storeNode;
+            successBlock.child1 = storeNode;
         }
 
-        let cond: *HirNode = Lcx_PatternCond(ctx, subject, cur.pattern, subjectEnumName, subjectHasData, line, col);
-        if cond == null as *HirNode {
-            // Always-true arm
-            if ifChain == null as *HirNode {
-                ifChain = armBlock;
-            } else {
-                let ifNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                ifNode.kind = hIf;
-                ifNode.line = line;
-                ifNode.column = col;
-                ifNode.child1 = Lcx_MakeTrueHir(line, col);
-                ifNode.child2 = armBlock;
-                ifNode.extraData = ifChain as *void;
-                ifChain = ifNode;
-            }
-        } else {
-            let ifNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-            ifNode.kind = hIf;
-            ifNode.line = line;
-            ifNode.column = col;
-            ifNode.child1 = cond;
-            ifNode.child2 = armBlock;
-            ifNode.extraData = ifChain as *void;
-            ifChain = ifNode;
+        // Optional guard wraps success (already lowered with renames active)
+        var afterBinds: *HirNode = successBlock;
+        if guardHirEarly != null as *HirNode {
+            let guardIf: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            guardIf.kind = hIf;
+            guardIf.line = line;
+            guardIf.column = col;
+            guardIf.child1 = guardHirEarly;
+            guardIf.child2 = successBlock;
+            afterBinds = guardIf;
         }
-        ai = ai - 1;
+
+        // armInner: binds → afterBinds
+        let armInner: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        armInner.kind = hBlock;
+        armInner.line = line;
+        armInner.column = col;
+        if bindHead != null as *HirNode {
+            armInner.child1 = bindHead;
+            var ibt: *HirNode = bindHead;
+            while ibt.child3 != null as *HirNode { ibt = ibt.child3; }
+            ibt.child3 = afterBinds;
+        } else {
+            armInner.child1 = afterBinds;
+        }
+
+        // Optional pattern condition
+        let cond: *HirNode = Lcx_PatternCond(ctx, subject, bindPat, subjectEnumName, subjectHasData, line, col);
+        var armBody: *HirNode = armInner;
+        if cond != null as *HirNode {
+            let condIf: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            condIf.kind = hIf;
+            condIf.line = line;
+            condIf.column = col;
+            condIf.child1 = cond;
+            condIf.child2 = armInner;
+            armBody = condIf;
+        }
+
+        // if (!found) armBody
+        let foundLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        foundLoad.kind = hVar;
+        foundLoad.strValue = foundName;
+        foundLoad.typeName = "bool";
+        let notFound: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        notFound.kind = hUnary;
+        notFound.line = line;
+        notFound.column = col;
+        notFound.intValue = tkBang;
+        notFound.child1 = foundLoad;
+
+        let tryIf: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+        tryIf.kind = hIf;
+        tryIf.line = line;
+        tryIf.column = col;
+        tryIf.child1 = notFound;
+        tryIf.child2 = armBody;
+
+        tail.child3 = tryIf;
+        tail = tryIf;
+        cur = cur.next;
     }
-
-    // Chain: alloca → ifChain
-    allocaNode.child3 = ifChain;
 
     let block: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
     block.kind = hBlock;
@@ -1153,6 +1234,18 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
 
     // Identifier → variable reference
     if kind == ekIdent {
+        // Pattern binding rename: source name → unique C local
+        let ren: String = Lcx_PatLookup(ctx, expr.strValue);
+        if !String_Eq(ren, "") {
+            n.kind = hVar;
+            n.strValue = ren;
+            let rsym: Symbol = Scope_Lookup(ctx.scope, expr.strValue);
+            n.typeKind = rsym.typeKind;
+            if rsym.typeName != null as String && !String_Eq(rsym.typeName, "") {
+                n.typeName = rsym.typeName;
+            }
+            return n;
+        }
         // Capture rewriting: if inside closure body and this ident is captured,
         // emit field access on env instance instead of bare variable
         if ctx.closureDepth > 0 && ctx.currentClosureExpr != null as *Expr && !String_Eq(ctx.envInstanceName, "") {
@@ -1564,18 +1657,65 @@ func Lcx_LowerExpr(ctx: *LowerCtx, expr: *Expr) -> *HirNode {
             n.kind = hCall;
             n.strValue = expr.child1.strValue;
 
-            // Generic call monomorphization
-            if expr.child1 != null as *Expr && expr.child1.genericTypeArgCount > 0 {
-                let genDecl: *Decl = Lcx_FindGenericFunc(ctx, expr.child1.strValue);
-                if genDecl != null as *Decl {
-                    var typeArg0: String = expr.child1.genericTypeArg0;
-                    var typeArg1: String = expr.child1.genericTypeArg1;
-                    if String_Eq(typeArg0, ctx.substParam0) { typeArg0 = ctx.substArg0; }
-                    if String_Eq(typeArg0, ctx.substParam1) { typeArg0 = ctx.substArg1; }
-                    if String_Eq(typeArg1, ctx.substParam0) { typeArg1 = ctx.substArg0; }
-                    if String_Eq(typeArg1, ctx.substParam1) { typeArg1 = ctx.substArg1; }
-                    let mangled: String = Lcx_GenerateFuncInstance(ctx, genDecl, typeArg0, typeArg1, expr.child1.genericTypeArgCount);
-                    n.strValue = mangled;
+            // Generic call monomorphization (explicit / inferred type args)
+            if expr.child1 != null as *Expr {
+                var argc: int = expr.child1.genericTypeArgCount;
+                var typeArg0: String = expr.child1.genericTypeArg0;
+                var typeArg1: String = expr.child1.genericTypeArg1;
+                // Fallback: infer T from first *Array/*Iter arg when sema left count=0
+                if argc == 0 {
+                    let genTry: *Decl = Lcx_FindGenericFunc(ctx, expr.child1.strValue);
+                    if genTry != null as *Decl && genTry.typeParamCount > 0 {
+                        if expr.callArgs != null as *ExprList && expr.callArgs.expr != null as *Expr {
+                            var a0: *Expr = expr.callArgs.expr;
+                            var te: *TypeExpr = a0.refType;
+                            if te == null as *TypeExpr && a0.kind == ekUnary && a0.intValue == tkAmp {
+                                if a0.child1 != null as *Expr { te = a0.child1.refType; }
+                            }
+                            if te != null as *TypeExpr {
+                                // Unwrap pointer
+                                if (te.kind == tekPointer || te.kind == tekRef || te.kind == tekMutRef)
+                                    && te.pointerPointee != null as *TypeExpr {
+                                    te = te.pointerPointee;
+                                }
+                                var elem: String = "";
+                                if te.typeArgCount > 0 {
+                                    elem = te.typeArgName0;
+                                } else {
+                                    // Mangled Array_int / Iter_String
+                                    elem = Lcx_ExtractElemFromName(te.typeName);
+                                }
+                                if !String_Eq(elem, "") {
+                                    typeArg0 = elem;
+                                    argc = 1;
+                                    // Second type arg from func-typed second argument if needed
+                                    if genTry.typeParamCount >= 2 && expr.callArgs.next != null as *ExprList {
+                                        let a1e: *Expr = expr.callArgs.next.expr;
+                                        if a1e != null as *Expr && a1e.kind == ekIdent {
+                                            let fsym: Symbol = Scope_Lookup(ctx.scope, a1e.strValue);
+                                            if fsym.kind == skFunc && fsym.decl != null as *Decl
+                                                && fsym.decl.retType != null as *TypeExpr
+                                                && fsym.decl.retType.kind == tekNamed {
+                                                typeArg1 = fsym.decl.retType.typeName;
+                                                argc = 2;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if argc > 0 {
+                    let genDecl: *Decl = Lcx_FindGenericFunc(ctx, expr.child1.strValue);
+                    if genDecl != null as *Decl {
+                        if String_Eq(typeArg0, ctx.substParam0) { typeArg0 = ctx.substArg0; }
+                        if String_Eq(typeArg0, ctx.substParam1) { typeArg0 = ctx.substArg1; }
+                        if String_Eq(typeArg1, ctx.substParam0) { typeArg1 = ctx.substArg0; }
+                        if String_Eq(typeArg1, ctx.substParam1) { typeArg1 = ctx.substArg1; }
+                        let mangled: String = Lcx_GenerateFuncInstance(ctx, genDecl, typeArg0, typeArg1, argc);
+                        n.strValue = mangled;
+                    }
                 }
             }
 
@@ -2476,10 +2616,33 @@ func Lcx_LowerStmt(ctx: *LowerCtx, stmt: *Stmt) -> *HirNode {
 
     // Return
     if kind == skReturn {
-        n.kind = hReturn;
         if stmt.child1 != null as *Expr {
-            n.child1 = Lcx_LowerExpr(ctx, stmt.child1);
+            let retVal: *HirNode = Lcx_LowerExpr(ctx, stmt.child1);
+            // `return match { ... }` / other multi-stmt yields: expand stmts then return result var
+            if retVal != null as *HirNode && Lcx_IsMatchYield(retVal) {
+                let retVar: *HirNode = Lcx_YieldVarOf(retVal);
+                let retNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                retNode.kind = hReturn;
+                retNode.line = line;
+                retNode.column = col;
+                retNode.child1 = retVar;
+                retVal.strValue = "";
+                var lastIn: *HirNode = retVal.child1;
+                if lastIn == null as *HirNode {
+                    retVal.child1 = retNode;
+                } else {
+                    while lastIn.child3 != null as *HirNode {
+                        lastIn = lastIn.child3;
+                    }
+                    lastIn.child3 = retNode;
+                }
+                return retVal;
+            }
+            n.kind = hReturn;
+            n.child1 = retVal;
+            return n;
         }
+        n.kind = hReturn;
         return n;
     }
 

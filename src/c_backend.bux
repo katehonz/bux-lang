@@ -75,6 +75,8 @@ struct CEmitter {
     movedName5: String,
     movedName6: String,
     movedName7: String,
+    tmpCounter: int,
+    currentRetType: String,
 }
 
 func CBE_PushDefer(cbe: *CEmitter, node: *HirNode) {
@@ -155,36 +157,56 @@ func CBE_GetAutoDropVarName(node: *HirNode) -> String {
     return varNode.strValue;
 }
 
+// Emit one defer slot (shared by full-stack and scope-pop emitters).
+func CBE_EmitOneDefer(cbe: *CEmitter, i: int) {
+    var dn: *HirNode = null as *HirNode;
+    if i == 0 { dn = cbe.defer0; }
+    if i == 1 { dn = cbe.defer1; }
+    if i == 2 { dn = cbe.defer2; }
+    if i == 3 { dn = cbe.defer3; }
+    if i == 4 { dn = cbe.defer4; }
+    if i == 5 { dn = cbe.defer5; }
+    if i == 6 { dn = cbe.defer6; }
+    if i == 7 { dn = cbe.defer7; }
+    // Skip auto-drop for moved variables
+    let deferVarName: String = CBE_GetAutoDropVarName(dn);
+    if !String_Eq(deferVarName, "") && CBE_IsMoved(cbe, deferVarName) {
+        return;
+    }
+    StringBuilder_Append(&cbe.sb, "\n");
+    var sp: int = 0;
+    while sp < cbe.indent {
+        StringBuilder_Append(&cbe.sb, "    ");
+        sp = sp + 1;
+    }
+    CBE_EmitExpr(cbe, dn);
+    StringBuilder_Append(&cbe.sb, ";");
+}
+
+// Emit all active defers (LIFO) without clearing the stack.
+// Must NOT clear: multiple return paths each need the full defer list.
+// (Clearing caused Early(flag) { if (0) return; return 1 } to drop only on first exit.)
+// Stack is reset at the start of each function emission.
 func CBE_EmitDefers(cbe: *CEmitter) -> int {
     if cbe.deferCount == 0 { return 0; }
     var i: int = cbe.deferCount - 1;
     while i >= 0 {
-        var dn: *HirNode = null as *HirNode;
-        if i == 0 { dn = cbe.defer0; }
-        if i == 1 { dn = cbe.defer1; }
-        if i == 2 { dn = cbe.defer2; }
-        if i == 3 { dn = cbe.defer3; }
-        if i == 4 { dn = cbe.defer4; }
-        if i == 5 { dn = cbe.defer5; }
-        if i == 6 { dn = cbe.defer6; }
-        if i == 7 { dn = cbe.defer7; }
-        // Skip auto-drop for moved variables
-        let deferVarName: String = CBE_GetAutoDropVarName(dn);
-        if !String_Eq(deferVarName, "") && CBE_IsMoved(cbe, deferVarName) {
-            i = i - 1;
-            continue;
-        }
-        StringBuilder_Append(&cbe.sb, "\n");
-        var sp: int = 0;
-        while sp < cbe.indent {
-            StringBuilder_Append(&cbe.sb, "    ");
-            sp = sp + 1;
-        }
-        CBE_EmitExpr(cbe, dn);
-        StringBuilder_Append(&cbe.sb, ";");
+        CBE_EmitOneDefer(cbe, i);
         i = i - 1;
     }
-    cbe.deferCount = 0;
+    return 1;
+}
+
+// Emit branch/loop-local defers (indices fromIdx..count-1) then pop them.
+// Outer defers stay live so sibling branches and later returns still drop correctly.
+func CBE_EmitAndPopDefersFrom(cbe: *CEmitter, fromIdx: int) -> int {
+    if cbe.deferCount <= fromIdx { return 0; }
+    var i: int = cbe.deferCount - 1;
+    while i >= fromIdx {
+        CBE_EmitOneDefer(cbe, i);
+        i = i - 1;
+    }
+    cbe.deferCount = fromIdx;
     return 1;
 }
 
@@ -381,19 +403,47 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
-    // Return
+    // Return — evaluate value first, then drop live locals, then return.
+    // (Emitting Drop before the value used to use-after-drop on `return a.id`.)
     if kind == hReturn {
-        // Track moved variables via return
+        // Track moved variables via return (skip auto-drop of moved-out locals)
         if node.child1 != null as *HirNode && node.child1.kind == hVar {
             CBE_AddMoved(cbe, node.child1.strValue);
         }
-        let hadDefers: int = CBE_EmitDefers(cbe);
-        if hadDefers != 0 {
+        if node.child1 != null as *HirNode && cbe.deferCount > 0 {
+            // Materialize into a temp so Drop cannot clobber the returned value.
+            // Prefer the enclosing function return type (field-access HIR often
+            // carries the base struct typeName, which is wrong for `return a.id`).
+            cbe.tmpCounter = cbe.tmpCounter + 1;
+            let tmpName: String = String_Concat("__retdrop_", String_FromInt(cbe.tmpCounter));
+            var retCt: String = "int";
+            if cbe.currentRetType != null as String && !String_Eq(cbe.currentRetType, "") && !String_Eq(cbe.currentRetType, "void") {
+                retCt = cbe.currentRetType;
+            } else if node.child1.typeKind != 0 {
+                retCt = CBackend_TypeToC(node.child1.typeKind);
+            }
+            StringBuilder_Append(&cbe.sb, CBE_CParamDecl(retCt, tmpName));
+            StringBuilder_Append(&cbe.sb, " = ");
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, ";");
+            discard CBE_EmitDefers(cbe);
             StringBuilder_Append(&cbe.sb, "\n");
             var sp: int = 0;
             while sp < cbe.indent {
                 StringBuilder_Append(&cbe.sb, "    ");
                 sp = sp + 1;
+            }
+            StringBuilder_Append(&cbe.sb, "return ");
+            StringBuilder_Append(&cbe.sb, tmpName);
+            return;
+        }
+        let hadDefers: int = CBE_EmitDefers(cbe);
+        if hadDefers != 0 {
+            StringBuilder_Append(&cbe.sb, "\n");
+            var sp2: int = 0;
+            while sp2 < cbe.indent {
+                StringBuilder_Append(&cbe.sb, "    ");
+                sp2 = sp2 + 1;
             }
         }
         StringBuilder_Append(&cbe.sb, "return");
@@ -444,15 +494,17 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
-    // If
+    // If — each branch has its own defer scope (locals do not leak)
     if kind == hIf {
 
         StringBuilder_Append(&cbe.sb, "if (");
         CBE_EmitExpr(cbe, node.child1);
         StringBuilder_Append(&cbe.sb, ") {\n");
         if node.child2 != null as *HirNode {
+            let savedThen: int = cbe.deferCount;
             cbe.indent = cbe.indent + 1;
             CBE_EmitExpr(cbe, node.child2);
+            discard CBE_EmitAndPopDefersFrom(cbe, savedThen);
             cbe.indent = cbe.indent - 1;
         }
         var sp: int = 0;
@@ -464,8 +516,10 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         let elseBlock: *HirNode = node.extraData as *HirNode;
         if elseBlock != null as *HirNode {
             StringBuilder_Append(&cbe.sb, " else {\n");
+            let savedElse: int = cbe.deferCount;
             cbe.indent = cbe.indent + 1;
             CBE_EmitExpr(cbe, elseBlock);
+            discard CBE_EmitAndPopDefersFrom(cbe, savedElse);
             cbe.indent = cbe.indent - 1;
             sp = 0;
             while sp < cbe.indent {
@@ -479,14 +533,16 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
         return;
     }
 
-    // While
+    // While — loop-body locals dropped each iteration
     if kind == hWhile {
         StringBuilder_Append(&cbe.sb, "while (");
         CBE_EmitExpr(cbe, node.child1);
         StringBuilder_Append(&cbe.sb, ") {\n");
         if node.child2 != null as *HirNode {
+            let savedW: int = cbe.deferCount;
             cbe.indent = cbe.indent + 1;
             CBE_EmitExpr(cbe, node.child2);
+            discard CBE_EmitAndPopDefersFrom(cbe, savedW);
             cbe.indent = cbe.indent - 1;
         }
         var sp: int = 0;
@@ -502,8 +558,10 @@ func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
     if kind == hLoop {
         StringBuilder_Append(&cbe.sb, "while (1) {\n");
         if node.child1 != null as *HirNode {
+            let savedL: int = cbe.deferCount;
             cbe.indent = cbe.indent + 1;
             CBE_EmitExpr(cbe, node.child1);
+            discard CBE_EmitAndPopDefersFrom(cbe, savedL);
             cbe.indent = cbe.indent - 1;
         }
         var sp: int = 0;
@@ -1266,6 +1324,7 @@ func CBackend_Generate(mod: *HirModule) -> String {
     cbe.mod = mod;
     cbe.deferCount = 0;
     cbe.movedCount = 0;
+    cbe.tmpCounter = 0;
 
     // Header
     StringBuilder_Append(&cbe.sb, "// Generated by Bux C Backend v2\n");
@@ -1566,6 +1625,8 @@ func CBackend_Generate(mod: *HirModule) -> String {
         cbe.checkedFunc = mod.funcs[i].checkedFunc;
         cbe.deferCount = 0;
         cbe.movedCount = 0;
+        cbe.tmpCounter = 0;
+        cbe.currentRetType = mod.funcs[i].retTypeName;
         var hasReturn: bool = false;
         cbe.indent = 1;
         CBE_EmitExpr(cbe, body);

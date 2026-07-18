@@ -1,0 +1,62 @@
+// C.3 — Auto-drop on early return and if branches
+// @[Drop] types call Type_Drop at every exit (return + branch scope end).
+
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+@[Drop]
+struct Token {
+    id: int,
+    counter: *int
+}
+
+func Token_Drop(self: *Token) {
+    if self.counter != null as *int {
+        *self.counter = *self.counter + 1;
+    }
+}
+
+// Drop t on both early return and fallthrough return.
+func Early(flag: int, counter: *int) -> int {
+    let t: Token = Token { id: 1, counter: counter };
+    if flag == 0 {
+        return 0;
+    }
+    return 1;
+}
+
+// Branch-local Tokens: only the taken branch's Drop runs.
+func Branched(flag: int, counter: *int) -> int {
+    if flag == 1 {
+        let a: Token = Token { id: 10, counter: counter };
+        return a.id;
+    } else {
+        let b: Token = Token { id: 20, counter: counter };
+        return b.id;
+    }
+}
+
+// Fallthrough: Drop at end of block without return.
+func Scoped(counter: *int) {
+    let s: Token = Token { id: 99, counter: counter };
+    discard s.id;
+}
+
+func Main() -> int {
+    var drops: int = 0;
+    discard Early(0, &drops);
+    discard Early(1, &drops);
+    Test_AssertEqInt(drops, 2);
+
+    discard Branched(1, &drops);
+    discard Branched(0, &drops);
+    Test_AssertEqInt(drops, 4);
+
+    Scoped(&drops);
+    Test_AssertEqInt(drops, 5);
+
+    PrintInt(drops);
+    PrintLine("");
+    Test_Pass("drop_early_return");
+    return 0;
+}

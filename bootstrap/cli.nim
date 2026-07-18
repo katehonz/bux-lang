@@ -180,6 +180,8 @@ proc underlineLength(lineText: string, col: uint32, message: string): int =
 proc hintForMessage(msg: string): string =
   ## Actionable help text for common compiler errors.
   let m = msg.toLowerAscii()
+  if "while it is mutably borrowed" in m:
+    return "only one active '&mut' borrow is allowed at a time; end the borrow before reuse"
   if "cannot assign" in m:
     return "ensure the right-hand side type matches the left-hand side"
   if "undeclared identifier" in m:
@@ -193,7 +195,9 @@ proc hintForMessage(msg: string): string =
   if "shared reference" in m or "checked function" in m:
     return "use '&mut T' for mutation, or drop @[Checked] for unchecked code"
   if "double mutable borrow" in m or "already mutably borrowed" in m:
-    return "only one active '&mut' borrow is allowed at a time"
+    return "only one active '&mut' borrow is allowed at a time; end the borrow before reuse"
+  if "shared-borrow" in m or "shared-borrowed" in m:
+    return "exclusive '&mut' and shared '&' cannot overlap on the same variable"
   if "expected expression" in m:
     return "the previous statement may be incomplete (missing value or ';')"
   if "expected type" in m:

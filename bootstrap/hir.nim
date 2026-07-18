@@ -163,6 +163,7 @@ type
   HirMatchArm* = object
     pattern*: Pattern
     body*: HirNode
+    guard*: HirNode  ## optional: lowered `if cond` from `p if cond => body`
 
   HirFunc* = object
     name*: string

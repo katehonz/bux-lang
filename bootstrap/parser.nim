@@ -63,14 +63,23 @@ proc checkAny(p: Parser, kinds: openArray[TokenKind]): bool =
   return false
 
 proc isTypeArgListAhead(p: Parser): bool =
-  ## Lookahead to determine if '<' starts a type argument list.
-  ## Returns true if we can find a matching '>' before EOF, '{', or ';'.
+  ## Lookahead to determine if '<' starts a type argument list (`Foo<int>`).
+  ## Returns true if we find a matching '>' before tokens that cannot appear
+  ## inside type arguments. Must NOT match comparison `x < 0` when a later
+  ## `x > 0` exists in the same expression/region (e.g. match arm guards).
   if not p.check(tkLt): return false
   var depth = 0
   var ahead = 0
   while true:
     let kind = p.peek(ahead)
-    if kind == tkEndOfFile or kind == tkLBrace or kind == tkSemicolon:
+    # Hard stops: cannot appear inside `<...>` type args
+    if kind in {tkEndOfFile, tkLBrace, tkRBrace, tkSemicolon, tkFatArrow,
+                tkIf, tkElse, tkWhile, tkFor, tkMatch, tkReturn, tkLet, tkVar,
+                tkEq, tkNe, tkLe, tkGe, tkAmpAmp, tkPipePipe, tkAssign}:
+      return false
+    # Literals and comparison/arithmetic mean this is a value expression, not types
+    if kind in {tkIntLiteral, tkFloatLiteral, tkStringLiteral, tkCharLiteral,
+                tkBoolLiteral, tkPlus, tkMinus, tkSlash, tkPercent}:
       return false
     if kind == tkLt:
       inc depth
@@ -170,6 +179,8 @@ type
     targetOs*: string
     checked*: bool             ## @[Checked] — enable borrow checking
     shared*: bool              ## @[Shared] — mark function as thread-safe
+    drop*: bool                ## @[Drop] — auto-call Type_Drop at scope exit
+    release*: bool             ## @[Release] — explicit zero-cost (no borrow checks)
 
 proc parseAttrs(p: var Parser): ParsedAttrs =
   while p.check(tkAt):
@@ -180,6 +191,10 @@ proc parseAttrs(p: var Parser): ParsedAttrs =
       result.checked = true
     elif name == "Shared":
       result.shared = true
+    elif name == "Drop":
+      result.drop = true
+    elif name == "Release":
+      result.release = true
     elif name == "Import":
       discard p.expect(tkLParen, "expected '('")
       let key = p.expect(tkIdent, "expected attribute key").text
@@ -375,8 +390,8 @@ proc parsePattern(p: var Parser): Pattern =
     let inclusive = p.check(tkDotDotEqual)
     discard p.advance()
     let right = p.parsePrimaryPattern()
-    return Pattern(kind: pkRange, loc: loc, patRangeLo: left, patRangeHi: right, patRangeInclusive: inclusive)
-  # Guarded pattern
+    left = Pattern(kind: pkRange, loc: loc, patRangeLo: left, patRangeHi: right, patRangeInclusive: inclusive)
+  # Guarded pattern: `p if cond` (also after range: `1..10 if x % 2 == 0`)
   if p.check(tkIf):
     discard p.advance()
     let guard = p.parseExpr()
@@ -1242,6 +1257,8 @@ proc parseFuncDecl(p: var Parser, isPublic: bool, isAsm: bool, attrs: ParsedAttr
     discard p.advance()
   var declAttrs: seq[string] = @[]
   if attrs.checked: declAttrs.add("Checked")
+  if attrs.release: declAttrs.add("Release")
+  if attrs.drop: declAttrs.add("Drop")
   return Decl(kind: dkFunc, loc: loc, isPublic: isPublic,
               declAttrs: declAttrs,
               declFuncAsm: isAsm, declFuncCallConv: attrs.callConv,
@@ -1250,7 +1267,7 @@ proc parseFuncDecl(p: var Parser, isPublic: bool, isAsm: bool, attrs: ParsedAttr
               declFuncParams: params, declFuncReturnType: retType,
               declFuncBody: body)
 
-proc parseStructDecl(p: var Parser, isPublic: bool): Decl =
+proc parseStructDecl(p: var Parser, isPublic: bool, attrs: ParsedAttrs = ParsedAttrs()): Decl =
   let loc = p.currentLoc
   discard p.expect(tkStruct, "expected 'struct'")
   let name = p.expect(tkIdent, "expected struct name").text
@@ -1279,7 +1296,10 @@ proc parseStructDecl(p: var Parser, isPublic: bool): Decl =
     if p.pos == startPos:
       discard p.advance()
   discard p.expect(tkRBrace, "expected '}' to close struct")
-  return Decl(kind: dkStruct, loc: loc, isPublic: isPublic,
+  var declAttrs: seq[string] = @[]
+  if attrs.drop: declAttrs.add("Drop")
+  if attrs.checked: declAttrs.add("Checked")
+  return Decl(kind: dkStruct, loc: loc, isPublic: isPublic, declAttrs: declAttrs,
               declStructName: name, declStructTypeParams: typeParams,
               declStructFields: fields)
 
@@ -1567,7 +1587,7 @@ proc parseDecl(p: var Parser): Decl =
   of tkFunc:
     return p.parseFuncDecl(isPublic, false, attrs, isConst, isAsync)
   of tkStruct:
-    return p.parseStructDecl(isPublic)
+    return p.parseStructDecl(isPublic, attrs)
   of tkEnum:
     return p.parseEnumDecl(isPublic)
   of tkUnion:

@@ -1,0 +1,94 @@
+// Generic HOF type inference — Iter_Map / Filter / Fold without explicit <T,U>
+// Also Array_Push / Array_Get / Array_Iter inferred from arguments.
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::{
+    Array, Array_New, Array_Push, Array_Get, Array_Len, Array_Free
+};
+import Std::String::{String_FromInt, String_Len, String_Eq};
+import Std::Iter::{
+    Array_Iter, Iter,
+    Iter_Map, Iter_Filter, Iter_Fold, Iter_Any, Iter_All
+};
+import Std::Test::{
+    Test_AssertEqInt, Test_AssertTrue, Test_AssertEqString, Test_Pass
+};
+
+func Double(x: int) -> int {
+    return x * 2;
+}
+
+func IsEven(x: int) -> bool {
+    return (x % 2) == 0;
+}
+
+func IntToString(x: int) -> String {
+    return String_FromInt(x);
+}
+
+func StringLenAsInt(s: String) -> int {
+    return String_Len(s) as int;
+}
+
+func AddLens(acc: int, s: String) -> int {
+    return acc + (String_Len(s) as int);
+}
+
+func AddInt(acc: int, x: int) -> int {
+    return acc + x;
+}
+
+func IsNonEmpty(s: String) -> bool {
+    return String_Len(s) > 0;
+}
+
+func Main() -> int {
+    var nums: Array<int> = Array_New<int>(8);
+    // Type args inferred from &nums : *Array<int> and value type
+    Array_Push(&nums, 1);
+    Array_Push(&nums, 2);
+    Array_Push(&nums, 3);
+    Array_Push(&nums, 4);
+    Array_Push(&nums, 5);
+
+    // Iter_Map<int,int> inferred from *Iter<int> + func(int)->int
+    let itA: Iter<int> = Array_Iter(&nums);
+    var doubled: Array<int> = Iter_Map(&itA, Double);
+    Test_AssertEqInt(Array_Get(&doubled, 0), 2);
+    Test_AssertEqInt(Array_Get(&doubled, 4), 10);
+
+    // Iter_Map<int,String>
+    let itB: Iter<int> = Array_Iter(&nums);
+    var asStr: Array<String> = Iter_Map(&itB, IntToString);
+    Test_AssertEqInt(Array_Len(&asStr) as int, 5);
+    Test_AssertEqString(Array_Get(&asStr, 0), "1");
+    Test_AssertEqString(Array_Get(&asStr, 4), "5");
+
+    // Iter_Map<String,int>
+    let itC: Iter<String> = Array_Iter(&asStr);
+    var lens: Array<int> = Iter_Map(&itC, StringLenAsInt);
+    Test_AssertEqInt(Array_Get(&lens, 0), 1);
+
+    // Iter_Filter<int>
+    let itD: Iter<int> = Array_Iter(&nums);
+    var evens: Array<int> = Iter_Filter(&itD, IsEven);
+    Test_AssertEqInt(Array_Len(&evens) as int, 2);
+    Test_AssertEqInt(Array_Get(&evens, 0), 2);
+    Test_AssertEqInt(Array_Get(&evens, 1), 4);
+
+    // Iter_Fold<String,int> — Acc from init, T from *Iter + func
+    let itE: Iter<String> = Array_Iter(&asStr);
+    let totalChars: int = Iter_Fold(&itE, 0, AddLens);
+    Test_AssertEqInt(totalChars, 5);
+
+    let itF: Iter<int> = Array_Iter(&nums);
+    let sum: int = Iter_Fold(&itF, 0, AddInt);
+    Test_AssertEqInt(sum, 15);
+
+    let itG: Iter<String> = Array_Iter(&asStr);
+    Test_AssertTrue(Iter_Any(&itG, IsNonEmpty));
+
+    PrintInt(sum);
+    PrintLine("");
+    Test_Pass("generic_infer_hof");
+    return 0;
+}

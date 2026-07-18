@@ -195,6 +195,46 @@ func Main() -> int {
 """)
     check(not res.hasErrors)
 
+  test "@[Checked] rejects two let-bound &mut of same var":
+    let res = checkSource("""
+@[Checked]
+func Main() -> int {
+  var x: int = 1;
+  let a: &mut int = &x;
+  let b: &mut int = &x;
+  return 0;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("already mutably borrowed"))
+
+  test "@[Checked] rejects assign while mutably borrowed":
+    let res = checkSource("""
+@[Checked]
+func Main() -> int {
+  var x: int = 1;
+  let a: &mut int = &x;
+  x = 2;
+  return *a;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("mutably borrowed"))
+
+  test "@[Checked] rejects shared borrow while mutably borrowed":
+    let res = checkSource("""
+@[Checked]
+func Main() -> int {
+  var x: int = 1;
+  let a: &mut int = &x;
+  let b: &int = &x;
+  return 0;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("shared-borrow") or
+          res.diagnostics[0].message.contains("mutably borrowed"))
+
   test "borrow & expr with shared ref":
     let res = checkSource("""
 struct Point {

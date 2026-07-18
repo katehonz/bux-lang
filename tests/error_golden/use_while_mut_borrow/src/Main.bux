@@ -1,0 +1,7 @@
+@[Checked]
+func Main() -> int {
+    var x: int = 1;
+    let a: &mut int = &x;
+    x = 2;
+    return *a;
+}

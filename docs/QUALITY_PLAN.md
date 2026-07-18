@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-18  
-> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **41+ examples**, match + pattern bindings + **`f"..."` interp** bootstrap+selfhost ✅  
+> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **43+ examples**, match + guards + **generic HOF inference** + pattern bindings + **`f"..."` interp** bootstrap+selfhost ✅  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -59,6 +59,7 @@
 | B.2 | Function pointer types | `func(T)->U` fat ABI | ✅ bootstrap + selfhost |
 | B.3 | Match expression lowering (literals, ranges, enums) | Expression-context match → if-else | ✅ bootstrap + selfhost |
 | B.3b | Pattern bindings (`Some(value) => value`) | Payload idents bound in arm body | ✅ bootstrap + selfhost |
+| B.3c | Match arm guards (`p if cond => …`) | Bindings visible in guard; sequential found-flag lower | ✅ bootstrap + selfhost |
 | B.4 | Closures multi-instance | Fat `BuxFn` + heap env | ✅ bootstrap + selfhost |
 | B.4b | Closures: `\|\|` empty params + loop/return body | Lexer `\|\|` vs empty closure; while/break/return | ✅ bootstrap + selfhost |
 | B.5 | По-добри diagnostics (snippet + hint) | DX #1 за нови потребители | ✅ |
@@ -66,18 +67,18 @@
 
 ### C — Gradual Ownership 2.0 (P1)
 
-| # | Задача | Защо |
-|---|--------|------|
-| C.1 | Lifetime elision за common cases | Без `'a` в 90% от API-тата |
-| C.2 | Exclusive `&mut` vs shared `&` data-flow | По-малко false negatives |
-| C.3 | Auto-drop edge cases (early return, branches) | RAII да е надежден |
-| C.4 | `@[Release]` zero-cost path документация + golden tests | Killer story: safe default, free hot path |
+| # | Задача | Защо | Статус |
+|---|--------|------|--------|
+| C.1 | Lifetime elision за common cases | Без `'a` в 90% от API-тата | ⏳ |
+| C.2 | Exclusive `&mut` vs shared `&` data-flow | По-малко false negatives | ✅ let-bound + use-while + call conflict |
+| C.3 | Auto-drop edge cases (early return, branches) | RAII да е надежден | ✅ bootstrap + selfhost |
+| C.4 | `@[Release]` zero-cost path документация + golden tests | Killer story: safe default, free hot path | ✅ partial (unchecked path + goldens) |
 
 ### D — Tooling (P1)
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ hover/def/outline + `buxc` diags (lightweight index; full sema later) |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ hover/def/outline + **sema types on hover** (v0.3.0) + `buxc` diags |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ⏳ |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ⏳ partial (`bux test` exists) |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ⏳ |
@@ -297,9 +298,98 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 18 (match arm guards — B.3c)
+
+1. **Syntax:** `p if cond => body` (also after ranges: `1..10 if x % 2 == 0`)
+2. **Parser fix (critical):** `isTypeArgListAhead` treated `x < 0` as generic when a later `x > 0` existed in another arm → infinite parse. Stop lookahead on `=>`, keywords, literals, arithmetic, comparisons.
+3. **Sema:** bind inner pattern first; type-check guard as bool in arm scope
+4. **HIR lower:** sequential `found` flag (no shared if-else DAG):
+   ```
+   if (!found) { if (inner_cond) { binds; if (guard) { result = body; found = true; } } }
+   ```
+   Bindings are in scope for the guard expression.
+5. **Selfhost:** `pkGuarded` + `patGuardExpr`; same lower strategy; fix `return match {…}` to expand yield block before return
+6. Example: `examples/match_guards.bux` (ident/literal/range/enum payload guards)
+7. Verified: bootstrap + **buxc2** + all examples + error goldens + **selfhost-loop IDENTICAL ✓**
+
+---
+
+## Сесия 19 (generic HOF type inference)
+
+1. **Bootstrap `inferTypeArgs`:** structural unify of param TypeExpr vs arg Type
+   - `*Iter<T>` / `*Array<T>` → extract T from pointee type args or mangled `Array_int`
+   - `func(T)->U` → bind T/U from function-value type (not whole func as T)
+   - bare `Acc` from init; multi-param `Iter_Fold<T,Acc>`
+2. **Selfhost:** improved `Sema_InferGenericArgs` + return-type subst after inference
+   - Fix: `ekCast` must type-check operand (was skipping → no inference under `as`)
+   - HIR fallback mono from first *Array/*Iter arg when count=0
+3. Works without explicit type args:
+   - `Array_Push(&nums, 1)`, `Array_Get`, `Array_Len`, `Array_Iter`
+   - `Iter_Map(&it, f)`, `Iter_Filter`, `Iter_Fold`, `Iter_Any` (int↔String)
+4. Example: `examples/generic_infer_hof.bux`
+5. Verified: bootstrap + **buxc2** + all examples + **selfhost-loop IDENTICAL ✓**
+
+---
+
+## Сесия 20 (LSP hover from real sema — D.1)
+
+1. **`bux-lsp` 0.3.0** links bootstrap (`--path:../bootstrap`) and runs `analyzeFull` on open/save
+2. **typeIndex:** global scope (stdlib + file) → hover signatures with real types
+3. **File-local priority:** user decls override stdlib name collisions (`Max<T>` vs `Math.Max`)
+4. **Locals:** walk function bodies for `let`/`var` with explicit type annotations
+5. **didChange:** fast lightweight rescan; keeps previous typeIndex until save/hover refresh
+6. Hover shows ```bux signature``` + `_kind_ · sema`
+7. Smoke: `Main() -> int`, `PrintLine(String) -> void`, `Max<T>(a: T, b: T) -> T`
+
+---
+
+## Сесия 21 (pattern binding shadowing)
+
+1. **Problem:** C/LIR function-scoped locals — nested `Some(n) => match … Some(n)` emitted store before `int n`, and `let v` + pattern `v` caused redeclaration.
+2. **Bootstrap:** every pattern binding → unique C name `__pN_src` via `patternRenames` map; body/guard idents rewritten; **binds before body lower** inside `lowerMatch`.
+3. **Selfhost:** same model — `Lcx_BindPatIdent` + `patMapFrom/To` rename table; arm-scoped push/pop of map.
+4. Semantics: nested pattern name shadows correctly; outer `let v` survives after match that binds `v`.
+5. Example: `examples/pattern_shadow.bux`
+6. Verified: bootstrap + **buxc2** + all examples + **selfhost-loop IDENTICAL ✓**
+
+---
+
+## Сесия 22 (Ownership 2.0 — C.2 + C.4 + *p= fix)
+
+1. **C.2 Exclusive &mut data-flow** (`@[Checked]`):
+   - Track long-lived let-bound borrows (`activeMutBorrows` / `activeSharedBorrows`)
+   - Reject: second `&mut x`, use/assign of `x` while mutably borrowed, `&x` while `&mut` live
+   - Call-site temps conflict with existing let-bound borrows
+2. **C.4 Golden tests:**
+   - `tests/error_golden/exclusive_mut_let/`
+   - `tests/error_golden/use_while_mut_borrow/`
+3. **Bugfix:** `*p = expr` now stores through the pointer (was assigning to a temp) — ownership examples finally mutate correctly
+4. Example: `examples/ownership_checked.bux` (unchecked zero-cost + checked OK path)
+5. Verified: 7 error goldens + borrow_test + all examples + selfhost-loop
+
+---
+
+## Сесия 23 (Ownership 2.0 — C.3 auto-drop early return / branches)
+
+1. **Bootstrap auto-drop for `@[Drop]` + collections:**
+   - Parser: `@[Drop]` / `@[Release]` on structs and funcs (`declAttrs`)
+   - `autoDropFuncName` + monomorphize `Array_Drop`/`Free` (etc.) so stdlib links
+   - Inject `Type_Drop(&x)` on `let` via `deferStmts`
+2. **Early return / multi-path:**
+   - Every `return` snapshots the full live defer stack (no clear-after-first-return)
+   - Materialize return value **before** Drop (`return a.id` is not use-after-drop)
+   - Move-on-return: skip Drop for a local returned by value (`return out`)
+3. **Branch / loop scopes:**
+   - Bootstrap: `lowerBlock` scopes `deferStmts` — branch-local drops at block exit; siblings do not see each other
+   - Selfhost C backend: `CBE_EmitDefers` keeps stack for multi-return; `CBE_EmitAndPopDefersFrom` pops branch/loop locals after `if`/`while`/`loop`
+4. **Selfhost fixes:** null-safe ret type; temp name counter; use function `retTypeName` for `__retdrop_N`
+5. Example: `examples/drop_early_return.bux` (Early + Branched + Scoped → 5 drops)
+6. Verified: bootstrap + **buxc2** drop tests, 7 error goldens, key examples, **selfhost-loop IDENTICAL ✓**
+
+---
+
 ## Следващи стъпки
 
-1. LSP: wire hover types from real sema
-2. Generic type inference for `Iter_Map` without explicit `<T,U>`
-3. Match arm guards (`p if cond => …`)
-4. Pattern binding name shadowing (C locals are function-scoped)
+1. C.1 Lifetime elision
+2. Phase D tooling: `bux fmt` CI, `bux test --filter`, golden stdlib tests
+3. LSP: position-sensitive locals; inferred `let` types
