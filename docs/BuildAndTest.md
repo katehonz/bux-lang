@@ -189,17 +189,25 @@ summary table and exits:
 
 Use `Std::Test` module for assertions inside test code.
 
+### Continuous integration
+```bash
+make test                          # what PR CI runs
+```
+| Workflow | When | Command |
+|----------|------|---------|
+| **`.github/workflows/ci.yml`** | every PR + push to `main` | `make test` |
+| **`.github/workflows/selfhost-loop.yml`** | weekly / manual / path-filtered main | `make selfhost-loop` |
+
+`make test` includes examples, goldens, registry, apps, DWARF, and selfhost smoke
+(not the slow gen2↔gen3 fixed-point).
+
 ### Selfhost loop (optional CI)
 ```bash
 make selfhost-loop                 # bootstrap builds src/ twice; C+ELF match
 BUX_SELFHOST_FIXED_POINT=1 make selfhost-loop   # buxc2→buxc3→buxc4 fixed-point
 ```
 Fixed-point compares **gen2 vs gen3** (same selfhost C backend), not bootstrap
-vs selfhost. Not part of default `make test`. GitHub Actions workflow
-`.github/workflows/selfhost-loop.yml` runs the fast determinism check on:
-- manual `workflow_dispatch` (optional fixed_point input)
-- weekly schedule
-- pushes to `main` that touch `src/`, `lib/`, bootstrap, or the loop script
+vs selfhost. Not part of default `make test`.
 
 ### Format (`bux fmt`)
 ```bash

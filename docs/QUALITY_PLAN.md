@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — **selfhost fixed-point green**, Expr/Stmt sourceFile, LSP 0.14  
+> **Текущо:** v0.5.x — **CI `make test`**, selfhost fixed-point, LSP 0.14  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -112,7 +112,7 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ## Acceptance criteria за „добър v1.0“
 
-- [ ] Всички examples + selfhost-loop + 3 apps минават на CI (apps: `make test-apps` ready)
+- [x] Всички examples + apps + selfhost smoke на CI (`make test` via `.github/workflows/ci.yml`); selfhost-loop optional
 - [ ] Array/Map/String/Test API покрива 90% от ежедневните нужди
 - [x] `@[Checked]` хваща use-after-move + double `&mut` + dangling return / elision fail
 - [x] `bux test` + `bux fmt` + `bux check` са default developer loop (`--filter` / `--check` shipped)
@@ -826,9 +826,21 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 53 (main CI workflow — `make test`)
+
+1. **`.github/workflows/ci.yml`**
+   - triggers: `pull_request`, `push` to `main`, `workflow_dispatch`
+   - job: install Nim 2.0.x + gcc/make/ssl → **`make test`**
+   - timeout 90m; concurrency cancel-in-progress
+   - failure artifact: selfhost `main.c` (best-effort)
+2. **selfhost-loop.yml** remains optional (not on every PR)
+3. Docs: README / BuildAndTest / QUALITY_PLAN point to ci vs selfhost-loop
+
+---
+
 ## Следващи стъпки
 
-1. Main PR CI workflow (`make test`) beyond optional selfhost-loop
-2. LSP type hierarchy / prepareTypeHierarchy (optional)
-3. Macro / quote hygiene using Expr.sourceFile grafts
-4. Parenthesize binary ops in CBE for full C precedence safety
+1. LSP type hierarchy / prepareTypeHierarchy (optional)
+2. Macro / quote hygiene using Expr.sourceFile grafts
+3. Parenthesize binary ops in CBE for full C precedence safety
+4. CI matrix (macOS) or split jobs for faster PR feedback

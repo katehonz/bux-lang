@@ -4134,7 +4134,7 @@ module HirLower {
                             var tn: String = ftype.typeName;
                             if ftype.typeArgCount >= 1 && !String_Eq(ftype.typeArgName0, "") {
                                 if String_Eq(tn, "Array") || String_Eq(tn, "Set") ||
-                                   String_Eq(tn, "Channel") || String_Eq(tn, "Iter") {
+                                String_Eq(tn, "Channel") || String_Eq(tn, "Iter") {
                                     tn = String_Concat(String_Concat(tn, "_"), ftype.typeArgName0);
                                 } else if String_Eq(tn, "Map") && ftype.typeArgCount >= 2 {
                                     tn = String_Concat(String_Concat(String_Concat("Map_", ftype.typeArgName0), "_"), ftype.typeArgName1);

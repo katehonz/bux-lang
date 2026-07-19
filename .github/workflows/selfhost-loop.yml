@@ -1,13 +1,13 @@
 # Optional / not on every PR: bootstrap selfhost determinism (make selfhost-loop).
-# Triggers: manual, weekly, or push to main that touches compiler/stdlib/loop.
-# Fixed-point buxc2→buxc3 is opt-in via BUX_SELFHOST_FIXED_POINT=1 (experimental).
+# Default PR CI is .github/workflows/ci.yml (`make test`).
+# Fixed-point gen2 vs gen3: BUX_SELFHOST_FIXED_POINT=1 (workflow_dispatch input).
 name: selfhost-loop
 
 on:
   workflow_dispatch:
     inputs:
       fixed_point:
-        description: "Also run experimental buxc2→buxc3 fixed-point"
+        description: "Also run fixed-point buxc2→buxc3→buxc4 (gen2 vs gen3)"
         type: boolean
         default: false
   schedule:

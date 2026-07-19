@@ -318,7 +318,7 @@ make test-examples
 # Golden diagnostic tests (Rust-style error format)
 make test-errors
 
-# Full unit + example suite
+# Full unit + example suite (also run on every PR via GitHub Actions `ci.yml`)
 make test
 
 # Full-tree format check (lib/ examples/ src/ tests/ apps/)

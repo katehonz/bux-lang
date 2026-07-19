@@ -1,0 +1,52 @@
+# Default PR / main CI: full `make test` (not selfhost fixed-point — see selfhost-loop.yml).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: make test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.0.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc make binutils libssl-dev python3
+
+      - name: Bootstrap + full test suite
+        env:
+          # Ensure registry / selfhost smokes see a clean env
+          BUX_NO_LINE: ""
+        run: |
+          unset BUX_DEBUG_FILE || true
+          unset BUX_SELFHOST_FIXED_POINT || true
+          make test
+
+      - name: Upload selfhost artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-logs
+          path: |
+            build/selfhost/build/main.c
+            _test_tmp_pkg/**
+          if-no-files-found: ignore
