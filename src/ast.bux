@@ -299,6 +299,8 @@ module Ast {
         isDrop: int,             // @[Drop] attribute (0/1)
         isRelease: int,          // @[Release] attribute (0/1)
         isConst: int,            // const func (0/1)
+        // Source file path for #line / diagnostics (multi-file projects)
+        sourceFile: String,
         // Names
         strValue: String,        // decl name
         strValue2: String,       // interface name, dll name, module path
@@ -418,6 +420,7 @@ module Ast {
 
     func Ast_MakeDecl(kind: int, line: uint32, col: uint32) -> Decl {
         return Decl { kind: kind, line: line, column: col, isPublic: false,
+            sourceFile: "",
             isAsync: false, isChecked: 0, isDrop: 0, isRelease: 0, isConst: 0,
             strValue: "", strValue2: "",
             typeParam0: "", typeParam1: "", typeParamCount: 0,

@@ -115,6 +115,8 @@ module Hir {
         envStructName: String;
         envInstanceName: String;
         checkedFunc: bool;
+        // Absolute/relative path for #line maps (multi-file selfhost)
+        sourceFile: String;
     }
 
     // ---------------------------------------------------------------------------

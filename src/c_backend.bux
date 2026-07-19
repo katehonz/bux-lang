@@ -1407,7 +1407,7 @@ module CBackend {
         cbe.lastDebugLine = 0;
         cbe.emitDebugLines = true;
         cbe.currentFile = "";
-        // Optional: BUX_DEBUG_FILE sets the #line path for gdb (selfhost has no multi-file loc yet)
+        // Optional override for all #line paths (default: per-func Decl.sourceFile)
         let dbgFile: String = bux_getenv("BUX_DEBUG_FILE");
         if dbgFile != null as String && !String_Eq(dbgFile, "") {
             cbe.currentFile = dbgFile;
@@ -1695,6 +1695,17 @@ module CBackend {
             if body == null as *HirNode {
                 i = i + 1;
                 continue;
+            }
+            // Per-function source path for multi-file #line (overrides BUX_DEBUG_FILE only if set)
+            if !String_Eq(mod.funcs[i].sourceFile, "") {
+                cbe.currentFile = mod.funcs[i].sourceFile;
+            }
+            cbe.lastDebugLine = 0;
+            // #line before the function itself
+            if cbe.emitDebugLines && !String_Eq(cbe.currentFile, "") {
+                StringBuilder_Append(&cbe.sb, "#line 1 \"");
+                StringBuilder_Append(&cbe.sb, cbe.currentFile);
+                StringBuilder_Append(&cbe.sb, "\"\n");
             }
             CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
             StringBuilder_Append(&cbe.sb, " {\n");

@@ -611,6 +611,27 @@ func Cli_CollectStdlibImports(mod: *Module, outPaths: *String, maxCount: int, st
     return count;
 }
 
+/// Stamp sourceFile on a decl and nested module items (for multi-file #line).
+func Cli_StampSourceFile(decl: *Decl, path: String) {
+    if decl == null as *Decl { return; }
+    decl.sourceFile = path;
+    if decl.kind == dkModule {
+        var inner: *Decl = decl.childDecl1;
+        while inner != null as *Decl {
+            Cli_StampSourceFile(inner, path);
+            inner = inner.childDecl2;
+        }
+    }
+    // Impl methods
+    if decl.kind == dkImpl {
+        var m: *Decl = decl.childDecl1;
+        while m != null as *Decl {
+            Cli_StampSourceFile(m, path);
+            m = m.childDecl2;
+        }
+    }
+}
+
 func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCount: int) -> int {
     if !FileExists(path) {
         Print("Error: stdlib file not found: ");
@@ -623,6 +644,12 @@ func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCo
     if Lexer_DiagCount(lex) > 0 { return 0; }
     let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
     if mod == null as *Module { return 0; }
+    // Tag every decl from this file for #line maps
+    var stamp: *Decl = mod.firstItem;
+    while stamp != null as *Decl {
+        Cli_StampSourceFile(stamp, path);
+        stamp = stamp.childDecl2;
+    }
 
     var added: int = 0;
     var decl: *Decl = mod.firstItem;
@@ -1430,6 +1457,12 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
             Print("  Parse failed for ");
             PrintLine(path);
             return 1;
+        }
+        // Tag decls with this source path for multi-file #line
+        var stampUser: *Decl = mod.firstItem;
+        while stampUser != null as *Decl {
+            Cli_StampSourceFile(stampUser, path);
+            stampUser = stampUser.childDecl2;
         }
         // Merge declarations from this module into userMerged
         var decl: *Decl = mod.firstItem;

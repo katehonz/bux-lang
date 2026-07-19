@@ -3423,6 +3423,7 @@ module HirLower {
         f.name = decl.strValue;
         f.isPublic = decl.isPublic;
         f.checkedFunc = ctx.checkedFunc;
+        f.sourceFile = decl.sourceFile;
         f.paramCount = decl.paramCount;
         f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam;
         Lcx_LowerParam(f.param0, &decl.param0, ctx);

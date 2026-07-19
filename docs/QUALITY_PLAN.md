@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — field-move, selfhost #line, Nexus KA, **LSP 0.8 call hierarchy**  
+> **Текущо:** v0.5.x — field-move, **multi-file #line**, Nexus KA, LSP 0.8 call hierarchy  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -78,7 +78,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.7.0: + **field/variant rename** + workspace/symbol |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.8.0: + **call hierarchy** + deeper rename + workspace/symbol |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
@@ -642,9 +642,23 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 40 (LSP 0.8 call hierarchy)
+
+1. **Providers:**
+   - `textDocument/prepareCallHierarchy`
+   - `callHierarchy/incomingCalls` — who calls F
+   - `callHierarchy/outgoingCalls` — what F calls
+2. **Graph:** textual scan of known `func` symbols + `Name(` call sites;
+   enclosing function via nearest prior `func` decl line
+3. Skips the declaration itself; workspace disk scan for other `.bux` files
+4. Smoke: `tools/smoke_lsp_call_hierarchy.sh` (Add ← Compute; Compute → Add/Mul)
+5. Version **bux-lsp 0.8.0**; `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. LSP call hierarchy (optional)
-2. Selfhost multi-file `#line` paths without BUX_DEBUG_FILE
-3. Wire selfhost smoke for move_field into CI
+1. Selfhost multi-file `#line` paths without BUX_DEBUG_FILE
+2. Wire selfhost smoke for move_field into CI
+3. Method call hierarchy (receiver methods / interface dispatch)
 4. Rename of method receivers / qualified module paths (edge cases)
