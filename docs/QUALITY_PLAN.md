@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — **LSP 0.14 workspace imports**, implementation, selfhost-loop CI  
+> **Текущо:** v0.5.x — Expr/Stmt sourceFile, LSP 0.14, selfhost-loop CI  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -799,9 +799,22 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 51 (Expr/Stmt sourceFile for multi-file / macros)
+
+1. **`Expr.sourceFile` / `Stmt.sourceFile` / `Block.sourceFile`**
+2. **`Ast_StampExprFile` / `Ast_StampStmtFile` / `Ast_StampBlockFile` /
+   `Ast_StampPatternFile`** — fill empty slots only (grafted nodes keep path)
+3. **`Cli_StampSourceFile`** stamps decl body + const init + default params
+4. **Lower:** `Lcx_SetNodeLoc` / `Lcx_SourceFileFor` prefer AST file, else
+   `currentSourceFile`; `Lcx_StampSourceFile` still fills empties at func end
+5. Smoke: Main body `#line` → Main.bux only (no Util leak); Util isolation kept
+6. Rebuild selfhost; `make test-selfhost-smoke`
+
+---
+
 ## Следващи стъпки
 
-1. Expr/Stmt-level sourceFile if macros / cross-file inlining land
-2. Fix selfhost C backend so buxc2→buxc3 fixed-point is green
-3. Main PR CI workflow (`make test`) beyond optional selfhost-loop
-4. LSP type hierarchy / prepareTypeHierarchy (optional)
+1. Fix selfhost C backend so buxc2→buxc3 fixed-point is green
+2. Main PR CI workflow (`make test`) beyond optional selfhost-loop
+3. LSP type hierarchy / prepareTypeHierarchy (optional)
+4. Macro / quote hygiene using Expr.sourceFile grafts

@@ -138,4 +138,32 @@ if echo "$util_body" | grep -qE '#line [0-9]+ ".*Main\.bux"'; then
 fi
 echo "  HirNode sourceFile: PASS (Util_Double stmts → Util.bux)"
 
-echo "PASS: selfhost smoke (move_field + multi-file #line + HirNode sourceFile)"
+# ---------------------------------------------------------------------------
+# 4) Expr/Stmt sourceFile — statement maps still per-file after AST stamp
+#    (Util body must not pick up Main.bux via empty inherit)
+# ---------------------------------------------------------------------------
+echo "=== selfhost: Expr/Stmt sourceFile stamp ==="
+# Re-use mfline main.c: every #line inside Util_Double already checked;
+# additionally ensure Main body has no Util.bux (symmetric isolation).
+main_body=$(awk '
+  /#line 1 ".*Main\.bux"/ { grab=1 }
+  grab { print }
+  grab && /^}/ { exit }
+' "$MAIN_C")
+if [[ -z "$main_body" ]]; then
+  echo "error: could not find Main definition block" >&2
+  exit 1
+fi
+if echo "$main_body" | grep -qE '#line [0-9]+ ".*Util\.bux"'; then
+  echo "error: Main body has #line Util.bux (Expr/Stmt stamp leak)" >&2
+  echo "$main_body" | grep -E '#line '
+  exit 1
+fi
+if ! echo "$main_body" | grep -vE '#line 1 "' | grep -qE '#line [0-9]+ ".*Main\.bux"'; then
+  echo "error: Main body missing statement #line Main.bux" >&2
+  echo "$main_body" | head -30
+  exit 1
+fi
+echo "  Expr/Stmt sourceFile: PASS (Main stmts → Main.bux only)"
+
+echo "PASS: selfhost smoke (move_field + multi-file #line + HirNode/Expr sourceFile)"

@@ -138,6 +138,8 @@ module Ast {
         kind: int,
         line: uint32,
         column: uint32,
+        // Source file for multi-file #line / future macros (empty = inherit Decl)
+        sourceFile: String,
         // Common fields
         strValue: String,        // ident name, path segments, field name, callee
         intValue: int,           // operator kind, intrinsic kind
@@ -193,6 +195,7 @@ module Ast {
     struct Block {
         line: uint32,
         column: uint32,
+        sourceFile: String,      // multi-file #line (empty = inherit Decl)
         stmtCount: int,
         firstStmt: *Stmt,
         lastStmt: *Stmt,
@@ -227,6 +230,8 @@ module Ast {
         kind: int,
         line: uint32,
         column: uint32,
+        // Source file for multi-file #line / future macros (empty = inherit Decl)
+        sourceFile: String,
         // Common fields
         strValue: String,        // let name, pattern ident, label, for var
         boolValue: bool,         // let mutable
@@ -372,7 +377,7 @@ module Ast {
     // ---------------------------------------------------------------------------
 
     func Ast_MakeExpr(kind: int, line: uint32, col: uint32) -> Expr {
-        return Expr { kind: kind, line: line, column: col,
+        return Expr { kind: kind, line: line, column: col, sourceFile: "",
             strValue: "", intValue: 0, boolValue: false,
             tokKind: 0, tokText: "",
             child1: null as *Expr, child2: null as *Expr, child3: null as *Expr,
@@ -410,12 +415,107 @@ module Ast {
     }
 
     func Ast_MakeStmt(kind: int, line: uint32, col: uint32) -> Stmt {
-        return Stmt { kind: kind, line: line, column: col,
+        return Stmt { kind: kind, line: line, column: col, sourceFile: "",
             strValue: "", boolValue: false,
             child1: null as *Expr, child2: null as *Expr, child3: null as *Expr,
             refStmtType: null as *TypeExpr, refStmtPattern: null as *Pattern,
             refStmtDecl: null as *Decl, refStmtBlock: null as *Block, refStmtElse: null as *Block,
             elseIfCount: 0 };
+    }
+
+    /// Stamp sourceFile on an expression tree (empty slots only — keeps grafted macro nodes).
+    func Ast_StampExprFile(e: *Expr, path: String) {
+        if e == null as *Expr { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        if e.sourceFile == null as String || String_Eq(e.sourceFile, "") {
+            e.sourceFile = path;
+        }
+        Ast_StampExprFile(e.child1, path);
+        Ast_StampExprFile(e.child2, path);
+        Ast_StampExprFile(e.child3, path);
+        if e.refBlock != null as *Block {
+            Ast_StampBlockFile(e.refBlock, path);
+        }
+        var args: *ExprList = e.callArgs;
+        while args != null as *ExprList {
+            Ast_StampExprFile(args.expr, path);
+            args = args.next;
+        }
+        // Match arms (guard lives on Pattern as patGuardExpr when pkGuarded)
+        var arm: *MatchArm = e.matchArms;
+        while arm != null as *MatchArm {
+            Ast_StampExprFile(arm.body, path);
+            if arm.pattern != null as *Pattern {
+                Ast_StampPatternFile(arm.pattern, path);
+            }
+            arm = arm.next;
+        }
+        // Closure default param exprs
+        if e.closureParams != null as *Decl {
+            var pi: int = 0;
+            while pi < e.closureParams.paramCount {
+                var p: *Param = null as *Param;
+                if pi == 0 { p = &e.closureParams.param0; }
+                else if pi == 1 { p = &e.closureParams.param1; }
+                else if pi == 2 { p = &e.closureParams.param2; }
+                else if pi == 3 { p = &e.closureParams.param3; }
+                else if pi == 4 { p = &e.closureParams.param4; }
+                else if pi == 5 { p = &e.closureParams.param5; }
+                else if pi == 6 { p = &e.closureParams.param6; }
+                else if pi == 7 { p = &e.closureParams.param7; }
+                else if pi == 8 { p = &e.closureParams.param8; }
+                if p != null as *Param && p.defaultExpr != null as *Expr {
+                    Ast_StampExprFile(p.defaultExpr, path);
+                }
+                pi = pi + 1;
+            }
+        }
+    }
+
+    func Ast_StampPatternFile(pat: *Pattern, path: String) {
+        if pat == null as *Pattern { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        if pat.patGuardExpr != null as *Expr {
+            Ast_StampExprFile(pat.patGuardExpr, path);
+        }
+        Ast_StampPatternFile(pat.patChild1, path);
+        Ast_StampPatternFile(pat.patChild2, path);
+        Ast_StampPatternFile(pat.patArgs, path);
+        Ast_StampPatternFile(pat.patNext, path);
+    }
+
+    func Ast_StampBlockFile(b: *Block, path: String) {
+        if b == null as *Block { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        if b.sourceFile == null as String || String_Eq(b.sourceFile, "") {
+            b.sourceFile = path;
+        }
+        var s: *Stmt = b.firstStmt;
+        while s != null as *Stmt {
+            Ast_StampStmtFile(s, path);
+            s = s.nextStmt;
+        }
+    }
+
+    func Ast_StampStmtFile(s: *Stmt, path: String) {
+        if s == null as *Stmt { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        if s.sourceFile == null as String || String_Eq(s.sourceFile, "") {
+            s.sourceFile = path;
+        }
+        Ast_StampExprFile(s.child1, path);
+        Ast_StampExprFile(s.child2, path);
+        Ast_StampExprFile(s.child3, path);
+        if s.refStmtBlock != null as *Block {
+            Ast_StampBlockFile(s.refStmtBlock, path);
+        }
+        if s.refStmtElse != null as *Block {
+            Ast_StampBlockFile(s.refStmtElse, path);
+        }
+        if s.refStmtDecl != null as *Decl {
+            // nested decl inside stmt — body stamp via Decl stamp
+            discard;
+        }
     }
 
     func Ast_MakeDecl(kind: int, line: uint32, col: uint32) -> Decl {

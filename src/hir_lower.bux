@@ -81,6 +81,28 @@ module HirLower {
         }
     }
 
+    /// Prefer Expr/Stmt.sourceFile (macro / cross-file graft); else enclosing Decl path.
+    func Lcx_SourceFileFor(ctx: *LowerCtx, nodeFile: String) -> String {
+        if nodeFile != null as String && !String_Eq(nodeFile, "") {
+            return nodeFile;
+        }
+        if ctx.currentSourceFile != null as String && !String_Eq(ctx.currentSourceFile, "") {
+            return ctx.currentSourceFile;
+        }
+        return "";
+    }
+
+    /// Set line/column/sourceFile on a freshly allocated HirNode from AST location.
+    func Lcx_SetNodeLoc(ctx: *LowerCtx, n: *HirNode, line: uint32, col: uint32, nodeFile: String) {
+        if n == null as *HirNode { return; }
+        n.line = line;
+        n.column = col;
+        let f: String = Lcx_SourceFileFor(ctx, nodeFile);
+        if f != null as String && !String_Eq(f, "") {
+            n.sourceFile = f;
+        }
+    }
+
     func Lcx_PatLookup(ctx: *LowerCtx, src: String) -> String {
         // Most recent rename wins (scan from end)
         var i: int = ctx.patMapCount - 1;
@@ -1000,15 +1022,13 @@ module HirLower {
         // Alloca result + found flag
         let allocaNode: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         allocaNode.kind = hAlloca;
-        allocaNode.line = line;
-        allocaNode.column = col;
+        Lcx_SetNodeLoc(ctx, allocaNode, line, col, expr.sourceFile);
         allocaNode.strValue = resultName;
         allocaNode.typeName = typeName;
 
         let foundAlloca: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         foundAlloca.kind = hAlloca;
-        foundAlloca.line = line;
-        foundAlloca.column = col;
+        Lcx_SetNodeLoc(ctx, foundAlloca, line, col, expr.sourceFile);
         foundAlloca.strValue = foundName;
         foundAlloca.typeName = "bool";
         allocaNode.child3 = foundAlloca;
@@ -1175,8 +1195,7 @@ module HirLower {
         let col: uint32 = expr.column;
         let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         n.kind = hBlock;
-        n.line = line;
-        n.column = col;
+        Lcx_SetNodeLoc(ctx, n, line, col, expr.sourceFile);
 
         let kind: int = expr.kind;
 
@@ -2387,8 +2406,7 @@ module HirLower {
         let col: uint32 = stmt.column;
         let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         n.kind = hBlock;
-        n.line = line;
-        n.column = col;
+        Lcx_SetNodeLoc(ctx, n, line, col, stmt.sourceFile);
 
         let kind: int = stmt.kind;
 
@@ -3397,8 +3415,7 @@ module HirLower {
         // Wrap in an hBlock node with child1 = first statement in chain
         let n: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
         n.kind = hBlock;
-        n.line = block.line;
-        n.column = block.column;
+        Lcx_SetNodeLoc(ctx, n, block.line, block.column, block.sourceFile);
         n.boolValue = true;
         n.child1 = firstNode;
         if asExpr && !String_Eq(yieldName, "") {

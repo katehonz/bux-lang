@@ -611,10 +611,19 @@ func Cli_CollectStdlibImports(mod: *Module, outPaths: *String, maxCount: int, st
     return count;
 }
 
-/// Stamp sourceFile on a decl and nested module items (for multi-file #line).
+/// Stamp sourceFile on a decl, nested items, and body Expr/Stmt/Block trees.
+/// Prepares multi-file #line and future macro / cross-file grafts (empty slots only).
 func Cli_StampSourceFile(decl: *Decl, path: String) {
     if decl == null as *Decl { return; }
     decl.sourceFile = path;
+    // Function / method body
+    if decl.refBody != null as *Block {
+        Ast_StampBlockFile(decl.refBody, path);
+    }
+    // Const / type alias init exprs if present
+    if decl.constValue != null as *Expr {
+        Ast_StampExprFile(decl.constValue, path);
+    }
     if decl.kind == dkModule {
         var inner: *Decl = decl.childDecl1;
         while inner != null as *Decl {
@@ -629,6 +638,24 @@ func Cli_StampSourceFile(decl: *Decl, path: String) {
             Cli_StampSourceFile(m, path);
             m = m.childDecl2;
         }
+    }
+    // Default param values
+    var pi: int = 0;
+    while pi < decl.paramCount {
+        var p: *Param = null as *Param;
+        if pi == 0 { p = &decl.param0; }
+        else if pi == 1 { p = &decl.param1; }
+        else if pi == 2 { p = &decl.param2; }
+        else if pi == 3 { p = &decl.param3; }
+        else if pi == 4 { p = &decl.param4; }
+        else if pi == 5 { p = &decl.param5; }
+        else if pi == 6 { p = &decl.param6; }
+        else if pi == 7 { p = &decl.param7; }
+        else if pi == 8 { p = &decl.param8; }
+        if p != null as *Param && p.defaultExpr != null as *Expr {
+            Ast_StampExprFile(p.defaultExpr, path);
+        }
+        pi = pi + 1;
     }
 }
 
