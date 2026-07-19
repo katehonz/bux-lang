@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — HirNode sourceFile #line, selfhost CI, **LSP 0.12 path rename**, Nexus KA  
+> **Текущо:** v0.5.x — HirNode sourceFile, **optional selfhost-loop CI**, LSP 0.12, Nexus KA  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -754,9 +754,26 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 48 (optional CI: selfhost-loop)
+
+1. **`tools/selfhost_loop.sh`**: bootstrap determinism (buxc × 2)
+   - path-normalized `#line` C compare (abs path / build-dir noise stripped)
+   - stripped ELF compare; **fails** on real C or ELF mismatch
+2. **Lexer:** `maxTokens` 32k → 131k (hir_lower was at the ceiling for buxc2 parse)
+3. **Optional fixed-point** `BUX_SELFHOST_FIXED_POINT=1`: buxc2 → buxc3
+   - experimental; selfhost still diverges on full compiler C emit
+4. **GitHub Actions** `.github/workflows/selfhost-loop.yml`
+   - `workflow_dispatch` (+ optional fixed_point input)
+   - weekly cron (Sunday 06:00 UTC)
+   - push to `main` when `src/` / `lib/` / loop script change
+   - **not** on every PR / not in default `make test`
+5. Verified: `make selfhost-loop` PASS (determinism)
+
+---
+
 ## Следващи стъпки
 
-1. Optional: selfhost-loop as optional CI job (slow)
-2. LSP find-implementations request (dedicated, beyond call hierarchy)
-3. Workspace-wide import path index without open documents (optional polish)
-4. Expr/Stmt-level sourceFile if macros / cross-file inlining land
+1. LSP find-implementations request (dedicated, beyond call hierarchy)
+2. Workspace-wide import path index without open documents (optional polish)
+3. Expr/Stmt-level sourceFile if macros / cross-file inlining land
+4. Fix selfhost C backend so buxc2→buxc3 fixed-point is green

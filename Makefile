@@ -142,40 +142,11 @@ fmt: build
 	@./$(OUT) fmt apps/
 	@echo "Formatted lib/ examples/ src/ tests/ apps/"
 
+# Fixed-point: bootstrap buxc → buxc2 → buxc3 (path-normalized C + stripped ELF).
+# Slow; not part of default `make test`. Optional CI: .github/workflows/selfhost-loop.yml
 selfhost-loop: build
-	@echo "=== Selfhost loop: bootstrap determinism check ==="
-	@echo "Build A..."
-	@rm -rf build/selfhost-loop-a
-	@mkdir -p build/selfhost-loop-a/src
-	@cp src/*.bux build/selfhost-loop-a/src/
-	@cp src/bux.toml build/selfhost-loop-a/
-	@mv build/selfhost-loop-a/src/main.bux build/selfhost-loop-a/src/Main.bux 2>/dev/null || true
-	@cd build/selfhost-loop-a && ../../$(OUT) build
-	@echo "Build B..."
-	@rm -rf build/selfhost-loop-b
-	@mkdir -p build/selfhost-loop-b/src
-	@cp src/*.bux build/selfhost-loop-b/src/
-	@cp src/bux.toml build/selfhost-loop-b/
-	@mv build/selfhost-loop-b/src/main.bux build/selfhost-loop-b/src/Main.bux 2>/dev/null || true
-	@cd build/selfhost-loop-b && ../../$(OUT) build
-	@echo ""
-	@echo "Comparing C output..."
-	@if diff build/selfhost-loop-a/build/main.c build/selfhost-loop-b/build/main.c > /dev/null 2>&1; then \
-		echo "  C output: IDENTICAL ✓"; \
-	else \
-		echo "  C output: DIFFERENT ✗"; \
-	fi
-	@echo "Comparing ELF binaries (stripped)..."
-	@cp build/selfhost-loop-a/build/buxc2 /tmp/buxc2_a && strip -d /tmp/buxc2_a
-	@cp build/selfhost-loop-b/build/buxc2 /tmp/buxc2_b && strip -d /tmp/buxc2_b
-	@if diff /tmp/buxc2_a /tmp/buxc2_b > /dev/null 2>&1; then \
-		echo "  ELF binary: IDENTICAL ✓"; \
-		echo "=== Selfhost loop PASSED ==="; \
-	else \
-		echo "  ELF binary: DIFFERENT ✗"; \
-		echo "=== Selfhost loop FAILED ==="; \
-		exit 1; \
-	fi
+	@chmod +x tools/selfhost_loop.sh
+	@tools/selfhost_loop.sh
 
 lsp: tools/bux-lsp
 	@echo "LSP server ready at tools/bux-lsp"

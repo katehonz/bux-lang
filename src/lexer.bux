@@ -42,7 +42,8 @@ module Lexer {
     // Lexer state
     // ---------------------------------------------------------------------------
 
-    const maxTokens: int = 32768;
+    // hir_lower.bux alone is ~32k+ tokens; keep headroom for larger units / growth
+    const maxTokens: int = 131072;
     const maxDiags: int = 128;
 
     struct LexerDiag {

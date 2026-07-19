@@ -349,8 +349,10 @@ make selfhost
 ./buxc search greet
 make test-registry          # add greet → install → build temp app
 
-# Verify selfhost binary parity (buxc2 → buxc3, identical)
+# Selfhost determinism (optional CI job; not in default `make test`)
 make selfhost-loop
+# Experimental fixed-point (buxc2 → buxc3):
+# BUX_SELFHOST_FIXED_POINT=1 make selfhost-loop
 
 # Clean build artifacts
 make clean

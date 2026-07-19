@@ -1,0 +1,67 @@
+# Optional / not on every PR: bootstrap selfhost determinism (make selfhost-loop).
+# Triggers: manual, weekly, or push to main that touches compiler/stdlib/loop.
+# Fixed-point buxc2→buxc3 is opt-in via BUX_SELFHOST_FIXED_POINT=1 (experimental).
+name: selfhost-loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixed_point:
+        description: "Also run experimental buxc2→buxc3 fixed-point"
+        type: boolean
+        default: false
+  schedule:
+    # Sundays 06:00 UTC
+    - cron: "0 6 * * 0"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "lib/**"
+      - "rt/**"
+      - "bootstrap/**"
+      - "tools/selfhost_loop.sh"
+      - "Makefile"
+      - ".github/workflows/selfhost-loop.yml"
+
+concurrency:
+  group: selfhost-loop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selfhost-loop:
+    name: bootstrap determinism
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.0.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make binutils libssl-dev
+
+      - name: Selfhost loop
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.fixed_point }}" = "true" ]; then
+            export BUX_SELFHOST_FIXED_POINT=1
+            echo "Fixed-point mode enabled (experimental)"
+          fi
+          make selfhost-loop
+
+      - name: Upload C on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfhost-loop-c
+          path: |
+            build/selfhost-loop-a/build/main.c
+            build/selfhost-loop-b/build/main.c
+          if-no-files-found: ignore
