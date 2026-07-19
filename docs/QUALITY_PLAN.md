@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — HirNode sourceFile, **optional selfhost-loop CI**, LSP 0.12, Nexus KA  
+> **Текущо:** v0.5.x — **LSP 0.13 implementation**, HirNode sourceFile, optional selfhost-loop CI  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -771,9 +771,24 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 49 (LSP 0.13 textDocument/implementation)
+
+1. **`implementationProvider`** + `textDocument/implementation`
+2. **Interface type** under cursor → locations of implementing types
+   (`extend Type for Iface` / type decl)
+3. **Interface method** under cursor → implementor method decls
+   (reuses `collectImplementorFuncs` + `workspaceImpls`)
+4. Also: call-site / shared method name matching known iface methods;
+   implementor method → sibling implementors of same iface method
+5. Smoke: `tools/smoke_lsp_implementation.sh`
+   - Drawable → ≥2 types; Draw → ≥2 methods (Circle + Square)
+6. Version **bux-lsp 0.13.0**; `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. LSP find-implementations request (dedicated, beyond call hierarchy)
-2. Workspace-wide import path index without open documents (optional polish)
-3. Expr/Stmt-level sourceFile if macros / cross-file inlining land
-4. Fix selfhost C backend so buxc2→buxc3 fixed-point is green
+1. Workspace-wide import path index without open documents (optional polish)
+2. Expr/Stmt-level sourceFile if macros / cross-file inlining land
+3. Fix selfhost C backend so buxc2→buxc3 fixed-point is green
+4. Main PR CI workflow (`make test`) beyond optional selfhost-loop

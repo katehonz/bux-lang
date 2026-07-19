@@ -14,6 +14,7 @@
 # v0.10.0: method rename + qualified path / extend Type rename edges.
 # v0.11.0: interface dispatch in call hierarchy (extend Type for Trait).
 # v0.12.0: module-path segment rename (import Std::Io / Std::Io::{…}).
+# v0.13.0: textDocument/implementation (interface → types / methods).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -2579,6 +2580,147 @@ proc collectImplementorFuncs(iface, meth: string): seq[FuncSym] =
           if seen.contains(key): continue
           seen.incl(key)
           result.add(FuncSym(name: meth, uri: uri, info: info))
+  # Closed-file index from workspace scan
+  let wkey = iface & "." & meth
+  if workspaceImpls.hasKey(wkey):
+    for impl in workspaceImpls[wkey]:
+      let key = impl.uri & "#" & impl.typeName & "." & meth
+      if seen.contains(key): continue
+      seen.incl(key)
+      if documents.hasKey(impl.uri):
+        let doc = documents[impl.uri]
+        ensureAnalyzed(doc)
+        if doc.symbols.hasKey(meth) and doc.symbols[meth].kind == "method" and
+           doc.symbols[meth].container == impl.typeName:
+          result.add(FuncSym(name: meth, uri: impl.uri, info: doc.symbols[meth]))
+          continue
+      if workspaceSymbols.hasKey(meth) and workspaceSymbols[meth].uri == impl.uri:
+        var info = workspaceSymbols[meth].info
+        info.container = impl.typeName
+        result.add(FuncSym(name: meth, uri: impl.uri, info: info))
+      else:
+        result.add(FuncSym(
+          name: meth, uri: impl.uri,
+          info: SymbolInfo(line: 0, col: 0, kind: "method",
+            detail: impl.typeName & "." & meth, container: impl.typeName)))
+
+proc collectTypeImplementorLocs(iface: string): seq[JsonNode] =
+  ## Locations of types that `extend Type for iface`.
+  result = @[]
+  var seen = initHashSet[string]()
+  for uri, doc in documents.pairs:
+    ensureAnalyzed(doc)
+    for impl in doc.impls:
+      if impl.iface != iface: continue
+      let key = uri & "#" & impl.typeName
+      if seen.contains(key): continue
+      seen.incl(key)
+      if doc.symbols.hasKey(impl.typeName):
+        let info = doc.symbols[impl.typeName]
+        result.add(locationJson(uri, info.line, info.col, impl.typeName.len))
+      else:
+        # Fall back to the `extend` line
+        result.add(locationJson(uri, impl.line, 0, max(1, impl.typeName.len)))
+  # Derive types from workspaceImpls (Iface.Method → typeName)
+  for wkey, impls in workspaceImpls.pairs:
+    if not wkey.startsWith(iface & "."): continue
+    for impl in impls:
+      let key = impl.uri & "#" & impl.typeName
+      if seen.contains(key): continue
+      seen.incl(key)
+      if documents.hasKey(impl.uri):
+        let doc = documents[impl.uri]
+        ensureAnalyzed(doc)
+        if doc.symbols.hasKey(impl.typeName):
+          let info = doc.symbols[impl.typeName]
+          result.add(locationJson(impl.uri, info.line, info.col, impl.typeName.len))
+          continue
+      if workspaceSymbols.hasKey(impl.typeName):
+        let ws = workspaceSymbols[impl.typeName]
+        result.add(locationJson(ws.uri, ws.info.line, ws.info.col, impl.typeName.len))
+      else:
+        result.add(locationJson(impl.uri, 0, 0, max(1, impl.typeName.len)))
+
+proc handleImplementation(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## textDocument/implementation — go to implementors of interface / iface method.
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let position = paramsNode["position"]
+  let lineNum = position["line"].getInt()
+  let col = position["character"].getInt()
+  let doc = getDoc(uri)
+  if doc.content == "":
+    sendResponse(stream, id, %*[])
+    return
+  ensureAnalyzed(doc)
+  let word = findWordAt(doc.content, lineNum, col)
+  if word.len == 0:
+    sendResponse(stream, id, %*[])
+    return
+
+  var arr = newJArray()
+
+  # 1) Interface method under cursor → implementor methods
+  let (iok, im) = findIfaceMethodAt(doc, word, lineNum, col)
+  if iok:
+    for fs in collectImplementorFuncs(im.parent, im.name):
+      arr.add(locationJson(fs.uri, fs.info.line, fs.info.col, fs.name.len))
+    sendResponse(stream, id, arr)
+    return
+
+  # 2) Interface type name → implementing types (extend Type for Iface)
+  var isIface = false
+  if doc.symbols.hasKey(word) and doc.symbols[word].kind == "interface":
+    isIface = true
+  elif workspaceSymbols.hasKey(word) and workspaceSymbols[word].info.kind == "interface":
+    isIface = true
+  if isIface:
+    for loc in collectTypeImplementorLocs(word):
+      arr.add(loc)
+    sendResponse(stream, id, arr)
+    return
+
+  # 3) Call site / method name that matches a known iface method
+  #    (e.g. cursor on Draw in c.Draw() or on implementor name shared with iface)
+  for m in doc.ifaceMethods:
+    if m.name != word: continue
+    for fs in collectImplementorFuncs(m.parent, m.name):
+      arr.add(locationJson(fs.uri, fs.info.line, fs.info.col, fs.name.len))
+    if arr.len > 0:
+      sendResponse(stream, id, arr)
+      return
+
+  # 4) Method registered as implementor of some interface — still list siblings?
+  #    Prefer: if word is method on a type that implements I, and I has that method,
+  #    return all implementors of I.Method (including self).
+  if doc.symbols.hasKey(word) and doc.symbols[word].kind == "method":
+    let container = doc.symbols[word].container
+    for impl in doc.impls:
+      if impl.typeName != container: continue
+      # This type implements impl.iface; if method is an iface method, list all
+      for m in doc.ifaceMethods:
+        if m.parent == impl.iface and m.name == word:
+          for fs in collectImplementorFuncs(impl.iface, word):
+            arr.add(locationJson(fs.uri, fs.info.line, fs.info.col, fs.name.len))
+          if arr.len > 0:
+            sendResponse(stream, id, arr)
+            return
+    # workspaceImpls reverse lookup
+    for wkey, impls in workspaceImpls.pairs:
+      if not wkey.endsWith("." & word): continue
+      let iface = wkey[0 ..< wkey.len - word.len - 1]
+      var onType = false
+      for impl in impls:
+        if impl.typeName == container or impl.uri == uri:
+          onType = true
+          break
+      if onType:
+        for fs in collectImplementorFuncs(iface, word):
+          arr.add(locationJson(fs.uri, fs.info.line, fs.info.col, fs.name.len))
+        if arr.len > 0:
+          sendResponse(stream, id, arr)
+          return
+
+  sendResponse(stream, id, arr)
 
 proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   let uri = paramsNode["textDocument"]["uri"].getStr()
@@ -2769,9 +2911,10 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "referencesProvider": true,
         "renameProvider": {"prepareProvider": true},
         "workspaceSymbolProvider": true,
-        "callHierarchyProvider": true
+        "callHierarchyProvider": true,
+        "implementationProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.12.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.13.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -2870,6 +3013,9 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
 
   of "callHierarchy/outgoingCalls":
     handleOutgoingCalls(stream, id, paramsNode)
+
+  of "textDocument/implementation":
+    handleImplementation(stream, id, paramsNode)
 
   else:
     if id != nil:

@@ -185,6 +185,9 @@ test-lsp: lsp
 	@echo "==> LSP path rename smoke"
 	@chmod +x tools/smoke_lsp_rename_path.sh
 	@tools/smoke_lsp_rename_path.sh
+	@echo "==> LSP implementation smoke"
+	@chmod +x tools/smoke_lsp_implementation.sh
+	@tools/smoke_lsp_implementation.sh
 
 .PHONY: test-registry
 test-registry: build
