@@ -15,6 +15,7 @@ type
     color*: ColorMode
     quiet*: bool
     verbose*: bool
+    release*: bool   ## --release: -O2, no -g / no #line (E.4 dual)
 
 proc printUsage*() =
   echo """Bux Programming Language (bootstrap compiler)
@@ -42,15 +43,22 @@ Command options:
   fmt  --check        Exit 1 if any file would be reformatted (CI)
   doc  --out <file>   Write docs to file (default: stdout)
   add  --path / --git Explicit source; else resolve via registry
+  build --release     Optimized build (-O2, no debug / #line)
+
+Registry:
+  BUX_REGISTRY            Local path or http(s):// URL to registry.toml
+  BUX_REGISTRY_REFRESH=1  Force re-download of HTTP index cache
+  BUX_CFLAGS              Extra flags appended to the C compiler line
 
 Global options:
   --color <auto|on|off>   Control colored output (default: auto)
   -q, --quiet             Suppress non-error output
   -v, --verbose           Verbose output
+  --release               Optimize (-O2), omit -g and #line maps
 """
 
 proc parseGlobalOptions(args: seq[string]): tuple[opts: GlobalOptions, rest: seq[string], ok: bool] =
-  result.opts = GlobalOptions(color: cmAuto, quiet: false, verbose: false)
+  result.opts = GlobalOptions(color: cmAuto, quiet: false, verbose: false, release: false)
   result.rest = @[]
   result.ok = true
   var i = 0
@@ -74,6 +82,8 @@ proc parseGlobalOptions(args: seq[string]): tuple[opts: GlobalOptions, rest: seq
       result.opts.quiet = true
     elif arg == "-v" or arg == "--verbose":
       result.opts.verbose = true
+    elif arg == "--release":
+      result.opts.release = true
     else:
       result.rest.add(arg)
     inc i
@@ -411,10 +421,14 @@ proc cmdAdd*(args: seq[string], opts: GlobalOptions): int =
   elif gitUrl.len > 0:
     depLine = &"{depName} = {{ Version = \"{version}\", Source = \"{gitUrl}\" }}"
   else:
-    # Registry resolve (E.1)
+    # Registry resolve (E.1 + HTTP URL)
     let reg = loadRegistry()
     if reg.path.len == 0:
-      printError("no package registry found (set BUX_REGISTRY or install config/registry.toml)", useColor)
+      if reg.sourceUrl.len > 0:
+        printError(&"failed to fetch registry from {reg.sourceUrl}", useColor)
+        printError("hint: check network, curl/wget, or set BUX_REGISTRY to a local file", useColor)
+      else:
+        printError("no package registry found (set BUX_REGISTRY or install config/registry.toml)", useColor)
       return 1
     let pkg = registryLookup(reg, depName, version)
     if pkg.name.len == 0:
@@ -423,7 +437,8 @@ proc cmdAdd*(args: seq[string], opts: GlobalOptions): int =
       return 1
     depLine = formatRegistryDepLine(depName, pkg)
     if not opts.quiet:
-      printInfo(&"Resolved '{depName}' {pkg.version} from registry {reg.path}", useColor)
+      let src = if reg.sourceUrl.len > 0: reg.sourceUrl else: reg.path
+      printInfo(&"Resolved '{depName}' {pkg.version} from registry {src}", useColor)
   var content = readFile(manifestPath)
   # Ensure [Dependencies] section exists
   if content.find("[Dependencies]") < 0:
@@ -440,10 +455,18 @@ proc cmdSearch*(args: seq[string], opts: GlobalOptions): int =
   let query = if args.len > 0: args[0] else: ""
   let reg = loadRegistry()
   if reg.path.len == 0:
-    printError("no package registry found (set BUX_REGISTRY)", useColor)
+    if reg.sourceUrl.len > 0:
+      printError(&"failed to fetch registry from {reg.sourceUrl}", useColor)
+      printError("hint: need curl or wget; or set BUX_REGISTRY to a local file", useColor)
+    else:
+      printError("no package registry found (set BUX_REGISTRY path or http(s) URL)", useColor)
     return 1
   if not opts.quiet:
-    echo &"Registry: {reg.path}"
+    if reg.sourceUrl.len > 0:
+      echo &"Registry: {reg.sourceUrl}"
+      echo &"  (cached: {reg.path})"
+    else:
+      echo &"Registry: {reg.path}"
   let hits = registrySearch(reg, query)
   if hits.len == 0:
     if not opts.quiet:
@@ -717,8 +740,18 @@ proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl] =
     result.add(d)
 
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
+  var opts = opts
+  var pathArgs: seq[string] = @[]
+  for a in args:
+    if a == "--release":
+      opts.release = true
+    elif a.startsWith("-"):
+      # ignore unknown flags for forward-compat; keep path-like later
+      discard
+    else:
+      pathArgs.add(a)
   let useColor = shouldUseColor(opts)
-  let root = if args.len > 0: absolutePath(args[0]) else: getCurrentDir()
+  let root = if pathArgs.len > 0: absolutePath(pathArgs[0]) else: getCurrentDir()
   let (pctx, status) = prepareProject(root, useColor, opts)
   if status != 0:
     return status
@@ -739,7 +772,8 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   
   let hirMod = lowerModule(unifiedModule, semaCtx)
   let lirBuilder = lowerModuleToLir(hirMod)
-  var lirCbe = initLirCBackend()
+  # Debug builds: #line maps into .bux for gdb. Release: skip maps + -O2.
+  var lirCbe = initLirCBackend(emitDebugLines = not opts.release)
   var allCCode = lirCbe.emitModule(lirBuilder, hirMod)
 
   # Write C file
@@ -769,10 +803,13 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     printError("io.c not found in rt/", useColor)
     return 1
 
-  # Compile with cc
+  # Compile with cc — debug default (-O0 -g) or --release (-O2)
   let outputName = if pctx.man.name != "": pctx.man.name else: "bux_out"
   let outputFile = buildDir / outputName
-  let ccCmd = &"cc -O0 -g -pthread -Wl,--build-id=none -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm -lcrypto 2>&1"
+  let optFlags = if opts.release: "-O2 -DNDEBUG" else: "-O0 -g"
+  let extraCflags = getEnv("BUX_CFLAGS")
+  let cflags = if extraCflags.len > 0: optFlags & " " & extraCflags else: optFlags
+  let ccCmd = &"cc {cflags} -pthread -Wl,--build-id=none -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm -lcrypto 2>&1"
   if opts.verbose:
     printInfo(&"running: {ccCmd}", useColor)
   let (output, exitCode) = execCmdEx(ccCmd)

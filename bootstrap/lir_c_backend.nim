@@ -10,11 +10,17 @@ type
     output*: string
     indent*: int
     tempTypes*: Table[string, string]  ## Track C types of temp variables
+    emitDebugLines*: bool              ## Emit #line → .bux for DWARF (E.4)
+    lastDebugLine*: int
+    lastDebugFile*: string
 
-proc initLirCBackend*(): LirCBackend =
+proc initLirCBackend*(emitDebugLines: bool = true): LirCBackend =
   result = LirCBackend(
     indent: 0,
     tempTypes: initTable[string, string](),
+    emitDebugLines: emitDebugLines,
+    lastDebugLine: 0,
+    lastDebugFile: "",
   )
 
 proc emitIndent(be: var LirCBackend) =
@@ -25,6 +31,22 @@ proc emitLine(be: var LirCBackend, s: string) =
   be.emitIndent()
   be.output.add(s)
   be.output.add("\n")
+
+proc emitDebugLine(be: var LirCBackend, instr: LirInstr) =
+  ## Map generated C back to Bux source for gdb/DWARF via #line.
+  if not be.emitDebugLines: return
+  if instr.locLine <= 0: return
+  if instr.locLine == be.lastDebugLine and instr.locFile == be.lastDebugFile:
+    return
+  be.lastDebugLine = instr.locLine
+  be.lastDebugFile = instr.locFile
+  var path = instr.locFile
+  if path.len == 0:
+    path = "<bux>"
+  # Escape for C string literal
+  path = path.replace("\\", "\\\\").replace("\"", "\\\"")
+  # #line must start at column 0
+  be.output.add(&"#line {instr.locLine} \"{path}\"\n")
 
 proc valToC(be: var LirCBackend, v: LirValue): string =
   ## Convert a LirValue to its C representation.
@@ -50,6 +72,7 @@ proc cParamDecl(cType, name: string): string =
 # ── Per-instruction emission ──
 
 proc emitInstr(be: var LirCBackend, instr: LirInstr) =
+  be.emitDebugLine(instr)
   template v(x: LirValue): string = valToC(be, x)
   case instr.kind
 
@@ -245,6 +268,16 @@ proc emitFunc(be: var LirCBackend, f: LirFunc, funcRetTypes: Table[string, strin
     paramsStr.add(cParamDecl(p.cType, p.name))
   if f.params.len == 0:
     paramsStr = "void"
+
+  # Point the function entry at the first Bux location so gdb `list Main` works
+  # (otherwise leftover #line from the previous function pollutes the prologue).
+  if be.emitDebugLines:
+    for instr in f.instrs:
+      if instr.locLine > 0:
+        be.lastDebugLine = 0
+        be.lastDebugFile = ""
+        be.emitDebugLine(instr)
+        break
 
   be.emitLine(&"{f.retType} {f.name}({paramsStr}) {{")
   be.indent += 1

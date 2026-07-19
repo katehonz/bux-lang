@@ -32,9 +32,12 @@ cd apps/nexus
 
 # Run
 ./nexus
+
+# Optional env (also used by `make bench-nexus`)
+# NEXUS_PORT=18080 NEXUS_BIND=127.0.0.1 NEXUS_WORKERS=4 ./build/nexus
 ```
 
-Server starts on `http://0.0.0.0:8080`:
+Server starts on `http://0.0.0.0:8080` (override with `NEXUS_PORT` / `NEXUS_BIND`):
 
 ```
 ╔══════════════════════════════════════════════╗

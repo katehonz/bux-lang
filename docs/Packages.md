@@ -1,6 +1,6 @@
 # Bux Package Manager
 
-> **Status:** Path + git + **local/file registry** (E.1). HTTP registry index URL optional later.
+> **Status:** Path + git + **local/file registry** (E.1) + **HTTP(S) index URL** (cached under `~/.bux/cache/`).
 
 See also: [SEMVER.md](SEMVER.md) for version policy.
 
@@ -46,9 +46,15 @@ Utils = { Path = "../Utils" }
 
 Default locations (first hit wins):
 
-1. `$BUX_REGISTRY` — path to a `registry.toml`
+1. `$BUX_REGISTRY` — **local path** *or* **`http(s)://` URL** to a `registry.toml`
 2. `~/.bux/registry.toml`
 3. `config/registry.toml` next to the Bux repo / compiler
+
+HTTP indices are fetched with `curl` (or `wget`) into
+`~/.bux/cache/registry_http.toml`. Set `BUX_REGISTRY_REFRESH=1` to force
+re-download. Relative `file:` / `path:` entries in a remote index resolve
+against the cache directory — prefer **absolute paths** or **git URLs** for
+HTTP-served registries.
 
 Format:
 
@@ -66,8 +72,18 @@ source = "https://github.com/example/bux-net.git"
 description = "TCP helpers"
 ```
 
-`file:` / `path:` sources are resolved relative to the registry file.
-Git URLs are cloned into `~/.bux/packages/<name>/` on install.
+`file:` / `path:` sources are resolved relative to the registry file (or
+the HTTP cache path). Git URLs are cloned into `~/.bux/packages/<name>/` on
+install.
+
+```bash
+# Local index (default in this repo)
+export BUX_REGISTRY=/path/to/config/registry.toml
+
+# Remote index URL
+export BUX_REGISTRY=https://example.com/bux/registry.toml
+bux search
+```
 
 ### CLI
 

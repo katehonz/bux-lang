@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
-> **Дата:** 2026-07-18  
-> **Текущо:** v0.5.x — selfhost, C.1, tooling, LSP 0.4, full-tree fmt, **package registry (E.1)** ✅  
+> **Дата:** 2026-07-19  
+> **Текущо:** v0.5.x — registry HTTP, apps smoke, E.5 benches, **E.4 DWARF `#line` + gdb**  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -18,7 +18,7 @@
 | Concurrency | M:N tasks + channels + async | ★★★★☆ |
 | Stdlib | Array/Map/Set/String/Iter HOF разширени | ★★★★☆ |
 | Tooling | `test-errors`, LSP diagnostics + hover/def/outline | ★★★★☆ |
-| Ecosystem / registry | path+git + **file registry index** (`bux search/add`) | ★★★☆☆ |
+| Ecosystem / registry | path+git + file **+ HTTP** index (`bux search/add`) | ★★★★☆ |
 | Документация | README + QUALITY_PLAN синхронизирани (2026-07-15) | ★★★★☆ |
 
 **Силна ниша:** gradual ownership (C-скорост на писане + opt-in Rust-safety).  
@@ -88,11 +88,11 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| E.1 | Package registry protocol (git/HTTP) | `bux add foo` без path hacks | ✅ local index + file/git sources + `search` |
-| E.2 | 3–5 production-quality apps в `apps/` | Showcase | ⏳ partial (`nexus`, `boko`, `simpledb`, `jwt-pitbul`) |
+| E.1 | Package registry protocol (git/HTTP) | `bux add foo` без path hacks | ✅ local index + **HTTP(S) URL** cache + file/git + `search` |
+| E.2 | 3–5 production-quality apps в `apps/` | Showcase | ✅ 4 apps + `make test-apps` smoke (build + CLI) |
 | E.3 | Language freeze + semver policy | Trust | ✅ draft `docs/SEMVER.md` |
-| E.4 | Debugger/DWARF basics | Systems audience | ⏳ |
-| E.5 | Benchmarks vs C/Zig/Nim (micro + nexus) | Marketing + regression | ⏳ |
+| E.4 | Debugger/DWARF basics | Systems audience | ✅ `#line`→`.bux` + `-g` / `--release`; `make test-dwarf` |
+| E.5 | Benchmarks vs C/Zig/Nim (micro + nexus) | Marketing + regression | ✅ micro + C/Nim/Zig twins + `make bench-nexus` (wrk) |
 
 ---
 
@@ -112,12 +112,12 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ## Acceptance criteria за „добър v1.0“
 
-- [ ] Всички examples + selfhost-loop + 3 apps минават на CI
+- [ ] Всички examples + selfhost-loop + 3 apps минават на CI (apps: `make test-apps` ready)
 - [ ] Array/Map/String/Test API покрива 90% от ежедневните нужди
 - [x] `@[Checked]` хваща use-after-move + double `&mut` + dangling return / elision fail
 - [x] `bux test` + `bux fmt` + `bux check` са default developer loop (`--filter` / `--check` shipped)
 - [x] LanguageRef синхронизиран с компилатора (incl. C.1 elision)
-- [x] Поне един външен/temp проект build-ва с registry dep (`tools/smoke_registry.sh`)
+- [x] Поне един външен/temp проект build-ва с registry dep (`tools/smoke_registry.sh` + HTTP)
 
 ---
 
@@ -496,8 +496,61 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 31 (E.1b HTTP registry + E.2 apps smoke + E.5 micro-bench)
+
+1. **HTTP registry index** (`bootstrap/registry.nim`):
+   - `$BUX_REGISTRY` accepts `http://` / `https://` URLs
+   - Fetch via `curl` (fallback `wget`) → `~/.bux/cache/registry_http.toml`
+   - `BUX_REGISTRY_REFRESH=1` forces re-download; cache keyed by URL meta file
+   - `bux search` shows URL + cached path; clear errors on fetch failure
+2. **Smoke:** `tools/smoke_registry.sh` — local path flow **+** python `http.server` HTTP search
+3. **E.2 apps smoke** (`tools/smoke_apps.sh` / `make test-apps`):
+   - Build `simpledb`, `jwt-pitbul`, `nexus`, `boko-framework`
+   - simpledb set/get/has/count/del; jwt-pitbul sign/verify/decode
+   - Removed obsolete JWT-disable workaround from simpledb README
+4. **E.5 micro-benchmarks** (`benches/micro`, `benches/c`, `make bench`):
+   - Bux: `int_loop`, `fib30`, `string_concat`, `array_push`
+   - C refs (`gcc -O2`): `fib30`, `int_loop` for relative comparison
+5. Docs: `Packages.md`, `config/registry.toml`, `benches/README.md`
+6. Verified: `make test-registry`, `tools/smoke_apps.sh`, `tools/bench.sh`
+
+---
+
+## Сесия 32 (E.5 nexus throughput + language twins)
+
+1. **Nexus env config** (`apps/nexus/src/Main.bux`):
+   - `NEXUS_PORT`, `NEXUS_WORKERS`, `NEXUS_BIND`, `NEXUS_PUBLIC`
+2. **Throughput harness** (`tools/bench_nexus.sh` / `make bench-nexus`):
+   - Start nexus on `:18080`, `wrk -t4 -c64 -d5s` → `/api/health`
+   - Sample (this machine): **~44.5k req/s**, p50 ~0.94 ms (Connection: close)
+3. **Language twins** for micro kernels:
+   - `benches/nim/` fib + int_loop (`nim c -d:release`)
+   - `benches/zig/` sources (built when `zig` is on PATH)
+   - `make bench` runs Bux + C + Nim (+ Zig if present)
+4. Docs: `benches/README.md`, nexus README, BuildAndTest
+5. Verified: `tools/bench.sh`, `tools/bench_nexus.sh`
+
+---
+
+## Сесия 33 (E.4 Debugger / DWARF basics)
+
+1. **Source map:** HIR `loc` → LIR `locLine`/`locFile` on every stmt/expr (`setSourceLoc`)
+2. **C backend:** emit `#line N "path.bux"` when location changes; force map at each func entry
+3. **Build modes:**
+   - default: `cc -O0 -g` + `#line` maps
+   - `--release` / `build --release`: `-O2 -DNDEBUG`, no `#line`, no `-g`
+   - `BUX_CFLAGS` appended for custom flags
+4. **Smoke:** `tools/smoke_dwarf.sh` / `make test-dwarf`
+   - `#line` for stdlib + user `Main.bux`
+   - `.debug_info` present in debug binary
+   - `gdb list Main` shows real Bux source
+5. Verified: smoke PASS; `gdb list Main` → hello.bux body
+
+---
+
 ## Следващи стъпки
 
-1. E.2 polish apps / E.5 benchmarks
-2. HTTP-fetchable registry index URL (beyond local file)
-3. LSP: workspace rename / references (optional)
+1. LSP: workspace rename / references (optional)
+2. Wire `test-apps` / `test-dwarf` into default CI `make test`
+3. Keep-alive / HTTP/1.1 pipelining for higher nexus RPS (optional)
+4. Selfhost parity for `--release` / `#line` (optional; bootstrap is the ship path)

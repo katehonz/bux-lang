@@ -1,8 +1,10 @@
-# Bux package registry index (E.1)
+# Bux package registry index (E.1 + HTTP URL)
 # Used by `bux add <name>` and `bux install` when no --path/--git is given.
 #
 # Override with: export BUX_REGISTRY=/path/to/registry.toml
+#            or: export BUX_REGISTRY=https://example.com/registry.toml
 # Or copy to:    ~/.bux/registry.toml
+# Force HTTP re-fetch: BUX_REGISTRY_REFRESH=1
 #
 # source forms:
 #   file:relative/or/absolute   — local package (relative to this file)

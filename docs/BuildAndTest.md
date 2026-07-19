@@ -133,7 +133,25 @@ Use `--target <triple>` to cross-compile for a different platform. Bux generates
 ```bash
 make test-examples   # all examples/ programs (40+)
 make test-errors     # golden Rust-style diagnostic output
+make test-stdlib     # stdlib golden packages
+make test-registry   # package registry (local + HTTP index)
+make test-apps       # showcase apps build + simpledb/jwt CLI smoke
+make test-dwarf      # #line maps + .debug_info + --release (E.4)
+make bench           # micro-benchmarks (Bux + C/Nim/Zig twins)
+make bench-nexus     # wrk throughput vs apps/nexus /api/health
 ```
+
+### Debug builds (E.4)
+
+```bash
+./buxc build              # -O0 -g, #line → .bux (gdb-friendly)
+./buxc build --release    # -O2, no debug maps
+gdb --args ./build/myapp
+#   (gdb) break Main
+#   (gdb) run
+#   (gdb) list            # shows Bux source via #line
+```
+
 
 ### Compiler Tests
 ```bash

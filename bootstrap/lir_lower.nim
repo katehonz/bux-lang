@@ -191,10 +191,20 @@ proc cmpOpToLir(op: TokenKind): LirKind =
 proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue
 proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode)
 
+proc setSourceLoc(ctx: var LowerToLirCtx, node: HirNode) =
+  ## Stamp LIR instructions with HIR source locations for #line / DWARF.
+  if node == nil: return
+  if node.loc.line > 0:
+    ctx.builder.commentLine = int(node.loc.line)
+    if node.loc.file.len > 0:
+      ctx.builder.commentFile = node.loc.file
+      ctx.currentFile = node.loc.file
+
 # ── Lowering: Expressions → LirValue ──
 
 proc lowerExpr(ctx: var LowerToLirCtx, node: HirNode): LirValue =
   if node == nil: return lirInt(0)
+  setSourceLoc(ctx, node)
   template b: var LirBuilder = ctx.builder
 
   case node.kind
@@ -623,6 +633,7 @@ proc buildLval(ctx: var LowerToLirCtx, n: HirNode): string =
 
 proc lowerStmt(ctx: var LowerToLirCtx, node: HirNode) =
   if node == nil: return
+  setSourceLoc(ctx, node)
   template b: var LirBuilder = ctx.builder
 
   case node.kind

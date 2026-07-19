@@ -1,0 +1,104 @@
+// Micro-benchmarks (E.5) — recursive fib, string concat, array push.
+// Prints lines: BENCH name iters total_us us_per_op
+import Std::Io::{PrintLine, Print};
+import Std::Time::{Time_NowUs};
+import Std::String::{String_FromInt, String_Concat, String_Len};
+import Std::Array::{Array, Array_New, Array_Push, Array_Len, Array_Get};
+
+func Fib(n: int) -> int {
+    if n <= 1 {
+        return n;
+    }
+    return Fib(n - 1) + Fib(n - 2);
+}
+
+func Report(name: String, iters: int, usTotal: int64) {
+    var perOpUs: int64 = 0;
+    if iters > 0 {
+        perOpUs = usTotal / (iters as int64);
+    }
+    Print("BENCH ");
+    Print(name);
+    Print(" iters=");
+    Print(String_FromInt(iters as int64));
+    Print(" total_us=");
+    Print(String_FromInt(usTotal));
+    Print(" us_per_op=");
+    PrintLine(String_FromInt(perOpUs));
+}
+
+func BenchIntLoop() {
+    let iters: int = 1000000;
+    var acc: int = 0;
+    var i: int = 0;
+    let t0: int64 = Time_NowUs();
+    while i < iters {
+        acc = acc + i * 3 - 1;
+        i = i + 1;
+    }
+    let t1: int64 = Time_NowUs();
+    if acc == 0 && iters > 0 {
+        PrintLine("unreachable");
+    }
+    Report("int_loop", iters, t1 - t0);
+}
+
+func BenchFib() {
+    discard Fib(20);
+    let n: int = 30;
+    let t0: int64 = Time_NowUs();
+    let r: int = Fib(n);
+    let t1: int64 = Time_NowUs();
+    if r < 0 {
+        PrintLine("unreachable");
+    }
+    Report("fib30", 1, t1 - t0);
+}
+
+func BenchStringConcat() {
+    let iters: int = 50000;
+    var i: int = 0;
+    let t0: int64 = Time_NowUs();
+    var s: String = "";
+    while i < iters {
+        s = String_Concat(s, "x");
+        if String_Len(s) > 256 {
+            s = "x";
+        }
+        i = i + 1;
+    }
+    let t1: int64 = Time_NowUs();
+    if String_Len(s) < 0 {
+        PrintLine("unreachable");
+    }
+    Report("string_concat", iters, t1 - t0);
+}
+
+func BenchArrayPush() {
+    let iters: int = 100000;
+    var arr: Array<int> = Array_New<int>(16);
+    var i: int = 0;
+    let t0: int64 = Time_NowUs();
+    while i < iters {
+        Array_Push<int>(&arr, i);
+        i = i + 1;
+    }
+    let t1: int64 = Time_NowUs();
+    let n: uint = Array_Len<int>(&arr);
+    if n as int != iters {
+        Print("array len mismatch: ");
+        PrintLine(String_FromInt(n as int64));
+    }
+    discard Array_Get<int>(&arr, (iters - 1) as uint);
+    Report("array_push", iters, t1 - t0);
+}
+
+func Main() -> int {
+    PrintLine("=== Bux micro-benchmarks (E.5) ===");
+    BenchIntLoop();
+    BenchFib();
+    BenchStringConcat();
+    BenchArrayPush();
+    PrintLine("=== done ===");
+    return 0;
+}

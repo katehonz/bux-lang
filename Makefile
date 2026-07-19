@@ -5,7 +5,7 @@ BUILD_DIR := build
 
 EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked drop_early_return lifetime_elision ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow
 
-.PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs
+.PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs bench test-apps test-dwarf
 
 all: build
 
@@ -193,6 +193,32 @@ test-lsp: lsp
 
 .PHONY: test-registry
 test-registry: build
-	@echo "=== Registry smoke (E.1) ==="
+	@echo "=== Registry smoke (E.1 + HTTP) ==="
 	@chmod +x tools/smoke_registry.sh
 	@tools/smoke_registry.sh
+
+# E.2 — build showcase apps + simpledb/jwt CLI smoke
+.PHONY: test-apps
+test-apps: build
+	@echo "=== Apps smoke (E.2) ==="
+	@chmod +x tools/smoke_apps.sh
+	@tools/smoke_apps.sh
+
+# E.5 — micro-benchmarks (Bux + C/Nim/Zig twins)
+.PHONY: bench
+bench: build
+	@chmod +x tools/bench.sh
+	@tools/bench.sh
+
+# E.5 — Nexus HTTP throughput (wrk); optional via BENCH_NEXUS=1 make bench
+.PHONY: bench-nexus
+bench-nexus: build
+	@chmod +x tools/bench_nexus.sh
+	@tools/bench_nexus.sh
+
+# E.4 — DWARF / #line debugger smoke
+.PHONY: test-dwarf
+test-dwarf: build
+	@echo "=== DWARF / #line smoke (E.4) ==="
+	@chmod +x tools/smoke_dwarf.sh
+	@tools/smoke_dwarf.sh

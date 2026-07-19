@@ -1,11 +1,11 @@
-## registry.nim — Bux package registry index (E.1)
+## registry.nim — Bux package registry index (E.1 + HTTP URL)
 ##
 ## Index format (TOML-ish, one package per [[package]] table):
 ##
 ##   [[package]]
 ##   name = "greet"
 ##   version = "0.1.0"
-##   source = "file:packages/greet"   # relative to the registry file
+##   source = "file:packages/greet"   # relative to the index file
 ##   description = "Hello helpers"
 ##
 ##   [[package]]
@@ -13,12 +13,16 @@
 ##   version = "1.2.0"
 ##   source = "https://github.com/bux-lang/net.git"
 ##
-## Lookup order for the index file:
-##   1. $BUX_REGISTRY (file path)
+## Lookup order for the index:
+##   1. $BUX_REGISTRY — local file path **or** http(s):// URL
 ##   2. ~/.bux/registry.toml
 ##   3. <repo>/config/registry.toml next to the compiler / cwd
+##
+## HTTP indices are downloaded to ~/.bux/cache/registry_http.toml.
+## Relative file:/path: sources in a remote index are resolved against that
+## cache directory — prefer absolute paths or git URLs for remote registries.
 
-import std/[os, strutils, strformat, algorithm]
+import std/[os, strutils, strformat, algorithm, osproc]
 
 type
   RegistryPackage* = object
@@ -29,7 +33,8 @@ type
     resolvedPath*: string  ## absolute path for file: sources (filled on load)
 
   Registry* = object
-    path*: string          ## index file path
+    path*: string          ## index file path (local, or cached path for HTTP)
+    sourceUrl*: string     ## non-empty when loaded from an HTTP URL
     packages*: seq[RegistryPackage]
 
 proc resolvePackageSource(pkg: var RegistryPackage, indexDir: string) =
@@ -83,14 +88,70 @@ proc parseRegistryToml(content, indexPath: string): seq[RegistryPackage] =
     resolvePackageSource(cur, indexDir)
     result.add(cur)
 
-proc findRegistryIndex*(): string =
-  ## Locate the registry index file.
+proc isHttpUrl*(s: string): bool =
+  s.startsWith("http://") or s.startsWith("https://")
+
+proc registryCacheDir*(): string =
+  getHomeDir() / ".bux" / "cache"
+
+proc fetchRegistryUrl*(url: string): string =
+  ## Download a remote registry.toml into ~/.bux/cache/.
+  ## Returns the local cache path on success, or "" on failure.
+  ## Re-fetches when the URL changes or when $BUX_REGISTRY_REFRESH is set.
+  let cacheDir = registryCacheDir()
+  try:
+    createDir(cacheDir)
+  except OSError, IOError:
+    return ""
+  let cachePath = cacheDir / "registry_http.toml"
+  let metaPath = cacheDir / "registry_http.url"
+  let force = getEnv("BUX_REGISTRY_REFRESH").len > 0
+  var cachedUrl = ""
+  if fileExists(metaPath):
+    try:
+      cachedUrl = readFile(metaPath).strip()
+    except CatchableError:
+      cachedUrl = ""
+  if not force and fileExists(cachePath) and cachedUrl == url:
+    return cachePath.absolutePath
+
+  # Prefer curl; fall back to wget
+  var ok = false
+  if findExe("curl").len > 0:
+    let cmd = &"curl -fsSL --max-time 30 -o {quoteShell(cachePath)} {quoteShell(url)}"
+    let (_, code) = execCmdEx(cmd)
+    ok = code == 0 and fileExists(cachePath) and getFileSize(cachePath) > 0
+  elif findExe("wget").len > 0:
+    let cmd = &"wget -q -T 30 -O {quoteShell(cachePath)} {quoteShell(url)}"
+    let (_, code) = execCmdEx(cmd)
+    ok = code == 0 and fileExists(cachePath) and getFileSize(cachePath) > 0
+  else:
+    return ""
+
+  if not ok:
+    return ""
+  try:
+    writeFile(metaPath, url & "\n")
+  except CatchableError:
+    discard
+  return cachePath.absolutePath
+
+proc findRegistryIndex*(): tuple[path: string, url: string] =
+  ## Locate the registry index. Returns (localPath, sourceUrl).
+  ## sourceUrl is non-empty only when the index was (or should be) fetched via HTTP.
+  result = ("", "")
   let env = getEnv("BUX_REGISTRY")
-  if env.len > 0 and fileExists(env):
-    return env.absolutePath
+  if env.len > 0:
+    if isHttpUrl(env):
+      let local = fetchRegistryUrl(env)
+      if local.len > 0:
+        return (local, env)
+      return ("", env)  # URL set but fetch failed — caller can report
+    if fileExists(env):
+      return (env.absolutePath, "")
   let homeIdx = getHomeDir() / ".bux" / "registry.toml"
   if fileExists(homeIdx):
-    return homeIdx
+    return (homeIdx, "")
   let candidates = @[
     getAppDir() / ".." / "config" / "registry.toml",
     getAppDir() / "config" / "registry.toml",
@@ -99,12 +160,23 @@ proc findRegistryIndex*(): string =
   ]
   for c in candidates:
     if fileExists(c):
-      return c.absolutePath
-  return ""
+      return (c.absolutePath, "")
+  return ("", "")
 
 proc loadRegistry*(path: string = ""): Registry =
-  result.path = if path.len > 0: path else: findRegistryIndex()
+  result.path = ""
+  result.sourceUrl = ""
   result.packages = @[]
+  if path.len > 0:
+    if isHttpUrl(path):
+      result.sourceUrl = path
+      result.path = fetchRegistryUrl(path)
+    else:
+      result.path = path
+  else:
+    let (p, u) = findRegistryIndex()
+    result.path = p
+    result.sourceUrl = u
   if result.path.len == 0 or not fileExists(result.path):
     return
   try:

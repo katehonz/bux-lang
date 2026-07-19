@@ -5,6 +5,8 @@ module Main {
     import Router::{Handler, Route, Router};
     import Server::{RunServer};
     import Std::Array::{Array, Array_New, Array_Push};
+    import Std::Os::{Os_GetEnv};
+    import Std::String::{String_Len, String_ToInt};
 
     func BuildRouter() -> Router {
         var routes: Array<Route> = Array_New<Route>(8);
@@ -39,8 +41,36 @@ module Main {
         };
     }
 
+    /// Apply optional env overrides for benches / ops:
+    ///   NEXUS_PORT, NEXUS_WORKERS, NEXUS_BIND, NEXUS_PUBLIC
+    func ApplyEnvConfig(config: *ServerConfig) {
+        let portEnv: String = Os_GetEnv("NEXUS_PORT");
+        if String_Len(portEnv) > 0 {
+            let p: int64 = String_ToInt(portEnv);
+            if p > 0 && p < 65536 {
+                config.port = p as int;
+            }
+        }
+        let workersEnv: String = Os_GetEnv("NEXUS_WORKERS");
+        if String_Len(workersEnv) > 0 {
+            let w: int64 = String_ToInt(workersEnv);
+            if w > 0 && w <= 256 {
+                config.workerCount = w as int;
+            }
+        }
+        let bindEnv: String = Os_GetEnv("NEXUS_BIND");
+        if String_Len(bindEnv) > 0 {
+            config.bindAddr = bindEnv;
+        }
+        let pubEnv: String = Os_GetEnv("NEXUS_PUBLIC");
+        if String_Len(pubEnv) > 0 {
+            config.publicDir = pubEnv;
+        }
+    }
+
     func Main() -> int {
-        let config: ServerConfig = DefaultConfig();
+        var config: ServerConfig = DefaultConfig();
+        ApplyEnvConfig(&config);
         let router: Router = BuildRouter();
 
         return RunServer(config, router);

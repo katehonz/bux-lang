@@ -50,10 +50,9 @@ Data is stored as plain text, one `key=value` per line. The file is created auto
 ## Build
 
 ```sh
-# workaround: disable broken JWT module
-mv ../../lib/crypto/jwt.bux ../../lib/crypto/jwt.bux.bak
+cd apps/simpledb
 ../../buxc build
-mv ../../lib/crypto/jwt.bux.bak ../../lib/crypto/jwt.bux
+./build/simpledb data.db set hello world
 ```
 
 ## API
