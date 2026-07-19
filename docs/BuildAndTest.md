@@ -138,7 +138,8 @@ make test-registry   # package registry (local + HTTP index)
 make test-apps       # showcase apps build + simpledb/jwt CLI smoke (in `make test`)
 make test-dwarf      # #line maps + .debug_info + --release (in `make test`)
 make test-registry   # package registry local + HTTP (in `make test`)
-make test-lsp        # hover + references/rename smokes
+make test-selfhost-smoke  # buxc2: move_field + multi-file #line (in `make test`)
+make test-lsp        # hover + references/rename + call hierarchy
 make bench           # micro-benchmarks (Bux + C/Nim/Zig twins)
 make bench-nexus     # wrk throughput vs apps/nexus /api/health
 ```

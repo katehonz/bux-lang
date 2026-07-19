@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — field-move, **multi-file #line**, Nexus KA, LSP 0.8 call hierarchy  
+> **Текущо:** v0.5.x — multi-file #line, **selfhost CI smoke**, LSP 0.8, Nexus KA  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -656,9 +656,35 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 41 (selfhost multi-file #line paths)
+
+1. **`Decl.sourceFile`** stamped when parsing/merging each `.bux` file
+   (`Cli_StampSourceFile` / `Cli_MergeFileInto` / project `src/` loop)
+2. **`HirFunc.sourceFile`** copied in `Lcx_LowerFunc`
+3. **C backend:** before each function, set `currentFile` from `sourceFile`
+   and emit `#line 1 "path"` + per-stmt `#line N "path"`
+4. **No env required** — stdlib + user multi-file paths appear automatically
+   (`lib/Fs.bux`, `./src/Util.bux`, `./src/Main.bux`, …)
+5. Overrides: `BUX_DEBUG_FILE` (force one path), `BUX_NO_LINE=1` (disable)
+6. Verified: multi-file project runs; `#line` paths distinct per source
+
+---
+
+## Сесия 42 (selfhost CI smoke)
+
+1. **`tools/smoke_selfhost.sh`:**
+   - build/use `buxc2` (`make selfhost`)
+   - **move_field**: run PASS + no `Array_Drop(&items)` after field move
+   - **multi-file #line**: Util.bux + Main.bux + `lib/*.bux` paths in `main.c`
+2. **`make test-selfhost-smoke`** depends on `selfhost`
+3. Wired into default **`make test`**
+4. Verified: smoke script PASS
+
+---
+
 ## Следващи стъпки
 
-1. Selfhost multi-file `#line` paths without BUX_DEBUG_FILE
-2. Wire selfhost smoke for move_field into CI
-3. Method call hierarchy (receiver methods / interface dispatch)
-4. Rename of method receivers / qualified module paths (edge cases)
+1. Method call hierarchy (receiver methods / interface dispatch)
+2. Rename of method receivers / qualified module paths (edge cases)
+3. HirNode-level file for statements spanning multiple files (rare)
+4. Optional: selfhost-loop as optional CI job (slow)
