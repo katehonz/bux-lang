@@ -518,6 +518,261 @@ module Ast {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // Macro / quote hygiene — graft sourceFile onto AST trees
+    // ---------------------------------------------------------------------------
+    // Stamp*  = fill empty only (merge file paths; keep pre-set macro grafts)
+    // Graft*  = force overwrite (call-site attribution after expansion)
+    // Clone*  = deep copy for templates
+    // Quote*  = clone + hygiene policy (def-site keep file | call-site graft)
+
+    /// Force-set sourceFile on an expression tree (overwrites existing).
+    func Ast_GraftExprFile(e: *Expr, path: String) {
+        if e == null as *Expr { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        e.sourceFile = path;
+        Ast_GraftExprFile(e.child1, path);
+        Ast_GraftExprFile(e.child2, path);
+        Ast_GraftExprFile(e.child3, path);
+        if e.refBlock != null as *Block {
+            Ast_GraftBlockFile(e.refBlock, path);
+        }
+        var args: *ExprList = e.callArgs;
+        while args != null as *ExprList {
+            Ast_GraftExprFile(args.expr, path);
+            args = args.next;
+        }
+        var arm: *MatchArm = e.matchArms;
+        while arm != null as *MatchArm {
+            Ast_GraftExprFile(arm.body, path);
+            if arm.pattern != null as *Pattern {
+                Ast_GraftPatternFile(arm.pattern, path);
+            }
+            arm = arm.next;
+        }
+    }
+
+    func Ast_GraftPatternFile(pat: *Pattern, path: String) {
+        if pat == null as *Pattern { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        if pat.patGuardExpr != null as *Expr {
+            Ast_GraftExprFile(pat.patGuardExpr, path);
+        }
+        Ast_GraftPatternFile(pat.patChild1, path);
+        Ast_GraftPatternFile(pat.patChild2, path);
+        Ast_GraftPatternFile(pat.patArgs, path);
+        Ast_GraftPatternFile(pat.patNext, path);
+    }
+
+    func Ast_GraftBlockFile(b: *Block, path: String) {
+        if b == null as *Block { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        b.sourceFile = path;
+        var s: *Stmt = b.firstStmt;
+        while s != null as *Stmt {
+            Ast_GraftStmtFile(s, path);
+            s = s.nextStmt;
+        }
+    }
+
+    func Ast_GraftStmtFile(s: *Stmt, path: String) {
+        if s == null as *Stmt { return; }
+        if path == null as String || String_Eq(path, "") { return; }
+        s.sourceFile = path;
+        Ast_GraftExprFile(s.child1, path);
+        Ast_GraftExprFile(s.child2, path);
+        Ast_GraftExprFile(s.child3, path);
+        if s.refStmtBlock != null as *Block {
+            Ast_GraftBlockFile(s.refStmtBlock, path);
+        }
+        if s.refStmtElse != null as *Block {
+            Ast_GraftBlockFile(s.refStmtElse, path);
+        }
+    }
+
+    /// Set line/column/sourceFile on a single node (no recurse).
+    func Ast_SetExprLoc(e: *Expr, line: uint32, col: uint32, path: String) {
+        if e == null as *Expr { return; }
+        e.line = line;
+        e.column = col;
+        if path != null as String && !String_Eq(path, "") {
+            e.sourceFile = path;
+        }
+    }
+
+    func Ast_SetStmtLoc(s: *Stmt, line: uint32, col: uint32, path: String) {
+        if s == null as *Stmt { return; }
+        s.line = line;
+        s.column = col;
+        if path != null as String && !String_Eq(path, "") {
+            s.sourceFile = path;
+        }
+    }
+
+    /// Effective source path for #line / diagnostics (empty if unknown).
+    func Ast_ExprSourceFile(e: *Expr) -> String {
+        if e == null as *Expr { return ""; }
+        if e.sourceFile == null as String { return ""; }
+        return e.sourceFile;
+    }
+
+    // Deep clone for quote / macro expansion templates (shares TypeExpr/Decl pointers).
+    func Ast_ClonePattern(pat: *Pattern) -> *Pattern {
+        if pat == null as *Pattern { return null as *Pattern; }
+        let n: *Pattern = bux_alloc(sizeof(Pattern)) as *Pattern;
+        n.kind = pat.kind;
+        n.line = pat.line;
+        n.column = pat.column;
+        n.patIdent = pat.patIdent;
+        n.patLitKind = pat.patLitKind;
+        n.patLitText = pat.patLitText;
+        n.patRangeInclusive = pat.patRangeInclusive;
+        n.patEnumPath = pat.patEnumPath;
+        n.patStructName = pat.patStructName;
+        n.patFieldName = pat.patFieldName;
+        n.patChild1 = Ast_ClonePattern(pat.patChild1);
+        n.patChild2 = Ast_ClonePattern(pat.patChild2);
+        n.patArgs = Ast_ClonePattern(pat.patArgs);
+        n.patNext = Ast_ClonePattern(pat.patNext);
+        n.patGuardExpr = Ast_CloneExpr(pat.patGuardExpr);
+        return n;
+    }
+
+    func Ast_CloneExprList(list: *ExprList) -> *ExprList {
+        if list == null as *ExprList { return null as *ExprList; }
+        let n: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+        n.expr = Ast_CloneExpr(list.expr);
+        n.next = Ast_CloneExprList(list.next);
+        n.argName = list.argName;
+        return n;
+    }
+
+    func Ast_CloneMatchArm(arm: *MatchArm) -> *MatchArm {
+        if arm == null as *MatchArm { return null as *MatchArm; }
+        let n: *MatchArm = bux_alloc(sizeof(MatchArm)) as *MatchArm;
+        n.line = arm.line;
+        n.column = arm.column;
+        n.pattern = Ast_ClonePattern(arm.pattern);
+        n.body = Ast_CloneExpr(arm.body);
+        n.next = Ast_CloneMatchArm(arm.next);
+        return n;
+    }
+
+    func Ast_CloneExpr(e: *Expr) -> *Expr {
+        if e == null as *Expr { return null as *Expr; }
+        let n: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+        n.kind = e.kind;
+        n.line = e.line;
+        n.column = e.column;
+        n.sourceFile = e.sourceFile;
+        n.strValue = e.strValue;
+        n.intValue = e.intValue;
+        n.boolValue = e.boolValue;
+        n.tokKind = e.tokKind;
+        n.tokText = e.tokText;
+        n.child1 = Ast_CloneExpr(e.child1);
+        n.child2 = Ast_CloneExpr(e.child2);
+        n.child3 = Ast_CloneExpr(e.child3);
+        n.refType = e.refType;       // share TypeExpr
+        n.refBlock = Ast_CloneBlock(e.refBlock);
+        n.genericCallee = e.genericCallee;
+        n.genericTypeArg0 = e.genericTypeArg0;
+        n.genericTypeArg1 = e.genericTypeArg1;
+        n.genericTypeArgCount = e.genericTypeArgCount;
+        n.structName = e.structName;
+        n.structFieldCount = e.structFieldCount;
+        n.closureParams = e.closureParams; // share param decl
+        n.captureCount = e.captureCount;
+        n.captureName0 = e.captureName0;
+        n.captureName1 = e.captureName1;
+        n.captureName2 = e.captureName2;
+        n.captureName3 = e.captureName3;
+        n.captureName4 = e.captureName4;
+        n.captureName5 = e.captureName5;
+        n.captureName6 = e.captureName6;
+        n.captureName7 = e.captureName7;
+        n.captureType0 = e.captureType0;
+        n.captureType1 = e.captureType1;
+        n.captureType2 = e.captureType2;
+        n.captureType3 = e.captureType3;
+        n.captureType4 = e.captureType4;
+        n.captureType5 = e.captureType5;
+        n.captureType6 = e.captureType6;
+        n.captureType7 = e.captureType7;
+        n.callArgs = Ast_CloneExprList(e.callArgs);
+        n.callArgCount = e.callArgCount;
+        n.matchArms = Ast_CloneMatchArm(e.matchArms);
+        n.matchArmCount = e.matchArmCount;
+        return n;
+    }
+
+    func Ast_CloneStmt(s: *Stmt) -> *Stmt {
+        if s == null as *Stmt { return null as *Stmt; }
+        let n: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+        n.kind = s.kind;
+        n.line = s.line;
+        n.column = s.column;
+        n.sourceFile = s.sourceFile;
+        n.strValue = s.strValue;
+        n.boolValue = s.boolValue;
+        n.child1 = Ast_CloneExpr(s.child1);
+        n.child2 = Ast_CloneExpr(s.child2);
+        n.child3 = Ast_CloneExpr(s.child3);
+        n.refStmtType = s.refStmtType;
+        n.refStmtPattern = Ast_ClonePattern(s.refStmtPattern);
+        n.refStmtDecl = s.refStmtDecl;
+        n.refStmtBlock = Ast_CloneBlock(s.refStmtBlock);
+        n.refStmtElse = Ast_CloneBlock(s.refStmtElse);
+        n.elseIfCount = s.elseIfCount;
+        n.nextStmt = Ast_CloneStmt(s.nextStmt);
+        return n;
+    }
+
+    func Ast_CloneBlock(b: *Block) -> *Block {
+        if b == null as *Block { return null as *Block; }
+        let n: *Block = bux_alloc(sizeof(Block)) as *Block;
+        n.line = b.line;
+        n.column = b.column;
+        n.sourceFile = b.sourceFile;
+        n.stmtCount = b.stmtCount;
+        n.firstStmt = Ast_CloneStmt(b.firstStmt);
+        // Rebuild lastStmt
+        var cur: *Stmt = n.firstStmt;
+        var last: *Stmt = null as *Stmt;
+        while cur != null as *Stmt {
+            last = cur;
+            cur = cur.nextStmt;
+        }
+        n.lastStmt = last;
+        return n;
+    }
+
+    /// Definition-site quote: clone template, keep sourceFile (macro body locations).
+    func Ast_QuoteDefSite(e: *Expr) -> *Expr {
+        return Ast_CloneExpr(e);
+    }
+
+    /// Call-site quote: clone template, graft call-site file and span for #line / diags.
+    func Ast_QuoteCallSite(e: *Expr, siteFile: String, siteLine: uint32, siteCol: uint32) -> *Expr {
+        let n: *Expr = Ast_CloneExpr(e);
+        if n == null as *Expr { return null as *Expr; }
+        Ast_GraftExprFile(n, siteFile);
+        // Root span is the invocation; children keep structure but share site file
+        n.line = siteLine;
+        n.column = siteCol;
+        return n;
+    }
+
+    /// Apply call-site graft to a whole statement tree (for stmt-producing macros).
+    func Ast_QuoteStmtCallSite(s: *Stmt, siteFile: String, siteLine: uint32, siteCol: uint32) -> *Stmt {
+        let n: *Stmt = Ast_CloneStmt(s);
+        if n == null as *Stmt { return null as *Stmt; }
+        Ast_GraftStmtFile(n, siteFile);
+        n.line = siteLine;
+        n.column = siteCol;
+        return n;
+    }
+
     func Ast_MakeDecl(kind: int, line: uint32, col: uint32) -> Decl {
         return Decl { kind: kind, line: line, column: col, isPublic: false,
             sourceFile: "",

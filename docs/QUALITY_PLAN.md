@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — **LSP 0.15 type hierarchy**, CI `make test`, fixed-point  
+> **Текущо:** v0.5.x — quote/graft hygiene, LSP 0.15, CI, fixed-point  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -850,9 +850,23 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 55 (macro / quote hygiene foundation)
+
+1. **AST graft API** (force overwrite): `Ast_GraftExpr/Stmt/Block/PatternFile`
+2. **Clone**: `Ast_CloneExpr/Stmt/Block/Pattern` (+ list / match arms)
+3. **Quote policies**:
+   - `Ast_QuoteDefSite` — clone, keep `sourceFile` (macro body / template)
+   - `Ast_QuoteCallSite` / `Ast_QuoteStmtCallSite` — clone + graft call-site path
+4. **Helpers**: `Ast_SetExprLoc` / `Ast_ExprSourceFile`
+5. **HIR**: `Lcx_GraftSourceFile`; mono instances force-graft `genDecl.sourceFile`
+6. Smoke: `tools/smoke_graft_hygiene.sh` (Array mono → lib; Main no leak)
+7. Wired into `make test-selfhost-smoke`
+
+---
+
 ## Следващи стъпки
 
-1. Macro / quote hygiene using Expr.sourceFile grafts
-2. Parenthesize binary ops in CBE for full C precedence safety
-3. CI matrix (macOS) or split jobs for faster PR feedback
-4. Type hierarchy for multi-file closed docs without open (workspace type index)
+1. Parenthesize binary ops in CBE for full C precedence safety
+2. CI matrix (macOS) or split jobs for faster PR feedback
+3. Type hierarchy for multi-file closed docs without open (workspace type index)
+4. User-facing `macro!` / `quote` syntax on top of graft/clone

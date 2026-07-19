@@ -233,3 +233,6 @@ test-selfhost-smoke: selfhost
 	@echo "=== Selfhost smoke (move_field + multi-file #line) ==="
 	@chmod +x tools/smoke_selfhost.sh
 	@tools/smoke_selfhost.sh
+	@echo "=== Graft / quote hygiene smoke ==="
+	@chmod +x tools/smoke_graft_hygiene.sh
+	@tools/smoke_graft_hygiene.sh

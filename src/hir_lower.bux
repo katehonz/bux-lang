@@ -81,6 +81,26 @@ module HirLower {
         }
     }
 
+    /// Force-set sourceFile on HIR tree (definition-site hygiene for mono / macro body).
+    func Lcx_GraftSourceFile(node: *HirNode, file: String) {
+        if node == null as *HirNode { return; }
+        if file == null as String || String_Eq(file, "") { return; }
+        node.sourceFile = file;
+        Lcx_GraftSourceFile(node.child1, file);
+        Lcx_GraftSourceFile(node.child2, file);
+        Lcx_GraftSourceFile(node.child3, file);
+        if (node.kind == hCall || node.kind == hCallIndirect) && node.extraData != null as *void {
+            var cur: *HirArgList = node.extraData as *HirArgList;
+            while cur != null as *HirArgList {
+                Lcx_GraftSourceFile(cur.node, file);
+                cur = cur.next;
+            }
+        }
+        if node.kind == hIf && node.extraData != null as *void {
+            Lcx_GraftSourceFile(node.extraData as *HirNode, file);
+        }
+    }
+
     /// Prefer Expr/Stmt.sourceFile (macro / cross-file graft); else enclosing Decl path.
     func Lcx_SourceFileFor(ctx: *LowerCtx, nodeFile: String) -> String {
         if nodeFile != null as String && !String_Eq(nodeFile, "") {
@@ -526,6 +546,12 @@ module HirLower {
         // Lower the generic function with substitution active
         let f: *HirFunc = Lcx_LowerFunc(ctx, genDecl);
         f.name = mangled;
+        // Definition-site hygiene: mono body always maps to the generic's source
+        // file (not the call-site module), even if synthetic nodes lacked a path.
+        if f.body != null as *HirNode && !String_Eq(genDecl.sourceFile, "") {
+            f.sourceFile = genDecl.sourceFile;
+            Lcx_GraftSourceFile(f.body, genDecl.sourceFile);
+        }
 
         // Add to module
         ctx.funcs[ctx.funcCount] = *f;
