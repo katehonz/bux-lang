@@ -17,7 +17,7 @@
 | Gradual ownership | `@[Checked]`, `&`/`&mut`, move, Drop, **lifetime elision** | ★★★★☆ |
 | Concurrency | M:N tasks + channels + async | ★★★★☆ |
 | Stdlib | Array/Map/Set/String/Iter HOF разширени | ★★★★☆ |
-| Tooling | `test-errors`, LSP diagnostics + hover/def/outline | ★★★★☆ |
+| Tooling | LSP 0.5 hover/def/outline/**refs/rename** + fmt/test/doc | ★★★★★ |
 | Ecosystem / registry | path+git + file **+ HTTP** index (`bux search/add`) | ★★★★☆ |
 | Документация | README + QUALITY_PLAN синхронизирани (2026-07-15) | ★★★★☆ |
 
@@ -78,7 +78,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.4.0: **position-sensitive locals** + **inferred `let`** + sema hover |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.5.0: locals + **references** + **rename** + prepareRename |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
@@ -548,9 +548,21 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 34 (LSP refs/rename + CI wiring)
+
+1. **bux-lsp 0.5.0** (`tools/lsp_server.nim`):
+   - `textDocument/references` — scoped locals (same binding via `lookupLocalAt`) + workspace globals
+   - `textDocument/prepareRename` + `rename` → `WorkspaceEdit.changes`
+   - Ident scan skips strings/comments; keyword rename rejected
+2. **Smoke:** `tools/smoke_lsp_rename.sh` (sum→total ≥2 edits); wired into `make test-lsp`
+3. **CI:** `make test` now runs `test-registry` + `test-dwarf` + `test-apps` after stdlib goldens
+4. Verified: rename/hover smokes PASS
+
+---
+
 ## Следващи стъпки
 
-1. LSP: workspace rename / references (optional)
-2. Wire `test-apps` / `test-dwarf` into default CI `make test`
-3. Keep-alive / HTTP/1.1 pipelining for higher nexus RPS (optional)
-4. Selfhost parity for `--release` / `#line` (optional; bootstrap is the ship path)
+1. Keep-alive / HTTP/1.1 pipelining for higher nexus RPS (optional)
+2. Selfhost parity for `--release` / `#line` (optional)
+3. LSP: workspace symbol search / call hierarchy (optional)
+4. Deeper rename (type members / qualified paths)
