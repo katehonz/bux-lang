@@ -11,6 +11,7 @@
 # v0.7.0: deeper rename — struct fields, enum variants, .member / ::Variant.
 # v0.8.0: call hierarchy (prepare / incoming / outgoing).
 # v0.9.0: method call hierarchy (extend Type / .Method() sites).
+# v0.10.0: method rename + qualified path / extend Type rename edges.
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -1412,19 +1413,22 @@ type
     access: IdentAccess
   RenameTargetKind = enum
     rtkLocal
-    rtkGlobal
-    rtkMember
+    rtkGlobal     ## free func / type / const (not method)
+    rtkMethod     ## extend/impl method — decl + .Name( + bare Name(
+    rtkMember     ## struct field / enum variant
     rtkUnknown
   RenameTarget = object
     kind: RenameTargetKind
     name: string
-    ## For rtkMember
+    ## For rtkMember / rtkMethod
     parent: string
     memberKind: string
     declLine: int
     declCol: int
     ## For rtkLocal
     local: LocalBinding
+    ## For rtkGlobal type symbols
+    isType: bool
 
 proc peekAccessBefore(content: string, start: int): IdentAccess =
   ## Classify how the identifier at `start` is written.
@@ -1585,50 +1589,135 @@ proc lookupMemberAt(doc: DocumentState, name: string, line, col: int): tuple[ok:
     result.ok = true
     result.m = last
 
+proc absOffset(content: string, line, col: int): int =
+  let lines = content.split("\n")
+  result = 0
+  for li in 0 ..< min(line, lines.len):
+    result += lines[li].len + 1
+  result += col
+
+proc isCallSiteAt(content: string, start, nameLen: int): bool =
+  ## True if `name` is followed by optional space then `(`.
+  var j = start + nameLen
+  while j < content.len and content[j] in {' ', '\t'}:
+    inc j
+  result = j < content.len and content[j] == '('
+
+proc isCallableKind(kind: string): bool =
+  kind == "function" or kind == "method"
+
 proc classifyRenameTarget(doc: DocumentState, word: string, line, col: int): RenameTarget =
   result.kind = rtkUnknown
   result.name = word
+  result.isType = false
   ensureAnalyzed(doc)
   if doc.locals.len == 0 and doc.content.len > 0:
     enrichWithSema(doc)
 
+  let lines = doc.content.split("\n")
+  var wordStart = col
+  if line >= 0 and line < lines.len:
+    wordStart = min(col, lines[line].len)
+    while wordStart > 0 and lines[line][wordStart - 1] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+      dec wordStart
+  let absStart = absOffset(doc.content, line, wordStart)
+  let acc = peekAccessBefore(doc.content, absStart)
+
   # 1) Type member (field/variant) when cursor is on decl or qualified access
   let (mok, mem) = lookupMemberAt(doc, word, line, col)
   if mok:
-    # Prefer member over local if this is clearly a member access or member decl
-    let lines = doc.content.split("\n")
-    var isMemberCtx = false
-    if line >= 0 and line < lines.len:
-      let l = lines[line]
-      var ws = min(col, l.len)
-      while ws > 0 and l[ws - 1] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
-        dec ws
-      let absStart = block:
-        var off = 0
-        for li in 0 ..< line:
-          off += lines[li].len + 1
-        off + ws
-      let acc = peekAccessBefore(doc.content, absStart)
-      isMemberCtx = acc in {iaDot, iaColonColon, iaFieldInit} or
-                    (mem.line == line and mem.col == ws)
-    if isMemberCtx or not lookupLocalAt(doc, word, line).ok:
-      result.kind = rtkMember
-      result.parent = mem.parent
-      result.memberKind = mem.kind
-      result.declLine = mem.line
-      result.declCol = mem.col
-      return
+    var isMemberCtx = acc in {iaDot, iaColonColon, iaFieldInit} or
+                      (mem.line == line and mem.col == wordStart)
+    # Don't treat method calls as field members
+    let isMethodSym = doc.symbols.hasKey(word) and doc.symbols[word].kind == "method"
+    if isMethodSym and acc == iaDot and isCallSiteAt(doc.content, absStart, word.len):
+      isMemberCtx = false
+    if isMemberCtx or (not lookupLocalAt(doc, word, line).ok and not isMethodSym):
+      if not isMethodSym:
+        result.kind = rtkMember
+        result.parent = mem.parent
+        result.memberKind = mem.kind
+        result.declLine = mem.line
+        result.declCol = mem.col
+        return
 
-  # 2) Local / param (scoped)
+  # 2) Method (extend/impl) — decl or .Method( / bare Method(
+  if doc.symbols.hasKey(word) and doc.symbols[word].kind == "method":
+    let info = doc.symbols[word]
+    result.kind = rtkMethod
+    result.parent = info.container
+    result.declLine = info.line
+    result.declCol = info.col
+    return
+  if workspaceSymbols.hasKey(word) and workspaceSymbols[word].info.kind == "method":
+    let info = workspaceSymbols[word].info
+    result.kind = rtkMethod
+    result.parent = info.container
+    result.declLine = info.line
+    result.declCol = info.col
+    return
+  # Call site on method: .Area( or Area(
+  if isCallSiteAt(doc.content, absStart, word.len):
+    if doc.symbols.hasKey(word) and isCallableKind(doc.symbols[word].kind):
+      if doc.symbols[word].kind == "method" or acc == iaDot:
+        # Prefer method if registered as method; .Name( may be method even if only function table
+        if doc.symbols.hasKey(word):
+          let info = doc.symbols[word]
+          if info.kind == "method":
+            result.kind = rtkMethod
+            result.parent = info.container
+            result.declLine = info.line
+            result.declCol = info.col
+            return
+
+  # 3) Local / param (scoped) — including `self` receiver
   let (lok, lb) = lookupLocalAt(doc, word, line)
   if lok:
     result.kind = rtkLocal
     result.local = lb
     return
 
-  # 3) Global / type / function
+  # 3b) Synthetic `self` when inside a method (sema may omit method params)
+  if word == "self":
+    let lines = doc.content.split("\n")
+    var ms = 0
+    var me = lines.len - 1
+    var li = min(line, lines.len - 1)
+    while li >= 0:
+      let t = lines[li].strip()
+      if t.startsWith("func ") or t.startsWith("pub func "):
+        ms = li
+        break
+      dec li
+    li = ms + 1
+    while li < lines.len:
+      let t = lines[li].strip()
+      if t.startsWith("func ") or t.startsWith("pub func "):
+        me = li - 1
+        break
+      inc li
+    # Find col of "self" on the func line if present
+    var sc = col
+    if ms >= 0 and ms < lines.len:
+      let idx = lines[ms].find("self")
+      if idx >= 0: sc = idx
+    result.kind = rtkLocal
+    result.local = LocalBinding(
+      name: "self", detail: "param self", kind: "parameter",
+      declLine: ms, declCol: sc,
+      scopeStartLine: ms, scopeEndLine: me,
+      container: "", inferred: false)
+    return
+
+  # 4) Global / type / free function
   if doc.symbols.hasKey(word) or doc.typeIndex.hasKey(word) or workspaceSymbols.hasKey(word):
     result.kind = rtkGlobal
+    if doc.symbols.hasKey(word):
+      let k = doc.symbols[word].kind
+      result.isType = k in ["struct", "enum", "union", "interface", "type"]
+    elif workspaceSymbols.hasKey(word):
+      let k = workspaceSymbols[word].info.kind
+      result.isType = k in ["struct", "enum", "union", "interface", "type"]
     return
 
   result.kind = rtkUnknown
@@ -1642,6 +1731,27 @@ proc hitMatchesMember(h: IdentHit, m: MemberInfo): bool =
     return true
   of iaBare:
     return false
+
+proc hitMatchesMethod(content: string, h: IdentHit, name: string, declLine, declCol: int): bool =
+  ## Method rename: decl, .Name(, bare Name( — not bare non-call idents.
+  if h.line == declLine and h.col == declCol:
+    return true
+  let off = absOffset(content, h.line, h.col)
+  if not isCallSiteAt(content, off, name.len):
+    return false
+  # .Method( or free Method(
+  return h.access in {iaDot, iaBare}
+
+proc hitMatchesType(content: string, h: IdentHit, name: string, declLine, declCol: int): bool =
+  ## Type rename: decl, bare Type, Type::Variant, extend Type, self: Type — not .field
+  if h.line == declLine and h.col == declCol:
+    return true
+  if h.access == iaDot:
+    return false  # obj.Type would be weird; skip field-like
+  # bare or Type:: (iaColonColon is the *second* segment; first segment is bare)
+  if h.access in {iaBare, iaColonColon, iaFieldInit}:
+    return true
+  return false
 
 proc collectReferences(doc: DocumentState, word: string, lineNum: int,
                        includeDecl: bool, col: int = 0): seq[JsonNode] =
@@ -1657,13 +1767,50 @@ proc collectReferences(doc: DocumentState, word: string, lineNum: int,
 
   case target.kind
   of rtkLocal:
+    # Always clip to the textual function/method body containing the cursor.
+    # Find the previous line that starts a `func` and the next such line.
+    let lines = doc.content.split("\n")
+    var methodStart = 0
+    var methodEnd = lines.len - 1
+    var li = min(lineNum, lines.len - 1)
+    while li >= 0:
+      let t = lines[li].strip()
+      if t.startsWith("func ") or t.startsWith("pub func "):
+        methodStart = li
+        break
+      li -= 1
+    li = methodStart + 1
+    while li < lines.len:
+      let t = lines[li].strip()
+      if t.startsWith("func ") or t.startsWith("pub func "):
+        methodEnd = li - 1
+        break
+      li += 1
     for h in hits:
-      let (ok, b) = lookupLocalAt(doc, word, h.line)
-      if not ok or not sameLocal(b, target.local):
+      if h.line < methodStart or h.line > methodEnd:
         continue
       if not includeDecl and h.line == target.local.declLine and h.col == target.local.declCol:
         continue
       result.add(locationJson(doc.uri, h.line, h.col, h.len))
+    return
+
+  of rtkMethod:
+    for h in hits:
+      if not hitMatchesMethod(doc.content, h, word, target.declLine, target.declCol):
+        continue
+      if not includeDecl and h.line == target.declLine and h.col == target.declCol:
+        continue
+      result.add(locationJson(doc.uri, h.line, h.col, h.len))
+    # Workspace other files
+    var seenUri = initHashSet[string]()
+    seenUri.incl(doc.uri)
+    for u, d in documents.pairs:
+      if d.content.len == 0 or seenUri.contains(u): continue
+      seenUri.incl(u)
+      ensureAnalyzed(d)
+      for h in collectIdentHits(d.content, word):
+        if hitMatchesMethod(d.content, h, word, -1, -1):
+          result.add(locationJson(u, h.line, h.col, h.len))
     return
 
   of rtkMember:
@@ -1673,10 +1820,14 @@ proc collectReferences(doc: DocumentState, word: string, lineNum: int,
     for h in hits:
       if not hitMatchesMember(h, m):
         continue
+      # Don't rename method calls that share a field name
+      let off = absOffset(doc.content, h.line, h.col)
+      if h.access == iaDot and isCallSiteAt(doc.content, off, word.len):
+        if doc.symbols.hasKey(word) and doc.symbols[word].kind == "method":
+          continue
       if not includeDecl and h.line == m.line and h.col == m.col:
         continue
       result.add(locationJson(doc.uri, h.line, h.col, h.len))
-    # Workspace: other files may reference Parent::name or .name
     var seenUri = initHashSet[string]()
     seenUri.incl(doc.uri)
     for u, d in documents.pairs:
@@ -1693,19 +1844,23 @@ proc collectReferences(doc: DocumentState, word: string, lineNum: int,
     let isWsSym = workspaceSymbols.hasKey(word)
     if not isFileSym and not isWsSym and target.kind == rtkUnknown:
       for h in hits:
-        # Unknown bare rename: only bare idents (avoid eating .x members)
         if h.access == iaBare:
           result.add(locationJson(doc.uri, h.line, h.col, h.len))
       return
 
+    let declLine = if doc.symbols.hasKey(word): doc.symbols[word].line else: -1
+    let declCol = if doc.symbols.hasKey(word): doc.symbols[word].col else: -1
+
     for h in hits:
-      if not includeDecl and doc.symbols.hasKey(word):
-        let info = doc.symbols[word]
-        if h.line == info.line and h.col == info.col:
-          continue
-      # Global type/func rename: bare + ::qualified, not .member of other types
-      if h.access == iaDot:
+      if not includeDecl and h.line == declLine and h.col == declCol:
         continue
+      if target.isType:
+        if not hitMatchesType(doc.content, h, word, declLine, declCol):
+          continue
+      else:
+        # Free function: bare + call; skip .member (fields/methods)
+        if h.access == iaDot:
+          continue
       result.add(locationJson(doc.uri, h.line, h.col, h.len))
 
     if isWsSym or isFileSym:
@@ -1715,7 +1870,10 @@ proc collectReferences(doc: DocumentState, word: string, lineNum: int,
         if d.content.len == 0 or seenUri.contains(u): continue
         seenUri.incl(u)
         for h in collectIdentHits(d.content, word):
-          if h.access == iaDot: continue
+          if target.isType:
+            if h.access == iaDot: continue
+          else:
+            if h.access == iaDot: continue
           result.add(locationJson(u, h.line, h.col, h.len))
       if rootPath.len > 0 and dirExists(rootPath):
         var stack: seq[tuple[dir: string, depth: int]] = @[(rootPath, 0)]
@@ -1968,9 +2126,6 @@ type
     callerUri: string
     isMethodCall: bool  ## true if site was `.Name(` (receiver call)
 
-proc isCallableKind(kind: string): bool =
-  kind == "function" or kind == "method"
-
 proc listFunctionSymbols(doc: DocumentState): seq[tuple[name: string, info: SymbolInfo]] =
   result = @[]
   ensureAnalyzed(doc)
@@ -1998,13 +2153,6 @@ proc enclosingFuncName(doc: DocumentState, line: int): string =
     if info.line <= line and info.line >= best:
       best = info.line
       result = name
-
-proc isCallSiteAt(content: string, start, nameLen: int): bool =
-  ## True if `name` is followed by optional space then `(`.
-  var j = start + nameLen
-  while j < content.len and content[j] in {' ', '\t'}:
-    inc j
-  result = j < content.len and content[j] == '('
 
 proc collectCallSitesInDoc(doc: DocumentState, known: HashSet[string]): seq[CallSite] =
   result = @[]
@@ -2270,7 +2418,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "workspaceSymbolProvider": true,
         "callHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.9.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.10.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()

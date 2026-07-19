@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — multi-file #line, selfhost CI, **LSP 0.9 method hierarchy**, Nexus KA  
+> **Текущо:** v0.5.x — multi-file #line, selfhost CI, **LSP 0.10 method/type rename**, Nexus KA  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -78,7 +78,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.8.0: + **call hierarchy** + deeper rename + workspace/symbol |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.9.0: + **method call hierarchy** (extend / `.Method`) |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
@@ -682,9 +682,24 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 43 (LSP 0.9 method call hierarchy)
+
+1. **Index methods** in `analyzeFile`:
+   - Track `extend Type` / `impl Type` brace body
+   - `func` inside → kind `method`, container `Type`, detail `Type.func …`
+2. **Call graph** includes methods as callables
+   - `.Method(` sites (iaDot) + free `Func(` calls
+   - CallHierarchyItem: SymbolKind.Method (6), display `Type.Method`
+   - `data` field keeps bare name for graph match
+3. Smoke: `tools/smoke_lsp_method_hierarchy.sh`
+   - `Scale` → `Len`; `Main` → `Scale`; prepare on method
+4. Version **bux-lsp 0.9.0**; `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. Method call hierarchy (receiver methods / interface dispatch)
-2. Rename of method receivers / qualified module paths (edge cases)
+1. Rename of method receivers / qualified module paths (edge cases)
+2. Interface dispatch in call hierarchy (dynamic)
 3. HirNode-level file for statements spanning multiple files (rare)
 4. Optional: selfhost-loop as optional CI job (slow)

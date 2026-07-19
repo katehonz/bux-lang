@@ -58,8 +58,8 @@ URI="file://$TMP/Main.bux"
   rpc '{"jsonrpc":"2.0","method":"exit","params":null}'
 } | "$LSP" 2>/dev/null | tr '\r' '\n' > "$TMP/out.txt"
 
-if ! grep -q '0.9.0' "$TMP/out.txt"; then
-  echo "WARN: version not 0.9.0"
+if ! grep -qE '0\.(9|10)\.0' "$TMP/out.txt"; then
+  echo "WARN: unexpected bux-lsp version"
 fi
 
 # prepare should return method (Point.Len or Len)

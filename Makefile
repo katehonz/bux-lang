@@ -205,6 +205,9 @@ test-lsp: lsp
 	@echo "=== LSP method call hierarchy smoke ==="
 	@chmod +x tools/smoke_lsp_method_hierarchy.sh
 	@tools/smoke_lsp_method_hierarchy.sh
+	@echo "=== LSP method/type/receiver rename smoke ==="
+	@chmod +x tools/smoke_lsp_rename_method.sh
+	@tools/smoke_lsp_rename_method.sh
 
 .PHONY: test-registry
 test-registry: build
