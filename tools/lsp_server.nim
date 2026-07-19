@@ -13,6 +13,7 @@
 # v0.9.0: method call hierarchy (extend Type / .Method() sites).
 # v0.10.0: method rename + qualified path / extend Type rename edges.
 # v0.11.0: interface dispatch in call hierarchy (extend Type for Trait).
+# v0.12.0: module-path segment rename (import Std::Io / Std::Io::{…}).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -102,6 +103,13 @@ type
     kind: string       ## field | variant
     line: int          ## 0-based decl line
     col: int           ## 0-based decl col of member name
+  ## One segment of an `import A::B::C` / `import A::B::{…}` path (v0.12)
+  PathSegInfo = object
+    name: string
+    line: int          ## 0-based
+    col: int           ## 0-based start of segment name
+    path: seq[string]  ## full path including this segment (prefix…name)
+    index: int         ## index of this segment in path
   ## Scoped local binding for position-sensitive hover / go-to-def
   LocalBinding = object
     name: string
@@ -130,6 +138,8 @@ type
     ifaceMethods: seq[MemberInfo]
     ## Type implements Interface (from `extend Type for Interface`)
     impls: seq[tuple[typeName, iface: string, line: int]]
+    ## Import path segments for module-path rename (v0.12)
+    importPaths: seq[PathSegInfo]
 
 var
   documents = initTable[string, DocumentState]()
@@ -336,6 +346,7 @@ proc analyzeFile(path: string, content: string): DocumentState =
 
   result.ifaceMethods = @[]
   result.impls = @[]
+  result.importPaths = @[]
 
   while i < content.len:
     let c = content[i]
@@ -427,6 +438,31 @@ proc analyzeFile(path: string, content: string): DocumentState =
         addSymbol(result, iname, SymbolInfo(
           line: line, col: col, kind: "interface", detail: "interface " & iname, container: ""))
         pendingInterface = iname
+      continue
+
+    # import A::B::C  |  import A::B::{X, Y}  |  import A::B::*
+    if atWord("import"):
+      i += 6
+      skipWs(content, i)
+      var path: seq[string] = @[]
+      while i < content.len and isIdentStart(content[i]):
+        let nameStart = i
+        let name = readIdent(content, i)
+        if name.len == 0:
+          break
+        let (line, col) = lineColAt(content, nameStart)
+        path.add(name)
+        result.importPaths.add(PathSegInfo(
+          name: name, line: line, col: col, path: path, index: path.len - 1))
+        skipWs(content, i)
+        if i + 1 < content.len and content[i] == ':' and content[i + 1] == ':':
+          i += 2
+          skipWs(content, i)
+          # stop before multi-import `{` or glob `*`
+          if i < content.len and (content[i] == '{' or content[i] == '*'):
+            break
+          continue
+        break
       continue
 
     # extend Type / impl Type [for Interface] — methods in following { block }
@@ -1148,6 +1184,7 @@ proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
   doc.members = updated.members
   doc.ifaceMethods = updated.ifaceMethods
   doc.impls = updated.impls
+  doc.importPaths = updated.importPaths
   # Keep / refresh real types for hover (does not replace lightweight outline)
   enrichWithSema(doc)
   let diags = runBuxcDiagnostics(path, doc.content)
@@ -1200,6 +1237,7 @@ proc ensureAnalyzed(doc: DocumentState) =
     doc.members = updated.members
     doc.ifaceMethods = updated.ifaceMethods
     doc.impls = updated.impls
+    doc.importPaths = updated.importPaths
 
 proc completionKind(kind: string): int =
   case kind
@@ -1488,6 +1526,7 @@ type
     rtkGlobal     ## free func / type / const (not method)
     rtkMethod     ## extend/impl method — decl + .Name( + bare Name(
     rtkMember     ## struct field / enum variant
+    rtkPathSeg    ## module path segment in import / A::B path (v0.12)
     rtkUnknown
   RenameTarget = object
     kind: RenameTargetKind
@@ -1501,6 +1540,8 @@ type
     local: LocalBinding
     ## For rtkGlobal type symbols
     isType: bool
+    ## For rtkPathSeg: segments before this name (e.g. ["Std"] for Io in Std::Io)
+    pathPrefix: seq[string]
 
 proc peekAccessBefore(content: string, start: int): IdentAccess =
   ## Classify how the identifier at `start` is written.
@@ -1678,10 +1719,68 @@ proc isCallSiteAt(content: string, start, nameLen: int): bool =
 proc isCallableKind(kind: string): bool =
   kind == "function" or kind == "method"
 
+proc followedByColonColon(content: string, start, nameLen: int): bool =
+  ## True if ident is followed by optional space then `::`.
+  var j = start + nameLen
+  while j < content.len and content[j] in {' ', '\t'}:
+    inc j
+  result = j + 1 < content.len and content[j] == ':' and content[j + 1] == ':'
+
+proc pathPrefixBefore(content: string, start: int): seq[string] =
+  ## Segments immediately before `start` via `A::B::` (left of the current ident).
+  result = @[]
+  var pos = start - 1
+  while pos >= 0 and content[pos] in {' ', '\t'}:
+    dec pos
+  while pos >= 1 and content[pos] == ':' and content[pos - 1] == ':':
+    pos -= 2
+    while pos >= 0 and content[pos] in {' ', '\t'}:
+      dec pos
+    if pos < 0 or not isIdentChar(content[pos]):
+      break
+    var e = pos
+    while pos >= 0 and isIdentChar(content[pos]):
+      dec pos
+    result.insert(content[pos + 1 .. e], 0)
+
+proc pathStartsWith(path, prefix: seq[string]): bool =
+  if path.len < prefix.len: return false
+  for i, s in prefix:
+    if path[i] != s: return false
+  true
+
+proc isKnownImportPathPrefix(prefix: seq[string], name: string): bool =
+  ## True if some open document's import path starts with prefix ++ name.
+  let full = prefix & name
+  for _, d in documents.pairs:
+    if d.importPaths.len == 0 and d.content.len > 0:
+      # lazy: may not have been copied yet
+      discard
+    for seg in d.importPaths:
+      if pathStartsWith(seg.path, full):
+        return true
+  false
+
+proc hitMatchesPathSeg(content: string, h: IdentHit, prefix: seq[string],
+                       name: string): bool =
+  ## Match path segment with exact left-prefix (avoids enum Color::X / bare locals).
+  if h.access in {iaDot, iaFieldInit}:
+    return false
+  let off = absOffset(content, h.line, h.col)
+  let pfx = pathPrefixBefore(content, off)
+  if pfx != prefix:
+    return false
+  if prefix.len == 0:
+    # Module path head: must introduce a path (`Std::…`), not bare ident
+    return followedByColonColon(content, off, name.len)
+  # Middle / tail: written as `…::Name`
+  return h.access == iaColonColon
+
 proc classifyRenameTarget(doc: DocumentState, word: string, line, col: int): RenameTarget =
   result.kind = rtkUnknown
   result.name = word
   result.isType = false
+  result.pathPrefix = @[]
   ensureAnalyzed(doc)
   if doc.locals.len == 0 and doc.content.len > 0:
     enrichWithSema(doc)
@@ -1741,6 +1840,35 @@ proc classifyRenameTarget(doc: DocumentState, word: string, line, col: int): Ren
             result.declLine = info.line
             result.declCol = info.col
             return
+
+  # 2b) Module-path segment (import Std::Io / Std::Io::{…} / matching A::B uses)
+  # Prefer path rename when cursor sits on an indexed import segment (except last
+  # segment that is also a known symbol — leave that to global/symbol rename).
+  for seg in doc.importPaths:
+    if seg.name != word: continue
+    if seg.line != line: continue
+    if col < seg.col or col > seg.col + word.len: continue
+    let isLast = seg.index == seg.path.len - 1
+    let isKnownSym = doc.symbols.hasKey(word) or workspaceSymbols.hasKey(word) or
+                     doc.typeIndex.hasKey(word)
+    if isLast and isKnownSym:
+      break  # fall through
+    result.kind = rtkPathSeg
+    result.name = word
+    if seg.index > 0:
+      result.pathPrefix = seg.path[0 ..< seg.index]
+    else:
+      result.pathPrefix = @[]
+    return
+  # Path use site matching a known import prefix (not enum Type::Variant alone)
+  let pfx = pathPrefixBefore(doc.content, absStart)
+  let inPathCtx = (pfx.len == 0 and followedByColonColon(doc.content, absStart, word.len)) or
+                  (pfx.len > 0 and acc == iaColonColon)
+  if inPathCtx and isKnownImportPathPrefix(pfx, word):
+    result.kind = rtkPathSeg
+    result.name = word
+    result.pathPrefix = pfx
+    return
 
   # 3) Local / param (scoped) — including `self` receiver
   let (lok, lb) = lookupLocalAt(doc, word, line)
@@ -1909,6 +2037,49 @@ proc collectReferences(doc: DocumentState, word: string, lineNum: int,
       for h in collectIdentHits(d.content, word):
         if hitMatchesMember(h, m):
           result.add(locationJson(u, h.line, h.col, h.len))
+    return
+
+  of rtkPathSeg:
+    # Rename only path segments with the same left-prefix (Std::Io not Foo::Io).
+    let pfx = target.pathPrefix
+    for h in hits:
+      if hitMatchesPathSeg(doc.content, h, pfx, word):
+        result.add(locationJson(doc.uri, h.line, h.col, h.len))
+    var seenUri = initHashSet[string]()
+    seenUri.incl(doc.uri)
+    for u, d in documents.pairs:
+      if d.content.len == 0 or seenUri.contains(u): continue
+      seenUri.incl(u)
+      ensureAnalyzed(d)
+      for h in collectIdentHits(d.content, word):
+        if hitMatchesPathSeg(d.content, h, pfx, word):
+          result.add(locationJson(u, h.line, h.col, h.len))
+    # On-disk workspace .bux files not yet opened
+    if rootPath.len > 0 and dirExists(rootPath):
+      var stack: seq[tuple[dir: string, depth: int]] = @[(rootPath, 0)]
+      while stack.len > 0:
+        let (dir, depth) = stack.pop()
+        if depth > 4: continue
+        let base = dir.extractFilename
+        if base in [".git", "build", "examples_pkg", "node_modules", "vendor", "nimcache"]:
+          continue
+        try:
+          for kind, path in walkDir(dir):
+            if kind == pcDir:
+              stack.add((path, depth + 1))
+            elif kind == pcFile and path.endsWith(".bux"):
+              let u = pathToUri(path.absolutePath)
+              if seenUri.contains(u): continue
+              seenUri.incl(u)
+              try:
+                let text = readFile(path)
+                for h in collectIdentHits(text, word):
+                  if hitMatchesPathSeg(text, h, pfx, word):
+                    result.add(locationJson(u, h.line, h.col, h.len))
+              except CatchableError:
+                discard
+        except CatchableError:
+          discard
     return
 
   of rtkGlobal, rtkUnknown:
@@ -2600,7 +2771,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "workspaceSymbolProvider": true,
         "callHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.11.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.12.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -2650,6 +2821,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
     doc.members = updated.members
     doc.ifaceMethods = updated.ifaceMethods
     doc.impls = updated.impls
+    doc.importPaths = updated.importPaths
     # Re-apply typeIndex details onto matching names (don't drop sema types mid-edit)
     for name, detail in doc.typeIndex.pairs:
       if doc.symbols.hasKey(name):

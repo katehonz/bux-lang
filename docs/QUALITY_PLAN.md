@@ -78,7 +78,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.10.0: + **method/type/self rename** + method hierarchy |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.11.0: + **interface dispatch hierarchy** |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
@@ -710,9 +710,39 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 45 (LSP 0.11 interface dispatch hierarchy)
+
+1. **Index:**
+   - `interface I { func M… }` → iface methods + symbol
+   - `extend Type for I` → `impls` relation + implementor methods
+2. **Call hierarchy:**
+   - prepare on interface method → item with `data: "I#M"`, kind Interface
+   - **outgoing** on iface method → implementor methods (dispatch targets)
+   - **incoming** on iface method → callers of `.M(`
+3. Smoke: `tools/smoke_lsp_iface_hierarchy.sh`
+   - Drawable.Draw → Circle implementor; Render → Draw
+4. Version **bux-lsp 0.11.0**
+
+---
+
+## Сесия 46 (LSP 0.12 module-path segment rename)
+
+1. **Index** `import A::B::C` / `import A::B::{…}` path segments (`PathSegInfo`)
+2. **`rtkPathSeg` rename** with left-prefix match:
+   - `Std::Io` → only segments under prefix `Std` (not `Foo::Io`, not bare `Io`)
+   - path head `Std` only when followed by `::` (not bare locals)
+   - does not clobber enum `Color::Red` (member path still wins on variants)
+3. Last import segment that is also a known symbol falls through to global rename
+4. Workspace scan for unopened `.bux` files
+5. Smoke: `tools/smoke_lsp_rename_path.sh`
+   - Io→Net ≥2 (Main+Util), not Foo::Io; Std→Core ≥2; Red→Crimson ≥2
+6. Version **bux-lsp 0.12.0**; `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. Interface dispatch in call hierarchy (dynamic)
-2. Module-path segment rename (`Std::Io` style imports)
-3. HirNode-level file for statements spanning multiple files (rare)
-4. Optional: selfhost-loop as optional CI job (slow)
+1. HirNode-level file for statements spanning multiple files (rare)
+2. Optional: selfhost-loop as optional CI job (slow)
+3. LSP find-implementations request (dedicated, beyond call hierarchy)
+4. Workspace-wide import path index without open documents (optional polish)

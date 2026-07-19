@@ -211,6 +211,9 @@ test-lsp: lsp
 	@echo "=== LSP interface dispatch hierarchy smoke ==="
 	@chmod +x tools/smoke_lsp_iface_hierarchy.sh
 	@tools/smoke_lsp_iface_hierarchy.sh
+	@echo "==> LSP path rename smoke"
+	@chmod +x tools/smoke_lsp_rename_path.sh
+	@tools/smoke_lsp_rename_path.sh
 
 .PHONY: test-registry
 test-registry: build
