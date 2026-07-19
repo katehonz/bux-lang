@@ -7,6 +7,7 @@
 # Hover uses real bootstrap sema types when possible (globals + stdlib).
 # Locals are position-sensitive (scoped) and include inferred `let` types (v0.4.0).
 # v0.5.0: textDocument/references + rename (scoped locals + workspace globals).
+# v0.6.0: workspace/symbol search.
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -1556,6 +1557,56 @@ proc handleDocumentSymbol(stream: FileStream, id: JsonNode, paramsNode: JsonNode
     })
   sendResponse(stream, id, arr)
 
+proc handleWorkspaceSymbol(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## workspace/symbol — fuzzy-ish substring filter over workspace + open docs.
+  let query = if paramsNode.hasKey("query"): paramsNode["query"].getStr().toLowerAscii() else: ""
+  var arr = newJArray()
+  var seen = initHashSet[string]()  # name@uri
+
+  proc maybeAdd(name, uri: string, info: SymbolInfo) =
+    if query.len > 0 and query notin name.toLowerAscii() and
+       query notin info.detail.toLowerAscii() and
+       query notin info.kind.toLowerAscii():
+      return
+    let key = name & "@" & uri
+    if seen.contains(key): return
+    seen.incl(key)
+    var item = %*{
+      "name": name,
+      "kind": symbolKindLsp(info.kind),
+      "location": {
+        "uri": uri,
+        "range": {
+          "start": {"line": info.line, "character": info.col},
+          "end": {"line": info.line, "character": info.col + name.len}
+        }
+      }
+    }
+    if info.detail.len > 0:
+      item["containerName"] = %info.kind
+    arr.add(item)
+
+  # Open documents first (freshest)
+  for uri, doc in documents.pairs:
+    ensureAnalyzed(doc)
+    for name, info in doc.symbols.pairs:
+      maybeAdd(name, uri, info)
+
+  # Workspace index from scan
+  for name, ws in workspaceSymbols.pairs:
+    maybeAdd(name, ws.uri, ws.info)
+
+  # Cap result size for IDE responsiveness
+  if arr.len > 200:
+    var capped = newJArray()
+    var i = 0
+    while i < 200:
+      capped.add(arr[i])
+      inc i
+    arr = capped
+
+  sendResponse(stream, id, arr)
+
 # ---------------------------------------------------------------------------
 # Main message loop
 # ---------------------------------------------------------------------------
@@ -1578,9 +1629,10 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "hoverProvider": true,
         "documentSymbolProvider": true,
         "referencesProvider": true,
-        "renameProvider": {"prepareProvider": true}
+        "renameProvider": {"prepareProvider": true},
+        "workspaceSymbolProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.5.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.6.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -1663,6 +1715,9 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
 
   of "textDocument/rename":
     handleRename(stream, id, paramsNode)
+
+  of "workspace/symbol":
+    handleWorkspaceSymbol(stream, id, paramsNode)
 
   else:
     if id != nil:

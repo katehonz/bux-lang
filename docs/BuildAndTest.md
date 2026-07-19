@@ -146,12 +146,14 @@ make bench-nexus     # wrk throughput vs apps/nexus /api/health
 ### Debug builds (E.4)
 
 ```bash
-./buxc build              # -O0 -g, #line → .bux (gdb-friendly)
-./buxc build --release    # -O2, no debug maps
+./buxc build              # -O0 -g, #line → .bux (gdb-friendly; bootstrap)
+./buxc build --release    # -O2 -DNDEBUG, no #line / -g
+# Selfhost (buxc2) same --release / default -O0 -g; #line maps bootstrap-only for now
+export BUX_CFLAGS="-fno-omit-frame-pointer"   # optional extra cc flags
 gdb --args ./build/myapp
 #   (gdb) break Main
 #   (gdb) run
-#   (gdb) list            # shows Bux source via #line
+#   (gdb) list            # shows Bux source via #line (bootstrap)
 ```
 
 

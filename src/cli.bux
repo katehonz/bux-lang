@@ -325,11 +325,17 @@ func Cli_Build(srcPath: String, outPath: String, targetTriple: String, isRelease
     }
 
     // Compile with cc or clang for cross-compilation
+    // Default: -O0 -g (debug, matches bootstrap). --release: -O2 -DNDEBUG.
     PrintLine("Compiling C...");
     var cmdBuf: StringBuilder = StringBuilder_NewCap(512);
-    var optFlags: String = "-O2";
+    var optFlags: String = "-O0 -g";
     if isRelease {
-        optFlags = "-O3 -flto";
+        optFlags = "-O2 -DNDEBUG";
+    }
+    let extraCf: String = bux_getenv("BUX_CFLAGS");
+    if extraCf != null as String && !String_Eq(extraCf, "") {
+        optFlags = String_Concat(optFlags, " ");
+        optFlags = String_Concat(optFlags, extraCf);
     }
     if !String_Eq(targetTriple, "") {
         StringBuilder_Append(&cmdBuf, "clang ");
@@ -1623,13 +1629,18 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
         ioPath = bux_path_join(projectDir, "../../rt/io.c");
     }
 
-    // Compile with cc
+    // Compile with cc — default debug (-O0 -g); --release → -O2 -DNDEBUG
     PrintLine("Compiling C...");
     let outBin: String = bux_path_join(buildDir, outName);
     var ccBuf: StringBuilder = StringBuilder_NewCap(512);
-    var optFlags2: String = "-O2";
+    var optFlags2: String = "-O0 -g";
     if isRelease {
-        optFlags2 = "-O3 -flto";
+        optFlags2 = "-O2 -DNDEBUG";
+    }
+    let extraCf2: String = bux_getenv("BUX_CFLAGS");
+    if extraCf2 != null as String && !String_Eq(extraCf2, "") {
+        optFlags2 = String_Concat(optFlags2, " ");
+        optFlags2 = String_Concat(optFlags2, extraCf2);
     }
     if !String_Eq(targetTriple, "") {
         StringBuilder_Append(&ccBuf, "clang ");
@@ -1729,6 +1740,8 @@ func Cli_Run(args: *String, argCount: int) -> int {
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
         PrintLine("  fmt  --check [path]    Exit 1 if any file would be reformatted (CI)");
         PrintLine("  doc  --out file.md [path]  API docs from /// comments");
+        PrintLine("  --release              Optimize (-O2 -DNDEBUG); default is -O0 -g");
+        PrintLine("  BUX_CFLAGS             Extra flags appended to cc");
         return 0;
     }
 
@@ -1745,6 +1758,8 @@ func Cli_Run(args: *String, argCount: int) -> int {
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
         PrintLine("  fmt  --check [path]    Exit 1 if any file would be reformatted (CI)");
         PrintLine("  doc  --out file.md [path]  API docs from /// comments");
+        PrintLine("  --release              Optimize (-O2 -DNDEBUG); default is -O0 -g");
+        PrintLine("  BUX_CFLAGS             Extra flags appended to cc");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅");
         PrintLine("  Parser     ✅");

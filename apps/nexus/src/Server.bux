@@ -5,7 +5,7 @@ module Server {
     import Std::String::{String_Len, String_StartsWith};
     import Std::Channel::{Channel, Channel_New, Channel_Send, Channel_Recv};
     import Config::{ServerConfig};
-    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse, RawRequest_WantsKeepAlive};
+    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse, Request_WantsKeepAlive};
     import Errors::{ParseResult};
     import Parser::{ParseRequest};
     import Router::{Router, Router_Dispatch};
@@ -87,8 +87,8 @@ module Server {
             let parsed: ParseResult = ParseRequest(raw);
             var keepAlive: bool = false;
             if parsed.tag == ParseResult_Ok {
-                let req: HttpRequest = parsed.data.Ok_0;
-                keepAlive = RawRequest_WantsKeepAlive(raw);
+                var req: HttpRequest = parsed.data.Ok_0;
+                keepAlive = Request_WantsKeepAlive(&req);
                 // Last request on the connection quota must close
                 if reqCount + 1 >= MAX_KEEPALIVE_REQUESTS {
                     keepAlive = false;

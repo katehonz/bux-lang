@@ -59,8 +59,8 @@ if ! grep -q 'renameProvider' "$TMP/out.txt"; then
   echo "FAIL: initialize missing renameProvider"
   exit 1
 fi
-if ! grep -q '0.5.0' "$TMP/out.txt"; then
-  echo "WARN: version not 0.5.0 in initialize (may be ok)"
+if ! grep -qE '0\.[56]\.0' "$TMP/out.txt"; then
+  echo "WARN: unexpected bux-lsp version in initialize"
 fi
 
 # Rename workspace edit should propose "total"

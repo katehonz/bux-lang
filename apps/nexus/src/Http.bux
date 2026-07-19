@@ -133,19 +133,33 @@ module Http {
         return "";
     }
 
-    /// Decide keep-alive from the raw request bytes (avoids fragile header Array walk).
     /// HTTP/1.1 defaults to keep-alive; Connection: close forces close;
-    /// HTTP/1.0 needs explicit keep-alive.
-    pub func RawRequest_WantsKeepAlive(raw: String) -> bool {
-        if String_Contains(raw, "Connection: close") || String_Contains(raw, "connection: close") ||
-        String_Contains(raw, "CONNECTION: CLOSE") {
+    /// HTTP/1.0 needs explicit keep-alive. Uses parsed headers (safe after
+    /// Parser field-move ownership handoff).
+    pub func Request_WantsKeepAlive(req: *HttpRequest) -> bool {
+        let conn: String = RequestHeader_Get(req, "Connection");
+        if String_EqIgnoreCase(conn, "close") {
             return false;
         }
-        // HTTP/1.0 without Keep-Alive → close
+        if String_EqIgnoreCase(conn, "keep-alive") {
+            return true;
+        }
+        if String_StartsWith(req.version, "HTTP/1.0") {
+            return false;
+        }
+        return true;
+    }
+
+    /// Fallback when only raw bytes are available.
+    pub func RawRequest_WantsKeepAlive(raw: String) -> bool {
+        if String_Contains(raw, "Connection: close") || String_Contains(raw, "connection: close") ||
+           String_Contains(raw, "CONNECTION: CLOSE") {
+            return false;
+        }
         if String_Contains(raw, "HTTP/1.0") {
             if String_Contains(raw, "Connection: keep-alive") ||
-            String_Contains(raw, "Connection: Keep-Alive") ||
-            String_Contains(raw, "connection: keep-alive") {
+               String_Contains(raw, "Connection: Keep-Alive") ||
+               String_Contains(raw, "connection: keep-alive") {
                 return true;
             }
             return false;

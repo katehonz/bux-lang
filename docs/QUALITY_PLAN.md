@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — LSP 0.5, CI smokes, **Nexus HTTP/1.1 keep-alive (~2× RPS)**  
+> **Текущо:** v0.5.x — Nexus keep-alive, **header Array ownership fix**, LSP 0.6 workspace/symbol, selfhost `-g`  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -78,7 +78,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.5.0: locals + **references** + **rename** + prepareRename |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.6.0: refs/rename + **workspace/symbol** |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
@@ -575,9 +575,28 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 36 (header ownership + selfhost flags + LSP workspace/symbol)
+
+1. **Root cause (Nexus headers UAF):** auto-drop of local `headers` after
+   shallow-copy into `HttpRequest` / `ParseResult` freed the buffer while still
+   referenced. Not Array ABI — **move-out-of-field not tracked**.
+2. **Fix** (`apps/nexus/src/Parser.bux`): after embedding, zero
+   `headers.data/len/cap` so auto-drop is a no-op; `Request_WantsKeepAlive`
+   again uses `RequestHeader_Get` safely. Bench still ~76–80k RPS.
+3. **Selfhost compile flags** (`src/cli.bux`):
+   - default **`-O0 -g`** (was always `-O2`)
+   - `--release` → **`-O2 -DNDEBUG`** (was `-O3 -flto`)
+   - `BUX_CFLAGS` appended via `bux_getenv`
+   - `#line` maps remain bootstrap-only (selfhost C backend has no LIR #line yet)
+4. **LSP 0.6.0:** `workspace/symbol` over open docs + workspace index (cap 200);
+   `tools/smoke_lsp_workspace.sh` + `make test-lsp`
+5. Verified: nexus keep-alive + header Get; `make lsp` + workspace smoke
+
+---
+
 ## Следващи стъпки
 
-1. Selfhost parity for `--release` / `#line` (optional)
-2. LSP: workspace symbol search / call hierarchy (optional)
+1. Compiler: skip Drop when local is moved into a struct field / return payload
+2. Selfhost `#line` maps (parity with bootstrap LIR backend)
 3. Deeper rename (type members / qualified paths)
-4. Fix header Array iteration / string field ABI (root cause of Get crash)
+4. LSP call hierarchy (optional)
