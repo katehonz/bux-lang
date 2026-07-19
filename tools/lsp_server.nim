@@ -15,6 +15,7 @@
 # v0.11.0: interface dispatch in call hierarchy (extend Type for Trait).
 # v0.12.0: module-path segment rename (import Std::Io / Std::Io::{…}).
 # v0.13.0: textDocument/implementation (interface → types / methods).
+# v0.14.0: workspace-wide import path index (no open-doc required).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -149,9 +150,24 @@ var
   workspaceSymbols = initTable[string, tuple[uri: string, info: SymbolInfo]]()
   ## Cross-file: "Iface.Method" → list of implementors
   workspaceImpls = initTable[string, seq[tuple[uri, typeName, meth: string]]]()
+  ## Import paths by file URI (from scanWorkspace + open docs) — v0.14
+  ## Each entry is a full path like @["Std", "Io"] (not open-doc dependent).
+  workspaceImportPaths = initTable[string, seq[seq[string]]]()
   cachedStdlibDir = ""
   cachedStdlibDecls: seq[Decl] = @[]
   stdlibLoaded = false
+
+proc registerWorkspaceImports(uri: string, segs: seq[PathSegInfo]) =
+  ## Index unique full import paths for this URI (replaces prior entry).
+  var paths: seq[seq[string]] = @[]
+  var seen = initHashSet[string]()
+  for s in segs:
+    if s.path.len == 0: continue
+    let key = s.path.join("::")
+    if seen.contains(key): continue
+    seen.incl(key)
+    paths.add(s.path)
+  workspaceImportPaths[uri] = paths
 
 proc getDoc(uri: string): DocumentState =
   if not documents.hasKey(uri):
@@ -453,8 +469,11 @@ proc analyzeFile(path: string, content: string): DocumentState =
           break
         let (line, col) = lineColAt(content, nameStart)
         path.add(name)
+        # Snapshot path so later segments do not mutate earlier PathSegInfo
+        var pathSnap: seq[string] = @[]
+        for p in path: pathSnap.add(p)
         result.importPaths.add(PathSegInfo(
-          name: name, line: line, col: col, path: path, index: path.len - 1))
+          name: name, line: line, col: col, path: pathSnap, index: pathSnap.len - 1))
         skipWs(content, i)
         if i + 1 < content.len and content[i] == ':' and content[i + 1] == ':':
           i += 2
@@ -607,6 +626,9 @@ proc analyzeFile(path: string, content: string): DocumentState =
         break
     if not matchedTypeKw:
       inc i
+
+  # Always refresh workspace import index for this URI (empty clears stale paths)
+  registerWorkspaceImports(result.uri, result.importPaths)
 
 # ---------------------------------------------------------------------------
 # Real sema types for hover
@@ -1751,12 +1773,14 @@ proc pathStartsWith(path, prefix: seq[string]): bool =
   true
 
 proc isKnownImportPathPrefix(prefix: seq[string], name: string): bool =
-  ## True if some open document's import path starts with prefix ++ name.
+  ## True if any workspace (or open-doc) import path starts with prefix ++ name.
+  ## Uses workspaceImportPaths from scanWorkspace — no open document required.
   let full = prefix & name
+  for _, paths in workspaceImportPaths.pairs:
+    for p in paths:
+      if pathStartsWith(p, full):
+        return true
   for _, d in documents.pairs:
-    if d.importPaths.len == 0 and d.content.len > 0:
-      # lazy: may not have been copied yet
-      discard
     for seg in d.importPaths:
       if pathStartsWith(seg.path, full):
         return true
@@ -2914,7 +2938,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "callHierarchyProvider": true,
         "implementationProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.13.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.14.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()

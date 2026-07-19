@@ -188,6 +188,9 @@ test-lsp: lsp
 	@echo "==> LSP implementation smoke"
 	@chmod +x tools/smoke_lsp_implementation.sh
 	@tools/smoke_lsp_implementation.sh
+	@echo "==> LSP workspace import index smoke"
+	@chmod +x tools/smoke_lsp_workspace_imports.sh
+	@tools/smoke_lsp_workspace_imports.sh
 
 .PHONY: test-registry
 test-registry: build

@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — **LSP 0.13 implementation**, HirNode sourceFile, optional selfhost-loop CI  
+> **Текущо:** v0.5.x — **LSP 0.14 workspace imports**, implementation, selfhost-loop CI  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -786,9 +786,22 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 50 (LSP 0.14 workspace import path index)
+
+1. **`workspaceImportPaths`**: URI → full import paths (`["Std","Io"]`)
+2. **`registerWorkspaceImports`** at end of `analyzeFile` (scan + open/edit)
+3. **`isKnownImportPathPrefix`** uses workspace index first — no open doc required
+4. Path segment snapshot fix (no shared seq mutation across segments)
+5. Smoke: `tools/smoke_lsp_workspace_imports.sh`
+   - only Main opened; Util closed on disk via `rootUri` scan
+   - Io→Net ≥2 edits including `Util.bux` in WorkspaceEdit
+6. Version **bux-lsp 0.14.0**; `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. Workspace-wide import path index without open documents (optional polish)
-2. Expr/Stmt-level sourceFile if macros / cross-file inlining land
-3. Fix selfhost C backend so buxc2→buxc3 fixed-point is green
-4. Main PR CI workflow (`make test`) beyond optional selfhost-loop
+1. Expr/Stmt-level sourceFile if macros / cross-file inlining land
+2. Fix selfhost C backend so buxc2→buxc3 fixed-point is green
+3. Main PR CI workflow (`make test`) beyond optional selfhost-loop
+4. LSP type hierarchy / prepareTypeHierarchy (optional)
