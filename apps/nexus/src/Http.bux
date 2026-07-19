@@ -1,7 +1,7 @@
 module Http {
 
-    import Std::Array::{Array};
-    import Std::String::{String_Eq, String_EndsWith, String_Contains};
+    import Std::Array::{Array, Array_Len, Array_Get};
+    import Std::String::{String_Eq, String_EndsWith, String_Contains, String_Len, String_StartsWith};
 
     pub enum HttpMethod {
         GET,
@@ -95,13 +95,62 @@ module Http {
         return resp;
     }
 
-    pub func RequestHeader_Get(req: HttpRequest, key: String) -> String {
-        for entry in req.headers {
-            if String_Eq(entry.key, key) {
+    func CharLower(c: int) -> int {
+        if c >= 65 && c <= 90 {
+            return c + 32;
+        }
+        return c;
+    }
+
+    /// Case-insensitive string equality (HTTP header names/values).
+    pub func String_EqIgnoreCase(a: String, b: String) -> bool {
+        let la: uint = String_Len(a);
+        let lb: uint = String_Len(b);
+        if la != lb {
+            return false;
+        }
+        var i: uint = 0;
+        while i < la {
+            if CharLower(a[i] as int) != CharLower(b[i] as int) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
+
+    pub func RequestHeader_Get(req: *HttpRequest, key: String) -> String {
+        // Index-based walk — for-in over Array<struct{String}> can corrupt string fields.
+        let n: uint = Array_Len<HeaderEntry>(&req.headers);
+        var i: uint = 0;
+        while i < n {
+            let entry: HeaderEntry = Array_Get<HeaderEntry>(&req.headers, i);
+            if String_EqIgnoreCase(entry.key, key) {
                 return entry.value;
             }
+            i = i + 1;
         }
         return "";
+    }
+
+    /// Decide keep-alive from the raw request bytes (avoids fragile header Array walk).
+    /// HTTP/1.1 defaults to keep-alive; Connection: close forces close;
+    /// HTTP/1.0 needs explicit keep-alive.
+    pub func RawRequest_WantsKeepAlive(raw: String) -> bool {
+        if String_Contains(raw, "Connection: close") || String_Contains(raw, "connection: close") ||
+        String_Contains(raw, "CONNECTION: CLOSE") {
+            return false;
+        }
+        // HTTP/1.0 without Keep-Alive → close
+        if String_Contains(raw, "HTTP/1.0") {
+            if String_Contains(raw, "Connection: keep-alive") ||
+            String_Contains(raw, "Connection: Keep-Alive") ||
+            String_Contains(raw, "connection: keep-alive") {
+                return true;
+            }
+            return false;
+        }
+        return true;
     }
 
 }

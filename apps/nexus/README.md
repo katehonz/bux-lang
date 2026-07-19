@@ -10,8 +10,8 @@ Nexus is a from-scratch web server that demonstrates Bux's systems-programming c
 
 | Area | What's Implemented |
 |------|-------------------|
-| **HTTP/1.1** | Full request parsing (method, path, headers, body), response building with status codes, content negotiation |
-| **Multi-threaded** | Configurable worker pool using the multi-accept pattern — each worker calls `accept()` directly on the shared listen socket |
+| **HTTP/1.1** | Full request parsing, **keep-alive** (reuse TCP), status codes, content negotiation |
+| **Multi-threaded** | Worker pool + channel task queue; configurable via `NEXUS_WORKERS` |
 | **HTTP/2** | Connection preface detection (`PRI * HTTP/2.0`), upgrade-aware routing |
 | **WebSocket** | RFC 6455 upgrade handshake detection, `Sec-WebSocket-Key` extraction |
 | **Static files** | Serves from `public/` with MIME-type detection for 20+ file types, directory-traversal protection |

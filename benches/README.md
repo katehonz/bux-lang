@@ -52,5 +52,7 @@ Server-side (any nexus run):
 ## Notes
 
 - Numbers vary by machine; use them relatively (same host, same day).
-- Nexus currently closes connections (`Connection: close`) — RPS is honest for that model, not keep-alive maxed.
+- Nexus **v0.3** uses HTTP/1.1 keep-alive (default). Sample RPS on one machine:
+  - close-only era: ~45k req/s
+  - keep-alive: ~80k+ req/s (`wrk -t4 -c64 -d5s /api/health`)
 - Requires `wrk` for `bench-nexus` (`apt install wrk` on Debian/Ubuntu).

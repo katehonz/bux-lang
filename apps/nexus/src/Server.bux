@@ -5,7 +5,7 @@ module Server {
     import Std::String::{String_Len, String_StartsWith};
     import Std::Channel::{Channel, Channel_New, Channel_Send, Channel_Recv};
     import Config::{ServerConfig};
-    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse};
+    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse, RawRequest_WantsKeepAlive};
     import Errors::{ParseResult};
     import Parser::{ParseRequest};
     import Router::{Router, Router_Dispatch};
@@ -17,11 +17,14 @@ module Server {
     extern func bux_sb_build(sb: *void) -> String;
     extern func bux_sb_free(sb: *void);
 
+    /// Cap requests per TCP connection (safety + fair scheduling).
+    const MAX_KEEPALIVE_REQUESTS: int = 1000;
+
     pub struct ConnectionTask {
         fd: int;
     }
 
-    pub func BuildResponse(resp: HttpResponse) -> String {
+    pub func BuildResponse(resp: HttpResponse, keepAlive: bool) -> String {
         let sb: *void = bux_sb_new(4096);
 
         bux_sb_append(sb, "HTTP/1.1 ");
@@ -30,7 +33,7 @@ module Server {
         bux_sb_append(sb, Http_StatusText(resp.statusCode));
         bux_sb_append(sb, "\r\n");
 
-        bux_sb_append(sb, "Server: Nexus/0.2.0 (Bux)\r\n");
+        bux_sb_append(sb, "Server: Nexus/0.3.0 (Bux)\r\n");
 
         if bux_strlen(resp.extraHeaders) > 0 {
             bux_sb_append(sb, resp.extraHeaders);
@@ -46,7 +49,13 @@ module Server {
         bux_sb_append(sb, "Content-Length: ");
         bux_sb_append_int(sb, bodyLen as int64);
         bux_sb_append(sb, "\r\n");
-        bux_sb_append(sb, "Connection: close\r\n");
+
+        if keepAlive {
+            bux_sb_append(sb, "Connection: keep-alive\r\n");
+            bux_sb_append(sb, "Keep-Alive: timeout=5, max=1000\r\n");
+        } else {
+            bux_sb_append(sb, "Connection: close\r\n");
+        }
         bux_sb_append(sb, "\r\n");
 
         if bodyLen > 0 {
@@ -58,28 +67,44 @@ module Server {
         return result;
     }
 
+    /// Serve one TCP client: zero or more HTTP requests (HTTP/1.1 keep-alive).
     pub func HandleConnection(fd: int, router: Router) {
-        let raw: String = Net_Recv(fd, 8192);
-        if String_Len(raw) == 0 {
-            return;
-        }
+        var reqCount: int = 0;
+        while reqCount < MAX_KEEPALIVE_REQUESTS {
+            let raw: String = Net_Recv(fd, 8192);
+            if String_Len(raw) == 0 {
+                return;
+            }
 
-        // HTTP/2 preface detection
-        if String_StartsWith(raw, "PRI * HTTP/2.0") {
-            let resp: HttpResponse = Http_NewResponse(200, "text/plain; charset=utf-8",
-            "HTTP/2 detected — full support planned for future release.\r\n");
-            Net_Send(fd, BuildResponse(resp));
-            return;
-        }
+            // HTTP/2 preface detection — one-shot response, then close
+            if String_StartsWith(raw, "PRI * HTTP/2.0") {
+                let resp: HttpResponse = Http_NewResponse(200, "text/plain; charset=utf-8",
+                "HTTP/2 detected — full support planned for future release.\r\n");
+                Net_Send(fd, BuildResponse(resp, false));
+                return;
+            }
 
-        let parsed: ParseResult = ParseRequest(raw);
-        if parsed.tag == ParseResult_Ok {
-            let req: HttpRequest = parsed.data.Ok_0;
-            let resp: HttpResponse = Router_Dispatch(router, req);
-            Net_Send(fd, BuildResponse(resp));
-        } else {
-            let resp: HttpResponse = Http_NewResponse(400, "text/plain; charset=utf-8", "Bad Request");
-            Net_Send(fd, BuildResponse(resp));
+            let parsed: ParseResult = ParseRequest(raw);
+            var keepAlive: bool = false;
+            if parsed.tag == ParseResult_Ok {
+                let req: HttpRequest = parsed.data.Ok_0;
+                keepAlive = RawRequest_WantsKeepAlive(raw);
+                // Last request on the connection quota must close
+                if reqCount + 1 >= MAX_KEEPALIVE_REQUESTS {
+                    keepAlive = false;
+                }
+                let resp: HttpResponse = Router_Dispatch(router, req);
+                Net_Send(fd, BuildResponse(resp, keepAlive));
+            } else {
+                let resp: HttpResponse = Http_NewResponse(400, "text/plain; charset=utf-8", "Bad Request");
+                Net_Send(fd, BuildResponse(resp, false));
+                return;
+            }
+
+            reqCount = reqCount + 1;
+            if !keepAlive {
+                return;
+            }
         }
     }
 
@@ -113,8 +138,8 @@ module Server {
 
     pub func RunServer(config: ServerConfig, router: Router) -> int {
         PrintLine("================================================");
-        PrintLine("  Nexus HTTP Server v0.2.0");
-        PrintLine("  Production-ready HTTP/1.1 with thread-pool");
+        PrintLine("  Nexus HTTP Server v0.3.0");
+        PrintLine("  HTTP/1.1 keep-alive + thread-pool");
         PrintLine("  Built with Bux");
         PrintLine("================================================");
         PrintLine("");
@@ -148,7 +173,7 @@ module Server {
         PrintInt(config.port);
         PrintLine("");
         PrintInt(config.workerCount);
-        PrintLine(" worker threads  |  static: ./public/");
+        PrintLine(" worker threads  |  keep-alive: on  |  static: ./public/");
         PrintLine("Endpoints:  /  /api/health  /api/info  /ws");
         PrintLine("Press Ctrl+C to stop.");
         PrintLine("");

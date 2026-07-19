@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — E.4 DWARF, E.5 benches, **LSP 0.5 references/rename**, CI apps/dwarf/registry  
+> **Текущо:** v0.5.x — LSP 0.5, CI smokes, **Nexus HTTP/1.1 keep-alive (~2× RPS)**  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -560,9 +560,24 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 35 (Nexus HTTP/1.1 keep-alive)
+
+1. **Server loop** (`apps/nexus/src/Server.bux`):
+   - `HandleConnection` serves up to 1000 requests per TCP fd
+   - `BuildResponse(..., keepAlive)` → `Connection: keep-alive` + `Keep-Alive:` or `close`
+2. **Policy** (`RawRequest_WantsKeepAlive` on raw bytes):
+   - HTTP/1.1 default keep-alive; `Connection: close` forces close
+   - HTTP/1.0 needs explicit keep-alive
+   - (Avoided fragile `Array<HeaderEntry>` walk — keys corrupted under for-in/Get)
+3. **Bench:** ~**81k req/s** vs ~45k with close-only (`wrk -t4 -c64 -d5s /api/health`)
+4. Version banner **0.3.0**; README / benches notes updated
+5. Verified: curl headers + `make bench-nexus`
+
+---
+
 ## Следващи стъпки
 
-1. Keep-alive / HTTP/1.1 pipelining for higher nexus RPS (optional)
-2. Selfhost parity for `--release` / `#line` (optional)
-3. LSP: workspace symbol search / call hierarchy (optional)
-4. Deeper rename (type members / qualified paths)
+1. Selfhost parity for `--release` / `#line` (optional)
+2. LSP: workspace symbol search / call hierarchy (optional)
+3. Deeper rename (type members / qualified paths)
+4. Fix header Array iteration / string field ABI (root cause of Get crash)
