@@ -112,35 +112,48 @@ if [[ "${BUX_SELFHOST_FIXED_POINT:-0}" != "1" ]]; then
 fi
 
 echo ""
-echo "=== Fixed-point: buxc2 → buxc3 (experimental) ==="
+echo "=== Fixed-point: buxc2 → buxc3 → buxc4 (same-backend gen) ==="
+# True fixed-point: compiler_n and compiler_n+1 (both from selfhost backend)
+# must produce identical C/ELF. Bootstrap vs selfhost CBE differ intentionally.
+C="$ROOT/build/selfhost-loop-c"
 BUXC2="$A/build/buxc2"
 if [[ ! -x "$BUXC2" ]]; then
   echo "error: buxc2 missing at $BUXC2" >&2
   exit 1
 fi
 
-# Rebuild B with buxc2
+echo "--- Gen2: buxc2 → buxc3 ---"
 prepare_tree "$B"
-set +e
-(cd "$B" && "$BUXC2" build)
-fp_status=$?
-set -e
-if [[ $fp_status -ne 0 ]]; then
+if ! (cd "$B" && "$BUXC2" build); then
   echo "=== Fixed-point FAILED (buxc2 could not build gen2) ==="
   exit 1
 fi
-
 BUXC3="$B/build/buxc2"
 if [[ ! -x "$BUXC3" ]]; then
   echo "error: gen2 binary missing" >&2
   exit 1
 fi
+echo "  buxc3: $BUXC3"
 
+echo "--- Gen3: buxc3 → buxc4 ---"
+prepare_tree "$C"
+if ! (cd "$C" && "$BUXC3" build); then
+  echo "=== Fixed-point FAILED (buxc3 could not build gen3) ==="
+  exit 1
+fi
+BUXC4="$C/build/buxc2"
+if [[ ! -x "$BUXC4" ]]; then
+  echo "error: gen3 binary missing" >&2
+  exit 1
+fi
+echo "  buxc4: $BUXC4"
+
+# Compare gen2 vs gen3 artifacts (not bootstrap vs selfhost)
 if ! compare_c_and_elf \
-  "buxc2" "$BUXC2" "$A/build/main.c" \
-  "buxc3" "$BUXC3" "$B/build/main.c"
+  "buxc3" "$BUXC3" "$B/build/main.c" \
+  "buxc4" "$BUXC4" "$C/build/main.c"
 then
-  echo "=== Fixed-point FAILED (gen1 vs gen2 mismatch) ==="
+  echo "=== Fixed-point FAILED (gen2 vs gen3 mismatch) ==="
   exit 1
 fi
 

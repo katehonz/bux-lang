@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — Expr/Stmt sourceFile, LSP 0.14, selfhost-loop CI  
+> **Текущо:** v0.5.x — **selfhost fixed-point green**, Expr/Stmt sourceFile, LSP 0.14  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -812,9 +812,23 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 52 (selfhost fixed-point buxc2→buxc3→buxc4 green)
+
+1. **Sema global scope:** allocate via `Scope_New` (8192), not 1024 — heap
+   overflow on ~1200 decls crashed buxc2 in `Scope_Lookup`
+2. **HIR buffers:** funcs 512→4096, structs 64→512, enums/consts/gen* raised
+3. **`CBE_FuncParam`:** avoid nested `.paramN.name` on `*HirParam` (wrong `.` vs `->`)
+4. **Adapters:** `__fat_env` not `env` (no clash with `CtfeEnv* env`)
+5. **Unary `!`:** parenthesize operand so `!(a && b)` ≠ `!a && b`
+6. **Fat typedef skip-void:** rewritten without nested `!` for older gens
+7. **Fixed-point loop:** compare gen2 vs gen3 (same CBE), not bootstrap vs selfhost
+8. Verified: `BUX_SELFHOST_FIXED_POINT=1 make selfhost-loop` — C+ELF IDENTICAL
+
+---
+
 ## Следващи стъпки
 
-1. Fix selfhost C backend so buxc2→buxc3 fixed-point is green
-2. Main PR CI workflow (`make test`) beyond optional selfhost-loop
-3. LSP type hierarchy / prepareTypeHierarchy (optional)
-4. Macro / quote hygiene using Expr.sourceFile grafts
+1. Main PR CI workflow (`make test`) beyond optional selfhost-loop
+2. LSP type hierarchy / prepareTypeHierarchy (optional)
+3. Macro / quote hygiene using Expr.sourceFile grafts
+4. Parenthesize binary ops in CBE for full C precedence safety

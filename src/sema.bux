@@ -1721,7 +1721,7 @@ module Sema {
 
             // Interface
             if dk == dkInterface {
-                if sema.interfaceCount < 64 {
+                if sema.interfaceCount < 256 {
                     sema.interfaceTable[sema.interfaceCount].name = decl.strValue;
                     sema.interfaceTable[sema.interfaceCount].decl = decl;
                     sema.interfaceCount = sema.interfaceCount + 1;
@@ -1734,7 +1734,7 @@ module Sema {
                 var m: *Decl = decl.childDecl1;
                 while m != null as *Decl {
                     if m.kind == dkFunc {
-                        if sema.methodCount < 256 {
+                        if sema.methodCount < 2048 {
                             sema.methodEntries[sema.methodCount].typeName = implTypeName;
                             sema.methodEntries[sema.methodCount].methodName = m.strValue;
                             sema.methodEntries[sema.methodCount].decl = m;
@@ -1865,7 +1865,7 @@ module Sema {
                     }
                     if !String_Eq(typeName, "") {
                         let methodName: String = bux_str_slice(decl.strValue, (i + 1) as uint, bux_strlen(decl.strValue) - (i + 1) as uint);
-                        if sema.methodCount < 256 {
+                        if sema.methodCount < 2048 {
                             sema.methodEntries[sema.methodCount].typeName = typeName;
                             sema.methodEntries[sema.methodCount].methodName = methodName;
                             sema.methodEntries[sema.methodCount].decl = decl;
@@ -2225,19 +2225,23 @@ module Sema {
     func Sema_Analyze(mod: *Module) -> *Sema {
         let s: *Sema = bux_alloc(sizeof(Sema)) as *Sema;
         s.module = mod;
+        // Global scope must use Scope_New capacity (maxSymbols=8192).
+        // Allocating only 1024 slots while Scope_Define allows 8192 overflowed
+        // the heap when analyzing full compiler sources (~1200 decls) — buxc2 crash.
         s.scope = bux_alloc(sizeof(Scope)) as *Scope;
-        s.scope.symbols = bux_alloc(1024 as uint * sizeof(Symbol)) as *Symbol;
-        s.scope.count = 0;
-        s.scope.parent = null as *Scope;
+        let globalScope: Scope = Scope_New();
+        s.scope.symbols = globalScope.symbols;
+        s.scope.count = globalScope.count;
+        s.scope.parent = globalScope.parent;
         s.hasError = false;
         s.diagCount = 0;
-        s.diags = bux_alloc(256 as uint * sizeof(SemaDiag)) as *SemaDiag;
+        s.diags = bux_alloc(1024 as uint * sizeof(SemaDiag)) as *SemaDiag;
         s.typeTable = null as *void;
         s.methodTable = null as *void;
         s.currentRetType = tyVoid;
-        s.interfaceTable = bux_alloc(64 as uint * sizeof(InterfaceEntry)) as *InterfaceEntry;
+        s.interfaceTable = bux_alloc(256 as uint * sizeof(InterfaceEntry)) as *InterfaceEntry;
         s.interfaceCount = 0;
-        s.methodEntries = bux_alloc(256 as uint * sizeof(MethodEntry)) as *MethodEntry;
+        s.methodEntries = bux_alloc(2048 as uint * sizeof(MethodEntry)) as *MethodEntry;
         s.methodCount = 0;
 
         // First pass: collect globals

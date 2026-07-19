@@ -351,7 +351,7 @@ make test-registry          # add greet → install → build temp app
 
 # Selfhost determinism (optional CI job; not in default `make test`)
 make selfhost-loop
-# Experimental fixed-point (buxc2 → buxc3):
+# Full fixed-point: buxc2 → buxc3 → buxc4 (gen2 vs gen3 C+ELF identical)
 # BUX_SELFHOST_FIXED_POINT=1 make selfhost-loop
 
 # Clean build artifacts

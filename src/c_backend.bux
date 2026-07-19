@@ -385,10 +385,12 @@ module CBackend {
             return;
         }
 
-        // Unary
+        // Unary — always parenthesize operand so `!(a && b)` is not `!a && b`
         if kind == hUnary {
             StringBuilder_Append(&cbe.sb, CBackend_OpToC(node.intValue));
+            StringBuilder_Append(&cbe.sb, "(");
             CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, ")");
             return;
         }
 
@@ -938,15 +940,8 @@ module CBackend {
             var p: int = 0;
             while p < mod.funcs[i].paramCount {
                 var ptype: String = "";
-                if p == 0 { ptype = mod.funcs[i].param0.typeName; }
-                else if p == 1 { ptype = mod.funcs[i].param1.typeName; }
-                else if p == 2 { ptype = mod.funcs[i].param2.typeName; }
-                else if p == 3 { ptype = mod.funcs[i].param3.typeName; }
-                else if p == 4 { ptype = mod.funcs[i].param4.typeName; }
-                else if p == 5 { ptype = mod.funcs[i].param5.typeName; }
-                else if p == 6 { ptype = mod.funcs[i].param6.typeName; }
-                else if p == 7 { ptype = mod.funcs[i].param7.typeName; }
-                else if p == 8 { ptype = mod.funcs[i].param8.typeName; }
+                let hp: *HirParam = CBE_FuncParam(&mod.funcs[i], p);
+                if hp != null as *HirParam { ptype = hp.typeName; }
                 CBE_MaybeEmitExtraFat(cbe, ptype);
                 p = p + 1;
             }
@@ -959,6 +954,22 @@ module CBackend {
         if String_Eq(name, "") { return; }
         if !String_StartsWith(name, "BuxFn_") { return; }
         CBE_EmitOneFatTypedef(cbe, name);
+    }
+
+    /// Load param pointer by index (avoids nested `.paramN.name` on *HirParam —
+    /// selfhost CBE may emit `.` instead of `->` for chained pointer fields).
+    func CBE_FuncParam(f: *HirFunc, idx: int) -> *HirParam {
+        if f == null as *HirFunc { return null as *HirParam; }
+        if idx == 0 { return f.param0; }
+        if idx == 1 { return f.param1; }
+        if idx == 2 { return f.param2; }
+        if idx == 3 { return f.param3; }
+        if idx == 4 { return f.param4; }
+        if idx == 5 { return f.param5; }
+        if idx == 6 { return f.param6; }
+        if idx == 7 { return f.param7; }
+        if idx == 8 { return f.param8; }
+        return null as *HirParam;
     }
 
     func CBE_CollectBuxFn(names: *String, count: *int, name: String) {
@@ -1001,7 +1012,15 @@ module CBackend {
         var pi: uint = 1;
         while pi < partCount {
             let pPart: String = String_SplitPart(rest, "_", pi);
-            if !(pi == 1 && String_Eq(pPart, "void") && partCount == 2) {
+            // Skip sole `void` param (BuxFn_ret_void); always emit real params.
+            // Written without nested `!` so older selfhost CBE stays correct.
+            var skipVoid: bool = false;
+            if pi == 1 {
+                if String_Eq(pPart, "void") {
+                    if partCount == 2 { skipVoid = true; }
+                }
+            }
+            if !skipVoid {
                 StringBuilder_Append(&cbe.sb, ", ");
                 StringBuilder_Append(&cbe.sb, CBE_FatPartToC(pPart));
             }
@@ -1148,21 +1167,17 @@ module CBackend {
             StringBuilder_Append(&cbe.sb, retC);
             StringBuilder_Append(&cbe.sb, " __adapt_");
             StringBuilder_Append(&cbe.sb, fname);
-            StringBuilder_Append(&cbe.sb, "(void* env");
+            // Use __fat_env so we never clash with a user param named `env` (CtfeEnv, etc.)
+            StringBuilder_Append(&cbe.sb, "(void* __fat_env");
             var p: int = 0;
             while p < mod.funcs[i].paramCount {
-                // Skip if first param is already __env (shouldn't for named funcs)
                 var pname: String = "";
                 var ptype: String = "int";
-                if p == 0 { pname = mod.funcs[i].param0.name; ptype = mod.funcs[i].param0.typeName; }
-                else if p == 1 { pname = mod.funcs[i].param1.name; ptype = mod.funcs[i].param1.typeName; }
-                else if p == 2 { pname = mod.funcs[i].param2.name; ptype = mod.funcs[i].param2.typeName; }
-                else if p == 3 { pname = mod.funcs[i].param3.name; ptype = mod.funcs[i].param3.typeName; }
-                else if p == 4 { pname = mod.funcs[i].param4.name; ptype = mod.funcs[i].param4.typeName; }
-                else if p == 5 { pname = mod.funcs[i].param5.name; ptype = mod.funcs[i].param5.typeName; }
-                else if p == 6 { pname = mod.funcs[i].param6.name; ptype = mod.funcs[i].param6.typeName; }
-                else if p == 7 { pname = mod.funcs[i].param7.name; ptype = mod.funcs[i].param7.typeName; }
-                else if p == 8 { pname = mod.funcs[i].param8.name; ptype = mod.funcs[i].param8.typeName; }
+                let hp: *HirParam = CBE_FuncParam(&mod.funcs[i], p);
+                if hp != null as *HirParam {
+                    pname = hp.name;
+                    ptype = hp.typeName;
+                }
                 if String_Eq(ptype, "") { ptype = "int"; }
                 StringBuilder_Append(&cbe.sb, ", ");
                 StringBuilder_Append(&cbe.sb, ptype);
@@ -1170,7 +1185,7 @@ module CBackend {
                 StringBuilder_Append(&cbe.sb, pname);
                 p = p + 1;
             }
-            StringBuilder_Append(&cbe.sb, ") {\n    (void)env;\n");
+            StringBuilder_Append(&cbe.sb, ") {\n    (void)__fat_env;\n");
             if String_Eq(retC, "void") {
                 StringBuilder_Append(&cbe.sb, "    ");
                 StringBuilder_Append(&cbe.sb, fname);
@@ -1184,15 +1199,8 @@ module CBackend {
             while p < mod.funcs[i].paramCount {
                 if p > 0 { StringBuilder_Append(&cbe.sb, ", "); }
                 var pname: String = "";
-                if p == 0 { pname = mod.funcs[i].param0.name; }
-                else if p == 1 { pname = mod.funcs[i].param1.name; }
-                else if p == 2 { pname = mod.funcs[i].param2.name; }
-                else if p == 3 { pname = mod.funcs[i].param3.name; }
-                else if p == 4 { pname = mod.funcs[i].param4.name; }
-                else if p == 5 { pname = mod.funcs[i].param5.name; }
-                else if p == 6 { pname = mod.funcs[i].param6.name; }
-                else if p == 7 { pname = mod.funcs[i].param7.name; }
-                else if p == 8 { pname = mod.funcs[i].param8.name; }
+                let hp2: *HirParam = CBE_FuncParam(&mod.funcs[i], p);
+                if hp2 != null as *HirParam { pname = hp2.name; }
                 StringBuilder_Append(&cbe.sb, pname);
                 p = p + 1;
             }
@@ -1386,7 +1394,8 @@ module CBackend {
             if node.typeName != null as String { return node.typeName; }
             return "";
         }
-        if node.kind == hFieldPtr {
+        // Field access (both hFieldPtr and hFieldAccess): resolve field type from structs
+        if node.kind == hFieldPtr || node.kind == hFieldAccess {
             let baseType: String = CBE_GetExprTypeName(mod, node.child1);
             var structName: String = baseType;
             if String_EndsWith(baseType, "*") {
@@ -1396,7 +1405,10 @@ module CBackend {
                 }
             }
             if !String_Eq(structName, "") {
-                return CBE_LookupFieldType(mod, structName, node.strValue);
+                let ft: String = CBE_LookupFieldType(mod, structName, node.strValue);
+                if ft != null as String && !String_Eq(ft, "") {
+                    return ft;
+                }
             }
         }
         if node.typeName != null as String { return node.typeName; }
@@ -1409,7 +1421,7 @@ module CBackend {
 
     func CBackend_Generate(mod: *HirModule) -> String {
         let cbe: *CEmitter = bux_alloc(sizeof(CEmitter)) as *CEmitter;
-        cbe.sb = StringBuilder_NewCap(8192);
+        cbe.sb = StringBuilder_NewCap(262144);
         cbe.indent = 0;
         cbe.mod = mod;
         cbe.deferCount = 0;
@@ -1737,7 +1749,8 @@ module CBackend {
                 StringBuilder_Append(&cbe.sb, "*)__env);\n");
             } else if mod.funcs[i].paramCount > 0 {
                 // Capture-less closure still has __env
-                if String_Eq(mod.funcs[i].param0.name, "__env") {
+                let envP: *HirParam = CBE_FuncParam(&mod.funcs[i], 0);
+                if envP != null as *HirParam && String_Eq(envP.name, "__env") {
                     StringBuilder_Append(&cbe.sb, "    (void)__env;\n");
                 }
             }

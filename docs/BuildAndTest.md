@@ -192,11 +192,12 @@ Use `Std::Test` module for assertions inside test code.
 ### Selfhost loop (optional CI)
 ```bash
 make selfhost-loop                 # bootstrap builds src/ twice; C+ELF match
-BUX_SELFHOST_FIXED_POINT=1 make selfhost-loop   # also buxc2→buxc3 (experimental)
+BUX_SELFHOST_FIXED_POINT=1 make selfhost-loop   # buxc2→buxc3→buxc4 fixed-point
 ```
-Not part of default `make test`. GitHub Actions workflow
-`.github/workflows/selfhost-loop.yml` runs it on:
-- manual `workflow_dispatch`
+Fixed-point compares **gen2 vs gen3** (same selfhost C backend), not bootstrap
+vs selfhost. Not part of default `make test`. GitHub Actions workflow
+`.github/workflows/selfhost-loop.yml` runs the fast determinism check on:
+- manual `workflow_dispatch` (optional fixed_point input)
 - weekly schedule
 - pushes to `main` that touch `src/`, `lib/`, bootstrap, or the loop script
 

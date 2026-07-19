@@ -4038,15 +4038,17 @@ module HirLower {
         let ctx: *LowerCtx = bux_alloc(sizeof(LowerCtx)) as *LowerCtx;
         ctx.module = mod;
         ctx.scope = sema.scope;
-        ctx.funcs = bux_alloc(512 as uint * sizeof(HirFunc)) as *HirFunc;
+        // Capacities sized for full selfhost compile (~600 funcs, ~120 structs).
+        // Undersized buffers overflowed heap → corrupt main.c / buxc2→buxc3 fail.
+        ctx.funcs = bux_alloc(4096 as uint * sizeof(HirFunc)) as *HirFunc;
         ctx.funcCount = 0;
-        ctx.externFuncs = bux_alloc(512 as uint * sizeof(HirFunc)) as *HirFunc;
+        ctx.externFuncs = bux_alloc(1024 as uint * sizeof(HirFunc)) as *HirFunc;
         ctx.externCount = 0;
         ctx.varCounter = 0;
         ctx.genFuncCount = 0;
-        ctx.genFuncs = bux_alloc(256 as uint * sizeof(Decl)) as *Decl;
+        ctx.genFuncs = bux_alloc(1024 as uint * sizeof(Decl)) as *Decl;
         ctx.genStructCount = 0;
-        ctx.genStructs = bux_alloc(256 as uint * sizeof(Decl)) as *Decl;
+        ctx.genStructs = bux_alloc(1024 as uint * sizeof(Decl)) as *Decl;
         ctx.substParam0 = "";
         ctx.substArg0 = "";
         ctx.substParam1 = "";
@@ -4056,11 +4058,11 @@ module HirLower {
         hm.funcCount = 0;
         hm.funcs = ctx.funcs;
         hm.structCount = 0;
-        hm.structs = bux_alloc(64 as uint * sizeof(HirStruct)) as *HirStruct;
+        hm.structs = bux_alloc(512 as uint * sizeof(HirStruct)) as *HirStruct;
         hm.enumCount = 0;
-        hm.enums = bux_alloc(64 as uint * sizeof(HirEnum)) as *HirEnum;
+        hm.enums = bux_alloc(256 as uint * sizeof(HirEnum)) as *HirEnum;
         hm.constCount = 0;
-        hm.consts = bux_alloc(512 as uint * sizeof(HirConst)) as *HirConst;
+        hm.consts = bux_alloc(2048 as uint * sizeof(HirConst)) as *HirConst;
         ctx.hm = hm;
 
         // First pass: count structs (to allocate field arrays later)
@@ -4175,7 +4177,7 @@ module HirLower {
                 ctx.externCount = ctx.externCount + 1;
             }
             // Pass 1: collect const names (expressions evaluated in Pass 2)
-            if decl.kind == dkConst && hm.constCount < 512 {
+            if decl.kind == dkConst && hm.constCount < 2048 {
                 let ci: int = hm.constCount;
                 hm.consts[ci].name = decl.strValue;
                 hm.consts[ci].value = 0;

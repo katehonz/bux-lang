@@ -62,7 +62,7 @@ clean:
 	rm -rf _test_cast _test_cast2 _test_cast3 _test_channel
 
 clean-all: clean
-	rm -rf build/selfhost build/selfhost-loop-a build/selfhost-loop-b
+	rm -rf build/selfhost build/selfhost-loop-a build/selfhost-loop-b build/selfhost-loop-c
 	rm -rf tests/golden/*/build
 
 selfhost: build
