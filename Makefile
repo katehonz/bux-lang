@@ -208,6 +208,9 @@ test-lsp: lsp
 	@echo "=== LSP method/type/receiver rename smoke ==="
 	@chmod +x tools/smoke_lsp_rename_method.sh
 	@tools/smoke_lsp_rename_method.sh
+	@echo "=== LSP interface dispatch hierarchy smoke ==="
+	@chmod +x tools/smoke_lsp_iface_hierarchy.sh
+	@tools/smoke_lsp_iface_hierarchy.sh
 
 .PHONY: test-registry
 test-registry: build

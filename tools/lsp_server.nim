@@ -12,6 +12,7 @@
 # v0.8.0: call hierarchy (prepare / incoming / outgoing).
 # v0.9.0: method call hierarchy (extend Type / .Method() sites).
 # v0.10.0: method rename + qualified path / extend Type rename edges.
+# v0.11.0: interface dispatch in call hierarchy (extend Type for Trait).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -125,12 +126,18 @@ type
     locals: seq[LocalBinding]
     ## Type members for field/variant rename (v0.7)
     members: seq[MemberInfo]
+    ## Interface methods (v0.11): name is method, parent is interface
+    ifaceMethods: seq[MemberInfo]
+    ## Type implements Interface (from `extend Type for Interface`)
+    impls: seq[tuple[typeName, iface: string, line: int]]
 
 var
   documents = initTable[string, DocumentState]()
   rootPath = ""
   rootUri = ""
   workspaceSymbols = initTable[string, tuple[uri: string, info: SymbolInfo]]()
+  ## Cross-file: "Iface.Method" → list of implementors
+  workspaceImpls = initTable[string, seq[tuple[uri, typeName, meth: string]]]()
   cachedStdlibDir = ""
   cachedStdlibDecls: seq[Decl] = @[]
   stdlibLoaded = false
@@ -318,8 +325,17 @@ proc analyzeFile(path: string, content: string): DocumentState =
   ## extend/impl Type { ... } tracking for method indexing
   var braceDepth = 0
   var activeExtend = ""       ## Type name of open extend/impl block
+  var activeIface = ""        ## Interface when `extend Type for Iface`
   var extendBodyDepth = 0     ## braceDepth of the extend/impl opening `{`
   var pendingExtend = ""      ## Type name after `extend Name` before `{`
+  var pendingIface = ""       ## Interface name after `for`
+  ## interface Iface { func M... } — abstract methods
+  var activeInterface = ""
+  var interfaceBodyDepth = 0
+  var pendingInterface = ""
+
+  result.ifaceMethods = @[]
+  result.impls = @[]
 
   while i < content.len:
     let c = content[i]
@@ -365,19 +381,31 @@ proc analyzeFile(path: string, content: string): DocumentState =
         inc i
       continue
 
-    # Brace tracking for extend/impl bodies (outside strings/comments)
+    # Brace tracking for extend/impl/interface bodies (outside strings/comments)
     if c == '{':
       inc braceDepth
       if pendingExtend.len > 0 and extendBodyDepth == 0:
         activeExtend = pendingExtend
+        activeIface = pendingIface
         extendBodyDepth = braceDepth
+        if pendingIface.len > 0:
+          result.impls.add((activeExtend, pendingIface, lineColAt(content, i).line))
         pendingExtend = ""
+        pendingIface = ""
+      if pendingInterface.len > 0 and interfaceBodyDepth == 0:
+        activeInterface = pendingInterface
+        interfaceBodyDepth = braceDepth
+        pendingInterface = ""
       inc i
       continue
     if c == '}':
       if extendBodyDepth > 0 and braceDepth == extendBodyDepth:
         activeExtend = ""
+        activeIface = ""
         extendBodyDepth = 0
+      if interfaceBodyDepth > 0 and braceDepth == interfaceBodyDepth:
+        activeInterface = ""
+        interfaceBodyDepth = 0
       if braceDepth > 0:
         dec braceDepth
       inc i
@@ -389,15 +417,35 @@ proc analyzeFile(path: string, content: string): DocumentState =
        (i == 0 or not isIdentChar(content[i - 1])) and
        (i + kw.len >= content.len or not isIdentChar(content[i + kw.len])))
 
-    # extend Type / impl Type — methods live in the following { block }
+    # interface Name — abstract methods in the following { block }
+    if atWord("interface"):
+      i += 9
+      skipWs(content, i)
+      let iname = readIdent(content, i)
+      if iname.len > 0:
+        let (line, col) = lineColAt(content, i - iname.len)
+        addSymbol(result, iname, SymbolInfo(
+          line: line, col: col, kind: "interface", detail: "interface " & iname, container: ""))
+        pendingInterface = iname
+      continue
+
+    # extend Type / impl Type [for Interface] — methods in following { block }
     if atWord("extend") or atWord("impl"):
       let kwLen = if content[i] == 'e': 6 else: 4
       i += kwLen
       skipWs(content, i)
-      # optional "Type for Trait" — take first type name
       let tname = readIdent(content, i)
       if tname.len > 0:
         pendingExtend = tname
+        pendingIface = ""
+        skipWs(content, i)
+        # `for Interface`
+        if atWord("for"):
+          i += 3
+          skipWs(content, i)
+          let iface = readIdent(content, i)
+          if iface.len > 0:
+            pendingIface = iface
       continue
 
     if atWord("func"):
@@ -426,22 +474,42 @@ proc analyzeFile(path: string, content: string): DocumentState =
                 discard readTypeish(content, k)
                 sigEnd = k
               break
-          elif ch == '{' or ch == '\n' and depth == 0 and j > nameStart + name.len:
-            # no-param or broken — still capture name
+          elif ch == '{' or ch == ';' or (ch == '\n' and depth == 0 and j > nameStart + name.len):
+            # interface methods often end with `;` (no body)
             if sigEnd <= nameStart:
               sigEnd = i
+            if ch == ';':
+              sigEnd = j
             break
           inc j
         var sig = content[kwPos ..< min(sigEnd, content.len)].strip()
         # collapse whitespace
         sig = sig.replace("\n", " ").multiReplace([("  ", " "), ("  ", " "), ("  ", " ")])
-        let isMethod = activeExtend.len > 0
-        let kind = if isMethod: "method" else: "function"
-        let container = if isMethod: activeExtend else: ""
-        if isMethod:
-          sig = activeExtend & "." & sig
-        addSymbol(result, name, SymbolInfo(
-          line: line, col: col, kind: kind, detail: sig, container: container))
+        if activeInterface.len > 0:
+          # Abstract interface method
+          sig = activeInterface & "." & sig
+          addSymbol(result, name, SymbolInfo(
+            line: line, col: col, kind: "method", detail: sig,
+            container: activeInterface))
+          result.ifaceMethods.add(MemberInfo(
+            name: name, parent: activeInterface, kind: "iface_method",
+            line: line, col: col))
+        elif activeExtend.len > 0:
+          var detail = activeExtend & "." & sig
+          if activeIface.len > 0:
+            detail = detail & "  [" & activeIface & "]"
+          addSymbol(result, name, SymbolInfo(
+            line: line, col: col, kind: "method", detail: detail,
+            container: activeExtend))
+          # Record as implementor of interface method
+          if activeIface.len > 0:
+            let key = activeIface & "." & name
+            if not workspaceImpls.hasKey(key):
+              workspaceImpls[key] = @[]
+            workspaceImpls[key].add((result.uri, activeExtend, name))
+        else:
+          addSymbol(result, name, SymbolInfo(
+            line: line, col: col, kind: "function", detail: sig, container: ""))
       continue
 
     if atWord("let") or atWord("var") or atWord("const"):
@@ -1078,6 +1146,8 @@ proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
   doc.symbols = updated.symbols
   doc.ordered = updated.ordered
   doc.members = updated.members
+  doc.ifaceMethods = updated.ifaceMethods
+  doc.impls = updated.impls
   # Keep / refresh real types for hover (does not replace lightweight outline)
   enrichWithSema(doc)
   let diags = runBuxcDiagnostics(path, doc.content)
@@ -1128,6 +1198,8 @@ proc ensureAnalyzed(doc: DocumentState) =
     doc.symbols = updated.symbols
     doc.ordered = updated.ordered
     doc.members = updated.members
+    doc.ifaceMethods = updated.ifaceMethods
+    doc.impls = updated.impls
 
 proc completionKind(kind: string): int =
   case kind
@@ -2267,6 +2339,76 @@ proc lookupFuncSym(name, uri: string): FuncSym =
   if all.hasKey(bare):
     return all[bare]
 
+proc findIfaceMethodAt(doc: DocumentState, word: string, line, col: int): tuple[ok: bool, m: MemberInfo] =
+  result.ok = false
+  for m in doc.ifaceMethods:
+    if m.name != word: continue
+    if m.line == line and col >= m.col and col <= m.col + word.len:
+      result.ok = true
+      result.m = m
+      return
+  # Only one iface method with this name
+  var n = 0
+  var last: MemberInfo
+  for m in doc.ifaceMethods:
+    if m.name == word:
+      inc n
+      last = m
+  if n == 1:
+    result.ok = true
+    result.m = last
+
+proc ifaceMethodItem(uri: string, m: MemberInfo): JsonNode =
+  %*{
+    "name": m.parent & "." & m.name,
+    "kind": 11,  # SymbolKind.Interface
+    "detail": "interface " & m.parent & "." & m.name,
+    "uri": uri,
+    "range": {
+      "start": {"line": m.line, "character": 0},
+      "end": {"line": m.line, "character": m.col + m.name.len}
+    },
+    "selectionRange": {
+      "start": {"line": m.line, "character": m.col},
+      "end": {"line": m.line, "character": m.col + m.name.len}
+    },
+    "data": m.parent & "#" & m.name  # iface#method for dispatch
+  }
+
+proc collectImplementorFuncs(iface, meth: string): seq[FuncSym] =
+  ## Find concrete methods Type.Method where Type implements Interface.
+  result = @[]
+  var seen = initHashSet[string]()
+  for uri, doc in documents.pairs:
+    ensureAnalyzed(doc)
+    for impl in doc.impls:
+      if impl.iface != iface: continue
+      if doc.symbols.hasKey(meth):
+        let info = doc.symbols[meth]
+        if info.kind == "method" and (info.container == impl.typeName or info.container == iface):
+          let key = uri & "#" & impl.typeName & "." & meth
+          if seen.contains(key): continue
+          seen.incl(key)
+          var useInfo = info
+          if info.container == iface:
+            # Symbol table kept iface method; use impl type from relation
+            useInfo = SymbolInfo(
+              line: info.line, col: info.col, kind: "method",
+              detail: impl.typeName & ".func " & meth & "  [" & iface & "]",
+              container: impl.typeName)
+          # Prefer implementor container over iface when both present
+          if info.container == impl.typeName:
+            useInfo = info
+          result.add(FuncSym(name: meth, uri: uri, info: useInfo))
+      for name, info in doc.symbols.pairs:
+        if name != meth: continue
+        if info.kind != "method": continue
+        if info.container == impl.typeName:
+          let key = uri & "#" & impl.typeName & "." & meth
+          if seen.contains(key): continue
+          seen.incl(key)
+          result.add(FuncSym(name: meth, uri: uri, info: info))
+
 proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   let uri = paramsNode["textDocument"]["uri"].getStr()
   let position = paramsNode["position"]
@@ -2280,6 +2422,11 @@ proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: Js
   let word = findWordAt(doc.content, lineNum, col)
   if word.len == 0:
     sendResponse(stream, id, %*[])
+    return
+  # Interface abstract method under cursor
+  let (iok, im) = findIfaceMethodAt(doc, word, lineNum, col)
+  if iok:
+    sendResponse(stream, id, %*[ifaceMethodItem(uri, im)])
     return
   # Prefer function/method symbol under cursor
   if doc.symbols.hasKey(word) and isCallableKind(doc.symbols[word].kind):
@@ -2303,6 +2450,11 @@ proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: Js
       off += lines[li].len + 1
     off += ws
     if isCallSiteAt(doc.content, off, word.len):
+      # Prefer interface method if this name is an iface method
+      for m in doc.ifaceMethods:
+        if m.name == word:
+          sendResponse(stream, id, %*[ifaceMethodItem(uri, m)])
+          return
       let all = allKnownFuncs()
       if all.hasKey(word):
         sendResponse(stream, id, %*[callHierarchyItem(all[word])])
@@ -2318,13 +2470,19 @@ proc bareCallName(itemName: string): string =
 
 proc handleIncomingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   ## Who calls this function/method?
+  ## Interface methods: callers of .Method( (dynamic dispatch sites).
   if not paramsNode.hasKey("item"):
     sendResponse(stream, id, %*[])
     return
   let item = paramsNode["item"]
   var name = item["name"].getStr()
+  var data = ""
   if item.hasKey("data") and item["data"].kind == JString:
-    name = item["data"].getStr()
+    data = item["data"].getStr()
+    if data.contains("#"):
+      name = data.split('#')[^1]  # method name
+    else:
+      name = data
   else:
     name = bareCallName(name)
   let sites = collectAllCallSites()
@@ -2355,21 +2513,45 @@ proc handleIncomingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode)
 
 proc handleOutgoingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   ## What does this function/method call?
+  ## For interface methods: "outgoing" lists implementor methods (dispatch targets).
   if not paramsNode.hasKey("item"):
     sendResponse(stream, id, %*[])
     return
   let item = paramsNode["item"]
   var name = item["name"].getStr()
+  var data = ""
   if item.hasKey("data") and item["data"].kind == JString:
-    name = item["data"].getStr()
+    data = item["data"].getStr()
+    name = data
   else:
     name = bareCallName(name)
+
+  # Interface dispatch: data = "Iface#Method"
+  if data.contains("#"):
+    let parts = data.split('#')
+    if parts.len == 2:
+      let iface = parts[0]
+      let meth = parts[1]
+      let impls = collectImplementorFuncs(iface, meth)
+      var arr = newJArray()
+      for fs in impls:
+        arr.add(%*{
+          "to": callHierarchyItem(fs),
+          "fromRanges": [%*{
+            "start": {"line": fs.info.line, "character": fs.info.col},
+            "end": {"line": fs.info.line, "character": fs.info.col + meth.len}
+          }]
+        })
+      sendResponse(stream, id, arr)
+      return
+
+  let bare = bareCallName(name)
   let uri = if item.hasKey("uri"): item["uri"].getStr() else: ""
   let sites = collectAllCallSites()
-  # Group by callee among sites whose caller is `name`
+  # Group by callee among sites whose caller is bare name
   var groups = initTable[string, tuple[fs: FuncSym, ranges: seq[tuple[line, col, len: int]]]]()
   for s in sites:
-    if s.caller != name: continue
+    if s.caller != bare: continue
     if uri.len > 0 and s.callerUri != uri: continue
     let key = s.callee
     if not groups.hasKey(key):
@@ -2418,7 +2600,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "workspaceSymbolProvider": true,
         "callHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.10.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.11.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -2466,6 +2648,8 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
     doc.symbols = updated.symbols
     doc.ordered = updated.ordered
     doc.members = updated.members
+    doc.ifaceMethods = updated.ifaceMethods
+    doc.impls = updated.impls
     # Re-apply typeIndex details onto matching names (don't drop sema types mid-edit)
     for name, detail in doc.typeIndex.pairs:
       if doc.symbols.hasKey(name):

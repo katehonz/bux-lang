@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — multi-file #line, selfhost CI, **LSP 0.10 method/type rename**, Nexus KA  
+> **Текущо:** v0.5.x — multi-file #line, selfhost CI, **LSP 0.11 interface hierarchy**, Nexus KA  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -78,7 +78,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.9.0: + **method call hierarchy** (extend / `.Method`) |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.10.0: + **method/type/self rename** + method hierarchy |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
@@ -697,9 +697,22 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 44 (LSP 0.10 method + type + receiver rename)
+
+1. **`rtkMethod`**: rename method decl + `.Method(` + bare `Method(`
+   - (previous global path skipped `iaDot` → broke method rename)
+2. **Type rename** (`isType`): `struct`/`extend Type`/`self: Type`/ctors; skip `.field`
+3. **`self` receiver**: synthetic local when sema omits method params; clip to
+   enclosing `func` body via textual bounds (sibling methods safe)
+4. Smoke: `tools/smoke_lsp_rename_method.sh`
+   - Len→Length ≥2, Point→Vec2 ≥4, self→this =3 (one method only)
+5. Version **bux-lsp 0.10.0**; `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. Rename of method receivers / qualified module paths (edge cases)
-2. Interface dispatch in call hierarchy (dynamic)
+1. Interface dispatch in call hierarchy (dynamic)
+2. Module-path segment rename (`Std::Io` style imports)
 3. HirNode-level file for statements spanning multiple files (rare)
 4. Optional: selfhost-loop as optional CI job (slow)
