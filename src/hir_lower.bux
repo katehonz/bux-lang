@@ -52,6 +52,33 @@ module HirLower {
         patMapTo6: String,
         patMapFrom7: String,
         patMapTo7: String,
+        // Active source path for #line stamping (from Decl.sourceFile)
+        currentSourceFile: String,
+    }
+
+    /// Fill empty HirNode.sourceFile from `file` (does not overwrite set paths).
+    /// Walks child1/2/3, call arg lists, and if-else via extraData.
+    func Lcx_StampSourceFile(node: *HirNode, file: String) {
+        if node == null as *HirNode { return; }
+        if file == null as String || String_Eq(file, "") { return; }
+        if node.sourceFile == null as String || String_Eq(node.sourceFile, "") {
+            node.sourceFile = file;
+        }
+        Lcx_StampSourceFile(node.child1, file);
+        Lcx_StampSourceFile(node.child2, file);
+        Lcx_StampSourceFile(node.child3, file);
+        // hCall / multi-arg: linked HirArgList in extraData
+        if (node.kind == hCall || node.kind == hCallIndirect) && node.extraData != null as *void {
+            var cur: *HirArgList = node.extraData as *HirArgList;
+            while cur != null as *HirArgList {
+                Lcx_StampSourceFile(cur.node, file);
+                cur = cur.next;
+            }
+        }
+        // hIf else branch may live in extraData (*HirNode)
+        if node.kind == hIf && node.extraData != null as *void {
+            Lcx_StampSourceFile(node.extraData as *HirNode, file);
+        }
     }
 
     func Lcx_PatLookup(ctx: *LowerCtx, src: String) -> String {
@@ -3424,6 +3451,8 @@ module HirLower {
         f.isPublic = decl.isPublic;
         f.checkedFunc = ctx.checkedFunc;
         f.sourceFile = decl.sourceFile;
+        let oldSourceFile: String = ctx.currentSourceFile;
+        ctx.currentSourceFile = decl.sourceFile;
         f.paramCount = decl.paramCount;
         f.param0 = bux_alloc(sizeof(HirParam)) as *HirParam;
         Lcx_LowerParam(f.param0, &decl.param0, ctx);
@@ -3507,12 +3536,16 @@ module HirLower {
         ctx.scope = &funcScope;
         if decl.refBody != null as *Block {
             f.body = Lcx_LowerBlock(ctx, decl.refBody, f.retTypeKind);
+            // Stamp every node with this function's source path (nodes may already
+            // carry a different file for rare multi-file spans; those are kept).
+            Lcx_StampSourceFile(f.body, f.sourceFile);
         } else {
             f.body = null as *HirNode;
         }
         ctx.scope = prevScope;
         ctx.checkedFunc = oldChecked;
         ctx.releaseFunc = oldRelease;
+        ctx.currentSourceFile = oldSourceFile;
 
         return f;
     }
@@ -3528,6 +3561,8 @@ module HirLower {
         let numStr: String = String_FromInt(ctx.funcCount);
         f.name = String_Concat("__closure_", numStr);
         f.isPublic = false;
+        // Closures inherit the enclosing function's source path
+        f.sourceFile = ctx.currentSourceFile;
 
         let params: *Decl = expr.closureParams;
         // Fat-func ABI: leading void* __env, then user params
@@ -3641,6 +3676,7 @@ module HirLower {
         ctx.envInstanceName = envInstanceName;
         if expr.refBlock != null as *Block {
             f.body = Lcx_LowerBlock(ctx, expr.refBlock, -1);
+            Lcx_StampSourceFile(f.body, f.sourceFile);
         } else {
             f.body = null as *HirNode;
         }

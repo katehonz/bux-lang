@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — multi-file #line, selfhost CI, **LSP 0.11 interface hierarchy**, Nexus KA  
+> **Текущо:** v0.5.x — HirNode sourceFile #line, selfhost CI, **LSP 0.12 path rename**, Nexus KA  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -740,9 +740,23 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 47 (HirNode-level sourceFile / mid-function #line)
+
+1. **`HirNode.sourceFile`** — per-statement path for `#line` (rare multi-file spans)
+2. **`Lcx_StampSourceFile`**: after lowering a func/closure body, fill empty
+   node paths from `Decl.sourceFile` / `HirFunc.sourceFile` (keeps pre-set paths)
+3. **`LowerCtx.currentSourceFile`** + closures inherit enclosing file
+4. **C backend:** `lastDebugFile` + prefer `node.sourceFile` over func
+   `currentFile`; re-emit `#line` when **line or file** changes mid-function
+5. `BUX_DEBUG_FILE` truly forces one path (no longer overwritten by per-func)
+6. Smoke: `tools/smoke_selfhost.sh` — Util_Double body `#line` → Util.bux only
+7. `make test-selfhost-smoke` / rebuild selfhost
+
+---
+
 ## Следващи стъпки
 
-1. HirNode-level file for statements spanning multiple files (rare)
-2. Optional: selfhost-loop as optional CI job (slow)
-3. LSP find-implementations request (dedicated, beyond call hierarchy)
-4. Workspace-wide import path index without open documents (optional polish)
+1. Optional: selfhost-loop as optional CI job (slow)
+2. LSP find-implementations request (dedicated, beyond call hierarchy)
+3. Workspace-wide import path index without open documents (optional polish)
+4. Expr/Stmt-level sourceFile if macros / cross-file inlining land

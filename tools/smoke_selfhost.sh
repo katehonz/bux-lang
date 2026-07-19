@@ -108,4 +108,34 @@ if ! grep -qE '#line [0-9]+ ".*lib/.*\.bux"' "$MAIN_C"; then
 fi
 echo "  multi-file #line: PASS (Util + Main + lib)"
 
-echo "PASS: selfhost smoke (move_field + multi-file #line)"
+# ---------------------------------------------------------------------------
+# 3) HirNode-level sourceFile — statement #line inside Util_Double uses Util.bux
+#    (not only the function prolog), and never Main.bux inside that body.
+# ---------------------------------------------------------------------------
+echo "=== selfhost: HirNode sourceFile (#line in body) ==="
+# Function definition (not the forward decl): #line 1 "…Util.bux" then int Util_Double(
+util_body=$(awk '
+  /#line 1 ".*Util\.bux"/ { grab=1 }
+  grab { print }
+  grab && /^}/ { exit }
+' "$MAIN_C")
+if [[ -z "$util_body" ]]; then
+  echo "error: could not find Util_Double definition block" >&2
+  grep -n 'Util_Double\|Util\.bux' "$MAIN_C" | head -20
+  exit 1
+fi
+# Statement-level #line inside body (not only prolog #line 1) must point at Util.bux
+if ! echo "$util_body" | grep -vE '#line 1 "' | grep -qE '#line [0-9]+ ".*Util\.bux"'; then
+  echo "error: Util_Double body has no statement #line …Util.bux" >&2
+  echo "$util_body"
+  exit 1
+fi
+# Body of Util_Double must not claim Main.bux
+if echo "$util_body" | grep -qE '#line [0-9]+ ".*Main\.bux"'; then
+  echo "error: Util_Double body has #line Main.bux (wrong sourceFile)" >&2
+  echo "$util_body" | grep -E '#line '
+  exit 1
+fi
+echo "  HirNode sourceFile: PASS (Util_Double stmts → Util.bux)"
+
+echo "PASS: selfhost smoke (move_field + multi-file #line + HirNode sourceFile)"

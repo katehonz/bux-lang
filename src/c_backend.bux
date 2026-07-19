@@ -80,6 +80,7 @@ module CBackend {
         currentRetType: String,
         // #line debug maps (E.4 selfhost parity)
         lastDebugLine: int,
+        lastDebugFile: String,   // re-emit when file changes mid-function (HirNode.sourceFile)
         emitDebugLines: bool,
         currentFile: String,
     }
@@ -140,14 +141,24 @@ module CBackend {
         if node == null as *HirNode { return; }
         if node.line == 0 { return; }
         let ln: int = node.line as int;
-        if ln == cbe.lastDebugLine { return; }
+        // Prefer per-node sourceFile (multi-file spans); else function-level currentFile
+        var file: String = cbe.currentFile;
+        if node.sourceFile != null as String && !String_Eq(node.sourceFile, "") {
+            file = node.sourceFile;
+        }
+        if file == null as String { file = ""; }
+        // Skip only when both line and file unchanged
+        if ln == cbe.lastDebugLine && String_Eq(file, cbe.lastDebugFile) {
+            return;
+        }
         cbe.lastDebugLine = ln;
+        cbe.lastDebugFile = file;
         // #line must start at column 0
         StringBuilder_Append(&cbe.sb, "#line ");
         StringBuilder_AppendInt(&cbe.sb, ln as int64);
-        if !String_Eq(cbe.currentFile, "") {
+        if !String_Eq(file, "") {
             StringBuilder_Append(&cbe.sb, " \"");
-            StringBuilder_Append(&cbe.sb, cbe.currentFile);
+            StringBuilder_Append(&cbe.sb, file);
             StringBuilder_Append(&cbe.sb, "\"");
         }
         StringBuilder_Append(&cbe.sb, "\n");
@@ -1405,6 +1416,7 @@ module CBackend {
         cbe.movedCount = 0;
         cbe.tmpCounter = 0;
         cbe.lastDebugLine = 0;
+        cbe.lastDebugFile = "";
         cbe.emitDebugLines = true;
         cbe.currentFile = "";
         // Optional override for all #line paths (default: per-func Decl.sourceFile)
@@ -1697,12 +1709,17 @@ module CBackend {
                 continue;
             }
             // Per-function source path for multi-file #line (overrides BUX_DEBUG_FILE only if set)
-            if !String_Eq(mod.funcs[i].sourceFile, "") {
-                cbe.currentFile = mod.funcs[i].sourceFile;
+            // BUX_DEBUG_FILE forces one path for the whole unit; skip per-func when set.
+            let forcedDbg: String = bux_getenv("BUX_DEBUG_FILE");
+            if forcedDbg == null as String || String_Eq(forcedDbg, "") {
+                if mod.funcs[i].sourceFile != null as String && !String_Eq(mod.funcs[i].sourceFile, "") {
+                    cbe.currentFile = mod.funcs[i].sourceFile;
+                }
             }
             cbe.lastDebugLine = 0;
+            cbe.lastDebugFile = "";
             // #line before the function itself
-            if cbe.emitDebugLines && !String_Eq(cbe.currentFile, "") {
+            if cbe.emitDebugLines && cbe.currentFile != null as String && !String_Eq(cbe.currentFile, "") {
                 StringBuilder_Append(&cbe.sb, "#line 1 \"");
                 StringBuilder_Append(&cbe.sb, cbe.currentFile);
                 StringBuilder_Append(&cbe.sb, "\"\n");

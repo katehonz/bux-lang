@@ -66,6 +66,9 @@ module Hir {
         // Extra data pointer (for children arrays, field lists, etc.)
         extraData: *void;
         extraCount: int;
+        // Per-node source path for #line (multi-file / rare mid-function spans)
+        // Empty → C backend falls back to HirFunc.sourceFile / currentFile
+        sourceFile: String;
     }
 
     // ---------------------------------------------------------------------------
@@ -182,7 +185,7 @@ module Hir {
             typeKind: 0, typeName: "",
             strValue: "", intValue: 0, boolValue: false,
             child1: null as *HirNode, child2: null as *HirNode, child3: null as *HirNode,
-            extraData: null as *void, extraCount: 0 };
+            extraData: null as *void, extraCount: 0, sourceFile: "" };
     }
 
     func Hir_MakeLit(tokKind: int, tokText: String, line: uint32, col: uint32) -> HirNode {
