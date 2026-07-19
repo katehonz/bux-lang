@@ -9,16 +9,16 @@ func Main() -> int {
     PrintLine(Fmt_Fmt1("Current directory: {0}", Os_GetCwd()));
     PrintLine(Fmt_FmtInt("Command-line args: {0}", Os_ArgsCount() as int64));
     PrintLine(Fmt_Fmt1("HOME env: {0}", Os_GetEnv("HOME")));
-    
+
     PrintLine("\n=== Time Demo ===");
     let start: int64 = Time_NowMs();
     PrintLine(Fmt_FmtInt("Start: {0} ms", start));
     PrintLine("Sleeping 150ms...");
     Time_SleepMs(150);
-    
+
     let end: int64 = Time_NowMs();
     PrintLine(Fmt_FmtInt("End: {0} ms", end));
     PrintLine(Fmt_FmtInt("Elapsed: {0} ms", end - start));
-    
+
     return 0;
 }

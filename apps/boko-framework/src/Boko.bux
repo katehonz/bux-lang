@@ -5,143 +5,143 @@
 // =============================================================================
 module Boko {
 
-import Std::Io::{PrintLine, Print, PrintInt};
-import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
-import Std::String::{
-    String_Len, String_Eq, String_IsNull,
-    String_StartsWith, String_Contains,
-    String_Find, String_Offset, String_Slice,
-    String_SplitCount, String_SplitPart,
-    StringBuilder, StringBuilder_New, StringBuilder_Append,
-    StringBuilder_AppendInt, StringBuilder_Build, StringBuilder_Free
-};
-import Std::Map::{StringMap, StringMap_New, StringMap_Set, StringMap_Get, StringMap_Has};
+    import Std::Io::{PrintLine, Print, PrintInt};
+    import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
+    import Std::String::{
+        String_Len, String_Eq, String_IsNull,
+        String_StartsWith, String_Contains,
+        String_Find, String_Offset, String_Slice,
+        String_SplitCount, String_SplitPart,
+        StringBuilder, StringBuilder_New, StringBuilder_Append,
+        StringBuilder_AppendInt, StringBuilder_Build, StringBuilder_Free
+    };
+    import Std::Map::{StringMap, StringMap_New, StringMap_Set, StringMap_Get, StringMap_Has};
 
 
-// =============================================================================
-// HTTP Methods
-// =============================================================================
-enum HttpVerb {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    PATCH,
-    HEAD,
-    OPTIONS,
-}
+    // =============================================================================
+    // HTTP Methods
+    // =============================================================================
+    enum HttpVerb {
+        GET,
+        POST,
+        PUT,
+        DELETE,
+        PATCH,
+        HEAD,
+        OPTIONS,
+    }
 
-func HttpVerb_MethodName(verb: HttpVerb) -> String {
-    if verb.tag == HttpVerb_GET     { return "GET"; }
-    if verb.tag == HttpVerb_POST    { return "POST"; }
-    if verb.tag == HttpVerb_PUT     { return "PUT"; }
-    if verb.tag == HttpVerb_DELETE  { return "DELETE"; }
-    if verb.tag == HttpVerb_PATCH   { return "PATCH"; }
-    if verb.tag == HttpVerb_HEAD    { return "HEAD"; }
-    if verb.tag == HttpVerb_OPTIONS { return "OPTIONS"; }
-    return "?";
-}
+    func HttpVerb_MethodName(verb: HttpVerb) -> String {
+        if verb.tag == HttpVerb_GET     { return "GET"; }
+        if verb.tag == HttpVerb_POST    { return "POST"; }
+        if verb.tag == HttpVerb_PUT     { return "PUT"; }
+        if verb.tag == HttpVerb_DELETE  { return "DELETE"; }
+        if verb.tag == HttpVerb_PATCH   { return "PATCH"; }
+        if verb.tag == HttpVerb_HEAD    { return "HEAD"; }
+        if verb.tag == HttpVerb_OPTIONS { return "OPTIONS"; }
+        return "?";
+    }
 
-func HttpVerb_Parse(methodStr: String) -> HttpVerb {
-    if String_Eq(methodStr, "GET")     { return HttpVerb { tag: HttpVerb_GET }; }
-    if String_Eq(methodStr, "POST")    { return HttpVerb { tag: HttpVerb_POST }; }
-    if String_Eq(methodStr, "PUT")     { return HttpVerb { tag: HttpVerb_PUT }; }
-    if String_Eq(methodStr, "DELETE")  { return HttpVerb { tag: HttpVerb_DELETE }; }
-    if String_Eq(methodStr, "PATCH")   { return HttpVerb { tag: HttpVerb_PATCH }; }
-    if String_Eq(methodStr, "HEAD")    { return HttpVerb { tag: HttpVerb_HEAD }; }
-    if String_Eq(methodStr, "OPTIONS") { return HttpVerb { tag: HttpVerb_OPTIONS }; }
-    return HttpVerb { tag: HttpVerb_GET };
-}
+    func HttpVerb_Parse(methodStr: String) -> HttpVerb {
+        if String_Eq(methodStr, "GET")     { return HttpVerb { tag: HttpVerb_GET }; }
+        if String_Eq(methodStr, "POST")    { return HttpVerb { tag: HttpVerb_POST }; }
+        if String_Eq(methodStr, "PUT")     { return HttpVerb { tag: HttpVerb_PUT }; }
+        if String_Eq(methodStr, "DELETE")  { return HttpVerb { tag: HttpVerb_DELETE }; }
+        if String_Eq(methodStr, "PATCH")   { return HttpVerb { tag: HttpVerb_PATCH }; }
+        if String_Eq(methodStr, "HEAD")    { return HttpVerb { tag: HttpVerb_HEAD }; }
+        if String_Eq(methodStr, "OPTIONS") { return HttpVerb { tag: HttpVerb_OPTIONS }; }
+        return HttpVerb { tag: HttpVerb_GET };
+    }
 
-// =============================================================================
-// Request — parsed incoming HTTP request
-// =============================================================================
-struct Request {
-    method: HttpVerb,
-    path: String,
-    body: String,
-    headers: StringMap<String>,
-    query: StringMap<String>,
-    pathParams: StringMap<String>,
-}
+    // =============================================================================
+    // Request — parsed incoming HTTP request
+    // =============================================================================
+    struct Request {
+        method: HttpVerb,
+        path: String,
+        body: String,
+        headers: StringMap<String>,
+        query: StringMap<String>,
+        pathParams: StringMap<String>,
+    }
 
-extend Request {
-    func GetHeader(self: Request, name: String) -> String {
-        if StringMap_Has<String>(&self.headers, name) {
-            return StringMap_Get<String>(&self.headers, name);
+    extend Request {
+        func GetHeader(self: Request, name: String) -> String {
+            if StringMap_Has<String>(&self.headers, name) {
+                return StringMap_Get<String>(&self.headers, name);
+            }
+            return "";
         }
-        return "";
-    }
 
-    func GetQuery(self: Request, name: String) -> String {
-        if StringMap_Has<String>(&self.query, name) {
-            return StringMap_Get<String>(&self.query, name);
+        func GetQuery(self: Request, name: String) -> String {
+            if StringMap_Has<String>(&self.query, name) {
+                return StringMap_Get<String>(&self.query, name);
+            }
+            return "";
         }
-        return "";
-    }
 
-    func HasQuery(self: Request, name: String) -> bool {
-        return StringMap_Has<String>(&self.query, name);
-    }
-
-    func GetPathParam(self: Request, name: String) -> String {
-        if StringMap_Has<String>(&self.pathParams, name) {
-            return StringMap_Get<String>(&self.pathParams, name);
+        func HasQuery(self: Request, name: String) -> bool {
+            return StringMap_Has<String>(&self.query, name);
         }
-        return "";
+
+        func GetPathParam(self: Request, name: String) -> String {
+            if StringMap_Has<String>(&self.pathParams, name) {
+                return StringMap_Get<String>(&self.pathParams, name);
+            }
+            return "";
+        }
     }
-}
 
-// =============================================================================
-// Response — outgoing HTTP response
-// =============================================================================
-struct Response {
-    statusCode: int,
-    contentType: String,
-    body: String,
-    extraHeaders: String,
-}
+    // =============================================================================
+    // Response — outgoing HTTP response
+    // =============================================================================
+    struct Response {
+        statusCode: int,
+        contentType: String,
+        body: String,
+        extraHeaders: String,
+    }
 
-// --- Constructors ---
-func Response_New(status: int, contentType: String, body: String) -> Response {
-    return Response { statusCode: status, contentType: contentType, body: body, extraHeaders: "" };
-}
+    // --- Constructors ---
+    func Response_New(status: int, contentType: String, body: String) -> Response {
+        return Response { statusCode: status, contentType: contentType, body: body, extraHeaders: "" };
+    }
 
-func Response_Ok(body: String) -> Response {
-    return Response_New(200, "text/html; charset=utf-8", body);
-}
+    func Response_Ok(body: String) -> Response {
+        return Response_New(200, "text/html; charset=utf-8", body);
+    }
 
-func Response_Html(html: String) -> Response {
-    return Response_New(200, "text/html; charset=utf-8", html);
-}
+    func Response_Html(html: String) -> Response {
+        return Response_New(200, "text/html; charset=utf-8", html);
+    }
 
-func Response_Json(json: String) -> Response {
-    return Response_New(200, "application/json; charset=utf-8", json);
-}
+    func Response_Json(json: String) -> Response {
+        return Response_New(200, "application/json; charset=utf-8", json);
+    }
 
-func Response_Text(text: String) -> Response {
-    return Response_New(200, "text/plain; charset=utf-8", text);
-}
+    func Response_Text(text: String) -> Response {
+        return Response_New(200, "text/plain; charset=utf-8", text);
+    }
 
-func Response_Redirect(url: String) -> Response {
-    let sb: StringBuilder = StringBuilder_New();
-    StringBuilder_Append(&sb, "Location: ");
-    StringBuilder_Append(&sb, url);
-    StringBuilder_Append(&sb, "\r\n");
-    let headers: String = StringBuilder_Build(&sb);
-    StringBuilder_Free(&sb);
-    return Response { statusCode: 302, contentType: "", body: "", extraHeaders: headers };
-}
+    func Response_Redirect(url: String) -> Response {
+        let sb: StringBuilder = StringBuilder_New();
+        StringBuilder_Append(&sb, "Location: ");
+        StringBuilder_Append(&sb, url);
+        StringBuilder_Append(&sb, "\r\n");
+        let headers: String = StringBuilder_Build(&sb);
+        StringBuilder_Free(&sb);
+        return Response { statusCode: 302, contentType: "", body: "", extraHeaders: headers };
+    }
 
-func Response_NotFound() -> Response {
-    return Response_New(404, "application/json; charset=utf-8", "{\"error\":\"not_found\"}");
-}
+    func Response_NotFound() -> Response {
+        return Response_New(404, "application/json; charset=utf-8", "{\"error\":\"not_found\"}");
+    }
 
-func Response_Error(status: int, message: String) -> Response {
-    let sb: StringBuilder = StringBuilder_New();
-    StringBuilder_Append(&sb, "{\"error\":\"");
-    StringBuilder_Append(&sb, message);
-    StringBuilder_Append(&sb, "\"}");
+    func Response_Error(status: int, message: String) -> Response {
+        let sb: StringBuilder = StringBuilder_New();
+        StringBuilder_Append(&sb, "{\"error\":\"");
+        StringBuilder_Append(&sb, message);
+        StringBuilder_Append(&sb, "\"}");
     let body: String = StringBuilder_Build(&sb);
     StringBuilder_Free(&sb);
     return Response_New(status, "application/json; charset=utf-8", body);

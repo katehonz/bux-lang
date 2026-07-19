@@ -5,12 +5,12 @@ import Std::Fmt::{Fmt_Fmt1, Fmt_FmtInt};
 
 func Main() -> int {
     PrintLine("Process demo:");
-    
+
     let output: String = Process_Output("echo Hello from subprocess");
     PrintLine(Fmt_Fmt1("Captured: {0}", output));
-    
+
     let rc: int = Process_Run("true");
     PrintLine(Fmt_FmtInt("Exit code: {0}", rc));
-    
+
     return 0;
 }

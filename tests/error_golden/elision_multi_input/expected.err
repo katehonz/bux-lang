@@ -1,0 +1,7 @@
+error: type errors in project
+error: lifetime elision failed: return type needs an explicit lifetime (multiple input references); e.g. func F<'a>(a: &'a T, b: &'a U) -> &'a T
+  --> FILE:2:1
+    |
+ 2 | func Pick(a: &int, b: &int) -> &int {
+    | ^^^^
+   = help: add an explicit lifetime, e.g. func F<'a>(x: &'a T, y: &'a U) -> &'a T

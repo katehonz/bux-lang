@@ -1,115 +1,115 @@
 // scope.bux — Symbol table with parent-chain lookup
 module Scope {
 
-// Symbol kinds
-const skVar: int = 0;
-const skFunc: int = 1;
-const skType: int = 2;
-const skConst: int = 3;
-const skModule: int = 4;
+    // Symbol kinds
+    const skVar: int = 0;
+    const skFunc: int = 1;
+    const skType: int = 2;
+    const skConst: int = 3;
+    const skModule: int = 4;
 
-// Maximum symbols per scope
-const maxSymbols: int = 8192;
+    // Maximum symbols per scope
+    const maxSymbols: int = 8192;
 
-struct Symbol {
-    kind: int;
-    name: String;
-    typeKind: int;
-    typeName: String;
-    refType: *TypeExpr;     // original type expression (for func types, etc.)
-    isMutable: bool;
-    isPublic: bool;
-    decl: *Decl;            // associated declaration (for funcs, structs, enums)
-}
-
-struct Scope {
-    symbols: *Symbol;
-    count: int;
-    parent: *Scope;
-}
-
-// ---------------------------------------------------------------------------
-// Scope operations
-// ---------------------------------------------------------------------------
-
-func Scope_New() -> Scope {
-    let sz: uint = maxSymbols as uint * sizeof(Symbol);
-    let data: *Symbol = bux_alloc(sz) as *Symbol;
-    return Scope { symbols: data, count: 0, parent: null as *Scope };
-}
-
-func Scope_NewChild(parent: *Scope) -> Scope {
-    let sz: uint = maxSymbols as uint * sizeof(Symbol);
-    let data: *Symbol = bux_alloc(sz) as *Symbol;
-    return Scope { symbols: data, count: 0, parent: parent };
-}
-
-func Scope_Define(scope: *Scope, sym: Symbol) -> bool {
-    // Check local scope for duplicates
-    var i: int = 0;
-    while i < scope.count {
-        if String_Eq(scope.symbols[i].name, sym.name) {
-            return false;
-        }
-        i = i + 1;
+    struct Symbol {
+        kind: int;
+        name: String;
+        typeKind: int;
+        typeName: String;
+        refType: *TypeExpr;     // original type expression (for func types, etc.)
+        isMutable: bool;
+        isPublic: bool;
+        decl: *Decl;            // associated declaration (for funcs, structs, enums)
     }
-    if scope.count < maxSymbols {
-        scope.symbols[scope.count] = sym;
-        scope.count = scope.count + 1;
-        return true;
-    }
-    return false;
-}
 
-func Scope_Lookup(scope: *Scope, name: String) -> Symbol {
-    var cur: *Scope = scope;
-    while cur != null as *Scope {
+    struct Scope {
+        symbols: *Symbol;
+        count: int;
+        parent: *Scope;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Scope operations
+    // ---------------------------------------------------------------------------
+
+    func Scope_New() -> Scope {
+        let sz: uint = maxSymbols as uint * sizeof(Symbol);
+        let data: *Symbol = bux_alloc(sz) as *Symbol;
+        return Scope { symbols: data, count: 0, parent: null as *Scope };
+    }
+
+    func Scope_NewChild(parent: *Scope) -> Scope {
+        let sz: uint = maxSymbols as uint * sizeof(Symbol);
+        let data: *Symbol = bux_alloc(sz) as *Symbol;
+        return Scope { symbols: data, count: 0, parent: parent };
+    }
+
+    func Scope_Define(scope: *Scope, sym: Symbol) -> bool {
+        // Check local scope for duplicates
         var i: int = 0;
-        while i < cur.count {
-            if String_Eq(cur.symbols[i].name, name) {
-                return cur.symbols[i];
+        while i < scope.count {
+            if String_Eq(scope.symbols[i].name, sym.name) {
+                return false;
             }
             i = i + 1;
         }
-        cur = cur.parent;
-    }
-    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
-    return empty;
-}
-
-func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
-    var i: int = 0;
-    while i < scope.count {
-        if String_Eq(scope.symbols[i].name, name) {
-            return scope.symbols[i];
+        if scope.count < maxSymbols {
+            scope.symbols[scope.count] = sym;
+            scope.count = scope.count + 1;
+            return true;
         }
-        i = i + 1;
+        return false;
     }
-    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
-    return empty;
-}
 
-func Scope_LookupUpTo(scope: *Scope, name: String, limit: *Scope) -> Symbol {
-    var cur: *Scope = scope;
-    while cur != null as *Scope {
+    func Scope_Lookup(scope: *Scope, name: String) -> Symbol {
+        var cur: *Scope = scope;
+        while cur != null as *Scope {
+            var i: int = 0;
+            while i < cur.count {
+                if String_Eq(cur.symbols[i].name, name) {
+                    return cur.symbols[i];
+                }
+                i = i + 1;
+            }
+            cur = cur.parent;
+        }
+        var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
+        return empty;
+    }
+
+    func Scope_LookupLocal(scope: *Scope, name: String) -> Symbol {
         var i: int = 0;
-        while i < cur.count {
-            if String_Eq(cur.symbols[i].name, name) {
-                return cur.symbols[i];
+        while i < scope.count {
+            if String_Eq(scope.symbols[i].name, name) {
+                return scope.symbols[i];
             }
             i = i + 1;
         }
-        if cur == limit {
-            break;
-        }
-        cur = cur.parent;
+        var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
+        return empty;
     }
-    var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
-    return empty;
-}
 
-func Scope_Free(scope: *Scope) {
-    bux_free(scope.symbols as *void);
-}
+    func Scope_LookupUpTo(scope: *Scope, name: String, limit: *Scope) -> Symbol {
+        var cur: *Scope = scope;
+        while cur != null as *Scope {
+            var i: int = 0;
+            while i < cur.count {
+                if String_Eq(cur.symbols[i].name, name) {
+                    return cur.symbols[i];
+                }
+                i = i + 1;
+            }
+            if cur == limit {
+                break;
+            }
+            cur = cur.parent;
+        }
+        var empty: Symbol = Symbol { kind: 0, name: "", typeKind: 0, typeName: "", refType: null as *TypeExpr, isMutable: false, isPublic: false, decl: null as *Decl };
+        return empty;
+    }
+
+    func Scope_Free(scope: *Scope) {
+        bux_free(scope.symbols as *void);
+    }
 
 }

@@ -1,61 +1,61 @@
 module Std::Option {
-import Std::Io::{PrintLine};
+    import Std::Io::{PrintLine};
 
-extern func bux_exit(code: int);
+    extern func bux_exit(code: int);
 
-enum Option {
-    Some(int),
-    None,
-}
-
-func Option_NewSome(value: int) -> Option {
-    let o: Option = Option { tag: Option_Some };
-    o.data.Some_0 = value;
-    return o;
-}
-
-func Option_NewNone() -> Option {
-    return Option { tag: Option_None };
-}
-
-func Option_IsSome(o: Option) -> bool {
-    return o.tag == Option_Some;
-}
-
-func Option_IsNone(o: Option) -> bool {
-    return o.tag == Option_None;
-}
-
-func Option_Unwrap(o: Option) -> int {
-    if o.tag != Option_Some {
-        PrintLine("panic: unwrap on None");
-        return 0;
+    enum Option {
+        Some(int),
+        None,
     }
-    return o.data.Some_0;
-}
 
-func Option_UnwrapOr(o: Option, fallback: int) -> int {
-    if o.tag == Option_Some {
-        return o.data.Some_0;
-    }
-    return fallback;
-}
-
-/* Unwrap Some or panic with a custom message */
-func Option_Expect(o: Option, msg: String) -> int {
-    if o.tag != Option_Some {
-        PrintLine(msg);
-        bux_exit(1);
-    }
-    return o.data.Some_0;
-}
-
-/* If o is Some return it, otherwise return other */
-func Option_Or(o: Option, other: Option) -> Option {
-    if o.tag == Option_Some {
+    func Option_NewSome(value: int) -> Option {
+        let o: Option = Option { tag: Option_Some };
+        o.data.Some_0 = value;
         return o;
     }
-    return other;
-}
+
+    func Option_NewNone() -> Option {
+        return Option { tag: Option_None };
+    }
+
+    func Option_IsSome(o: Option) -> bool {
+        return o.tag == Option_Some;
+    }
+
+    func Option_IsNone(o: Option) -> bool {
+        return o.tag == Option_None;
+    }
+
+    func Option_Unwrap(o: Option) -> int {
+        if o.tag != Option_Some {
+            PrintLine("panic: unwrap on None");
+            return 0;
+        }
+        return o.data.Some_0;
+    }
+
+    func Option_UnwrapOr(o: Option, fallback: int) -> int {
+        if o.tag == Option_Some {
+            return o.data.Some_0;
+        }
+        return fallback;
+    }
+
+    /* Unwrap Some or panic with a custom message */
+    func Option_Expect(o: Option, msg: String) -> int {
+        if o.tag != Option_Some {
+            PrintLine(msg);
+            bux_exit(1);
+        }
+        return o.data.Some_0;
+    }
+
+    /* If o is Some return it, otherwise return other */
+    func Option_Or(o: Option, other: Option) -> Option {
+        if o.tag == Option_Some {
+            return o;
+        }
+        return other;
+    }
 
 }

@@ -432,7 +432,7 @@ func ReadFile(path: String) -> Result<String, IoError> {
 | `8.2.1` `own` keyword | ✅ | `own T` parsed and resolves to `T`; ready for borrow checker integration |
 | `8.2.2` `borrow` / `&` | ✅ | `&T` shared reference type checked and enforced |
 | `8.2.3` `mut` references | ✅ | `&mut T` mutable reference type checked and enforced |
-| `8.2.4` Lifetime elision | ⏳ | Simple rules for common cases; explicit `'a` for complex |
+| `8.2.4` Lifetime elision | ✅ | Single-input elision + dangling return; explicit `'a` for multi-input |
 | `8.2.5` Opt-in checker | ✅ | `@[Checked]` attribute enables borrow checking: writes through `&T` are rejected |
 
 ```bux
@@ -681,8 +681,8 @@ buxc2 == buxc3            ✅ (binary-identical)
 | `10.2.3` `&mut T` exclusive mutable check | ✅ | No aliasing of mutable refs |
 | `10.2.4` Bounds checking on slices | ✅ | `Slice_Get` / `Array_Get` with `bux_bounds_check` |
 | `10.2.5` `@[Release]` zero-cost mode | ✅ | Disables borrow + bounds checks, passes `-O3 -flto` |
-| `10.2.6` Lifetime elision (simple rules) | ⏳ | 80% of cases without annotations |
-| `10.2.7` Explicit lifetimes `'a` | ⏳ | Only for complex cases |
+| `10.2.6` Lifetime elision (simple rules) | ✅ | Single-input elision; multi-input requires `'a` |
+| `10.2.7` Explicit lifetimes `'a` | ✅ | Parsed + checked; multi-input + mismatch |
 
 ### 10.3 — Compiler Architecture Upgrade (v0.6.0 target)
 

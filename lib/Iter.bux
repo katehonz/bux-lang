@@ -1,233 +1,233 @@
 module Std::Iter {
 
-import Std::Array::*;
+    import Std::Array::*;
 
-struct Iter<T> {
-    data: *T,
-    len: uint,
-    pos: uint,
-}
-
-/* Create an iterator from an Array */
-func Array_Iter<T>(arr: *Array<T>) -> Iter<T> {
-    return Iter<T> { data: arr.data, len: arr.len, pos: 0 };
-}
-
-/* Check if there are more elements */
-func Iter_HasNext<T>(it: *Iter<T>) -> bool {
-    return it.pos < it.len;
-}
-
-/* Get the next element and advance (undefined if HasNext is false) */
-func Iter_Next<T>(it: *Iter<T>) -> T {
-    let val: T = it.data[it.pos];
-    it.pos = it.pos + 1;
-    return val;
-}
-
-/* Peek current element without advancing (undefined if HasNext is false) */
-func Iter_Peek<T>(it: *Iter<T>) -> T {
-    return it.data[it.pos];
-}
-
-/* Reset iterator to the beginning */
-func Iter_Reset<T>(it: *Iter<T>) {
-    it.pos = 0;
-}
-
-/* Current position */
-func Iter_Pos<T>(it: *Iter<T>) -> uint {
-    return it.pos;
-}
-
-/* Remaining length */
-func Iter_Len<T>(it: *Iter<T>) -> uint {
-    return it.len;
-}
-
-/* Count remaining elements */
-func Iter_Count<T>(it: *Iter<T>) -> uint {
-    return it.len - it.pos;
-}
-
-/* Skip N elements */
-func Iter_Skip<T>(it: *Iter<T>, n: uint) {
-    it.pos = it.pos + n;
-    if it.pos > it.len {
-        it.pos = it.len;
+    struct Iter<T> {
+        data: *T,
+        len: uint,
+        pos: uint,
     }
-}
 
-/* Take first N elements (by limiting len) */
-func Iter_Take<T>(it: *Iter<T>, n: uint) -> Iter<T> {
-    var endPos: uint = it.pos + n;
-    if endPos > it.len {
-        endPos = it.len;
+    /* Create an iterator from an Array */
+    func Array_Iter<T>(arr: *Array<T>) -> Iter<T> {
+        return Iter<T> { data: arr.data, len: arr.len, pos: 0 };
     }
-    return Iter<T> { data: it.data, len: endPos, pos: it.pos };
-}
 
-/* True if any remaining element equals value */
-func Iter_AnyEq<T>(it: *Iter<T>, value: T) -> bool {
-    var i: uint = it.pos;
-    while i < it.len {
-        if it.data[i] == value {
-            return true;
+    /* Check if there are more elements */
+    func Iter_HasNext<T>(it: *Iter<T>) -> bool {
+        return it.pos < it.len;
+    }
+
+    /* Get the next element and advance (undefined if HasNext is false) */
+    func Iter_Next<T>(it: *Iter<T>) -> T {
+        let val: T = it.data[it.pos];
+        it.pos = it.pos + 1;
+        return val;
+    }
+
+    /* Peek current element without advancing (undefined if HasNext is false) */
+    func Iter_Peek<T>(it: *Iter<T>) -> T {
+        return it.data[it.pos];
+    }
+
+    /* Reset iterator to the beginning */
+    func Iter_Reset<T>(it: *Iter<T>) {
+        it.pos = 0;
+    }
+
+    /* Current position */
+    func Iter_Pos<T>(it: *Iter<T>) -> uint {
+        return it.pos;
+    }
+
+    /* Remaining length */
+    func Iter_Len<T>(it: *Iter<T>) -> uint {
+        return it.len;
+    }
+
+    /* Count remaining elements */
+    func Iter_Count<T>(it: *Iter<T>) -> uint {
+        return it.len - it.pos;
+    }
+
+    /* Skip N elements */
+    func Iter_Skip<T>(it: *Iter<T>, n: uint) {
+        it.pos = it.pos + n;
+        if it.pos > it.len {
+            it.pos = it.len;
         }
-        i = i + 1;
     }
-    return false;
-}
 
-/* True if every remaining element equals value (true if empty) */
-func Iter_AllEq<T>(it: *Iter<T>, value: T) -> bool {
-    var i: uint = it.pos;
-    while i < it.len {
-        if it.data[i] != value {
-            return false;
+    /* Take first N elements (by limiting len) */
+    func Iter_Take<T>(it: *Iter<T>, n: uint) -> Iter<T> {
+        var endPos: uint = it.pos + n;
+        if endPos > it.len {
+            endPos = it.len;
         }
-        i = i + 1;
+        return Iter<T> { data: it.data, len: endPos, pos: it.pos };
     }
-    return true;
-}
 
-/* Collect remaining elements into a new Array */
-func Iter_Collect<T>(it: *Iter<T>) -> Array<T> {
-    let remaining: uint = it.len - it.pos;
-    var cap: uint = remaining;
-    if cap == 0 {
-        cap = 1;
-    }
-    var arr: Array<T> = Array_New<T>(cap);
-    var i: uint = it.pos;
-    while i < it.len {
-        Array_Push<T>(&arr, it.data[i]);
-        i = i + 1;
-    }
-    return arr;
-}
-
-// ---------------------------------------------------------------------------
-// Higher-order helpers (generic; fat func pointers / closures)
-// ---------------------------------------------------------------------------
-
-/* Map each remaining element through f: T → U, collect into Array<U> */
-func Iter_Map<T, U>(it: *Iter<T>, f: func(T) -> U) -> Array<U> {
-    let remaining: uint = it.len - it.pos;
-    var cap: uint = remaining;
-    if cap == 0 {
-        cap = 1;
-    }
-    var out: Array<U> = Array_New<U>(cap);
-    var i: uint = it.pos;
-    while i < it.len {
-        let mapped: U = f(it.data[i]);
-        Array_Push<U>(&out, mapped);
-        i = i + 1;
-    }
-    return out;
-}
-
-/* Keep remaining elements for which pred returns true */
-func Iter_Filter<T>(it: *Iter<T>, pred: func(T) -> bool) -> Array<T> {
-    let remaining: uint = it.len - it.pos;
-    var cap: uint = remaining;
-    if cap == 0 {
-        cap = 1;
-    }
-    var out: Array<T> = Array_New<T>(cap);
-    var i: uint = it.pos;
-    while i < it.len {
-        let v: T = it.data[i];
-        if pred(v) {
-            Array_Push<T>(&out, v);
+    /* True if any remaining element equals value */
+    func Iter_AnyEq<T>(it: *Iter<T>, value: T) -> bool {
+        var i: uint = it.pos;
+        while i < it.len {
+            if it.data[i] == value {
+                return true;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        return false;
     }
-    return out;
-}
 
-/* Left-fold: f(f(...f(init, x0), x1), ...) */
-func Iter_Fold<T, Acc>(it: *Iter<T>, init: Acc, f: func(Acc, T) -> Acc) -> Acc {
-    var acc: Acc = init;
-    var i: uint = it.pos;
-    while i < it.len {
-        acc = f(acc, it.data[i]);
-        i = i + 1;
-    }
-    return acc;
-}
-
-/* Call f for each remaining element (return value of f is ignored) */
-func Iter_ForEach<T>(it: *Iter<T>, f: func(T) -> int) {
-    var i: uint = it.pos;
-    while i < it.len {
-        let _ignored: int = f(it.data[i]);
-        i = i + 1;
-    }
-}
-
-/* True if any remaining element satisfies pred */
-func Iter_Any<T>(it: *Iter<T>, pred: func(T) -> bool) -> bool {
-    var i: uint = it.pos;
-    while i < it.len {
-        if pred(it.data[i]) {
-            return true;
+    /* True if every remaining element equals value (true if empty) */
+    func Iter_AllEq<T>(it: *Iter<T>, value: T) -> bool {
+        var i: uint = it.pos;
+        while i < it.len {
+            if it.data[i] != value {
+                return false;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        return true;
     }
-    return false;
-}
 
-/* True if all remaining elements satisfy pred (true if empty) */
-func Iter_All<T>(it: *Iter<T>, pred: func(T) -> bool) -> bool {
-    var i: uint = it.pos;
-    while i < it.len {
-        if !pred(it.data[i]) {
-            return false;
+    /* Collect remaining elements into a new Array */
+    func Iter_Collect<T>(it: *Iter<T>) -> Array<T> {
+        let remaining: uint = it.len - it.pos;
+        var cap: uint = remaining;
+        if cap == 0 {
+            cap = 1;
         }
-        i = i + 1;
+        var arr: Array<T> = Array_New<T>(cap);
+        var i: uint = it.pos;
+        while i < it.len {
+            Array_Push<T>(&arr, it.data[i]);
+            i = i + 1;
+        }
+        return arr;
     }
-    return true;
-}
 
-/* Sum remaining ints (specialized fold) */
-func Iter_SumInt(it: *Iter<int>) -> int {
-    var total: int = 0;
-    var i: uint = it.pos;
-    while i < it.len {
-        total = total + it.data[i];
-        i = i + 1;
+    // ---------------------------------------------------------------------------
+    // Higher-order helpers (generic; fat func pointers / closures)
+    // ---------------------------------------------------------------------------
+
+    /* Map each remaining element through f: T → U, collect into Array<U> */
+    func Iter_Map<T, U>(it: *Iter<T>, f: func(T) -> U) -> Array<U> {
+        let remaining: uint = it.len - it.pos;
+        var cap: uint = remaining;
+        if cap == 0 {
+            cap = 1;
+        }
+        var out: Array<U> = Array_New<U>(cap);
+        var i: uint = it.pos;
+        while i < it.len {
+            let mapped: U = f(it.data[i]);
+            Array_Push<U>(&out, mapped);
+            i = i + 1;
+        }
+        return out;
     }
-    return total;
-}
 
-// ---------------------------------------------------------------------------
-// Int-specialized aliases (backward compatible with earlier examples)
-// ---------------------------------------------------------------------------
+    /* Keep remaining elements for which pred returns true */
+    func Iter_Filter<T>(it: *Iter<T>, pred: func(T) -> bool) -> Array<T> {
+        let remaining: uint = it.len - it.pos;
+        var cap: uint = remaining;
+        if cap == 0 {
+            cap = 1;
+        }
+        var out: Array<T> = Array_New<T>(cap);
+        var i: uint = it.pos;
+        while i < it.len {
+            let v: T = it.data[i];
+            if pred(v) {
+                Array_Push<T>(&out, v);
+            }
+            i = i + 1;
+        }
+        return out;
+    }
 
-func Iter_MapInt(it: *Iter<int>, f: func(int) -> int) -> Array<int> {
-    return Iter_Map<int, int>(it, f);
-}
+    /* Left-fold: f(f(...f(init, x0), x1), ...) */
+    func Iter_Fold<T, Acc>(it: *Iter<T>, init: Acc, f: func(Acc, T) -> Acc) -> Acc {
+        var acc: Acc = init;
+        var i: uint = it.pos;
+        while i < it.len {
+            acc = f(acc, it.data[i]);
+            i = i + 1;
+        }
+        return acc;
+    }
 
-func Iter_FilterInt(it: *Iter<int>, pred: func(int) -> bool) -> Array<int> {
-    return Iter_Filter<int>(it, pred);
-}
+    /* Call f for each remaining element (return value of f is ignored) */
+    func Iter_ForEach<T>(it: *Iter<T>, f: func(T) -> int) {
+        var i: uint = it.pos;
+        while i < it.len {
+            let _ignored: int = f(it.data[i]);
+            i = i + 1;
+        }
+    }
 
-func Iter_FoldInt(it: *Iter<int>, init: int, f: func(int, int) -> int) -> int {
-    return Iter_Fold<int, int>(it, init, f);
-}
+    /* True if any remaining element satisfies pred */
+    func Iter_Any<T>(it: *Iter<T>, pred: func(T) -> bool) -> bool {
+        var i: uint = it.pos;
+        while i < it.len {
+            if pred(it.data[i]) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
 
-func Iter_ForEachInt(it: *Iter<int>, f: func(int) -> int) {
-    Iter_ForEach<int>(it, f);
-}
+    /* True if all remaining elements satisfy pred (true if empty) */
+    func Iter_All<T>(it: *Iter<T>, pred: func(T) -> bool) -> bool {
+        var i: uint = it.pos;
+        while i < it.len {
+            if !pred(it.data[i]) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
+    }
 
-func Iter_AnyInt(it: *Iter<int>, pred: func(int) -> bool) -> bool {
-    return Iter_Any<int>(it, pred);
-}
+    /* Sum remaining ints (specialized fold) */
+    func Iter_SumInt(it: *Iter<int>) -> int {
+        var total: int = 0;
+        var i: uint = it.pos;
+        while i < it.len {
+            total = total + it.data[i];
+            i = i + 1;
+        }
+        return total;
+    }
 
-func Iter_AllInt(it: *Iter<int>, pred: func(int) -> bool) -> bool {
-    return Iter_All<int>(it, pred);
-}
+    // ---------------------------------------------------------------------------
+    // Int-specialized aliases (backward compatible with earlier examples)
+    // ---------------------------------------------------------------------------
+
+    func Iter_MapInt(it: *Iter<int>, f: func(int) -> int) -> Array<int> {
+        return Iter_Map<int, int>(it, f);
+    }
+
+    func Iter_FilterInt(it: *Iter<int>, pred: func(int) -> bool) -> Array<int> {
+        return Iter_Filter<int>(it, pred);
+    }
+
+    func Iter_FoldInt(it: *Iter<int>, init: int, f: func(int, int) -> int) -> int {
+        return Iter_Fold<int, int>(it, init, f);
+    }
+
+    func Iter_ForEachInt(it: *Iter<int>, f: func(int) -> int) {
+        Iter_ForEach<int>(it, f);
+    }
+
+    func Iter_AnyInt(it: *Iter<int>, pred: func(int) -> bool) -> bool {
+        return Iter_Any<int>(it, pred);
+    }
+
+    func Iter_AllInt(it: *Iter<int>, pred: func(int) -> bool) -> bool {
+        return Iter_All<int>(it, pred);
+    }
 
 }

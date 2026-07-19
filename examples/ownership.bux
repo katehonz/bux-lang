@@ -23,17 +23,17 @@ func UncheckedSwap(a: *int, b: *int) {
 
 func Main() -> int {
     var x: int = 10;
-    
+
     // &mut allows mutation
     ScaleInPlace(&x, 3);
     PrintInt(x);  // 30
     PrintLine("");
-    
+
     // & allows reading
     let y: int = GetValue(&x);
     PrintInt(y);  // 30
     PrintLine("");
-    
+
     // Unchecked: raw pointers work like C
     var a: int = 5;
     var b: int = 7;
@@ -42,6 +42,6 @@ func Main() -> int {
     PrintLine("");
     PrintInt(b);  // 5
     PrintLine("");
-    
+
     return 0;
 }

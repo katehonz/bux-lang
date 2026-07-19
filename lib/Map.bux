@@ -1,242 +1,250 @@
 module Std::Map {
 
-extern func bux_hash_bytes(ptr: *void, size: uint) -> uint;
-extern func bux_hash_string(s: String) -> uint;
+    extern func bux_hash_bytes(ptr: *void, size: uint) -> uint;
+    extern func bux_hash_string(s: String) -> uint;
 
-// ---------------------------------------------------------------------------
-// Generic Map<K, V> — works with value-type keys (int, float, etc.)
-// For String keys, use StringMap below.
-// ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Generic Map<K, V> — works with value-type keys (int, float, etc.)
+    // For String keys, use StringMap below.
+    // ---------------------------------------------------------------------------
 
-struct MapEntry<K, V> {
-    key: K,
-    value: V,
-    occupied: bool,
-}
-
-struct Map<K, V> {
-    entries: *MapEntry<K, V>,
-    cap: uint,
-    len: uint,
-}
-
-func Map_New<K, V>(cap: uint) -> Map<K, V> {
-    let total: uint = cap * sizeof(MapEntry<K, V>);
-    let data: *MapEntry<K, V> = bux_alloc(total) as *MapEntry<K, V>;
-    var i: uint = 0;
-    while i < cap {
-        data[i].occupied = false;
-        i = i + 1;
+    struct MapEntry<K, V> {
+        key: K,
+        value: V,
+        occupied: bool,
     }
-    return Map<K, V> { entries: data, cap: cap, len: 0 };
-}
 
-func Map_Set<K, V>(m: *Map<K, V>, key: K, value: V) {
-    var keyPtr: *K = &key;
-    let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
-    var idx: uint = hash % m.cap;
-    while m.entries[idx].occupied {
-        if m.entries[idx].key == key {
-            m.entries[idx].value = value;
-            return;
+    struct Map<K, V> {
+        entries: *MapEntry<K, V>,
+        cap: uint,
+        len: uint,
+    }
+
+    func Map_New<K, V>(cap: uint) -> Map<K, V> {
+        let total: uint = cap * sizeof(MapEntry<K, V>);
+        let data: *MapEntry<K, V> = bux_alloc(total) as *MapEntry<K, V>;
+        var i: uint = 0;
+        while i < cap {
+            data[i].occupied = false;
+            i = i + 1;
         }
-        idx = (idx + 1) % m.cap;
+        return Map<K, V> { entries: data, cap: cap, len: 0 };
     }
-    m.entries[idx].key = key;
-    m.entries[idx].value = value;
-    m.entries[idx].occupied = true;
-    m.len = m.len + 1;
-}
 
-func Map_Get<K, V>(m: *Map<K, V>, key: K) -> V {
-    var keyPtr: *K = &key;
-    let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
-    var idx: uint = hash % m.cap;
-    while m.entries[idx].occupied {
-        if m.entries[idx].key == key {
-            return m.entries[idx].value;
+    func Map_Set<K, V>(m: *Map<K, V>, key: K, value: V) {
+        var keyPtr: *K = &key;
+        let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
+        var idx: uint = hash % m.cap;
+        while m.entries[idx].occupied {
+            if m.entries[idx].key == key {
+                m.entries[idx].value = value;
+                return;
+            }
+            idx = (idx + 1) % m.cap;
         }
-        idx = (idx + 1) % m.cap;
+        m.entries[idx].key = key;
+        m.entries[idx].value = value;
+        m.entries[idx].occupied = true;
+        m.len = m.len + 1;
     }
-    // Return zero value for missing key
-    var zero: V = 0 as V;
-    return zero;
-}
 
-func Map_Has<K, V>(m: *Map<K, V>, key: K) -> bool {
-    var keyPtr: *K = &key;
-    let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
-    var idx: uint = hash % m.cap;
-    while m.entries[idx].occupied {
-        if m.entries[idx].key == key {
-            return true;
+    func Map_Get<K, V>(m: *Map<K, V>, key: K) -> V {
+        var keyPtr: *K = &key;
+        let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
+        var idx: uint = hash % m.cap;
+        while m.entries[idx].occupied {
+            if m.entries[idx].key == key {
+                return m.entries[idx].value;
+            }
+            idx = (idx + 1) % m.cap;
         }
-        idx = (idx + 1) % m.cap;
+        // Return zero value for missing key
+        var zero: V = 0 as V;
+        return zero;
     }
-    return false;
-}
 
-func Map_Len<K, V>(m: *Map<K, V>) -> uint {
-    return m.len;
-}
-
-func Map_IsEmpty<K, V>(m: *Map<K, V>) -> bool {
-    return m.len == 0;
-}
-
-/* Remove key if present. Rebuilds the table to keep open-addressing correct. */
-func Map_Remove<K, V>(m: *Map<K, V>, key: K) -> bool {
-    if !Map_Has<K, V>(m, key) {
+    func Map_Has<K, V>(m: *Map<K, V>, key: K) -> bool {
+        var keyPtr: *K = &key;
+        let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
+        var idx: uint = hash % m.cap;
+        while m.entries[idx].occupied {
+            if m.entries[idx].key == key {
+                return true;
+            }
+            idx = (idx + 1) % m.cap;
+        }
         return false;
     }
-    var fresh: Map<K, V> = Map_New<K, V>(m.cap);
-    var i: uint = 0;
-    while i < m.cap {
-        if m.entries[i].occupied {
-            if m.entries[i].key != key {
-                Map_Set<K, V>(&fresh, m.entries[i].key, m.entries[i].value);
+
+    func Map_Len<K, V>(m: *Map<K, V>) -> uint {
+        return m.len;
+    }
+
+    func Map_IsEmpty<K, V>(m: *Map<K, V>) -> bool {
+        return m.len == 0;
+    }
+
+    /* Remove key if present. Rebuilds the table to keep open-addressing correct. */
+    func Map_Remove<K, V>(m: *Map<K, V>, key: K) -> bool {
+        if !Map_Has<K, V>(m, key) {
+            return false;
+        }
+        var fresh: Map<K, V> = Map_New<K, V>(m.cap);
+        var i: uint = 0;
+        while i < m.cap {
+            if m.entries[i].occupied {
+                if m.entries[i].key != key {
+                    Map_Set<K, V>(&fresh, m.entries[i].key, m.entries[i].value);
+                }
             }
+            i = i + 1;
         }
-        i = i + 1;
+        bux_free(m.entries as *void);
+        m.entries = fresh.entries;
+        m.cap = fresh.cap;
+        m.len = fresh.len;
+        // Ownership transferred to `m` — clear `fresh` so auto-Drop does not free twice
+        fresh.entries = null as *MapEntry<K, V>;
+        fresh.cap = 0;
+        fresh.len = 0;
+        return true;
     }
-    bux_free(m.entries as *void);
-    m.entries = fresh.entries;
-    m.cap = fresh.cap;
-    m.len = fresh.len;
-    return true;
-}
 
-func Map_Clear<K, V>(m: *Map<K, V>) {
-    var i: uint = 0;
-    while i < m.cap {
-        m.entries[i].occupied = false;
-        i = i + 1;
-    }
-    m.len = 0;
-}
-
-func Map_Free<K, V>(m: *Map<K, V>) {
-    bux_free(m.entries as *void);
-    m.entries = null as *MapEntry<K, V>;
-    m.cap = 0;
-    m.len = 0;
-}
-
-func Map_Drop<K, V>(m: *Map<K, V>) {
-    Map_Free<K, V>(m);
-}
-
-// ---------------------------------------------------------------------------
-// StringMap<V> — specialized Map for String keys, using strcmp
-// ---------------------------------------------------------------------------
-
-struct StringMapEntry<V> {
-    key: String,
-    value: V,
-    occupied: bool,
-}
-
-struct StringMap<V> {
-    entries: *StringMapEntry<V>,
-    cap: uint,
-    len: uint,
-}
-
-func StringMap_New<V>(cap: uint) -> StringMap<V> {
-    let total: uint = cap * sizeof(StringMapEntry<V>);
-    let data: *StringMapEntry<V> = bux_alloc(total) as *StringMapEntry<V>;
-    var i: uint = 0;
-    while i < cap {
-        data[i].occupied = false;
-        i = i + 1;
-    }
-    return StringMap<V> { entries: data, cap: cap, len: 0 };
-}
-
-func StringMap_Set<V>(m: *StringMap<V>, key: String, value: V) {
-    let hash: uint = bux_hash_string(key);
-    var idx: uint = hash % m.cap;
-    while m.entries[idx].occupied {
-        if String_Eq(m.entries[idx].key, key) {
-            m.entries[idx].value = value;
-            return;
+    func Map_Clear<K, V>(m: *Map<K, V>) {
+        var i: uint = 0;
+        while i < m.cap {
+            m.entries[i].occupied = false;
+            i = i + 1;
         }
-        idx = (idx + 1) % m.cap;
+        m.len = 0;
     }
-    m.entries[idx].key = key;
-    m.entries[idx].value = value;
-    m.entries[idx].occupied = true;
-    m.len = m.len + 1;
-}
 
-func StringMap_Get<V>(m: *StringMap<V>, key: String) -> V {
-    let hash: uint = bux_hash_string(key);
-    var idx: uint = hash % m.cap;
-    while m.entries[idx].occupied {
-        if String_Eq(m.entries[idx].key, key) {
-            return m.entries[idx].value;
+    func Map_Free<K, V>(m: *Map<K, V>) {
+        bux_free(m.entries as *void);
+        m.entries = null as *MapEntry<K, V>;
+        m.cap = 0;
+        m.len = 0;
+    }
+
+    func Map_Drop<K, V>(m: *Map<K, V>) {
+        Map_Free<K, V>(m);
+    }
+
+    // ---------------------------------------------------------------------------
+    // StringMap<V> — specialized Map for String keys, using strcmp
+    // ---------------------------------------------------------------------------
+
+    struct StringMapEntry<V> {
+        key: String,
+        value: V,
+        occupied: bool,
+    }
+
+    struct StringMap<V> {
+        entries: *StringMapEntry<V>,
+        cap: uint,
+        len: uint,
+    }
+
+    func StringMap_New<V>(cap: uint) -> StringMap<V> {
+        let total: uint = cap * sizeof(StringMapEntry<V>);
+        let data: *StringMapEntry<V> = bux_alloc(total) as *StringMapEntry<V>;
+        var i: uint = 0;
+        while i < cap {
+            data[i].occupied = false;
+            i = i + 1;
         }
-        idx = (idx + 1) % m.cap;
+        return StringMap<V> { entries: data, cap: cap, len: 0 };
     }
-    var zero: V = 0 as V;
-    return zero;
-}
 
-func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool {
-    let hash: uint = bux_hash_string(key);
-    var idx: uint = hash % m.cap;
-    while m.entries[idx].occupied {
-        if String_Eq(m.entries[idx].key, key) {
-            return true;
+    func StringMap_Set<V>(m: *StringMap<V>, key: String, value: V) {
+        let hash: uint = bux_hash_string(key);
+        var idx: uint = hash % m.cap;
+        while m.entries[idx].occupied {
+            if String_Eq(m.entries[idx].key, key) {
+                m.entries[idx].value = value;
+                return;
+            }
+            idx = (idx + 1) % m.cap;
         }
-        idx = (idx + 1) % m.cap;
+        m.entries[idx].key = key;
+        m.entries[idx].value = value;
+        m.entries[idx].occupied = true;
+        m.len = m.len + 1;
     }
-    return false;
-}
 
-func StringMap_Len<V>(m: *StringMap<V>) -> uint {
-    return m.len;
-}
+    func StringMap_Get<V>(m: *StringMap<V>, key: String) -> V {
+        let hash: uint = bux_hash_string(key);
+        var idx: uint = hash % m.cap;
+        while m.entries[idx].occupied {
+            if String_Eq(m.entries[idx].key, key) {
+                return m.entries[idx].value;
+            }
+            idx = (idx + 1) % m.cap;
+        }
+        var zero: V = 0 as V;
+        return zero;
+    }
 
-func StringMap_IsEmpty<V>(m: *StringMap<V>) -> bool {
-    return m.len == 0;
-}
-
-func StringMap_Remove<V>(m: *StringMap<V>, key: String) -> bool {
-    if !StringMap_Has<V>(m, key) {
+    func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool {
+        let hash: uint = bux_hash_string(key);
+        var idx: uint = hash % m.cap;
+        while m.entries[idx].occupied {
+            if String_Eq(m.entries[idx].key, key) {
+                return true;
+            }
+            idx = (idx + 1) % m.cap;
+        }
         return false;
     }
-    var fresh: StringMap<V> = StringMap_New<V>(m.cap);
-    var i: uint = 0;
-    while i < m.cap {
-        if m.entries[i].occupied {
-            if !String_Eq(m.entries[i].key, key) {
-                StringMap_Set<V>(&fresh, m.entries[i].key, m.entries[i].value);
-            }
+
+    func StringMap_Len<V>(m: *StringMap<V>) -> uint {
+        return m.len;
+    }
+
+    func StringMap_IsEmpty<V>(m: *StringMap<V>) -> bool {
+        return m.len == 0;
+    }
+
+    func StringMap_Remove<V>(m: *StringMap<V>, key: String) -> bool {
+        if !StringMap_Has<V>(m, key) {
+            return false;
         }
-        i = i + 1;
+        var fresh: StringMap<V> = StringMap_New<V>(m.cap);
+        var i: uint = 0;
+        while i < m.cap {
+            if m.entries[i].occupied {
+                if !String_Eq(m.entries[i].key, key) {
+                    StringMap_Set<V>(&fresh, m.entries[i].key, m.entries[i].value);
+                }
+            }
+            i = i + 1;
+        }
+        bux_free(m.entries as *void);
+        m.entries = fresh.entries;
+        m.cap = fresh.cap;
+        m.len = fresh.len;
+        // Ownership transferred to `m` — clear `fresh` so auto-Drop does not free twice
+        fresh.entries = null as *StringMapEntry<V>;
+        fresh.cap = 0;
+        fresh.len = 0;
+        return true;
     }
-    bux_free(m.entries as *void);
-    m.entries = fresh.entries;
-    m.cap = fresh.cap;
-    m.len = fresh.len;
-    return true;
-}
 
-func StringMap_Clear<V>(m: *StringMap<V>) {
-    var i: uint = 0;
-    while i < m.cap {
-        m.entries[i].occupied = false;
-        i = i + 1;
+    func StringMap_Clear<V>(m: *StringMap<V>) {
+        var i: uint = 0;
+        while i < m.cap {
+            m.entries[i].occupied = false;
+            i = i + 1;
+        }
+        m.len = 0;
     }
-    m.len = 0;
-}
 
-func StringMap_Free<V>(m: *StringMap<V>) {
-    bux_free(m.entries as *void);
-    m.entries = null as *StringMapEntry<V>;
-    m.cap = 0;
-    m.len = 0;
-}
+    func StringMap_Free<V>(m: *StringMap<V>) {
+        bux_free(m.entries as *void);
+        m.entries = null as *StringMapEntry<V>;
+        m.cap = 0;
+        m.len = 0;
+    }
 
 }

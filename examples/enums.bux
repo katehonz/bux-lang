@@ -23,12 +23,12 @@ func ColorName(c: Color) -> String {
 
 func Main() -> int {
     let myColor: Color = Color::Green;
-    
+
     PrintLine("My color is:");
     PrintLine(ColorName(myColor));
     PrintLine("Color value:");
     PrintInt(myColor as int);
     PrintLine("");
-    
+
     return 0;
 }

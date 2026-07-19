@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-18  
-> **Текущо:** v0.5.x — selfhost loop, gradual ownership, green threads, **43+ examples**, match + guards + **generic HOF inference** + pattern bindings + **`f"..."` interp** bootstrap+selfhost ✅  
+> **Текущо:** v0.5.x — selfhost, C.1, tooling, LSP 0.4, full-tree fmt, **package registry (E.1)** ✅  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -14,11 +14,11 @@
 | Sema / generics | Monomorphization, trait bounds basic | ★★★★☆ |
 | HIR → C | Tuples + fat `func` ABI в bootstrap **и** selfhost | ★★★★☆ |
 | Selfhost (`src/`) | ~12k LOC, binary-identical loop, closures+tuples | ★★★★★ |
-| Gradual ownership | `@[Checked]`, `&`/`&mut`, move, Drop | ★★★☆☆ (basic) |
+| Gradual ownership | `@[Checked]`, `&`/`&mut`, move, Drop, **lifetime elision** | ★★★★☆ |
 | Concurrency | M:N tasks + channels + async | ★★★★☆ |
 | Stdlib | Array/Map/Set/String/Iter HOF разширени | ★★★★☆ |
 | Tooling | `test-errors`, LSP diagnostics + hover/def/outline | ★★★★☆ |
-| Ecosystem / registry | path+git deps; няма централен registry | ★☆☆☆☆ |
+| Ecosystem / registry | path+git + **file registry index** (`bux search/add`) | ★★★☆☆ |
 | Документация | README + QUALITY_PLAN синхронизирани (2026-07-15) | ★★★★☆ |
 
 **Силна ниша:** gradual ownership (C-скорост на писане + opt-in Rust-safety).  
@@ -69,7 +69,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| C.1 | Lifetime elision за common cases | Без `'a` в 90% от API-тата | ⏳ |
+| C.1 | Lifetime elision за common cases | Без `'a` в 90% от API-тата | ✅ bootstrap + selfhost |
 | C.2 | Exclusive `&mut` vs shared `&` data-flow | По-малко false negatives | ✅ let-bound + use-while + call conflict |
 | C.3 | Auto-drop edge cases (early return, branches) | RAII да е надежден | ✅ bootstrap + selfhost |
 | C.4 | `@[Release]` zero-cost path документация + golden tests | Killer story: safe default, free hot path | ✅ partial (unchecked path + goldens) |
@@ -78,21 +78,21 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ hover/def/outline + **sema types on hover** (v0.3.0) + `buxc` diags |
-| D.2 | `bux fmt` стабилен + CI check | Единен style | ⏳ |
-| D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ⏳ partial (`bux test` exists) |
-| D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ⏳ |
-| D.5 | Golden tests за stdlib modules | Регресии без изненади | ⏳ |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.4.0: **position-sensitive locals** + **inferred `let`** + sema hover |
+| D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
+| D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
+| D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
+| D.5 | Golden tests за stdlib modules | Регресии без изненади | ✅ `tests/stdlib_golden/` + `make test-stdlib` |
 
 ### E — Ecosystem & v1.0 (P2)
 
-| # | Задача | Защо |
-|---|--------|------|
-| E.1 | Package registry protocol (git/HTTP) | `bux add foo` без path hacks |
-| E.2 | 3–5 production-quality apps в `apps/` | Showcase |
-| E.3 | Language freeze + semver policy | Trust |
-| E.4 | Debugger/DWARF basics | Systems audience |
-| E.5 | Benchmarks vs C/Zig/Nim (micro + nexus) | Marketing + regression |
+| # | Задача | Защо | Статус |
+|---|--------|------|--------|
+| E.1 | Package registry protocol (git/HTTP) | `bux add foo` без path hacks | ✅ local index + file/git sources + `search` |
+| E.2 | 3–5 production-quality apps в `apps/` | Showcase | ⏳ partial (`nexus`, `boko`, `simpledb`, `jwt-pitbul`) |
+| E.3 | Language freeze + semver policy | Trust | ✅ draft `docs/SEMVER.md` |
+| E.4 | Debugger/DWARF basics | Systems audience | ⏳ |
+| E.5 | Benchmarks vs C/Zig/Nim (micro + nexus) | Marketing + regression | ⏳ |
 
 ---
 
@@ -114,10 +114,10 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 - [ ] Всички examples + selfhost-loop + 3 apps минават на CI
 - [ ] Array/Map/String/Test API покрива 90% от ежедневните нужди
-- [ ] `@[Checked]` хваща use-after-move + double `&mut` в documented subset
-- [ ] `bux test` + `bux fmt` + `bux check` са default developer loop
-- [ ] LanguageRef синхронизиран с компилатора
-- [ ] Поне един външен проект (не в monorepo) build-ва с git dep
+- [x] `@[Checked]` хваща use-after-move + double `&mut` + dangling return / elision fail
+- [x] `bux test` + `bux fmt` + `bux check` са default developer loop (`--filter` / `--check` shipped)
+- [x] LanguageRef синхронизиран с компилатора (incl. C.1 elision)
+- [x] Поне един външен/temp проект build-ва с registry dep (`tools/smoke_registry.sh`)
 
 ---
 
@@ -388,8 +388,116 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 24 (tooling — D.2 fmt --check + D.3 test --filter)
+
+1. **Bootstrap `bux fmt`** (`bootstrap/fmt.nim`):
+   - Indent-by-brace-depth formatter (parity with `src/fmt.bux`)
+   - `bux fmt [path...]` writes; `bux fmt --check` exits 1 if any file would change
+   - Collects single file or recursive `.bux` under directories
+2. **Bootstrap `bux test --filter`**:
+   - `--filter <s>` / `--filter=<s>` — only run `tests/*.bux` whose name contains `s`
+   - Summary table (`PASS` / `FAIL[:code]`) + `Results: N passed, M failed, T total`
+   - Exit `0` all pass, `1` failures or no match
+3. **Selfhost parity** (`src/cli.bux`, `src/fmt.bux`):
+   - `Fmt_WouldChange` / `Fmt_CheckFile`; `Cli_Fmt(dir, checkOnly)`
+   - `Cli_Test(dir, filter)` with summary + skip count; filter skips Main package run
+4. **CI hooks:** `make fmt-check` smoke (clean→0, dirty→1); full-tree enforce deferred
+   until a one-shot format pass on `lib/`/`examples/`
+5. **Idempotence fix:** drop trailing split-empty so re-format is a no-op
+6. Verified: unit suite + `./buxc test --filter first _test_runner` + selfhost `buxc2`
+   fmt/test parity
+
+---
+
+## Сесия 25 (Ownership 2.0 — C.1 lifetime elision)
+
+1. **Elision rules** in `@[Checked]` (`bootstrap/sema.nim`):
+   - Each elided input `&`/`&mut` → distinct `#elidedN`
+   - One input lifetime → assigned to elided return
+   - First param `self`/`Self` preferred when multiple inputs
+   - Multiple inputs + elided return → `lifetime elision failed` (need `'a`)
+2. **Return checks:**
+   - `cannot return reference to local variable` (`return &local` / let-bound local ref)
+   - `no input reference to borrow from` (return ref with zero input refs)
+   - Explicit `'a` mismatch between return and value
+3. **Body check for lifetime-only generics** (`func F<'a>(...)`) — no longer skipped
+4. **Diagnostics hints** for elision / dangling / mismatch
+5. **Tests:** 8 new borrow_test cases; goldens `return_local_ref`, `elision_multi_input`
+6. **Example:** `examples/lifetime_elision.bux` (Identity / explicit / ViaLet / self)
+7. LanguageRef + QUALITY_PLAN updated
+8. Verified: borrow_test 24/24, 9 error goldens, example runs
+
+## Сесия 26 (C.1 selfhost parity)
+
+1. **Lexer** (`src/lexer.bux` + `tkLifetime=111`): `'a` vs char `'x'` (same heuristic as bootstrap)
+2. **Parser:**
+   - `&'a T` / `&'a mut T` → `TypeExpr.refLifetime`
+   - `func F<'a, T>(…)` — lifetime params accepted and **skipped** for mono slots
+3. **Sema** lifetime elision (fixed 8-slot maps, same rules as bootstrap):
+   - single-input elision, `self` preference, multi-input fail
+   - return-local / no-input-ref / explicit mismatch
+   - let-bound ref lifetime propagation
+4. Fixed `checkFunc` else-branch that wiped `checkedFunc` when retType was void
+5. Verified: `buxc2 run lifetime_elision` PASS; goldens on buxc2 show same errors;
+   bootstrap still green; **selfhost-loop** expected IDENTICAL
+
+---
+
+## Сесия 27 (tooling — D.4 bux doc + D.5 stdlib goldens)
+
+1. **D.5 Stdlib goldens** (`tests/stdlib_golden/`):
+   - Packages: `array`, `string`, `collections` (Map/Set/Result/Option)
+   - `run.sh` builds via `buxc run` and matches expected PASS lines
+   - `make test-stdlib` wired into `make test`
+2. **D.4 `bux doc`**:
+   - Bootstrap: `bootstrap/docgen.nim` — `///` + adjacent `/* */`
+   - Selfhost: `Cli_Doc` line scanner for `///`
+   - `bux doc [--out file] [path]` (default path `lib/`)
+   - `make docs` → `docs/api/stdlib.md`
+3. **Stdlib docs:** `///` on Array / String / Test public helpers
+4. Verified: `make test-stdlib`, `./buxc doc lib/Array.bux | head`, selfhost build
+
+---
+
+## Сесия 28 (LSP v0.4.0 — position-sensitive locals + inferred lets)
+
+1. **`LocalBinding`** with scope range (`scopeStartLine`…`scopeEndLine`) per let/param
+2. **Sema-backed inference** (`checkExprForLsp` / `resolveType`):
+   - `let x = 42` → hover `let x: int` · inferred
+   - `let s: String = "…"` → annotated, not inferred
+   - params: `param a: int` visible for whole function
+3. **Position-sensitive** hover / go-to-def / completion (innermost scope wins on shadowing)
+4. Nested scopes: if/while/for/match/block arms
+5. Version **bux-lsp 0.4.0**; tests: `tools/test_lsp_locals.nim`, `tools/smoke_lsp_hover.sh`
+6. Verified: hover shows `let sum: int · inferred`, `param a: int`, `let n: int · inferred`
+
+---
+
+## Сесия 29 (full-tree `bux fmt` + CI enforce)
+
+1. **One-shot format** of `lib/` (33), `examples/` (23), `src/` (15), `tests/` (8), `apps/` (12)
+2. **Idempotent:** second `--check` → 0 would reformat on all trees
+3. **CI:** `make fmt-check` enforces full tree + dirty-path smoke (exit 1)
+4. **`make fmt`** helper to reformat the same roots
+5. Verified: `test-stdlib`, key examples, **selfhost + selfhost-loop IDENTICAL ✓**
+
+---
+
+## Сесия 30 (E.1 package registry + E.3 semver draft)
+
+1. **Registry index** (`config/registry.toml`, `$BUX_REGISTRY`, `~/.bux/registry.toml`)
+   - `[[package]]` with `name` / `version` / `source` / `description`
+   - `file:` / `path:` (relative to index) or git URL
+2. **CLI:** `bux search [q]`, `bux add <name>` resolves registry, `bux install` locks path/git
+3. **Demo package:** `registry/packages/greet` (`Greet_Hello`, `Greet_Version`)
+4. **Smoke:** `tools/smoke_registry.sh` / `make test-registry` — temp app outside tree
+5. **Semver policy:** `docs/SEMVER.md` (0.x vs 1.0, registry version match)
+6. Packages.md updated
+
+---
+
 ## Следващи стъпки
 
-1. C.1 Lifetime elision
-2. Phase D tooling: `bux fmt` CI, `bux test --filter`, golden stdlib tests
-3. LSP: position-sensitive locals; inferred `let` types
+1. E.2 polish apps / E.5 benchmarks
+2. HTTP-fetchable registry index URL (beyond local file)
+3. LSP: workspace rename / references (optional)

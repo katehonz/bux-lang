@@ -1,279 +1,279 @@
 // types.bux — Type system definitions and factories
 module Types {
 
-// ---------------------------------------------------------------------------
-// TypeKind constants
-// ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // TypeKind constants
+    // ---------------------------------------------------------------------------
 
-const tyUnknown: int = 0;
-const tyVoid: int = 1;
-const tyBool: int = 2;
-const tyBool8: int = 3;
-const tyBool16: int = 4;
-const tyBool32: int = 5;
-const tyChar8: int = 6;
-const tyChar16: int = 7;
-const tyChar32: int = 8;
-const tyStr: int = 9;
-const tyInt8: int = 10;
-const tyInt16: int = 11;
-const tyInt32: int = 12;
-const tyInt64: int = 13;
-const tyInt: int = 14;
-const tyUInt8: int = 15;
-const tyUInt16: int = 16;
-const tyUInt32: int = 17;
-const tyUInt64: int = 18;
-const tyUInt: int = 19;
-const tyFloat32: int = 20;
-const tyFloat64: int = 21;
-const tyPointer: int = 22;
-const tySlice: int = 23;
-const tyRange: int = 24;
-const tyTuple: int = 25;
-const tyNamed: int = 26;
-const tyTypeParam: int = 27;
-const tyFunc: int = 28;
+    const tyUnknown: int = 0;
+    const tyVoid: int = 1;
+    const tyBool: int = 2;
+    const tyBool8: int = 3;
+    const tyBool16: int = 4;
+    const tyBool32: int = 5;
+    const tyChar8: int = 6;
+    const tyChar16: int = 7;
+    const tyChar32: int = 8;
+    const tyStr: int = 9;
+    const tyInt8: int = 10;
+    const tyInt16: int = 11;
+    const tyInt32: int = 12;
+    const tyInt64: int = 13;
+    const tyInt: int = 14;
+    const tyUInt8: int = 15;
+    const tyUInt16: int = 16;
+    const tyUInt32: int = 17;
+    const tyUInt64: int = 18;
+    const tyUInt: int = 19;
+    const tyFloat32: int = 20;
+    const tyFloat64: int = 21;
+    const tyPointer: int = 22;
+    const tySlice: int = 23;
+    const tyRange: int = 24;
+    const tyTuple: int = 25;
+    const tyNamed: int = 26;
+    const tyTypeParam: int = 27;
+    const tyFunc: int = 28;
 
-// ---------------------------------------------------------------------------
-// Type struct
-// ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Type struct
+    // ---------------------------------------------------------------------------
 
-struct Type {
-    kind: int;
-    name: String;
-    // inner types stored as array of pointers (simplified)
-    innerKind1: int;
-    innerName1: String;
-    innerKind2: int;
-    innerName2: String;
-    innerKind3: int;
-    innerName3: String;
-    innerCount: int;
-}
-
-// ---------------------------------------------------------------------------
-// Factories
-// ---------------------------------------------------------------------------
-
-func Type_MakeUnknown() -> Type {
-    return Type { kind: tyUnknown, name: "", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeVoid() -> Type {
-    return Type { kind: tyVoid, name: "void", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeBool() -> Type {
-    return Type { kind: tyBool, name: "bool", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeInt() -> Type {
-    return Type { kind: tyInt, name: "int", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeInt64() -> Type {
-    return Type { kind: tyInt64, name: "int64", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeUInt() -> Type {
-    return Type { kind: tyUInt, name: "uint", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeFloat64() -> Type {
-    return Type { kind: tyFloat64, name: "float64", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeStr() -> Type {
-    return Type { kind: tyStr, name: "String", innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakePointer(pointee: Type) -> Type {
-    return Type { kind: tyPointer, name: "", innerCount: 1,
-        innerKind1: pointee.kind, innerName1: pointee.name,
-        innerKind2: 0, innerName2: "", innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeNamed(name: String) -> Type {
-    return Type { kind: tyNamed, name: name, innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-func Type_MakeTypeParam(name: String) -> Type {
-    return Type { kind: tyTypeParam, name: name, innerCount: 0,
-        innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
-        innerKind3: 0, innerName3: "" };
-}
-
-// ---------------------------------------------------------------------------
-// Predicates
-// ---------------------------------------------------------------------------
-
-func Type_IsNumeric(t: Type) -> bool {
-    let k: int = t.kind;
-    if k == tyInt8 || k == tyInt16 || k == tyInt32 || k == tyInt64 || k == tyInt { return true; }
-    if k == tyUInt8 || k == tyUInt16 || k == tyUInt32 || k == tyUInt64 || k == tyUInt { return true; }
-    if k == tyFloat32 || k == tyFloat64 { return true; }
-    if k == tyUnknown || k == tyNamed || k == tyTypeParam { return true; }
-    return false;
-}
-
-func Type_IsInteger(t: Type) -> bool {
-    let k: int = t.kind;
-    if k == tyInt8 || k == tyInt16 || k == tyInt32 || k == tyInt64 || k == tyInt { return true; }
-    if k == tyUInt8 || k == tyUInt16 || k == tyUInt32 || k == tyUInt64 || k == tyUInt { return true; }
-    if k == tyUnknown || k == tyNamed || k == tyTypeParam { return true; }
-    return false;
-}
-
-func Type_IsBool(t: Type) -> bool {
-    let k: int = t.kind;
-    return k == tyBool || k == tyBool8 || k == tyBool16 || k == tyBool32;
-}
-
-func Type_IsPointer(t: Type) -> bool {
-    return t.kind == tyPointer;
-}
-
-func Type_IsSlice(t: Type) -> bool {
-    return t.kind == tySlice;
-}
-
-// ---------------------------------------------------------------------------
-// Comparison (structural, limited to kind + name for simplicity)
-// ---------------------------------------------------------------------------
-
-func Type_Eq(a: Type, b: Type) -> bool {
-    if a.kind != b.kind { return false; }
-    if a.kind == tyNamed || a.kind == tyTypeParam {
-        return String_Eq(a.name, b.name);
+    struct Type {
+        kind: int;
+        name: String;
+        // inner types stored as array of pointers (simplified)
+        innerKind1: int;
+        innerName1: String;
+        innerKind2: int;
+        innerName2: String;
+        innerKind3: int;
+        innerName3: String;
+        innerCount: int;
     }
-    return true;
-}
 
-// ---------------------------------------------------------------------------
-// toString
-// ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Factories
+    // ---------------------------------------------------------------------------
 
-func Type_ToString(t: Type) -> String {
-    if t.kind == tyVoid { return "void"; }
-    if t.kind == tyBool { return "bool"; }
-    if t.kind == tyStr { return "String"; }
-    if t.kind == tyInt { return "int"; }
-    if t.kind == tyInt64 { return "int64"; }
-    if t.kind == tyUInt { return "uint"; }
-    if t.kind == tyFloat64 { return "float64"; }
-    if t.kind == tyNamed { return t.name; }
-    if t.kind == tyTypeParam { return t.name; }
-    if t.kind == tyPointer { return String_Concat("*", t.innerName1); }
-    if t.kind == tyFunc { return t.name; }
-    return "?";
-}
+    func Type_MakeUnknown() -> Type {
+        return Type { kind: tyUnknown, name: "", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-// ---------------------------------------------------------------------------
-// Type_FromName — central type-name → kind mapping (used by sema, hir_lower)
-// ---------------------------------------------------------------------------
+    func Type_MakeVoid() -> Type {
+        return Type { kind: tyVoid, name: "void", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-func Type_FromName(name: String) -> int {
-    if String_Eq(name, "void") { return tyVoid; }
-    if String_Eq(name, "bool") { return tyBool; }
-    if String_Eq(name, "bool8") { return tyBool8; }
-    if String_Eq(name, "bool16") { return tyBool16; }
-    if String_Eq(name, "bool32") { return tyBool32; }
-    if String_Eq(name, "char8") { return tyChar8; }
-    if String_Eq(name, "char16") { return tyChar16; }
-    if String_Eq(name, "char32") { return tyChar32; }
-    if String_Eq(name, "String") { return tyStr; }
-    if String_Eq(name, "str") { return tyStr; }
-    if String_Eq(name, "int8") { return tyInt8; }
-    if String_Eq(name, "int16") { return tyInt16; }
-    if String_Eq(name, "int32") { return tyInt32; }
-    if String_Eq(name, "int64") { return tyInt64; }
-    if String_Eq(name, "int") { return tyInt; }
-    if String_Eq(name, "uint8") { return tyUInt8; }
-    if String_Eq(name, "uint16") { return tyUInt16; }
-    if String_Eq(name, "uint32") { return tyUInt32; }
-    if String_Eq(name, "uint64") { return tyUInt64; }
-    if String_Eq(name, "uint") { return tyUInt; }
-    if String_Eq(name, "float32") { return tyFloat32; }
-    if String_Eq(name, "float64") { return tyFloat64; }
-    if String_Eq(name, "float") { return tyFloat64; }
-    return tyNamed;
-}
+    func Type_MakeBool() -> Type {
+        return Type { kind: tyBool, name: "bool", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-// ---------------------------------------------------------------------------
-// Type_ToCName — type kind → C type name (used by C backend)
-// ---------------------------------------------------------------------------
+    func Type_MakeInt() -> Type {
+        return Type { kind: tyInt, name: "int", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-func Type_ToCName(kind: int) -> String {
-    if kind == tyVoid { return "void"; }
-    if kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32 { return "bool"; }
-    if kind == tyChar8 { return "char"; }
-    if kind == tyChar16 { return "uint16"; }
-    if kind == tyChar32 { return "uint32"; }
-    if kind == tyStr { return "String"; }
-    if kind == tyInt8 { return "int8"; }
-    if kind == tyInt16 { return "int16"; }
-    if kind == tyInt32 { return "int32"; }
-    if kind == tyInt64 { return "int64"; }
-    if kind == tyInt { return "int"; }
-    if kind == tyUInt8 { return "uint8"; }
-    if kind == tyUInt16 { return "uint16"; }
-    if kind == tyUInt32 { return "uint32"; }
-    if kind == tyUInt64 { return "uint64"; }
-    if kind == tyUInt { return "uint"; }
-    if kind == tyFloat32 { return "float32"; }
-    if kind == tyFloat64 { return "float64"; }
-    if kind == tyPointer { return "void*"; }
-    // Fat function pointer — concrete BuxFn_* name comes from typeName field
-    if kind == tyFunc { return "BuxFn"; }
-    return "";
-}
+    func Type_MakeInt64() -> Type {
+        return Type { kind: tyInt64, name: "int64", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-// ---------------------------------------------------------------------------
-// Signed / Unsigned / Float predicates
-// ---------------------------------------------------------------------------
+    func Type_MakeUInt() -> Type {
+        return Type { kind: tyUInt, name: "uint", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-func Type_IsSigned(kind: int) -> bool {
-    return kind == tyInt8 || kind == tyInt16 || kind == tyInt32 || kind == tyInt64 || kind == tyInt;
-}
+    func Type_MakeFloat64() -> Type {
+        return Type { kind: tyFloat64, name: "float64", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-func Type_IsUnsigned(kind: int) -> bool {
-    return kind == tyUInt8 || kind == tyUInt16 || kind == tyUInt32 || kind == tyUInt64 || kind == tyUInt;
-}
+    func Type_MakeStr() -> Type {
+        return Type { kind: tyStr, name: "String", innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-func Type_IsFloat(kind: int) -> bool {
-    return kind == tyFloat32 || kind == tyFloat64;
-}
+    func Type_MakePointer(pointee: Type) -> Type {
+        return Type { kind: tyPointer, name: "", innerCount: 1,
+            innerKind1: pointee.kind, innerName1: pointee.name,
+            innerKind2: 0, innerName2: "", innerKind3: 0, innerName3: "" };
+    }
 
-// ---------------------------------------------------------------------------
-// Type_SizeOf — byte size of a primitive type (0 for non-primitive)
-// ---------------------------------------------------------------------------
+    func Type_MakeNamed(name: String) -> Type {
+        return Type { kind: tyNamed, name: name, innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
 
-func Type_SizeOf(kind: int) -> int {
-    if kind == tyBool || kind == tyBool8 || kind == tyChar8 || kind == tyInt8 || kind == tyUInt8 { return 1; }
-    if kind == tyBool16 || kind == tyChar16 || kind == tyInt16 || kind == tyUInt16 { return 2; }
-    if kind == tyBool32 || kind == tyChar32 || kind == tyInt32 || kind == tyUInt32 || kind == tyFloat32 { return 4; }
-    if kind == tyInt64 || kind == tyUInt64 || kind == tyFloat64 { return 8; }
-    if kind == tyInt || kind == tyUInt { return 8; }
-    if kind == tyPointer { return 8; }
-    return 0;
-}
+    func Type_MakeTypeParam(name: String) -> Type {
+        return Type { kind: tyTypeParam, name: name, innerCount: 0,
+            innerKind1: 0, innerName1: "", innerKind2: 0, innerName2: "",
+            innerKind3: 0, innerName3: "" };
+    }
+
+    // ---------------------------------------------------------------------------
+    // Predicates
+    // ---------------------------------------------------------------------------
+
+    func Type_IsNumeric(t: Type) -> bool {
+        let k: int = t.kind;
+        if k == tyInt8 || k == tyInt16 || k == tyInt32 || k == tyInt64 || k == tyInt { return true; }
+        if k == tyUInt8 || k == tyUInt16 || k == tyUInt32 || k == tyUInt64 || k == tyUInt { return true; }
+        if k == tyFloat32 || k == tyFloat64 { return true; }
+        if k == tyUnknown || k == tyNamed || k == tyTypeParam { return true; }
+        return false;
+    }
+
+    func Type_IsInteger(t: Type) -> bool {
+        let k: int = t.kind;
+        if k == tyInt8 || k == tyInt16 || k == tyInt32 || k == tyInt64 || k == tyInt { return true; }
+        if k == tyUInt8 || k == tyUInt16 || k == tyUInt32 || k == tyUInt64 || k == tyUInt { return true; }
+        if k == tyUnknown || k == tyNamed || k == tyTypeParam { return true; }
+        return false;
+    }
+
+    func Type_IsBool(t: Type) -> bool {
+        let k: int = t.kind;
+        return k == tyBool || k == tyBool8 || k == tyBool16 || k == tyBool32;
+    }
+
+    func Type_IsPointer(t: Type) -> bool {
+        return t.kind == tyPointer;
+    }
+
+    func Type_IsSlice(t: Type) -> bool {
+        return t.kind == tySlice;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Comparison (structural, limited to kind + name for simplicity)
+    // ---------------------------------------------------------------------------
+
+    func Type_Eq(a: Type, b: Type) -> bool {
+        if a.kind != b.kind { return false; }
+        if a.kind == tyNamed || a.kind == tyTypeParam {
+            return String_Eq(a.name, b.name);
+        }
+        return true;
+    }
+
+    // ---------------------------------------------------------------------------
+    // toString
+    // ---------------------------------------------------------------------------
+
+    func Type_ToString(t: Type) -> String {
+        if t.kind == tyVoid { return "void"; }
+        if t.kind == tyBool { return "bool"; }
+        if t.kind == tyStr { return "String"; }
+        if t.kind == tyInt { return "int"; }
+        if t.kind == tyInt64 { return "int64"; }
+        if t.kind == tyUInt { return "uint"; }
+        if t.kind == tyFloat64 { return "float64"; }
+        if t.kind == tyNamed { return t.name; }
+        if t.kind == tyTypeParam { return t.name; }
+        if t.kind == tyPointer { return String_Concat("*", t.innerName1); }
+        if t.kind == tyFunc { return t.name; }
+        return "?";
+    }
+
+    // ---------------------------------------------------------------------------
+    // Type_FromName — central type-name → kind mapping (used by sema, hir_lower)
+    // ---------------------------------------------------------------------------
+
+    func Type_FromName(name: String) -> int {
+        if String_Eq(name, "void") { return tyVoid; }
+        if String_Eq(name, "bool") { return tyBool; }
+        if String_Eq(name, "bool8") { return tyBool8; }
+        if String_Eq(name, "bool16") { return tyBool16; }
+        if String_Eq(name, "bool32") { return tyBool32; }
+        if String_Eq(name, "char8") { return tyChar8; }
+        if String_Eq(name, "char16") { return tyChar16; }
+        if String_Eq(name, "char32") { return tyChar32; }
+        if String_Eq(name, "String") { return tyStr; }
+        if String_Eq(name, "str") { return tyStr; }
+        if String_Eq(name, "int8") { return tyInt8; }
+        if String_Eq(name, "int16") { return tyInt16; }
+        if String_Eq(name, "int32") { return tyInt32; }
+        if String_Eq(name, "int64") { return tyInt64; }
+        if String_Eq(name, "int") { return tyInt; }
+        if String_Eq(name, "uint8") { return tyUInt8; }
+        if String_Eq(name, "uint16") { return tyUInt16; }
+        if String_Eq(name, "uint32") { return tyUInt32; }
+        if String_Eq(name, "uint64") { return tyUInt64; }
+        if String_Eq(name, "uint") { return tyUInt; }
+        if String_Eq(name, "float32") { return tyFloat32; }
+        if String_Eq(name, "float64") { return tyFloat64; }
+        if String_Eq(name, "float") { return tyFloat64; }
+        return tyNamed;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Type_ToCName — type kind → C type name (used by C backend)
+    // ---------------------------------------------------------------------------
+
+    func Type_ToCName(kind: int) -> String {
+        if kind == tyVoid { return "void"; }
+        if kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32 { return "bool"; }
+        if kind == tyChar8 { return "char"; }
+        if kind == tyChar16 { return "uint16"; }
+        if kind == tyChar32 { return "uint32"; }
+        if kind == tyStr { return "String"; }
+        if kind == tyInt8 { return "int8"; }
+        if kind == tyInt16 { return "int16"; }
+        if kind == tyInt32 { return "int32"; }
+        if kind == tyInt64 { return "int64"; }
+        if kind == tyInt { return "int"; }
+        if kind == tyUInt8 { return "uint8"; }
+        if kind == tyUInt16 { return "uint16"; }
+        if kind == tyUInt32 { return "uint32"; }
+        if kind == tyUInt64 { return "uint64"; }
+        if kind == tyUInt { return "uint"; }
+        if kind == tyFloat32 { return "float32"; }
+        if kind == tyFloat64 { return "float64"; }
+        if kind == tyPointer { return "void*"; }
+        // Fat function pointer — concrete BuxFn_* name comes from typeName field
+        if kind == tyFunc { return "BuxFn"; }
+        return "";
+    }
+
+    // ---------------------------------------------------------------------------
+    // Signed / Unsigned / Float predicates
+    // ---------------------------------------------------------------------------
+
+    func Type_IsSigned(kind: int) -> bool {
+        return kind == tyInt8 || kind == tyInt16 || kind == tyInt32 || kind == tyInt64 || kind == tyInt;
+    }
+
+    func Type_IsUnsigned(kind: int) -> bool {
+        return kind == tyUInt8 || kind == tyUInt16 || kind == tyUInt32 || kind == tyUInt64 || kind == tyUInt;
+    }
+
+    func Type_IsFloat(kind: int) -> bool {
+        return kind == tyFloat32 || kind == tyFloat64;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Type_SizeOf — byte size of a primitive type (0 for non-primitive)
+    // ---------------------------------------------------------------------------
+
+    func Type_SizeOf(kind: int) -> int {
+        if kind == tyBool || kind == tyBool8 || kind == tyChar8 || kind == tyInt8 || kind == tyUInt8 { return 1; }
+        if kind == tyBool16 || kind == tyChar16 || kind == tyInt16 || kind == tyUInt16 { return 2; }
+        if kind == tyBool32 || kind == tyChar32 || kind == tyInt32 || kind == tyUInt32 || kind == tyFloat32 { return 4; }
+        if kind == tyInt64 || kind == tyUInt64 || kind == tyFloat64 { return 8; }
+        if kind == tyInt || kind == tyUInt { return 8; }
+        if kind == tyPointer { return 8; }
+        return 0;
+    }
 }

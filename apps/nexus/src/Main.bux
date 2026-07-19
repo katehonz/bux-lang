@@ -1,49 +1,49 @@
 module Main {
 
-import Config::{ServerConfig, DefaultConfig};
-import Http::{HttpMethod};
-import Router::{Handler, Route, Router};
-import Server::{RunServer};
-import Std::Array::{Array, Array_New, Array_Push};
+    import Config::{ServerConfig, DefaultConfig};
+    import Http::{HttpMethod};
+    import Router::{Handler, Route, Router};
+    import Server::{RunServer};
+    import Std::Array::{Array, Array_New, Array_Push};
 
-func BuildRouter() -> Router {
-    var routes: Array<Route> = Array_New<Route>(8);
+    func BuildRouter() -> Router {
+        var routes: Array<Route> = Array_New<Route>(8);
 
-    Array_Push<Route>(&routes, Route {
-        method: HttpMethod { tag: HttpMethod_GET },
-        path: "/api/health",
-        handler: Handler { tag: Handler_ApiHealth },
-    });
+        Array_Push<Route>(&routes, Route {
+            method: HttpMethod { tag: HttpMethod_GET },
+            path: "/api/health",
+            handler: Handler { tag: Handler_ApiHealth },
+        });
 
-    Array_Push<Route>(&routes, Route {
-        method: HttpMethod { tag: HttpMethod_GET },
-        path: "/api/info",
-        handler: Handler { tag: Handler_ApiInfo },
-    });
+        Array_Push<Route>(&routes, Route {
+            method: HttpMethod { tag: HttpMethod_GET },
+            path: "/api/info",
+            handler: Handler { tag: Handler_ApiInfo },
+        });
 
-    Array_Push<Route>(&routes, Route {
-        method: HttpMethod { tag: HttpMethod_GET },
-        path: "/ws",
-        handler: Handler { tag: Handler_WsUpgrade },
-    });
+        Array_Push<Route>(&routes, Route {
+            method: HttpMethod { tag: HttpMethod_GET },
+            path: "/ws",
+            handler: Handler { tag: Handler_WsUpgrade },
+        });
 
-    Array_Push<Route>(&routes, Route {
-        method: HttpMethod { tag: HttpMethod_GET },
-        path: "/",
-        handler: Handler { tag: Handler_StaticFile },
-    });
+        Array_Push<Route>(&routes, Route {
+            method: HttpMethod { tag: HttpMethod_GET },
+            path: "/",
+            handler: Handler { tag: Handler_StaticFile },
+        });
 
-    return Router {
-        routes: routes,
-        notFound: Handler { tag: Handler_NotFound },
-    };
-}
+        return Router {
+            routes: routes,
+            notFound: Handler { tag: Handler_NotFound },
+        };
+    }
 
-func Main() -> int {
-    let config: ServerConfig = DefaultConfig();
-    let router: Router = BuildRouter();
+    func Main() -> int {
+        let config: ServerConfig = DefaultConfig();
+        let router: Router = BuildRouter();
 
-    return RunServer(config, router);
-}
+        return RunServer(config, router);
+    }
 
 }

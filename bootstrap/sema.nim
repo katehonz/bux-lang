@@ -51,6 +51,11 @@ type
     ## When true, ekIdent skips use-while-borrowed (we're forming `&x` itself)
     suppressUseWhileBorrow*: bool
     currentRetType*: Type    ## return type of the function being checked
+    ## Lifetime elision / ref-origin tracking (@[Checked] only)
+    ## Binding name → lifetime id ("'a", "#elided0", "#local", …)
+    varRefLifetime*: Table[string, string]
+    ## Expected lifetime of the function's returned reference ("" if ret is not a ref)
+    returnLifetime*: string
     closureDepth*: int       ## nesting depth inside closures
     currentClosureExpr*: Expr  ## current closure being analyzed
     closureScope*: Scope     ## scope at which the current closure was entered
@@ -163,6 +168,138 @@ proc checkTempMutBorrow(sema: var Sema, varName: string, loc: SourceLocation) =
     sema.emitError(loc, &"cannot mutably borrow '{varName}': already mutably borrowed")
   elif sema.activeSharedBorrows.getOrDefault(varName, 0) > 0:
     sema.emitError(loc, &"cannot mutably borrow '{varName}' while it is shared-borrowed")
+
+# ---------------------------------------------------------------------------
+# Lifetime elision (C.1) — Rust-style simple rules for @[Checked]
+# ---------------------------------------------------------------------------
+#
+# Rules (common cases, no annotations required):
+#   1. Each elided input reference (&T / &mut T param) gets a distinct lifetime.
+#   2. If there is exactly one input lifetime, it is assigned to all elided outputs.
+#   3. If the first param is `self` / `Self`, its lifetime is preferred for outputs.
+#   4. Multiple input refs + elided return → error (need explicit `'a`).
+#   5. Returning a reference derived from a local (or by-value param) is rejected.
+#
+
+const
+  LifetimeLocal* = "#local"       ## ref derived from a local / by-value place
+  LifetimeOutNone* = "#out"       ## return ref with no input to borrow from
+  LifetimeAmbiguous* = "#ambiguous"
+
+proc isRefTypeExpr(te: TypeExpr): bool =
+  te != nil and te.kind in {tekRef, tekMutRef}
+
+proc applyLifetimeElision*(sema: var Sema, decl: Decl) =
+  ## Assign elided lifetimes for ref params/return of `decl`. Populates
+  ## `varRefLifetime` (params) and `returnLifetime`.
+  sema.varRefLifetime = initTable[string, string]()
+  sema.returnLifetime = ""
+  if not sema.checkedFunc:
+    return
+
+  var inputLts: seq[string] = @[]
+  var anon = 0
+  for p in decl.declFuncParams:
+    if not isRefTypeExpr(p.ptype):
+      continue
+    var lt = p.ptype.refLifetime
+    if lt.len == 0:
+      lt = "#elided" & $anon
+      inc anon
+    inputLts.add(lt)
+    sema.varRefLifetime[p.name] = lt
+
+  let ret = decl.declFuncReturnType
+  if not isRefTypeExpr(ret):
+    return
+
+  var rlt = ret.refLifetime
+  if rlt.len == 0:
+    if inputLts.len == 1:
+      rlt = inputLts[0]
+    elif inputLts.len == 0:
+      rlt = LifetimeOutNone
+    elif decl.declFuncParams.len > 0 and
+         decl.declFuncParams[0].name in ["self", "Self"]:
+      rlt = inputLts[0]
+    else:
+      sema.emitError(decl.loc,
+        "lifetime elision failed: return type needs an explicit lifetime " &
+        "(multiple input references); e.g. func F<'a>(a: &'a T, b: &'a U) -> &'a T")
+      rlt = LifetimeAmbiguous
+  sema.returnLifetime = rlt
+
+proc exprRefLifetime*(sema: Sema, expr: Expr, scope: Scope): string =
+  ## Best-effort lifetime of a reference-producing expression.
+  if expr == nil:
+    return ""
+  case expr.kind
+  of ekIdent:
+    if sema.varRefLifetime.hasKey(expr.exprIdent):
+      return sema.varRefLifetime[expr.exprIdent]
+    return ""
+  of ekUnary:
+    if expr.exprUnaryOp == tkAmp:
+      let name = extractBorrowedIdent(expr)
+      if name.len == 0:
+        return LifetimeLocal
+      # Reborrow of an existing ref binding keeps its lifetime
+      if sema.varRefLifetime.hasKey(name):
+        return sema.varRefLifetime[name]
+      # Address-of a by-value local or by-value parameter → local (dangling if returned)
+      return LifetimeLocal
+    # Dereference: *r still carries r's lifetime for field/ref purposes
+    if expr.exprUnaryOp == tkStar:
+      return sema.exprRefLifetime(expr.exprUnaryOperand, scope)
+    return ""
+  of ekBorrow:
+    # `borrow &x` / `borrow &mut x` — same origin rules as unary &
+    if expr.exprBorrowOperand != nil:
+      return sema.exprRefLifetime(expr.exprBorrowOperand, scope)
+    return LifetimeLocal
+  of ekField:
+    # Field projection through a ref keeps the base lifetime: (*p).x or p.x
+    if expr.exprFieldObj != nil:
+      let baseLt = sema.exprRefLifetime(expr.exprFieldObj, scope)
+      if baseLt.len > 0:
+        return baseLt
+      # Base is an ident of a struct local — field address would be local
+      if expr.exprFieldObj.kind == ekIdent:
+        if sema.varRefLifetime.hasKey(expr.exprFieldObj.exprIdent):
+          return sema.varRefLifetime[expr.exprFieldObj.exprIdent]
+        return LifetimeLocal
+    return ""
+  else:
+    return ""
+
+proc checkReturnLifetime*(sema: var Sema, retExpr: Expr, scope: Scope, loc: SourceLocation) =
+  ## Reject dangling returns and explicit lifetime mismatches in @[Checked].
+  if not sema.checkedFunc or sema.returnLifetime.len == 0 or retExpr == nil:
+    return
+  let got = sema.exprRefLifetime(retExpr, scope)
+  if sema.returnLifetime == LifetimeOutNone:
+    sema.emitError(loc,
+      "cannot return a reference: function has no input reference to borrow from")
+    return
+  if got == LifetimeLocal:
+    sema.emitError(loc, "cannot return reference to local variable")
+    return
+  if got.len == 0:
+    # Non-trivial expression (call, etc.) — leave for later analysis
+    return
+  if got == LifetimeAmbiguous or sema.returnLifetime == LifetimeAmbiguous:
+    return
+  # Explicit lifetime mismatch (both sides named with ')
+  if got.startsWith("'") and sema.returnLifetime.startsWith("'") and got != sema.returnLifetime:
+    sema.emitError(loc,
+      &"lifetime mismatch: returning '{got}' but function returns '{sema.returnLifetime}'")
+    return
+  # Distinct elided inputs returned into another elided input's return slot
+  if got.startsWith("#elided") and sema.returnLifetime.startsWith("#elided") and
+     got != sema.returnLifetime:
+    sema.emitError(loc,
+      "lifetime mismatch: returned reference does not outlive the return type " &
+      "(multiple input references; annotate with an explicit lifetime)")
 
 # ---------------------------------------------------------------------------
 # Generic type inference helpers
@@ -472,7 +609,7 @@ proc inferTypeArgs(sema: var Sema, funcDecl: Decl, argTypes: seq[Type],
 # Type resolution from AST TypeExpr
 # ---------------------------------------------------------------------------
 
-proc resolveType(sema: var Sema, te: TypeExpr): Type =
+proc resolveType*(sema: var Sema, te: TypeExpr): Type =
   if te == nil:
     return makeUnknown()
   case te.kind
@@ -918,7 +1055,7 @@ proc collectGlobals*(sema: var Sema) =
 # Expression type checking
 # ---------------------------------------------------------------------------
 
-proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type
+proc checkExpr*(sema: var Sema, expr: Expr, scope: Scope): Type
 proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type
 
 proc typeImplements(sema: Sema, t: Type, interfaceName: string): bool =
@@ -1099,7 +1236,7 @@ proc resolveCallArgs(sema: var Sema, expr: Expr, calleeDecl: Decl, scope: Scope)
   expr.exprCallArgs = newArgs
   expr.exprCallArgNames = newNames
 
-proc checkExpr(sema: var Sema, expr: Expr, scope: Scope): Type =
+proc checkExpr*(sema: var Sema, expr: Expr, scope: Scope): Type =
   if expr == nil:
     return makeUnknown()
   case expr.kind
@@ -1835,6 +1972,11 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
           # Untyped let + `&x` is typed as &mut by unary lowering
           isMut = initType.isMutRef
         sema.checkCreateBorrow(bname, isMut, stmt.stmtLetInit.loc)
+      # Propagate ref lifetime to the new binding (for return-site checks)
+      if declaredType.isRef or declaredType.isMutRef or initType.isRef or initType.isMutRef:
+        let lt = sema.exprRefLifetime(stmt.stmtLetInit, scope)
+        if lt.len > 0:
+          sema.varRefLifetime[stmt.stmtLetName] = lt
     return makeVoid()
   of skIf:
     let condType = sema.checkExpr(stmt.stmtIfCond, scope)
@@ -1897,6 +2039,8 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
         let retSym = scope.lookup(stmt.stmtReturnValue.exprIdent)
         if retSym != nil and retSym.isOwn:
           sema.movedVars.add(stmt.stmtReturnValue.exprIdent)
+      # Lifetime: reject dangling returns / explicit mismatches
+      sema.checkReturnLifetime(stmt.stmtReturnValue, scope, stmt.loc)
     return makeVoid()
   of skBreak, skContinue:
     return makeVoid()
@@ -1951,9 +2095,15 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
 proc checkFunc(sema: var Sema, decl: Decl) =
   if decl.declFuncBody == nil:
     return
-  # Skip body type-checking for generic functions — their bodies contain
+  # Skip body type-checking for type-generic functions — their bodies contain
   # type parameters that cannot be fully resolved until monomorphization.
-  if decl.declFuncTypeParams.len > 0:
+  # Lifetime-only params (`'a`) are fine: we still check the body for elision.
+  var hasTypeGeneric = false
+  for tp in decl.declFuncTypeParams:
+    if not tp.isLifetime:
+      hasTypeGeneric = true
+      break
+  if hasTypeGeneric:
     return
   let wasChecked = sema.checkedFunc
   let wasAsync = sema.currentFuncIsAsync
@@ -1963,10 +2113,18 @@ proc checkFunc(sema: var Sema, decl: Decl) =
     sema.movedVars = @[]
     sema.activeMutBorrows = initTable[string, SourceLocation]()
     sema.activeSharedBorrows = initTable[string, int]()
+    # C.1: elide lifetimes on params / return before walking the body
+    sema.applyLifetimeElision(decl)
+  else:
+    sema.varRefLifetime = initTable[string, string]()
+    sema.returnLifetime = ""
   var funcScope = newScope(sema.globalScope)
   # Add type parameters to type table for resolution
   var addedTypeParams: seq[string] = @[]
   for tp in decl.declFuncTypeParams:
+    if tp.isLifetime:
+      # Lifetime params are not types; skip typeTable
+      continue
     sema.typeTable[tp.name] = makeTypeParam(tp.name)
     addedTypeParams.add(tp.name)
   # Add parameters
@@ -1982,6 +2140,8 @@ proc checkFunc(sema: var Sema, decl: Decl) =
     sema.typeTable.del(tp)
   sema.checkedFunc = wasChecked
   sema.currentFuncIsAsync = wasAsync
+  sema.varRefLifetime = initTable[string, string]()
+  sema.returnLifetime = ""
 
 # ---------------------------------------------------------------------------
 # Second pass: check all function bodies
@@ -2026,3 +2186,16 @@ proc analyzeFull*(modu: Module): tuple[result: SemaResult, sema: Sema] =
   sema.collectGlobals()
   sema.checkBodies()
   result = (SemaResult(diagnostics: sema.diagnostics), sema)
+
+proc checkExprForLsp*(sema: var Sema, expr: Expr, scope: Scope): Type =
+  ## Type-check an expression for IDE use (no borrow/move side effects).
+  let wasChecked = sema.checkedFunc
+  let savedMoved = sema.movedVars
+  let savedMut = sema.activeMutBorrows
+  let savedShared = sema.activeSharedBorrows
+  sema.checkedFunc = false
+  result = sema.checkExpr(expr, scope)
+  sema.checkedFunc = wasChecked
+  sema.movedVars = savedMoved
+  sema.activeMutBorrows = savedMut
+  sema.activeSharedBorrows = savedShared

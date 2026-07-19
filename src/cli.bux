@@ -2,144 +2,144 @@
 // Wires together: Lexer → Parser → Sema → HirLower → CBackend
 module Cli {
 
-extern func PrintLine(s: String);
-extern func Print(s: String);
-extern func bux_read_file(path: String) -> String;
-extern func bux_write_file(path: String, content: String) -> bool;
-extern func bux_file_exists(path: String) -> int;
-extern func bux_dir_exists(path: String) -> int;
-extern func bux_getcwd() -> String;
-extern func bux_path_join(a: String, b: String) -> String;
-extern func bux_path_parent(path: String) -> String;
-extern func bux_mkdir_if_needed(path: String) -> int;
-extern func bux_run_nim(nim_file: String, out_bin: String) -> int;
-extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
-extern func bux_system(cmd: String) -> int;
-extern func bux_getenv(name: String) -> String;
-extern func bux_setenv(name: String, value: String) -> int;
-extern func bux_strlen(s: String) -> uint;
-extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+    extern func PrintLine(s: String);
+    extern func Print(s: String);
+    extern func bux_read_file(path: String) -> String;
+    extern func bux_write_file(path: String, content: String) -> bool;
+    extern func bux_file_exists(path: String) -> int;
+    extern func bux_dir_exists(path: String) -> int;
+    extern func bux_getcwd() -> String;
+    extern func bux_path_join(a: String, b: String) -> String;
+    extern func bux_path_parent(path: String) -> String;
+    extern func bux_mkdir_if_needed(path: String) -> int;
+    extern func bux_run_nim(nim_file: String, out_bin: String) -> int;
+    extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
+    extern func bux_system(cmd: String) -> int;
+    extern func bux_getenv(name: String) -> String;
+    extern func bux_setenv(name: String, value: String) -> int;
+    extern func bux_strlen(s: String) -> uint;
+    extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
 
-func ReadFile(path: String) -> String {
-    return bux_read_file(path);
-}
-
-func WriteFile(path: String, content: String) -> bool {
-    return bux_write_file(path, content);
-}
-
-func FileExists(path: String) -> bool {
-    return bux_file_exists(path) != 0;
-}
-
-func DirExists(path: String) -> bool {
-    return bux_dir_exists(path) != 0;
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostic formatting (Rust-style errors with snippets)
-// ---------------------------------------------------------------------------
-
-struct Diagnostic {
-    message: String;
-    line: uint32;
-    column: uint32;
-    severity: int;
-}
-
-/* Read a single line from a file (1-based). Returns "" on error or EOF. */
-func Diagnostic_GetLine(path: String, lineNum: uint32) -> String {
-    let content: String = bux_read_file(path);
-    if String_Eq(content, "") { return ""; }
-    /* bux_str_split_part uses 0-based index */
-    return bux_str_split_part(content, "\n", lineNum - 1);
-}
-
-/* Simple substring check for help hints */
-func Diagnostic_MsgContains(msg: String, needle: String) -> bool {
-    return bux_str_contains(msg, needle) != 0;
-}
-
-/* Actionable help for common error messages */
-func Diagnostic_Hint(msg: String) -> String {
-    if Diagnostic_MsgContains(msg, "cannot assign") {
-        return "ensure the right-hand side type matches the left-hand side";
+    func ReadFile(path: String) -> String {
+        return bux_read_file(path);
     }
-    if Diagnostic_MsgContains(msg, "undeclared identifier") {
-        return "check the spelling, or import the symbol from the right module";
-    }
-    if Diagnostic_MsgContains(msg, "too few arguments") {
-        return "compare the call with the function's parameter list";
-    }
-    if Diagnostic_MsgContains(msg, "too many arguments") {
-        return "compare the call with the function's parameter list";
-    }
-    if Diagnostic_MsgContains(msg, "use of moved value") {
-        return "the value was moved; clone it or restructure ownership";
-    }
-    if Diagnostic_MsgContains(msg, "expected expression") {
-        return "the previous statement may be incomplete (missing value or ';')";
-    }
-    if Diagnostic_MsgContains(msg, "duplicate symbol") {
-        return "rename one of the definitions or remove the duplicate";
-    }
-    return "";
-}
 
-/* Print a diagnostic in Rust-style format:
- *   error: <message>
- *     --> <path>:<line>:<col>
- *      |
- *   42 | <source_line>
- *      | <spaces>^
- *      = help: <hint>
- */
-func Diagnostic_Print(diag: *Diagnostic, sourcePath: String) {
-    /* Severity prefix */
-    if diag.severity == 0 {
-        Print("error: ");
-    } else if diag.severity == 1 {
-        Print("warning: ");
-    } else {
-        Print("note: ");
+    func WriteFile(path: String, content: String) -> bool {
+        return bux_write_file(path, content);
     }
-    PrintLine(diag.message);
 
-    /* Location header */
-    Print("  --> ");
-    Print(sourcePath);
-    Print(":");
-    PrintInt(diag.line as int64);
-    Print(":");
-    PrintInt(diag.column as int64);
-    PrintLine("");
+    func FileExists(path: String) -> bool {
+        return bux_file_exists(path) != 0;
+    }
 
-    /* Source snippet */
-    let lineText: String = Diagnostic_GetLine(sourcePath, diag.line);
-    if !String_Eq(lineText, "") {
-        let lineNumStr: String = String_FromInt(diag.line as int64);
+    func DirExists(path: String) -> bool {
+        return bux_dir_exists(path) != 0;
+    }
 
-        Print("   |");
-        PrintLine("");
-        Print(" ");
-        Print(lineNumStr);
-        Print(" | ");
-        PrintLine(lineText);
+    // ---------------------------------------------------------------------------
+    // Diagnostic formatting (Rust-style errors with snippets)
+    // ---------------------------------------------------------------------------
 
-        /* Underline (multi-char for identifiers/string tokens) */
-        Print("   | ");
-        var i: uint32 = 0;
-        while i < diag.column - 1 && i < 120 {
-            Print(" ");
-            i = i + 1;
+    struct Diagnostic {
+        message: String;
+        line: uint32;
+        column: uint32;
+        severity: int;
+    }
+
+    /* Read a single line from a file (1-based). Returns "" on error or EOF. */
+    func Diagnostic_GetLine(path: String, lineNum: uint32) -> String {
+        let content: String = bux_read_file(path);
+        if String_Eq(content, "") { return ""; }
+        /* bux_str_split_part uses 0-based index */
+        return bux_str_split_part(content, "\n", lineNum - 1);
+    }
+
+    /* Simple substring check for help hints */
+    func Diagnostic_MsgContains(msg: String, needle: String) -> bool {
+        return bux_str_contains(msg, needle) != 0;
+    }
+
+    /* Actionable help for common error messages */
+    func Diagnostic_Hint(msg: String) -> String {
+        if Diagnostic_MsgContains(msg, "cannot assign") {
+            return "ensure the right-hand side type matches the left-hand side";
         }
-        /* Estimate token length from the source line */
-        var ulen: uint = 1;
-        let col0: uint = diag.column - 1;
-        let lineLen: uint = String_Len(lineText);
-        if col0 < lineLen {
-            let first: String = String_Chars(lineText, col0);
-            if String_Eq(first, "\"") || String_Eq(first, "`") || String_Eq(first, "'") {
+        if Diagnostic_MsgContains(msg, "undeclared identifier") {
+            return "check the spelling, or import the symbol from the right module";
+        }
+        if Diagnostic_MsgContains(msg, "too few arguments") {
+            return "compare the call with the function's parameter list";
+        }
+        if Diagnostic_MsgContains(msg, "too many arguments") {
+            return "compare the call with the function's parameter list";
+        }
+        if Diagnostic_MsgContains(msg, "use of moved value") {
+            return "the value was moved; clone it or restructure ownership";
+        }
+        if Diagnostic_MsgContains(msg, "expected expression") {
+            return "the previous statement may be incomplete (missing value or ';')";
+        }
+        if Diagnostic_MsgContains(msg, "duplicate symbol") {
+            return "rename one of the definitions or remove the duplicate";
+        }
+        return "";
+    }
+
+    /* Print a diagnostic in Rust-style format:
+    *   error: <message>
+    *     --> <path>:<line>:<col>
+    *      |
+    *   42 | <source_line>
+    *      | <spaces>^
+    *      = help: <hint>
+    */
+    func Diagnostic_Print(diag: *Diagnostic, sourcePath: String) {
+        /* Severity prefix */
+        if diag.severity == 0 {
+            Print("error: ");
+        } else if diag.severity == 1 {
+            Print("warning: ");
+        } else {
+            Print("note: ");
+        }
+        PrintLine(diag.message);
+
+        /* Location header */
+        Print("  --> ");
+        Print(sourcePath);
+        Print(":");
+        PrintInt(diag.line as int64);
+        Print(":");
+        PrintInt(diag.column as int64);
+        PrintLine("");
+
+        /* Source snippet */
+        let lineText: String = Diagnostic_GetLine(sourcePath, diag.line);
+        if !String_Eq(lineText, "") {
+            let lineNumStr: String = String_FromInt(diag.line as int64);
+
+            Print("   |");
+            PrintLine("");
+            Print(" ");
+            Print(lineNumStr);
+            Print(" | ");
+            PrintLine(lineText);
+
+            /* Underline (multi-char for identifiers/string tokens) */
+            Print("   | ");
+            var i: uint32 = 0;
+            while i < diag.column - 1 && i < 120 {
+                Print(" ");
+                i = i + 1;
+            }
+            /* Estimate token length from the source line */
+            var ulen: uint = 1;
+            let col0: uint = diag.column - 1;
+            let lineLen: uint = String_Len(lineText);
+            if col0 < lineLen {
+                let first: String = String_Chars(lineText, col0);
+                if String_Eq(first, "\"") || String_Eq(first, "`") || String_Eq(first, "'") {
                 var j: uint = col0 + 1;
                 while j < lineLen {
                     let cj: String = String_Chars(lineText, j);
@@ -922,12 +922,184 @@ func Cli_Fetch() -> int {
 }
 
 // ---------------------------------------------------------------------------
-// Fmt command — format source files
+// Doc command — Markdown from /// comments (D.4)
 // ---------------------------------------------------------------------------
 
-func Cli_Fmt(dir: String) -> int {
-    // If dir is a file, format just that file
+func Cli_DocIsDeclStart(line: String) -> bool {
+    if String_StartsWith(line, "func ") { return true; }
+    if String_StartsWith(line, "pub func ") { return true; }
+    if String_StartsWith(line, "extern func ") { return true; }
+    if String_StartsWith(line, "const func ") { return true; }
+    if String_StartsWith(line, "async func ") { return true; }
+    if String_StartsWith(line, "struct ") { return true; }
+    if String_StartsWith(line, "pub struct ") { return true; }
+    if String_StartsWith(line, "enum ") { return true; }
+    if String_StartsWith(line, "interface ") { return true; }
+    if String_StartsWith(line, "module ") { return true; }
+    if String_StartsWith(line, "type ") { return true; }
+    return false;
+}
+
+func Cli_DocExtractName(line: String) -> String {
+    // Skip leading keywords
+    var s: String = line;
+    if String_StartsWith(s, "pub ") { s = bux_str_slice(s, 4, bux_strlen(s) - 4); }
+    if String_StartsWith(s, "extern ") { s = bux_str_slice(s, 7, bux_strlen(s) - 7); }
+    if String_StartsWith(s, "const ") { s = bux_str_slice(s, 6, bux_strlen(s) - 6); }
+    if String_StartsWith(s, "async ") { s = bux_str_slice(s, 6, bux_strlen(s) - 6); }
+    if String_StartsWith(s, "func ") { s = bux_str_slice(s, 5, bux_strlen(s) - 5); }
+    else if String_StartsWith(s, "struct ") { s = bux_str_slice(s, 7, bux_strlen(s) - 7); }
+    else if String_StartsWith(s, "enum ") { s = bux_str_slice(s, 5, bux_strlen(s) - 5); }
+    else if String_StartsWith(s, "interface ") { s = bux_str_slice(s, 10, bux_strlen(s) - 10); }
+    else if String_StartsWith(s, "module ") { s = bux_str_slice(s, 7, bux_strlen(s) - 7); }
+    else if String_StartsWith(s, "type ") { s = bux_str_slice(s, 5, bux_strlen(s) - 5); }
+    // Take until space, <, (, {, :, ;
+    var i: uint = 0;
+    let n: uint = bux_strlen(s);
+    while i < n {
+        let ch: String = bux_str_slice(s, i, 1);
+        if String_Eq(ch, " ") || String_Eq(ch, "<") || String_Eq(ch, "(") ||
+        String_Eq(ch, "{") || String_Eq(ch, ":") || String_Eq(ch, ";") {
+            break;
+        }
+        i = i + 1;
+    }
+    if i == 0 { return s; }
+    return bux_str_slice(s, 0, i);
+}
+
+func Cli_DocProcessFile(path: String, outSb: *StringBuilder) -> int {
+    let source: String = ReadFile(path);
+    if source == null as String || String_Eq(source, "") { return 0; }
+    var itemCount: int = 0;
+    var pending: String = "";
+    var hasPending: bool = false;
+    let lineCount: uint = bux_str_split_count(source, "\n");
+    // Drop trailing empty split artifact
+    var nLines: uint = lineCount;
+    if nLines > 0 {
+        let last: String = bux_str_split_part(source, "\n", nLines - 1);
+        if String_Eq(last, "") { nLines = nLines - 1; }
+    }
+    var li: uint = 0;
+    var wroteHeader: bool = false;
+    while li < nLines {
+        let raw: String = bux_str_split_part(source, "\n", li);
+        let line: String = String_Trim(raw);
+        if String_StartsWith(line, "///") {
+        var body: String = bux_str_slice(line, 3, bux_strlen(line) - 3);
+        if String_StartsWith(body, " ") {
+            body = bux_str_slice(body, 1, bux_strlen(body) - 1);
+        }
+        if hasPending {
+            pending = String_Concat(pending, String_Concat("\n", body));
+        } else {
+            pending = body;
+            hasPending = true;
+        }
+        li = li + 1;
+        continue;
+    }
+    if String_Eq(line, "") || String_StartsWith(line, "@[") {
+        li = li + 1;
+        continue;
+    }
+    if hasPending && Cli_DocIsDeclStart(line) {
+        if !wroteHeader {
+            StringBuilder_Append(outSb, "## `");
+            StringBuilder_Append(outSb, Cli_FileNameFromPath(path));
+            StringBuilder_Append(outSb, "`\n\n");
+            StringBuilder_Append(outSb, "_Source: `");
+            StringBuilder_Append(outSb, path);
+            StringBuilder_Append(outSb, "`_\n\n");
+            wroteHeader = true;
+        }
+        let name: String = Cli_DocExtractName(line);
+        StringBuilder_Append(outSb, "### `");
+        StringBuilder_Append(outSb, name);
+        StringBuilder_Append(outSb, "`\n\n");
+        StringBuilder_Append(outSb, "```bux\n");
+        StringBuilder_Append(outSb, line);
+        StringBuilder_Append(outSb, "\n```\n\n");
+        StringBuilder_Append(outSb, pending);
+        StringBuilder_Append(outSb, "\n\n");
+        itemCount = itemCount + 1;
+        hasPending = false;
+        pending = "";
+        li = li + 1;
+        continue;
+    }
+    if String_StartsWith(line, "//") {
+    li = li + 1;
+    continue;
+}
+// Other code clears pending
+hasPending = false;
+pending = "";
+li = li + 1;
+}
+return itemCount;
+}
+
+func Cli_Doc(dir: String, outPath: String) -> int {
+    var sb: StringBuilder = StringBuilder_NewCap(16384);
+    StringBuilder_Append(&sb, "# API Reference\n\n");
+    StringBuilder_Append(&sb, "Generated by `bux doc` from `///` documentation comments.\n\n");
+    var total: int = 0;
     if FileExists(dir) {
+        total = total + Cli_DocProcessFile(dir, &sb);
+    } else if DirExists(dir) {
+        var fileCount: int = 0;
+        let files: *String = bux_list_dir(dir, ".bux", &fileCount);
+        var i: int = 0;
+        while i < fileCount {
+            total = total + Cli_DocProcessFile(files[i], &sb);
+            i = i + 1;
+        }
+    } else {
+        Print("Error: path not found: ");
+        PrintLine(dir);
+        StringBuilder_Free(&sb);
+        return 1;
+    }
+    let md: String = StringBuilder_Build(&sb);
+    StringBuilder_Free(&sb);
+    if String_Eq(outPath, "") {
+        Print(md);
+    } else {
+        if !WriteFile(outPath, md) {
+            Print("Error: cannot write ");
+            PrintLine(outPath);
+            return 1;
+        }
+        Print("Wrote ");
+        PrintInt(total as int64);
+        Print(" documented items → ");
+        PrintLine(outPath);
+    }
+    if total == 0 {
+        PrintLine("warning: no /// documented declarations found");
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Fmt command — format source files (write or --check for CI)
+// ---------------------------------------------------------------------------
+
+func Cli_Fmt(dir: String, checkOnly: bool) -> int {
+    // If dir is a file, format/check just that file
+    if FileExists(dir) {
+        if checkOnly {
+            if Fmt_CheckFile(dir) == 0 {
+                Print("  ok ");
+                PrintLine(dir);
+                return 0;
+            }
+            Print("  would reformat ");
+            PrintLine(dir);
+            return 1;
+        }
         Print("Formatting ");
         PrintLine(dir);
         if Fmt_FormatFile(dir) {
@@ -936,8 +1108,12 @@ func Cli_Fmt(dir: String) -> int {
         }
         return 1;
     }
-    // Otherwise format all .bux files in directory
-    Print("Formatting ");
+    // Otherwise format/check all .bux files in directory
+    if checkOnly {
+        Print("Checking format in ");
+    } else {
+        Print("Formatting ");
+    }
     PrintLine(dir);
     var fileCount: int = 0;
     let files: *String = bux_list_dir(dir, ".bux", &fileCount);
@@ -947,13 +1123,33 @@ func Cli_Fmt(dir: String) -> int {
     }
     var i: int = 0;
     var okCount: int = 0;
+    var changeCount: int = 0;
     while i < fileCount {
-        Print("  ");
-        PrintLine(files[i]);
-        if Fmt_FormatFile(files[i]) {
-            okCount = okCount + 1;
+        if checkOnly {
+            if Fmt_CheckFile(files[i]) == 0 {
+                okCount = okCount + 1;
+            } else {
+                Print("  would reformat ");
+                PrintLine(files[i]);
+                changeCount = changeCount + 1;
+            }
+        } else {
+            Print("  ");
+            PrintLine(files[i]);
+            if Fmt_FormatFile(files[i]) {
+                okCount = okCount + 1;
+            }
         }
         i = i + 1;
+    }
+    if checkOnly {
+        Print("fmt --check: ");
+        PrintInt(changeCount as int64);
+        Print(" would reformat, ");
+        PrintInt(okCount as int64);
+        PrintLine(" ok");
+        if changeCount > 0 { return 1; }
+        return 0;
     }
     Print("Formatted "); PrintInt(okCount as int64); Print("/"); PrintInt(fileCount as int64); PrintLine(" files");
     return 0;
@@ -985,32 +1181,40 @@ func Cli_StripExtension(name: String) -> String {
     return name;
 }
 
-func Cli_Test(projectDir: String) -> int {
+func Cli_Test(projectDir: String, filter: String) -> int {
     Print("Testing project: ");
     PrintLine(projectDir);
-    // Build and run the project's own Main first
-    let mainRc: int = Cli_BuildProject(projectDir, "", false);
-    if mainRc != 0 {
-        PrintLine("Main test build failed");
-        return mainRc;
+    if !String_Eq(filter, "") {
+        Print("Filter: ");
+        PrintLine(filter);
     }
-    let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
-    var mainName: String = man.name;
-    if String_Eq(mainName, "") { mainName = "bux_out"; }
-    let mainBin: String = bux_path_join(bux_path_join(projectDir, "build"), mainName);
-    if !FileExists(mainBin) {
-        Print("Error: test binary not found: ");
-        PrintLine(mainBin);
-        return 1;
+
+    // Without --filter, build and run the project's own Main first.
+    // With --filter, only run matching tests/*.bux files.
+    if String_Eq(filter, "") {
+        let mainRc: int = Cli_BuildProject(projectDir, "", false);
+        if mainRc != 0 {
+            PrintLine("Main test build failed");
+            return mainRc;
+        }
+        let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
+        var mainName: String = man.name;
+        if String_Eq(mainName, "") { mainName = "bux_out"; }
+        let mainBin: String = bux_path_join(bux_path_join(projectDir, "build"), mainName);
+        if !FileExists(mainBin) {
+            Print("Error: test binary not found: ");
+            PrintLine(mainBin);
+            return 1;
+        }
+        let mainResult: int = bux_system(mainBin);
+        if mainResult != 0 {
+            Print("Main tests failed (exit code ");
+            PrintInt(mainResult as int64);
+            PrintLine(")");
+            return mainResult;
+        }
+        PrintLine("Main tests passed");
     }
-    let mainResult: int = bux_system(mainBin);
-    if mainResult != 0 {
-        Print("Main tests failed (exit code ");
-        PrintInt(mainResult as int64);
-        PrintLine(")");
-        return mainResult;
-    }
-    PrintLine("Main tests passed");
 
     // Propagate the project's stdlib to temp test packages.
     let stdlibDir: String = Cli_FindStdlibDir(projectDir);
@@ -1031,15 +1235,31 @@ func Cli_Test(projectDir: String) -> int {
         return 0;
     }
 
+    PrintLine("┌──────────────────────────────┬────────┐");
+    PrintLine("│ Test                         │ Status │");
+    PrintLine("├──────────────────────────────┼────────┤");
+
     var passed: int = 0;
     var failed: int = 0;
+    var skipped: int = 0;
     var i: int = 0;
     while i < testCount {
         let testPath: String = testFiles[i];
         let fileName: String = Cli_FileNameFromPath(testPath);
         let testName: String = Cli_StripExtension(fileName);
-        Print("  Test: ");
+
+        // --filter: only run tests whose name contains the filter substring
+        if !String_Eq(filter, "") {
+            if !String_Contains(testName, filter) {
+                skipped = skipped + 1;
+                i = i + 1;
+                continue;
+            }
+        }
+
+        Print("│ ");
         Print(testName);
+        // Pad status column roughly (name may be long)
         Print(" ... ");
 
         // Create temp package for this test file
@@ -1050,14 +1270,14 @@ func Cli_Test(projectDir: String) -> int {
 
         let source: String = ReadFile(testPath);
         if String_Eq(source, "") {
-            PrintLine("FAIL (cannot read test file)");
+            PrintLine("FAIL │");
             failed = failed + 1;
             i = i + 1;
             continue;
         }
         let tmpMain: String = bux_path_join(tmpSrc, "Main.bux");
         if !WriteFile(tmpMain, source) {
-            PrintLine("FAIL (cannot write temp Main.bux)");
+            PrintLine("FAIL │");
             failed = failed + 1;
             i = i + 1;
             continue;
@@ -1066,7 +1286,7 @@ func Cli_Test(projectDir: String) -> int {
         let tmpToml: String = bux_path_join(tmpDir, "bux.toml");
         var tomlContent: String = "[Package]\nName    = \"_test_tmp\"\nVersion = \"0.1.0\"\nType    = \"bin\"\n\n[Build]\nOutput = \"Bin\"\n";
         if !WriteFile(tmpToml, tomlContent) {
-            PrintLine("FAIL (cannot write temp bux.toml)");
+            PrintLine("FAIL │");
             failed = failed + 1;
             i = i + 1;
             continue;
@@ -1091,36 +1311,48 @@ func Cli_Test(projectDir: String) -> int {
 
         let buildRc: int = Cli_BuildProject(tmpDir, "", false);
         if buildRc != 0 {
-            PrintLine("FAIL (build error)");
+            PrintLine("FAIL │");
             failed = failed + 1;
             i = i + 1;
             continue;
         }
         let testBin: String = bux_path_join(bux_path_join(tmpDir, "build"), "_test_tmp");
         if !FileExists(testBin) {
-            PrintLine("FAIL (test binary not found)");
+            PrintLine("FAIL │");
             failed = failed + 1;
             i = i + 1;
             continue;
         }
         let runRc: int = bux_system(testBin);
         if runRc == 0 {
-            PrintLine("PASS");
+            PrintLine("PASS │");
             passed = passed + 1;
         } else {
-            Print("FAIL (exit ");
-            PrintInt(runRc as int64);
-            PrintLine(")");
+            Print("FAIL │");
+            PrintLine("");
             failed = failed + 1;
         }
         i = i + 1;
     }
 
-    Print("Tests: ");
+    PrintLine("└──────────────────────────────┴────────┘");
+    Print("Results: ");
     PrintInt(passed as int64);
     Print(" passed, ");
     PrintInt(failed as int64);
-    PrintLine(" failed");
+    Print(" failed");
+    if skipped > 0 {
+        Print(", ");
+        PrintInt(skipped as int64);
+        Print(" skipped");
+    }
+    PrintLine("");
+    if !String_Eq(filter, "") && passed == 0 && failed == 0 {
+        Print("No tests matching filter '");
+        Print(filter);
+        PrintLine("'");
+        return 1;
+    }
     if failed > 0 { return 1; }
     return 0;
 }
@@ -1493,7 +1725,10 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, doc, test, run, project, help, version");
+        PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
+        PrintLine("  fmt  --check [path]    Exit 1 if any file would be reformatted (CI)");
+        PrintLine("  doc  --out file.md [path]  API docs from /// comments");
         return 0;
     }
 
@@ -1506,14 +1741,16 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, doc, test, run, project, help, version");
+        PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
+        PrintLine("  fmt  --check [path]    Exit 1 if any file would be reformatted (CI)");
+        PrintLine("  doc  --out file.md [path]  API docs from /// comments");
         PrintLine("Pipeline modules:");
-        PrintLine("  Lexer      ✅  695 lines");
-        PrintLine("  Parser     ✅ 1004 lines");
-        PrintLine("  Sema       ✅  393 lines");
-        PrintLine("  HirLower   ✅  307 lines");
-        PrintLine("  CBackend   ✅  585 lines");
-        PrintLine("  Total: 3830 lines of Bux");
+        PrintLine("  Lexer      ✅");
+        PrintLine("  Parser     ✅");
+        PrintLine("  Sema       ✅");
+        PrintLine("  HirLower   ✅");
+        PrintLine("  CBackend   ✅");
         return 0;
     }
 
@@ -1550,9 +1787,36 @@ func Cli_Run(args: *String, argCount: int) -> int {
     }
 
     if String_Eq(cmd, "fmt") {
-        let dir: String = ".";
-        if argCount >= 3 { dir = args[2]; }
-        return Cli_Fmt(dir);
+        var dir: String = ".";
+        var checkOnly: bool = false;
+        var fi: int = 2;
+        while fi < argCount {
+            if String_Eq(args[fi], "--check") {
+                checkOnly = true;
+            } else {
+                dir = args[fi];
+            }
+            fi = fi + 1;
+        }
+        return Cli_Fmt(dir, checkOnly);
+    }
+
+    if String_Eq(cmd, "doc") {
+        var dir: String = "lib";
+        var outPath: String = "";
+        var di: int = 2;
+        while di < argCount {
+            if String_Eq(args[di], "--out") && di + 1 < argCount {
+                outPath = args[di + 1];
+                di = di + 1;
+            } else if String_StartsWith(args[di], "--out=") {
+                outPath = bux_str_slice(args[di], 6, bux_strlen(args[di]) - 6);
+            } else if !String_StartsWith(args[di], "-") {
+                dir = args[di];
+            }
+            di = di + 1;
+        }
+        return Cli_Doc(dir, outPath);
     }
 
     if String_Eq(cmd, "check") {
@@ -1578,9 +1842,22 @@ func Cli_Run(args: *String, argCount: int) -> int {
     }
 
     if String_Eq(cmd, "test") {
-        let dir: String = ".";
-        if argCount >= 3 { dir = args[2]; }
-        return Cli_Test(dir);
+        var dir: String = ".";
+        var filter: String = "";
+        var ti: int = 2;
+        while ti < argCount {
+            if String_Eq(args[ti], "--filter") && ti + 1 < argCount {
+                filter = args[ti + 1];
+                ti = ti + 1;
+            } else if String_StartsWith(args[ti], "--filter=") {
+                // --filter=name form
+                filter = bux_str_slice(args[ti], 9, bux_strlen(args[ti]) - 9);
+            } else if !String_StartsWith(args[ti], "-") {
+                dir = args[ti];
+            }
+            ti = ti + 1;
+        }
+        return Cli_Test(dir, filter);
     }
 
     if String_Eq(cmd, "run") {

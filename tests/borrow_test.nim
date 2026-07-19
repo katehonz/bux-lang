@@ -250,3 +250,124 @@ func Main() -> int {
 }
 """)
     check(not res.hasErrors)
+
+  # --- C.1 Lifetime elision ---
+
+  test "@[Checked] elided lifetime: return param ref is OK":
+    let res = checkSource("""
+@[Checked]
+func Identity(p: &int) -> &int {
+  return p;
+}
+@[Checked]
+func Main() -> int {
+  var x: int = 7;
+  let r: &int = Identity(&x);
+  return *r;
+}
+""")
+    check(not res.hasErrors)
+
+  test "@[Checked] explicit lifetime 'a works":
+    let res = checkSource("""
+@[Checked]
+func Identity<'a>(p: &'a int) -> &'a int {
+  return p;
+}
+@[Checked]
+func Main() -> int {
+  var x: int = 3;
+  let r: &int = Identity(&x);
+  return *r;
+}
+""")
+    check(not res.hasErrors)
+
+  test "@[Checked] rejects return of reference to local":
+    let res = checkSource("""
+@[Checked]
+func Dangle(p: &int) -> &int {
+  var x: int = 1;
+  return &x;
+}
+@[Checked]
+func Main() -> int {
+  return 0;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("local"))
+
+  test "@[Checked] rejects return ref with no input reference":
+    let res = checkSource("""
+@[Checked]
+func Bad() -> &int {
+  var x: int = 1;
+  return &x;
+}
+@[Checked]
+func Main() -> int {
+  return 0;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("no input reference") or
+          res.diagnostics[0].message.contains("local"))
+
+  test "@[Checked] elision fails with multiple input refs":
+    let res = checkSource("""
+@[Checked]
+func Pick(a: &int, b: &int) -> &int {
+  return a;
+}
+@[Checked]
+func Main() -> int {
+  return 0;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("lifetime elision failed") or
+          res.diagnostics[0].message.contains("lifetime mismatch"))
+
+  test "@[Checked] multiple inputs OK with explicit lifetime":
+    let res = checkSource("""
+@[Checked]
+func Pick<'a>(a: &'a int, b: &'a int) -> &'a int {
+  return a;
+}
+@[Checked]
+func Main() -> int {
+  var x: int = 1;
+  var y: int = 2;
+  let r: &int = Pick(&x, &y);
+  return *r;
+}
+""")
+    check(not res.hasErrors)
+
+  test "@[Checked] let-bound reborrow of param may be returned":
+    let res = checkSource("""
+@[Checked]
+func ViaLet(p: &int) -> &int {
+  let r: &int = p;
+  return r;
+}
+@[Checked]
+func Main() -> int {
+  var x: int = 9;
+  return *ViaLet(&x);
+}
+""")
+    check(not res.hasErrors)
+
+  test "unchecked may return &local (no lifetime checks)":
+    let res = checkSource("""
+func Dangle() -> &int {
+  var x: int = 1;
+  return &x;
+}
+func Main() -> int {
+  return 0;
+}
+""")
+    check(not res.hasErrors)

@@ -152,14 +152,59 @@ This runs:
 
 ### Project Tests (`bux test`)
 ```bash
-./buxc test
+./buxc test                    # run all tests/*.bux in the current package
+./buxc test --filter first     # only tests whose name contains "first"
+./buxc test --filter=first _test_runner
 ```
 
-Builds the project and runs the resulting binary. Reports:
-- `Tests passed` on exit code 0
-- `Tests failed (exit code N)` on non-zero exit
+Discovers `tests/*.bux`, builds each as a temp package, and runs it. Prints a
+summary table and exits:
+- `0` — all selected tests passed
+- `1` — at least one failure, or no tests matched the filter
 
 Use `Std::Test` module for assertions inside test code.
+
+### Format (`bux fmt`)
+```bash
+./buxc fmt examples/hello.bux  # reformat one file
+./buxc fmt lib/                # reformat a directory tree
+make fmt                       # reformat lib/ examples/ src/ tests/ apps/
+./buxc fmt --check path/       # exit 1 if any file would change
+make fmt-check                 # CI: full-tree clean + dirty smoke
+```
+
+Indentation is 4 spaces by brace depth. The formatter is idempotent (safe to re-run).
+`make fmt-check` enforces a clean tree under `lib/`, `examples/`, `src/`, `tests/`, and `apps/`.
+
+### Stdlib golden tests
+```bash
+make test-stdlib
+# or: tests/stdlib_golden/run.sh ./buxc
+```
+
+Behavioral packages under `tests/stdlib_golden/` (`array`, `string`, `collections`)
+assert core Array/String/Map/Set/Result/Option APIs and match expected `PASS` lines.
+
+### API docs (`bux doc`)
+```bash
+./buxc doc lib/                      # Markdown to stdout
+./buxc doc --out docs/api/stdlib.md lib/
+make docs                            # writes docs/api/stdlib.md
+```
+
+Scans `///` line comments (and bootstrap also accepts adjacent `/* */`) immediately
+before `func` / `struct` / `enum` / `interface` / `module` declarations.
+
+### Language Server (`bux-lsp` 0.4.0)
+```bash
+make lsp                             # → tools/bux-lsp
+nim r --path:bootstrap tools/test_lsp_locals.nim
+./tools/smoke_lsp_hover.sh
+```
+
+Features: diagnostics (`buxc check`), hover, go-to-def, outline, completion.
+**Locals are position-sensitive** (nested scopes / shadowing). **Inferred `let` types**
+appear on hover (`let x: int · inferred`).
 
 ### Example Programs
 ```bash

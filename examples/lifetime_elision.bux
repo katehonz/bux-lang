@@ -1,0 +1,51 @@
+// lifetime_elision.bux — C.1: elided lifetimes for common &[Checked] APIs
+// No 'a annotations needed when there is a single input reference.
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+// Elided: param and return share one lifetime automatically
+@[Checked]
+func Identity(p: &int) -> &int {
+    return p;
+}
+
+// Explicit lifetime for documentation / multi-ref (same lifetime both sides)
+@[Checked]
+func IdentityNamed<'a>(p: &'a int) -> &'a int {
+return p;
+}
+
+// Via intermediate let binding — lifetime is propagated
+@[Checked]
+func ViaLet(p: &int) -> &int {
+    let r: &int = p;
+    return r;
+}
+
+// self-style first param: elision prefers the first input for the return
+@[Checked]
+func FirstOf(self: &int, _other: int) -> &int {
+    return self;
+}
+
+@[Checked]
+func Main() -> int {
+    var x: int = 10;
+    var y: int = 20;
+
+    let a: &int = Identity(&x);
+    Test_AssertEqInt(*a, 10);
+
+    let b: &int = IdentityNamed(&y);
+    Test_AssertEqInt(*b, 20);
+
+    let c: &int = ViaLet(&x);
+    Test_AssertEqInt(*c, 10);
+
+    let d: &int = FirstOf(&y, 0);
+    Test_AssertEqInt(*d, 20);
+
+    Test_Pass("lifetime_elision");
+    PrintLine("lifetime_elision: ok");
+    return 0;
+}

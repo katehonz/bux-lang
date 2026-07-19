@@ -65,7 +65,7 @@ func Main() -> int {
     StringBuilder_Append(&sb, "World");
     StringBuilder_Append(&sb, "! #");
     StringBuilder_AppendInt(&sb, 42);
-    
+
     Print("StringBuilder: ");
     PrintLine(StringBuilder_Build(&sb));
     StringBuilder_Free(&sb);

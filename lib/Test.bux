@@ -1,76 +1,86 @@
 module Std::Test {
-import Std::Io::{PrintLine, PrintInt};
-import Std::String::{String_Eq};
+    import Std::Io::{PrintLine, PrintInt};
+    import Std::String::{String_Eq};
 
-extern func bux_exit(code: int);
-extern func bux_assert(cond: int, file: String, line: int, expr: String);
+    extern func bux_exit(code: int);
+    extern func bux_assert(cond: int, file: String, line: int, expr: String);
 
-func Test_Exit(code: int) {
-    bux_exit(code);
-}
+    /// Exit the process with `code` (for test runners).
+    func Test_Exit(code: int) {
+        bux_exit(code);
+    }
 
-func Test_Assert(cond: bool) {
-    bux_assert(cond as int, "", 0, "");
-}
+    /// Assert `cond` is true; abort on failure.
+    func Test_Assert(cond: bool) {
+        bux_assert(cond as int, "", 0, "");
+    }
 
-func Test_AssertEqInt(a: int, b: int) {
-    if a != b {
-        PrintLine("ASSERT_EQ_INT FAILED:");
-        PrintInt(a);
-        PrintLine(" != ");
-        PrintInt(b);
+    /// Assert two ints are equal; print both values and exit 1 on mismatch.
+    func Test_AssertEqInt(a: int, b: int) {
+        if a != b {
+            PrintLine("ASSERT_EQ_INT FAILED:");
+            PrintInt(a);
+            PrintLine(" != ");
+            PrintInt(b);
+            bux_exit(1);
+        }
+    }
+
+    /// Assert two ints differ.
+    func Test_AssertNeqInt(a: int, b: int) {
+        if a == b {
+            PrintLine("ASSERT_NEQ_INT FAILED: both are");
+            PrintInt(a);
+            bux_exit(1);
+        }
+    }
+
+    /// Assert two strings are equal (`String_Eq`).
+    func Test_AssertEqString(a: String, b: String) {
+        if !String_Eq(a, b) {
+            PrintLine("ASSERT_EQ_STRING FAILED:");
+            PrintLine(a);
+            PrintLine(" != ");
+            PrintLine(b);
+            bux_exit(1);
+        }
+    }
+
+    /// Assert two bools are equal.
+    func Test_AssertEqBool(a: bool, b: bool) {
+        if a != b {
+            PrintLine("ASSERT_EQ_BOOL FAILED");
+            bux_exit(1);
+        }
+    }
+
+    /// Assert `cond` is true.
+    func Test_AssertTrue(cond: bool) {
+        if !cond {
+            PrintLine("ASSERT_TRUE FAILED");
+            bux_exit(1);
+        }
+    }
+
+    /// Assert `cond` is false.
+    func Test_AssertFalse(cond: bool) {
+        if cond {
+            PrintLine("ASSERT_FALSE FAILED");
+            bux_exit(1);
+        }
+    }
+
+    /// Fail the test with a message and exit 1.
+    func Test_Fail(msg: String) {
+        PrintLine("FAIL:");
+        PrintLine(msg);
         bux_exit(1);
     }
-}
 
-func Test_AssertNeqInt(a: int, b: int) {
-    if a == b {
-        PrintLine("ASSERT_NEQ_INT FAILED: both are");
-        PrintInt(a);
-        bux_exit(1);
+    /// Print a PASS line (for human-readable runners / goldens).
+    func Test_Pass(msg: String) {
+        PrintLine("PASS:");
+        PrintLine(msg);
     }
-}
-
-func Test_AssertEqString(a: String, b: String) {
-    if !String_Eq(a, b) {
-        PrintLine("ASSERT_EQ_STRING FAILED:");
-        PrintLine(a);
-        PrintLine(" != ");
-        PrintLine(b);
-        bux_exit(1);
-    }
-}
-
-func Test_AssertEqBool(a: bool, b: bool) {
-    if a != b {
-        PrintLine("ASSERT_EQ_BOOL FAILED");
-        bux_exit(1);
-    }
-}
-
-func Test_AssertTrue(cond: bool) {
-    if !cond {
-        PrintLine("ASSERT_TRUE FAILED");
-        bux_exit(1);
-    }
-}
-
-func Test_AssertFalse(cond: bool) {
-    if cond {
-        PrintLine("ASSERT_FALSE FAILED");
-        bux_exit(1);
-    }
-}
-
-func Test_Fail(msg: String) {
-    PrintLine("FAIL:");
-    PrintLine(msg);
-    bux_exit(1);
-}
-
-func Test_Pass(msg: String) {
-    PrintLine("PASS:");
-    PrintLine(msg);
-}
 
 }

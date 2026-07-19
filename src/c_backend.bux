@@ -3,1665 +3,1665 @@
 module CBackend {
 
 
-// ---------------------------------------------------------------------------
-// Type → C type name
-// ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Type → C type name
+    // ---------------------------------------------------------------------------
 
-func CBackend_TypeToC(kind: int) -> String {
-    let cName: String = Type_ToCName(kind);
-    if !String_Eq(cName, "") { return cName; }
-    if kind == tyNamed { return "int"; }
-    return "int";
-}
-
-// Emit a C parameter/variable declaration, embedding the name inside function-pointer syntax.
-func CBE_CParamDecl(typeStr: String, name: String) -> String {
-    if String_Contains(typeStr, "(*)") {
-        let replacement: String = String_Concat("(*", String_Concat(name, ")"));
-        return String_Replace(typeStr, "(*)", replacement);
+    func CBackend_TypeToC(kind: int) -> String {
+        let cName: String = Type_ToCName(kind);
+        if !String_Eq(cName, "") { return cName; }
+        if kind == tyNamed { return "int"; }
+        return "int";
     }
-    return String_Concat(typeStr, String_Concat(" ", name));
-}
 
-func CBackend_OpToC(op: int) -> String {
-    if op == tkPlus { return "+"; }
-    if op == tkMinus { return "-"; }
-    if op == tkStar { return "*"; }
-    if op == tkSlash { return "/"; }
-    if op == tkPercent { return "%"; }
-    if op == tkEq { return "=="; }
-    if op == tkNe { return "!="; }
-    if op == tkLt { return "<"; }
-    if op == tkLe { return "<="; }
-    if op == tkGt { return ">"; }
-    if op == tkGe { return ">="; }
-    if op == tkAmpAmp { return "&&"; }
-    if op == tkPipePipe { return "||"; }
-    if op == tkBang { return "!"; }
-    if op == tkTilde { return "~"; }
-    if op == tkAmp { return "&"; }
-    if op == tkPipe { return "|"; }
-    if op == tkCaret { return "^"; }
-    if op == tkShl { return "<<"; }
-    if op == tkShr { return ">>"; }
-    if op == tkAssign { return "="; }
-    return "?";
-}
-
-// ---------------------------------------------------------------------------
-// StringBuilder-based C emitter
-// ---------------------------------------------------------------------------
-
-struct CEmitter {
-    sb: StringBuilder,
-    indent: int,
-    mod: *HirModule,
-    checkedFunc: bool,
-    deferCount: int,
-    defer0: *HirNode,
-    defer1: *HirNode,
-    defer2: *HirNode,
-    defer3: *HirNode,
-    defer4: *HirNode,
-    defer5: *HirNode,
-    defer6: *HirNode,
-    defer7: *HirNode,
-    movedCount: int,
-    movedName0: String,
-    movedName1: String,
-    movedName2: String,
-    movedName3: String,
-    movedName4: String,
-    movedName5: String,
-    movedName6: String,
-    movedName7: String,
-    tmpCounter: int,
-    currentRetType: String,
-}
-
-func CBE_PushDefer(cbe: *CEmitter, node: *HirNode) {
-    if cbe.deferCount == 0 { cbe.defer0 = node; }
-    if cbe.deferCount == 1 { cbe.defer1 = node; }
-    if cbe.deferCount == 2 { cbe.defer2 = node; }
-    if cbe.deferCount == 3 { cbe.defer3 = node; }
-    if cbe.deferCount == 4 { cbe.defer4 = node; }
-    if cbe.deferCount == 5 { cbe.defer5 = node; }
-    if cbe.deferCount == 6 { cbe.defer6 = node; }
-    if cbe.deferCount == 7 { cbe.defer7 = node; }
-    cbe.deferCount = cbe.deferCount + 1;
-}
-
-func CBE_AddMoved(cbe: *CEmitter, name: String) {
-    if cbe.movedCount >= 8 { return; }
-    if cbe.movedCount == 0 { cbe.movedName0 = name; }
-    else if cbe.movedCount == 1 { cbe.movedName1 = name; }
-    else if cbe.movedCount == 2 { cbe.movedName2 = name; }
-    else if cbe.movedCount == 3 { cbe.movedName3 = name; }
-    else if cbe.movedCount == 4 { cbe.movedName4 = name; }
-    else if cbe.movedCount == 5 { cbe.movedName5 = name; }
-    else if cbe.movedCount == 6 { cbe.movedName6 = name; }
-    else if cbe.movedCount == 7 { cbe.movedName7 = name; }
-    cbe.movedCount = cbe.movedCount + 1;
-}
-
-func CBE_IsMoved(cbe: *CEmitter, name: String) -> bool {
-    if cbe.movedCount > 0 && String_Eq(cbe.movedName0, name) { return true; }
-    if cbe.movedCount > 1 && String_Eq(cbe.movedName1, name) { return true; }
-    if cbe.movedCount > 2 && String_Eq(cbe.movedName2, name) { return true; }
-    if cbe.movedCount > 3 && String_Eq(cbe.movedName3, name) { return true; }
-    if cbe.movedCount > 4 && String_Eq(cbe.movedName4, name) { return true; }
-    if cbe.movedCount > 5 && String_Eq(cbe.movedName5, name) { return true; }
-    if cbe.movedCount > 6 && String_Eq(cbe.movedName6, name) { return true; }
-    if cbe.movedCount > 7 && String_Eq(cbe.movedName7, name) { return true; }
-    return false;
-}
-
-func CBE_RemoveMoved(cbe: *CEmitter, name: String) {
-    var found: int = -1;
-    if cbe.movedCount > 0 && String_Eq(cbe.movedName0, name) { found = 0; }
-    else if cbe.movedCount > 1 && String_Eq(cbe.movedName1, name) { found = 1; }
-    else if cbe.movedCount > 2 && String_Eq(cbe.movedName2, name) { found = 2; }
-    else if cbe.movedCount > 3 && String_Eq(cbe.movedName3, name) { found = 3; }
-    else if cbe.movedCount > 4 && String_Eq(cbe.movedName4, name) { found = 4; }
-    else if cbe.movedCount > 5 && String_Eq(cbe.movedName5, name) { found = 5; }
-    else if cbe.movedCount > 6 && String_Eq(cbe.movedName6, name) { found = 6; }
-    else if cbe.movedCount > 7 && String_Eq(cbe.movedName7, name) { found = 7; }
-    if found >= 0 {
-        var i: int = found;
-        while i < cbe.movedCount - 1 {
-            if i == 0 { cbe.movedName0 = cbe.movedName1; }
-            else if i == 1 { cbe.movedName1 = cbe.movedName2; }
-            else if i == 2 { cbe.movedName2 = cbe.movedName3; }
-            else if i == 3 { cbe.movedName3 = cbe.movedName4; }
-            else if i == 4 { cbe.movedName4 = cbe.movedName5; }
-            else if i == 5 { cbe.movedName5 = cbe.movedName6; }
-            else if i == 6 { cbe.movedName6 = cbe.movedName7; }
-            i = i + 1;
+    // Emit a C parameter/variable declaration, embedding the name inside function-pointer syntax.
+    func CBE_CParamDecl(typeStr: String, name: String) -> String {
+        if String_Contains(typeStr, "(*)") {
+            let replacement: String = String_Concat("(*", String_Concat(name, ")"));
+            return String_Replace(typeStr, "(*)", replacement);
         }
-        cbe.movedCount = cbe.movedCount - 1;
+        return String_Concat(typeStr, String_Concat(" ", name));
     }
-}
 
-func CBE_GetAutoDropVarName(node: *HirNode) -> String {
-    if node == null as *HirNode { return ""; }
-    // node is the inner expression stored by CBE_PushDefer (hCall for auto-drop)
-    let callNode: *HirNode = node;
-    if callNode.kind != hCall { return ""; }
-    let addrNode: *HirNode = callNode.child1;
-    if addrNode == null as *HirNode { return ""; }
-    if addrNode.kind != hUnary { return ""; }
-    if addrNode.intValue != tkAmp { return ""; }
-    let varNode: *HirNode = addrNode.child1;
-    if varNode == null as *HirNode { return ""; }
-    if varNode.kind != hVar { return ""; }
-    return varNode.strValue;
-}
-
-// Emit one defer slot (shared by full-stack and scope-pop emitters).
-func CBE_EmitOneDefer(cbe: *CEmitter, i: int) {
-    var dn: *HirNode = null as *HirNode;
-    if i == 0 { dn = cbe.defer0; }
-    if i == 1 { dn = cbe.defer1; }
-    if i == 2 { dn = cbe.defer2; }
-    if i == 3 { dn = cbe.defer3; }
-    if i == 4 { dn = cbe.defer4; }
-    if i == 5 { dn = cbe.defer5; }
-    if i == 6 { dn = cbe.defer6; }
-    if i == 7 { dn = cbe.defer7; }
-    // Skip auto-drop for moved variables
-    let deferVarName: String = CBE_GetAutoDropVarName(dn);
-    if !String_Eq(deferVarName, "") && CBE_IsMoved(cbe, deferVarName) {
-        return;
+    func CBackend_OpToC(op: int) -> String {
+        if op == tkPlus { return "+"; }
+        if op == tkMinus { return "-"; }
+        if op == tkStar { return "*"; }
+        if op == tkSlash { return "/"; }
+        if op == tkPercent { return "%"; }
+        if op == tkEq { return "=="; }
+        if op == tkNe { return "!="; }
+        if op == tkLt { return "<"; }
+        if op == tkLe { return "<="; }
+        if op == tkGt { return ">"; }
+        if op == tkGe { return ">="; }
+        if op == tkAmpAmp { return "&&"; }
+        if op == tkPipePipe { return "||"; }
+        if op == tkBang { return "!"; }
+        if op == tkTilde { return "~"; }
+        if op == tkAmp { return "&"; }
+        if op == tkPipe { return "|"; }
+        if op == tkCaret { return "^"; }
+        if op == tkShl { return "<<"; }
+        if op == tkShr { return ">>"; }
+        if op == tkAssign { return "="; }
+        return "?";
     }
-    StringBuilder_Append(&cbe.sb, "\n");
-    var sp: int = 0;
-    while sp < cbe.indent {
-        StringBuilder_Append(&cbe.sb, "    ");
-        sp = sp + 1;
+
+    // ---------------------------------------------------------------------------
+    // StringBuilder-based C emitter
+    // ---------------------------------------------------------------------------
+
+    struct CEmitter {
+        sb: StringBuilder,
+        indent: int,
+        mod: *HirModule,
+        checkedFunc: bool,
+        deferCount: int,
+        defer0: *HirNode,
+        defer1: *HirNode,
+        defer2: *HirNode,
+        defer3: *HirNode,
+        defer4: *HirNode,
+        defer5: *HirNode,
+        defer6: *HirNode,
+        defer7: *HirNode,
+        movedCount: int,
+        movedName0: String,
+        movedName1: String,
+        movedName2: String,
+        movedName3: String,
+        movedName4: String,
+        movedName5: String,
+        movedName6: String,
+        movedName7: String,
+        tmpCounter: int,
+        currentRetType: String,
     }
-    CBE_EmitExpr(cbe, dn);
-    StringBuilder_Append(&cbe.sb, ";");
-}
 
-// Emit all active defers (LIFO) without clearing the stack.
-// Must NOT clear: multiple return paths each need the full defer list.
-// (Clearing caused Early(flag) { if (0) return; return 1 } to drop only on first exit.)
-// Stack is reset at the start of each function emission.
-func CBE_EmitDefers(cbe: *CEmitter) -> int {
-    if cbe.deferCount == 0 { return 0; }
-    var i: int = cbe.deferCount - 1;
-    while i >= 0 {
-        CBE_EmitOneDefer(cbe, i);
-        i = i - 1;
+    func CBE_PushDefer(cbe: *CEmitter, node: *HirNode) {
+        if cbe.deferCount == 0 { cbe.defer0 = node; }
+        if cbe.deferCount == 1 { cbe.defer1 = node; }
+        if cbe.deferCount == 2 { cbe.defer2 = node; }
+        if cbe.deferCount == 3 { cbe.defer3 = node; }
+        if cbe.deferCount == 4 { cbe.defer4 = node; }
+        if cbe.deferCount == 5 { cbe.defer5 = node; }
+        if cbe.deferCount == 6 { cbe.defer6 = node; }
+        if cbe.deferCount == 7 { cbe.defer7 = node; }
+        cbe.deferCount = cbe.deferCount + 1;
     }
-    return 1;
-}
 
-// Emit branch/loop-local defers (indices fromIdx..count-1) then pop them.
-// Outer defers stay live so sibling branches and later returns still drop correctly.
-func CBE_EmitAndPopDefersFrom(cbe: *CEmitter, fromIdx: int) -> int {
-    if cbe.deferCount <= fromIdx { return 0; }
-    var i: int = cbe.deferCount - 1;
-    while i >= fromIdx {
-        CBE_EmitOneDefer(cbe, i);
-        i = i - 1;
+    func CBE_AddMoved(cbe: *CEmitter, name: String) {
+        if cbe.movedCount >= 8 { return; }
+        if cbe.movedCount == 0 { cbe.movedName0 = name; }
+        else if cbe.movedCount == 1 { cbe.movedName1 = name; }
+        else if cbe.movedCount == 2 { cbe.movedName2 = name; }
+        else if cbe.movedCount == 3 { cbe.movedName3 = name; }
+        else if cbe.movedCount == 4 { cbe.movedName4 = name; }
+        else if cbe.movedCount == 5 { cbe.movedName5 = name; }
+        else if cbe.movedCount == 6 { cbe.movedName6 = name; }
+        else if cbe.movedCount == 7 { cbe.movedName7 = name; }
+        cbe.movedCount = cbe.movedCount + 1;
     }
-    cbe.deferCount = fromIdx;
-    return 1;
-}
 
-func CBE_Emit(cbe: *CEmitter, text: String) {
-    var i: int = 0;
-    while i < cbe.indent {
-        StringBuilder_Append(&cbe.sb, "    ");
-        i = i + 1;
+    func CBE_IsMoved(cbe: *CEmitter, name: String) -> bool {
+        if cbe.movedCount > 0 && String_Eq(cbe.movedName0, name) { return true; }
+        if cbe.movedCount > 1 && String_Eq(cbe.movedName1, name) { return true; }
+        if cbe.movedCount > 2 && String_Eq(cbe.movedName2, name) { return true; }
+        if cbe.movedCount > 3 && String_Eq(cbe.movedName3, name) { return true; }
+        if cbe.movedCount > 4 && String_Eq(cbe.movedName4, name) { return true; }
+        if cbe.movedCount > 5 && String_Eq(cbe.movedName5, name) { return true; }
+        if cbe.movedCount > 6 && String_Eq(cbe.movedName6, name) { return true; }
+        if cbe.movedCount > 7 && String_Eq(cbe.movedName7, name) { return true; }
+        return false;
     }
-    StringBuilder_Append(&cbe.sb, text);
-}
 
-// ---------------------------------------------------------------------------
-// Emit HIR node
-// ---------------------------------------------------------------------------
-
-func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
-    if node == null as *HirNode { return; }
-    let kind: int = node.kind;
-
-    // Literal
-    if kind == hLit {
-        if node.intValue == tkNull {
-            StringBuilder_Append(&cbe.sb, "0");
-        } else {
-            let s: String = node.strValue;
-            let slen: int = String_Len(s) as int;
-            var start: int = 0;
-            var end: int = slen;
-            var isQuoted: bool = false;
-            var isBacktick: bool = false;
-            // If the literal is wrapped in quotes (from lexer), preserve outer quotes
-            // and only escape the inner content.
-            if slen >= 2 && s[0] == 34 as char8 && s[slen - 1] == 34 as char8 {
-                isQuoted = true;
-                start = 1;
-                end = slen - 1;
-            }
-            // Backtick raw string: strip backticks, escape inner content for C
-            if slen >= 2 && s[0] == 96 as char8 && s[slen - 1] == 96 as char8 {
-                isBacktick = true;
-                start = 1;
-                end = slen - 1;
-            }
-            if isQuoted || isBacktick {
-                StringBuilder_Append(&cbe.sb, "\"");
-            }
-            var i: int = start;
-            while i < end {
-                let c: int = s[i] as int;
-                if c == 34 {
-                    StringBuilder_Append(&cbe.sb, "\\\"");
-                } else if c == 92 {
-                    StringBuilder_Append(&cbe.sb, "\\\\");
-                } else if c == 10 {
-                    StringBuilder_Append(&cbe.sb, "\\n");
-                } else if c == 9 {
-                    StringBuilder_Append(&cbe.sb, "\\t");
-                } else if c == 13 {
-                    StringBuilder_Append(&cbe.sb, "\\r");
-                } else {
-                    StringBuilder_AppendChar(&cbe.sb, c as char8);
-                }
+    func CBE_RemoveMoved(cbe: *CEmitter, name: String) {
+        var found: int = -1;
+        if cbe.movedCount > 0 && String_Eq(cbe.movedName0, name) { found = 0; }
+        else if cbe.movedCount > 1 && String_Eq(cbe.movedName1, name) { found = 1; }
+        else if cbe.movedCount > 2 && String_Eq(cbe.movedName2, name) { found = 2; }
+        else if cbe.movedCount > 3 && String_Eq(cbe.movedName3, name) { found = 3; }
+        else if cbe.movedCount > 4 && String_Eq(cbe.movedName4, name) { found = 4; }
+        else if cbe.movedCount > 5 && String_Eq(cbe.movedName5, name) { found = 5; }
+        else if cbe.movedCount > 6 && String_Eq(cbe.movedName6, name) { found = 6; }
+        else if cbe.movedCount > 7 && String_Eq(cbe.movedName7, name) { found = 7; }
+        if found >= 0 {
+            var i: int = found;
+            while i < cbe.movedCount - 1 {
+                if i == 0 { cbe.movedName0 = cbe.movedName1; }
+                else if i == 1 { cbe.movedName1 = cbe.movedName2; }
+                else if i == 2 { cbe.movedName2 = cbe.movedName3; }
+                else if i == 3 { cbe.movedName3 = cbe.movedName4; }
+                else if i == 4 { cbe.movedName4 = cbe.movedName5; }
+                else if i == 5 { cbe.movedName5 = cbe.movedName6; }
+                else if i == 6 { cbe.movedName6 = cbe.movedName7; }
                 i = i + 1;
             }
-            if isQuoted || isBacktick {
-                StringBuilder_Append(&cbe.sb, "\"");
-            }
+            cbe.movedCount = cbe.movedCount - 1;
         }
-        return;
     }
 
-    // Variable
-    if kind == hVar {
-        if node.intValue != 0 {
-            StringBuilder_Append(&cbe.sb, "/* hVar tk=");
-            StringBuilder_AppendInt(&cbe.sb, node.intValue);
-            StringBuilder_Append(&cbe.sb, " */");
-        }
-        StringBuilder_Append(&cbe.sb, node.strValue);
-        return;
+    func CBE_GetAutoDropVarName(node: *HirNode) -> String {
+        if node == null as *HirNode { return ""; }
+        // node is the inner expression stored by CBE_PushDefer (hCall for auto-drop)
+        let callNode: *HirNode = node;
+        if callNode.kind != hCall { return ""; }
+        let addrNode: *HirNode = callNode.child1;
+        if addrNode == null as *HirNode { return ""; }
+        if addrNode.kind != hUnary { return ""; }
+        if addrNode.intValue != tkAmp { return ""; }
+        let varNode: *HirNode = addrNode.child1;
+        if varNode == null as *HirNode { return ""; }
+        if varNode.kind != hVar { return ""; }
+        return varNode.strValue;
     }
 
-    // Binary
-    if kind == hBinary {
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, " ");
-        StringBuilder_Append(&cbe.sb, CBackend_OpToC(node.intValue));
-        StringBuilder_Append(&cbe.sb, " ");
-        CBE_EmitExpr(cbe, node.child2);
-        return;
+    // Emit one defer slot (shared by full-stack and scope-pop emitters).
+    func CBE_EmitOneDefer(cbe: *CEmitter, i: int) {
+        var dn: *HirNode = null as *HirNode;
+        if i == 0 { dn = cbe.defer0; }
+        if i == 1 { dn = cbe.defer1; }
+        if i == 2 { dn = cbe.defer2; }
+        if i == 3 { dn = cbe.defer3; }
+        if i == 4 { dn = cbe.defer4; }
+        if i == 5 { dn = cbe.defer5; }
+        if i == 6 { dn = cbe.defer6; }
+        if i == 7 { dn = cbe.defer7; }
+        // Skip auto-drop for moved variables
+        let deferVarName: String = CBE_GetAutoDropVarName(dn);
+        if !String_Eq(deferVarName, "") && CBE_IsMoved(cbe, deferVarName) {
+            return;
+        }
+        StringBuilder_Append(&cbe.sb, "\n");
+        var sp: int = 0;
+        while sp < cbe.indent {
+            StringBuilder_Append(&cbe.sb, "    ");
+            sp = sp + 1;
+        }
+        CBE_EmitExpr(cbe, dn);
+        StringBuilder_Append(&cbe.sb, ";");
     }
 
-    // Unary
-    if kind == hUnary {
-        StringBuilder_Append(&cbe.sb, CBackend_OpToC(node.intValue));
-        CBE_EmitExpr(cbe, node.child1);
-        return;
+    // Emit all active defers (LIFO) without clearing the stack.
+    // Must NOT clear: multiple return paths each need the full defer list.
+    // (Clearing caused Early(flag) { if (0) return; return 1 } to drop only on first exit.)
+    // Stack is reset at the start of each function emission.
+    func CBE_EmitDefers(cbe: *CEmitter) -> int {
+        if cbe.deferCount == 0 { return 0; }
+        var i: int = cbe.deferCount - 1;
+        while i >= 0 {
+            CBE_EmitOneDefer(cbe, i);
+            i = i - 1;
+        }
+        return 1;
     }
 
-    // Call
-    if kind == hCall {
-        StringBuilder_Append(&cbe.sb, node.strValue);
-        StringBuilder_Append(&cbe.sb, "(");
-        var needsComma: bool = false;
-        if node.child1 != null as *HirNode {
-            CBE_EmitExpr(cbe, node.child1);
-            needsComma = true;
+    // Emit branch/loop-local defers (indices fromIdx..count-1) then pop them.
+    // Outer defers stay live so sibling branches and later returns still drop correctly.
+    func CBE_EmitAndPopDefersFrom(cbe: *CEmitter, fromIdx: int) -> int {
+        if cbe.deferCount <= fromIdx { return 0; }
+        var i: int = cbe.deferCount - 1;
+        while i >= fromIdx {
+            CBE_EmitOneDefer(cbe, i);
+            i = i - 1;
         }
-        if node.child2 != null as *HirNode {
-            if needsComma {
-                StringBuilder_Append(&cbe.sb, ", ");
-            }
-            CBE_EmitExpr(cbe, node.child2);
-            needsComma = true;
-        }
-        // Emit extra args from linked list
-        var ai: int = 0;
-        var curExtra: *HirArgList = node.extraData as *HirArgList;
-        while ai < node.extraCount {
-            if needsComma {
-                StringBuilder_Append(&cbe.sb, ", ");
-            }
-            CBE_EmitExpr(cbe, curExtra.node);
-            needsComma = true;
-            curExtra = curExtra.next;
-            ai = ai + 1;
-        }
-        StringBuilder_Append(&cbe.sb, ")");
-        return;
+        cbe.deferCount = fromIdx;
+        return 1;
     }
 
-    // Indirect call through fat function pointer: f.code(f.env, args...)
-    if kind == hCallIndirect {
-        StringBuilder_Append(&cbe.sb, "(");
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ".code)(");
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ".env");
-        if node.child2 != null as *HirNode {
-            StringBuilder_Append(&cbe.sb, ", ");
-            CBE_EmitExpr(cbe, node.child2);
+    func CBE_Emit(cbe: *CEmitter, text: String) {
+        var i: int = 0;
+        while i < cbe.indent {
+            StringBuilder_Append(&cbe.sb, "    ");
+            i = i + 1;
         }
-        if node.child3 != null as *HirNode {
-            StringBuilder_Append(&cbe.sb, ", ");
-            CBE_EmitExpr(cbe, node.child3);
-        }
-        // Emit extra args from linked list
-        var ai: int = 0;
-        var curExtra: *HirArgList = node.extraData as *HirArgList;
-        while ai < node.extraCount {
-            StringBuilder_Append(&cbe.sb, ", ");
-            CBE_EmitExpr(cbe, curExtra.node);
-            curExtra = curExtra.next;
-            ai = ai + 1;
-        }
-        StringBuilder_Append(&cbe.sb, ")");
-        return;
+        StringBuilder_Append(&cbe.sb, text);
     }
 
-    // spawn Callee(args)
-    if kind == hSpawn {
-        if node.boolValue {
-            // Async spawn: callee is an async function
-            StringBuilder_Append(&cbe.sb, "bux_async_spawn(");
-            StringBuilder_Append(&cbe.sb, node.strValue);
-            StringBuilder_Append(&cbe.sb, ")");
-        } else {
-            // Green-thread spawn: callee is a regular task function
-            StringBuilder_Append(&cbe.sb, "bux_task_spawn(");
-            StringBuilder_Append(&cbe.sb, node.strValue);
-            if node.child1 != null as *HirNode {
-                StringBuilder_Append(&cbe.sb, ", (void*)");
-                CBE_EmitExpr(cbe, node.child1);
+    // ---------------------------------------------------------------------------
+    // Emit HIR node
+    // ---------------------------------------------------------------------------
+
+    func CBE_EmitExpr(cbe: *CEmitter, node: *HirNode) {
+        if node == null as *HirNode { return; }
+        let kind: int = node.kind;
+
+        // Literal
+        if kind == hLit {
+            if node.intValue == tkNull {
+                StringBuilder_Append(&cbe.sb, "0");
             } else {
-                StringBuilder_Append(&cbe.sb, ", NULL");
+                let s: String = node.strValue;
+                let slen: int = String_Len(s) as int;
+                var start: int = 0;
+                var end: int = slen;
+                var isQuoted: bool = false;
+                var isBacktick: bool = false;
+                // If the literal is wrapped in quotes (from lexer), preserve outer quotes
+                // and only escape the inner content.
+                if slen >= 2 && s[0] == 34 as char8 && s[slen - 1] == 34 as char8 {
+                    isQuoted = true;
+                    start = 1;
+                    end = slen - 1;
+                }
+                // Backtick raw string: strip backticks, escape inner content for C
+                if slen >= 2 && s[0] == 96 as char8 && s[slen - 1] == 96 as char8 {
+                    isBacktick = true;
+                    start = 1;
+                    end = slen - 1;
+                }
+                if isQuoted || isBacktick {
+                    StringBuilder_Append(&cbe.sb, "\"");
+                }
+                var i: int = start;
+                while i < end {
+                    let c: int = s[i] as int;
+                    if c == 34 {
+                        StringBuilder_Append(&cbe.sb, "\\\"");
+                    } else if c == 92 {
+                        StringBuilder_Append(&cbe.sb, "\\\\");
+                    } else if c == 10 {
+                        StringBuilder_Append(&cbe.sb, "\\n");
+                    } else if c == 9 {
+                        StringBuilder_Append(&cbe.sb, "\\t");
+                    } else if c == 13 {
+                        StringBuilder_Append(&cbe.sb, "\\r");
+                    } else {
+                        StringBuilder_AppendChar(&cbe.sb, c as char8);
+                    }
+                    i = i + 1;
+                }
+                if isQuoted || isBacktick {
+                    StringBuilder_Append(&cbe.sb, "\"");
+                }
+            }
+            return;
+        }
+
+        // Variable
+        if kind == hVar {
+            if node.intValue != 0 {
+                StringBuilder_Append(&cbe.sb, "/* hVar tk=");
+                StringBuilder_AppendInt(&cbe.sb, node.intValue);
+                StringBuilder_Append(&cbe.sb, " */");
+            }
+            StringBuilder_Append(&cbe.sb, node.strValue);
+            return;
+        }
+
+        // Binary
+        if kind == hBinary {
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, CBackend_OpToC(node.intValue));
+            StringBuilder_Append(&cbe.sb, " ");
+            CBE_EmitExpr(cbe, node.child2);
+            return;
+        }
+
+        // Unary
+        if kind == hUnary {
+            StringBuilder_Append(&cbe.sb, CBackend_OpToC(node.intValue));
+            CBE_EmitExpr(cbe, node.child1);
+            return;
+        }
+
+        // Call
+        if kind == hCall {
+            StringBuilder_Append(&cbe.sb, node.strValue);
+            StringBuilder_Append(&cbe.sb, "(");
+            var needsComma: bool = false;
+            if node.child1 != null as *HirNode {
+                CBE_EmitExpr(cbe, node.child1);
+                needsComma = true;
+            }
+            if node.child2 != null as *HirNode {
+                if needsComma {
+                    StringBuilder_Append(&cbe.sb, ", ");
+                }
+                CBE_EmitExpr(cbe, node.child2);
+                needsComma = true;
+            }
+            // Emit extra args from linked list
+            var ai: int = 0;
+            var curExtra: *HirArgList = node.extraData as *HirArgList;
+            while ai < node.extraCount {
+                if needsComma {
+                    StringBuilder_Append(&cbe.sb, ", ");
+                }
+                CBE_EmitExpr(cbe, curExtra.node);
+                needsComma = true;
+                curExtra = curExtra.next;
+                ai = ai + 1;
             }
             StringBuilder_Append(&cbe.sb, ")");
+            return;
         }
-        return;
-    }
 
-    // await
-    if kind == hAwait {
-        StringBuilder_Append(&cbe.sb, "bux_async_await(");
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ")");
-        return;
-    }
-
-    // Defer
-    if kind == hDefer {
-        CBE_PushDefer(cbe, node.child1);
-        return;
-    }
-
-    // Return — evaluate value first, then drop live locals, then return.
-    // (Emitting Drop before the value used to use-after-drop on `return a.id`.)
-    if kind == hReturn {
-        // Track moved variables via return (skip auto-drop of moved-out locals)
-        if node.child1 != null as *HirNode && node.child1.kind == hVar {
-            CBE_AddMoved(cbe, node.child1.strValue);
-        }
-        if node.child1 != null as *HirNode && cbe.deferCount > 0 {
-            // Materialize into a temp so Drop cannot clobber the returned value.
-            // Prefer the enclosing function return type (field-access HIR often
-            // carries the base struct typeName, which is wrong for `return a.id`).
-            cbe.tmpCounter = cbe.tmpCounter + 1;
-            let tmpName: String = String_Concat("__retdrop_", String_FromInt(cbe.tmpCounter));
-            var retCt: String = "int";
-            if cbe.currentRetType != null as String && !String_Eq(cbe.currentRetType, "") && !String_Eq(cbe.currentRetType, "void") {
-                retCt = cbe.currentRetType;
-            } else if node.child1.typeKind != 0 {
-                retCt = CBackend_TypeToC(node.child1.typeKind);
-            }
-            StringBuilder_Append(&cbe.sb, CBE_CParamDecl(retCt, tmpName));
-            StringBuilder_Append(&cbe.sb, " = ");
+        // Indirect call through fat function pointer: f.code(f.env, args...)
+        if kind == hCallIndirect {
+            StringBuilder_Append(&cbe.sb, "(");
             CBE_EmitExpr(cbe, node.child1);
-            StringBuilder_Append(&cbe.sb, ";");
-            discard CBE_EmitDefers(cbe);
-            StringBuilder_Append(&cbe.sb, "\n");
+            StringBuilder_Append(&cbe.sb, ".code)(");
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, ".env");
+            if node.child2 != null as *HirNode {
+                StringBuilder_Append(&cbe.sb, ", ");
+                CBE_EmitExpr(cbe, node.child2);
+            }
+            if node.child3 != null as *HirNode {
+                StringBuilder_Append(&cbe.sb, ", ");
+                CBE_EmitExpr(cbe, node.child3);
+            }
+            // Emit extra args from linked list
+            var ai: int = 0;
+            var curExtra: *HirArgList = node.extraData as *HirArgList;
+            while ai < node.extraCount {
+                StringBuilder_Append(&cbe.sb, ", ");
+                CBE_EmitExpr(cbe, curExtra.node);
+                curExtra = curExtra.next;
+                ai = ai + 1;
+            }
+            StringBuilder_Append(&cbe.sb, ")");
+            return;
+        }
+
+        // spawn Callee(args)
+        if kind == hSpawn {
+            if node.boolValue {
+                // Async spawn: callee is an async function
+                StringBuilder_Append(&cbe.sb, "bux_async_spawn(");
+                StringBuilder_Append(&cbe.sb, node.strValue);
+                StringBuilder_Append(&cbe.sb, ")");
+            } else {
+                // Green-thread spawn: callee is a regular task function
+                StringBuilder_Append(&cbe.sb, "bux_task_spawn(");
+                StringBuilder_Append(&cbe.sb, node.strValue);
+                if node.child1 != null as *HirNode {
+                    StringBuilder_Append(&cbe.sb, ", (void*)");
+                    CBE_EmitExpr(cbe, node.child1);
+                } else {
+                    StringBuilder_Append(&cbe.sb, ", NULL");
+                }
+                StringBuilder_Append(&cbe.sb, ")");
+            }
+            return;
+        }
+
+        // await
+        if kind == hAwait {
+            StringBuilder_Append(&cbe.sb, "bux_async_await(");
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, ")");
+            return;
+        }
+
+        // Defer
+        if kind == hDefer {
+            CBE_PushDefer(cbe, node.child1);
+            return;
+        }
+
+        // Return — evaluate value first, then drop live locals, then return.
+        // (Emitting Drop before the value used to use-after-drop on `return a.id`.)
+        if kind == hReturn {
+            // Track moved variables via return (skip auto-drop of moved-out locals)
+            if node.child1 != null as *HirNode && node.child1.kind == hVar {
+                CBE_AddMoved(cbe, node.child1.strValue);
+            }
+            if node.child1 != null as *HirNode && cbe.deferCount > 0 {
+                // Materialize into a temp so Drop cannot clobber the returned value.
+                // Prefer the enclosing function return type (field-access HIR often
+                // carries the base struct typeName, which is wrong for `return a.id`).
+                cbe.tmpCounter = cbe.tmpCounter + 1;
+                let tmpName: String = String_Concat("__retdrop_", String_FromInt(cbe.tmpCounter));
+                var retCt: String = "int";
+                if cbe.currentRetType != null as String && !String_Eq(cbe.currentRetType, "") && !String_Eq(cbe.currentRetType, "void") {
+                    retCt = cbe.currentRetType;
+                } else if node.child1.typeKind != 0 {
+                    retCt = CBackend_TypeToC(node.child1.typeKind);
+                }
+                StringBuilder_Append(&cbe.sb, CBE_CParamDecl(retCt, tmpName));
+                StringBuilder_Append(&cbe.sb, " = ");
+                CBE_EmitExpr(cbe, node.child1);
+                StringBuilder_Append(&cbe.sb, ";");
+                discard CBE_EmitDefers(cbe);
+                StringBuilder_Append(&cbe.sb, "\n");
+                var sp: int = 0;
+                while sp < cbe.indent {
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    sp = sp + 1;
+                }
+                StringBuilder_Append(&cbe.sb, "return ");
+                StringBuilder_Append(&cbe.sb, tmpName);
+                return;
+            }
+            let hadDefers: int = CBE_EmitDefers(cbe);
+            if hadDefers != 0 {
+                StringBuilder_Append(&cbe.sb, "\n");
+                var sp2: int = 0;
+                while sp2 < cbe.indent {
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    sp2 = sp2 + 1;
+                }
+            }
+            StringBuilder_Append(&cbe.sb, "return");
+            if node.child1 != null as *HirNode {
+                StringBuilder_Append(&cbe.sb, " ");
+                CBE_EmitExpr(cbe, node.child1);
+            }
+            return;
+        }
+
+        // Alloca
+        if kind == hAlloca {
+            var ct: String = "int";
+            if !String_Eq(node.typeName, "") {
+                ct = node.typeName;
+            }
+            StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.strValue));
+            return;
+        }
+
+        // Store: combine alloca + value into single declaration
+        if kind == hStore {
+            // Track moved variables via assignment/let
+            if node.child2 != null as *HirNode && node.child2.kind == hVar {
+                CBE_AddMoved(cbe, node.child2.strValue);
+            }
+            // Reinitialization removes moved status
+            if node.child1 != null as *HirNode && node.child1.kind == hVar {
+                CBE_RemoveMoved(cbe, node.child1.strValue);
+            }
+            if node.child1 != null as *HirNode && node.child1.kind == hAlloca {
+                // Declaration with initializer: Type x = value;
+                var ct: String = CBackend_TypeToC(node.child1.intValue);
+                if !String_Eq(node.child1.typeName, "") {
+                    ct = node.child1.typeName;
+                }
+                StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.child1.strValue));
+                if node.child2 != null as *HirNode {
+                    StringBuilder_Append(&cbe.sb, " = ");
+                    CBE_EmitExpr(cbe, node.child2);
+                }
+                return;
+            }
+            // Plain assignment
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, " = ");
+            CBE_EmitExpr(cbe, node.child2);
+            return;
+        }
+
+        // If — each branch has its own defer scope (locals do not leak)
+        if kind == hIf {
+
+            StringBuilder_Append(&cbe.sb, "if (");
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, ") {\n");
+            if node.child2 != null as *HirNode {
+                let savedThen: int = cbe.deferCount;
+                cbe.indent = cbe.indent + 1;
+                CBE_EmitExpr(cbe, node.child2);
+                discard CBE_EmitAndPopDefersFrom(cbe, savedThen);
+                cbe.indent = cbe.indent - 1;
+            }
             var sp: int = 0;
             while sp < cbe.indent {
                 StringBuilder_Append(&cbe.sb, "    ");
                 sp = sp + 1;
             }
-            StringBuilder_Append(&cbe.sb, "return ");
-            StringBuilder_Append(&cbe.sb, tmpName);
+            StringBuilder_Append(&cbe.sb, "}");
+            let elseBlock: *HirNode = node.extraData as *HirNode;
+            if elseBlock != null as *HirNode {
+                StringBuilder_Append(&cbe.sb, " else {\n");
+                let savedElse: int = cbe.deferCount;
+                cbe.indent = cbe.indent + 1;
+                CBE_EmitExpr(cbe, elseBlock);
+                discard CBE_EmitAndPopDefersFrom(cbe, savedElse);
+                cbe.indent = cbe.indent - 1;
+                sp = 0;
+                while sp < cbe.indent {
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    sp = sp + 1;
+                }
+                StringBuilder_Append(&cbe.sb, "}\n");
+            } else {
+                StringBuilder_Append(&cbe.sb, "\n");
+            }
             return;
         }
-        let hadDefers: int = CBE_EmitDefers(cbe);
-        if hadDefers != 0 {
-            StringBuilder_Append(&cbe.sb, "\n");
-            var sp2: int = 0;
-            while sp2 < cbe.indent {
-                StringBuilder_Append(&cbe.sb, "    ");
-                sp2 = sp2 + 1;
-            }
-        }
-        StringBuilder_Append(&cbe.sb, "return");
-        if node.child1 != null as *HirNode {
-            StringBuilder_Append(&cbe.sb, " ");
+
+        // While — loop-body locals dropped each iteration
+        if kind == hWhile {
+            StringBuilder_Append(&cbe.sb, "while (");
             CBE_EmitExpr(cbe, node.child1);
-        }
-        return;
-    }
-
-    // Alloca
-    if kind == hAlloca {
-        var ct: String = "int";
-        if !String_Eq(node.typeName, "") {
-            ct = node.typeName;
-        }
-        StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.strValue));
-        return;
-    }
-
-    // Store: combine alloca + value into single declaration
-    if kind == hStore {
-        // Track moved variables via assignment/let
-        if node.child2 != null as *HirNode && node.child2.kind == hVar {
-            CBE_AddMoved(cbe, node.child2.strValue);
-        }
-        // Reinitialization removes moved status
-        if node.child1 != null as *HirNode && node.child1.kind == hVar {
-            CBE_RemoveMoved(cbe, node.child1.strValue);
-        }
-        if node.child1 != null as *HirNode && node.child1.kind == hAlloca {
-            // Declaration with initializer: Type x = value;
-            var ct: String = CBackend_TypeToC(node.child1.intValue);
-            if !String_Eq(node.child1.typeName, "") {
-                ct = node.child1.typeName;
-            }
-            StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.child1.strValue));
+            StringBuilder_Append(&cbe.sb, ") {\n");
             if node.child2 != null as *HirNode {
-                StringBuilder_Append(&cbe.sb, " = ");
+                let savedW: int = cbe.deferCount;
+                cbe.indent = cbe.indent + 1;
                 CBE_EmitExpr(cbe, node.child2);
+                discard CBE_EmitAndPopDefersFrom(cbe, savedW);
+                cbe.indent = cbe.indent - 1;
             }
-            return;
-        }
-        // Plain assignment
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, " = ");
-        CBE_EmitExpr(cbe, node.child2);
-        return;
-    }
-
-    // If — each branch has its own defer scope (locals do not leak)
-    if kind == hIf {
-
-        StringBuilder_Append(&cbe.sb, "if (");
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ") {\n");
-        if node.child2 != null as *HirNode {
-            let savedThen: int = cbe.deferCount;
-            cbe.indent = cbe.indent + 1;
-            CBE_EmitExpr(cbe, node.child2);
-            discard CBE_EmitAndPopDefersFrom(cbe, savedThen);
-            cbe.indent = cbe.indent - 1;
-        }
-        var sp: int = 0;
-        while sp < cbe.indent {
-            StringBuilder_Append(&cbe.sb, "    ");
-            sp = sp + 1;
-        }
-        StringBuilder_Append(&cbe.sb, "}");
-        let elseBlock: *HirNode = node.extraData as *HirNode;
-        if elseBlock != null as *HirNode {
-            StringBuilder_Append(&cbe.sb, " else {\n");
-            let savedElse: int = cbe.deferCount;
-            cbe.indent = cbe.indent + 1;
-            CBE_EmitExpr(cbe, elseBlock);
-            discard CBE_EmitAndPopDefersFrom(cbe, savedElse);
-            cbe.indent = cbe.indent - 1;
-            sp = 0;
+            var sp: int = 0;
             while sp < cbe.indent {
                 StringBuilder_Append(&cbe.sb, "    ");
                 sp = sp + 1;
             }
-            StringBuilder_Append(&cbe.sb, "}\n");
-        } else {
-            StringBuilder_Append(&cbe.sb, "\n");
+            StringBuilder_Append(&cbe.sb, "}");
+            return;
         }
-        return;
-    }
 
-    // While — loop-body locals dropped each iteration
-    if kind == hWhile {
-        StringBuilder_Append(&cbe.sb, "while (");
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ") {\n");
-        if node.child2 != null as *HirNode {
-            let savedW: int = cbe.deferCount;
-            cbe.indent = cbe.indent + 1;
-            CBE_EmitExpr(cbe, node.child2);
-            discard CBE_EmitAndPopDefersFrom(cbe, savedW);
-            cbe.indent = cbe.indent - 1;
+        // Loop (infinite)
+        if kind == hLoop {
+            StringBuilder_Append(&cbe.sb, "while (1) {\n");
+            if node.child1 != null as *HirNode {
+                let savedL: int = cbe.deferCount;
+                cbe.indent = cbe.indent + 1;
+                CBE_EmitExpr(cbe, node.child1);
+                discard CBE_EmitAndPopDefersFrom(cbe, savedL);
+                cbe.indent = cbe.indent - 1;
+            }
+            var sp: int = 0;
+            while sp < cbe.indent {
+                StringBuilder_Append(&cbe.sb, "    ");
+                sp = sp + 1;
+            }
+            StringBuilder_Append(&cbe.sb, "}");
+            return;
         }
-        var sp: int = 0;
-        while sp < cbe.indent {
-            StringBuilder_Append(&cbe.sb, "    ");
-            sp = sp + 1;
-        }
-        StringBuilder_Append(&cbe.sb, "}");
-        return;
-    }
 
-    // Loop (infinite)
-    if kind == hLoop {
-        StringBuilder_Append(&cbe.sb, "while (1) {\n");
-        if node.child1 != null as *HirNode {
-            let savedL: int = cbe.deferCount;
-            cbe.indent = cbe.indent + 1;
+        // Break / Continue
+        if kind == hBreak {
+            StringBuilder_Append(&cbe.sb, "break;");
+            return;
+        }
+        if kind == hContinue {
+            StringBuilder_Append(&cbe.sb, "continue;");
+            return;
+        }
+
+        // Field access: obj.field — use -> if base is a pointer
+        if kind == hFieldAccess {
             CBE_EmitExpr(cbe, node.child1);
-            discard CBE_EmitAndPopDefersFrom(cbe, savedL);
-            cbe.indent = cbe.indent - 1;
-        }
-        var sp: int = 0;
-        while sp < cbe.indent {
-            StringBuilder_Append(&cbe.sb, "    ");
-            sp = sp + 1;
-        }
-        StringBuilder_Append(&cbe.sb, "}");
-        return;
-    }
-
-    // Break / Continue
-    if kind == hBreak {
-        StringBuilder_Append(&cbe.sb, "break;");
-        return;
-    }
-    if kind == hContinue {
-        StringBuilder_Append(&cbe.sb, "continue;");
-        return;
-    }
-
-    // Field access: obj.field — use -> if base is a pointer
-    if kind == hFieldAccess {
-        CBE_EmitExpr(cbe, node.child1);
-        var isPtr: bool = false;
-        if node.child1 != null as *HirNode {
-            let childType: String = CBE_GetExprTypeName(cbe.mod, node.child1);
-            if String_EndsWith(childType, "*") {
-                isPtr = true;
-            }
-            if node.child1.kind == hVar && node.child1.typeKind == tyPointer {
-                isPtr = true;
-            }
-        }
-        if isPtr {
-            StringBuilder_Append(&cbe.sb, "->");
-        } else {
-            StringBuilder_Append(&cbe.sb, ".");
-        }
-        StringBuilder_Append(&cbe.sb, node.strValue);
-        return;
-    }
-
-    // Field access: obj.field — use -> if base is pointer, else .
-    if kind == hFieldPtr {
-        CBE_EmitExpr(cbe, node.child1);
-        var isPtr: bool = false;
-        if node.child1 != null as *HirNode {
-            let childType: String = CBE_GetExprTypeName(cbe.mod, node.child1);
-            if String_EndsWith(childType, "*") {
-                isPtr = true;
-            }
-        }
-        if isPtr {
-            StringBuilder_Append(&cbe.sb, "->");
-        } else {
-            StringBuilder_Append(&cbe.sb, ".");
-        }
-        StringBuilder_Append(&cbe.sb, node.strValue);
-        return;
-    }
-
-    // Sizeof: sizeof(Type) — emit as sizeof(Type)
-    if kind == hSizeOf {
-        StringBuilder_Append(&cbe.sb, "sizeof(");
-        if !String_Eq(node.typeName, "") {
-            StringBuilder_Append(&cbe.sb, node.typeName);
-        } else {
-            StringBuilder_Append(&cbe.sb, "int");
-        }
-        StringBuilder_Append(&cbe.sb, ")");
-        return;
-    }
-
-    // Index: arr[idx] — emit as arr[idx]
-    // For Array/Iter desugar pattern (fieldPtr "data"), emit bounds-checked access
-    if kind == hIndexPtr {
-        var isArrayAccess: bool = false;
-        if node.child1 != null as *HirNode {
-            if node.child1.kind == hFieldPtr && String_Eq(node.child1.strValue, "data") {
-                isArrayAccess = true;
-            }
-        }
-        if isArrayAccess {
-            // self.data[i] is a raw pointer index; Bux source inserts
-            // bux_bounds_check explicitly where needed (Array_Get). Do NOT
-            // re-check against .len here — Push writes at index == len.
-            let base: *HirNode = node.child1.child1;
             var isPtr: bool = false;
-            if base != null as *HirNode {
-                let childType: String = CBE_GetExprTypeName(cbe.mod, base);
+            if node.child1 != null as *HirNode {
+                let childType: String = CBE_GetExprTypeName(cbe.mod, node.child1);
                 if String_EndsWith(childType, "*") {
                     isPtr = true;
                 }
-                if base.kind == hVar && base.typeKind == tyPointer {
+                if node.child1.kind == hVar && node.child1.typeKind == tyPointer {
                     isPtr = true;
                 }
             }
-            let sep: String = ".";
-            if isPtr { sep = "->"; }
-            CBE_EmitExpr(cbe, base);
-            StringBuilder_Append(&cbe.sb, sep);
-            StringBuilder_Append(&cbe.sb, "data[");
-            CBE_EmitExpr(cbe, node.child2);
-            StringBuilder_Append(&cbe.sb, "]");
-        } else {
-            CBE_EmitExpr(cbe, node.child1);
-            StringBuilder_Append(&cbe.sb, "[");
-            CBE_EmitExpr(cbe, node.child2);
-            StringBuilder_Append(&cbe.sb, "]");
+            if isPtr {
+                StringBuilder_Append(&cbe.sb, "->");
+            } else {
+                StringBuilder_Append(&cbe.sb, ".");
+            }
+            StringBuilder_Append(&cbe.sb, node.strValue);
+            return;
         }
-        return;
-    }
 
-    // Load: *ptr — emit as *ptr (dereference)
-    // Optimize common patterns to avoid & / * temporaries
-    if kind == hLoad {
-        if node.child1 != null as *HirNode {
-            let ptrNode: *HirNode = node.child1;
-            let ptrKind: int = ptrNode.kind;
-            // field access: load(field_ptr(base, field)) → base.field
-            if ptrKind == hFieldPtr {
-                CBE_EmitExpr(cbe, ptrNode.child1);
+        // Field access: obj.field — use -> if base is pointer, else .
+        if kind == hFieldPtr {
+            CBE_EmitExpr(cbe, node.child1);
+            var isPtr: bool = false;
+            if node.child1 != null as *HirNode {
+                let childType: String = CBE_GetExprTypeName(cbe.mod, node.child1);
+                if String_EndsWith(childType, "*") {
+                    isPtr = true;
+                }
+            }
+            if isPtr {
+                StringBuilder_Append(&cbe.sb, "->");
+            } else {
+                StringBuilder_Append(&cbe.sb, ".");
+            }
+            StringBuilder_Append(&cbe.sb, node.strValue);
+            return;
+        }
+
+        // Sizeof: sizeof(Type) — emit as sizeof(Type)
+        if kind == hSizeOf {
+            StringBuilder_Append(&cbe.sb, "sizeof(");
+            if !String_Eq(node.typeName, "") {
+                StringBuilder_Append(&cbe.sb, node.typeName);
+            } else {
+                StringBuilder_Append(&cbe.sb, "int");
+            }
+            StringBuilder_Append(&cbe.sb, ")");
+            return;
+        }
+
+        // Index: arr[idx] — emit as arr[idx]
+        // For Array/Iter desugar pattern (fieldPtr "data"), emit bounds-checked access
+        if kind == hIndexPtr {
+            var isArrayAccess: bool = false;
+            if node.child1 != null as *HirNode {
+                if node.child1.kind == hFieldPtr && String_Eq(node.child1.strValue, "data") {
+                    isArrayAccess = true;
+                }
+            }
+            if isArrayAccess {
+                // self.data[i] is a raw pointer index; Bux source inserts
+                // bux_bounds_check explicitly where needed (Array_Get). Do NOT
+                // re-check against .len here — Push writes at index == len.
+                let base: *HirNode = node.child1.child1;
                 var isPtr: bool = false;
-                if ptrNode.child1 != null as *HirNode {
-                    let childType: String = CBE_GetExprTypeName(cbe.mod, ptrNode.child1);
+                if base != null as *HirNode {
+                    let childType: String = CBE_GetExprTypeName(cbe.mod, base);
                     if String_EndsWith(childType, "*") {
                         isPtr = true;
                     }
-                }
-                if isPtr {
-                    StringBuilder_Append(&cbe.sb, "->");
-                } else {
-                    StringBuilder_Append(&cbe.sb, ".");
-                }
-                StringBuilder_Append(&cbe.sb, ptrNode.strValue);
-                return;
-            }
-            // arrow field: load(arrow_field(base, field)) → base->field
-            if ptrKind == hArrowField {
-                CBE_EmitExpr(cbe, ptrNode.child1);
-                StringBuilder_Append(&cbe.sb, "->");
-                StringBuilder_Append(&cbe.sb, ptrNode.strValue);
-                return;
-            }
-            // index: load(index_ptr(base, idx)) → base[idx]
-            // For Array<T> desugar pattern, emit bounds-checked access
-            if ptrKind == hIndexPtr {
-                var isArrayAccess: bool = false;
-                if ptrNode.child1 != null as *HirNode {
-                    if ptrNode.child1.kind == hFieldPtr && String_Eq(ptrNode.child1.strValue, "data") {
-                        isArrayAccess = true;
+                    if base.kind == hVar && base.typeKind == tyPointer {
+                        isPtr = true;
                     }
                 }
-                if isArrayAccess {
-                    CBE_EmitExpr(cbe, ptrNode.child1.child1);
-                    StringBuilder_Append(&cbe.sb, ".data[bux_index_check(");
-                    CBE_EmitExpr(cbe, ptrNode.child2);
-                    StringBuilder_Append(&cbe.sb, ", ");
-                    CBE_EmitExpr(cbe, ptrNode.child1.child1);
-                    StringBuilder_Append(&cbe.sb, ".len)]");
-                } else {
+                let sep: String = ".";
+                if isPtr { sep = "->"; }
+                CBE_EmitExpr(cbe, base);
+                StringBuilder_Append(&cbe.sb, sep);
+                StringBuilder_Append(&cbe.sb, "data[");
+                CBE_EmitExpr(cbe, node.child2);
+                StringBuilder_Append(&cbe.sb, "]");
+            } else {
+                CBE_EmitExpr(cbe, node.child1);
+                StringBuilder_Append(&cbe.sb, "[");
+                CBE_EmitExpr(cbe, node.child2);
+                StringBuilder_Append(&cbe.sb, "]");
+            }
+            return;
+        }
+
+        // Load: *ptr — emit as *ptr (dereference)
+        // Optimize common patterns to avoid & / * temporaries
+        if kind == hLoad {
+            if node.child1 != null as *HirNode {
+                let ptrNode: *HirNode = node.child1;
+                let ptrKind: int = ptrNode.kind;
+                // field access: load(field_ptr(base, field)) → base.field
+                if ptrKind == hFieldPtr {
                     CBE_EmitExpr(cbe, ptrNode.child1);
-                    StringBuilder_Append(&cbe.sb, "[");
-                    CBE_EmitExpr(cbe, ptrNode.child2);
-                    StringBuilder_Append(&cbe.sb, "]");
+                    var isPtr: bool = false;
+                    if ptrNode.child1 != null as *HirNode {
+                        let childType: String = CBE_GetExprTypeName(cbe.mod, ptrNode.child1);
+                        if String_EndsWith(childType, "*") {
+                            isPtr = true;
+                        }
+                    }
+                    if isPtr {
+                        StringBuilder_Append(&cbe.sb, "->");
+                    } else {
+                        StringBuilder_Append(&cbe.sb, ".");
+                    }
+                    StringBuilder_Append(&cbe.sb, ptrNode.strValue);
+                    return;
                 }
-                return;
+                // arrow field: load(arrow_field(base, field)) → base->field
+                if ptrKind == hArrowField {
+                    CBE_EmitExpr(cbe, ptrNode.child1);
+                    StringBuilder_Append(&cbe.sb, "->");
+                    StringBuilder_Append(&cbe.sb, ptrNode.strValue);
+                    return;
+                }
+                // index: load(index_ptr(base, idx)) → base[idx]
+                // For Array<T> desugar pattern, emit bounds-checked access
+                if ptrKind == hIndexPtr {
+                    var isArrayAccess: bool = false;
+                    if ptrNode.child1 != null as *HirNode {
+                        if ptrNode.child1.kind == hFieldPtr && String_Eq(ptrNode.child1.strValue, "data") {
+                            isArrayAccess = true;
+                        }
+                    }
+                    if isArrayAccess {
+                        CBE_EmitExpr(cbe, ptrNode.child1.child1);
+                        StringBuilder_Append(&cbe.sb, ".data[bux_index_check(");
+                        CBE_EmitExpr(cbe, ptrNode.child2);
+                        StringBuilder_Append(&cbe.sb, ", ");
+                        CBE_EmitExpr(cbe, ptrNode.child1.child1);
+                        StringBuilder_Append(&cbe.sb, ".len)]");
+                    } else {
+                        CBE_EmitExpr(cbe, ptrNode.child1);
+                        StringBuilder_Append(&cbe.sb, "[");
+                        CBE_EmitExpr(cbe, ptrNode.child2);
+                        StringBuilder_Append(&cbe.sb, "]");
+                    }
+                    return;
+                }
             }
+            StringBuilder_Append(&cbe.sb, "(*");
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, ")");
+            return;
         }
-        StringBuilder_Append(&cbe.sb, "(*");
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ")");
-        return;
-    }
 
-    // Assign: target = value
-    if kind == hAssign {
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, " = ");
-        CBE_EmitExpr(cbe, node.child2);
-        return;
-    }
-
-    // Cast
-    if kind == hCast {
-        StringBuilder_Append(&cbe.sb, "((");
-        if !String_Eq(node.typeName, "") {
-            StringBuilder_Append(&cbe.sb, node.typeName);
-        } else {
-            StringBuilder_Append(&cbe.sb, CBackend_TypeToC(node.typeKind));
-        }
-        StringBuilder_Append(&cbe.sb, ")");
-        CBE_EmitExpr(cbe, node.child1);
-        StringBuilder_Append(&cbe.sb, ")");
-        return;
-    }
-
-    // Struct init: ((TypeName){.field = value, ...})
-    if kind == hStructInit {
-        StringBuilder_Append(&cbe.sb, "((");
-        StringBuilder_Append(&cbe.sb, node.strValue);
-        StringBuilder_Append(&cbe.sb, "){");
-        // Emit fields (chained via child3)
-        var field: *HirNode = node.child1;
-        var first: bool = true;
-        while field != null as *HirNode {
-            if !first {
-                StringBuilder_Append(&cbe.sb, ", ");
-            }
-            StringBuilder_Append(&cbe.sb, ".");
-            StringBuilder_Append(&cbe.sb, field.strValue);
+        // Assign: target = value
+        if kind == hAssign {
+            CBE_EmitExpr(cbe, node.child1);
             StringBuilder_Append(&cbe.sb, " = ");
-            CBE_EmitExpr(cbe, field.child1);
-            first = false;
-            field = field.child3;
+            CBE_EmitExpr(cbe, node.child2);
+            return;
         }
-        StringBuilder_Append(&cbe.sb, "})");
-        return;
+
+        // Cast
+        if kind == hCast {
+            StringBuilder_Append(&cbe.sb, "((");
+            if !String_Eq(node.typeName, "") {
+                StringBuilder_Append(&cbe.sb, node.typeName);
+            } else {
+                StringBuilder_Append(&cbe.sb, CBackend_TypeToC(node.typeKind));
+            }
+            StringBuilder_Append(&cbe.sb, ")");
+            CBE_EmitExpr(cbe, node.child1);
+            StringBuilder_Append(&cbe.sb, ")");
+            return;
+        }
+
+        // Struct init: ((TypeName){.field = value, ...})
+        if kind == hStructInit {
+            StringBuilder_Append(&cbe.sb, "((");
+            StringBuilder_Append(&cbe.sb, node.strValue);
+            StringBuilder_Append(&cbe.sb, "){");
+            // Emit fields (chained via child3)
+            var field: *HirNode = node.child1;
+            var first: bool = true;
+            while field != null as *HirNode {
+                if !first {
+                    StringBuilder_Append(&cbe.sb, ", ");
+                }
+                StringBuilder_Append(&cbe.sb, ".");
+                StringBuilder_Append(&cbe.sb, field.strValue);
+                StringBuilder_Append(&cbe.sb, " = ");
+                CBE_EmitExpr(cbe, field.child1);
+                first = false;
+                field = field.child3;
+            }
+            StringBuilder_Append(&cbe.sb, "})");
+            return;
+        }
+
+        // Block — emit each statement via child3 linked list
+        if kind == hBlock {
+            var child: *HirNode = node.child1;
+            while child != null as *HirNode {
+                if child.kind == hDefer {
+                    CBE_EmitExpr(cbe, child);
+                    child = child.child3;
+                    continue;
+                }
+                // Indent
+                var sp: int = 0;
+                while sp < cbe.indent {
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    sp = sp + 1;
+                }
+                CBE_EmitExpr(cbe, child);
+                // Add semicolon for statements that need it
+                if child.kind != hBlock && child.kind != hIf && child.kind != hWhile && child.kind != hLoop && child.kind != hBreak && child.kind != hContinue {
+                    StringBuilder_Append(&cbe.sb, ";");
+                }
+                StringBuilder_Append(&cbe.sb, "\n");
+                child = child.child3;
+            }
+            return;
+        }
     }
 
-    // Block — emit each statement via child3 linked list
-    if kind == hBlock {
-        var child: *HirNode = node.child1;
-        while child != null as *HirNode {
-            if child.kind == hDefer {
-                CBE_EmitExpr(cbe, child);
-                child = child.child3;
+    // ---------------------------------------------------------------------------
+    // Emit function declaration
+    // ---------------------------------------------------------------------------
+
+    // Infer C type for a BuxFn mangled part (int, cstr, uint, void, ...)
+    func CBE_FatPartToC(part: String) -> String {
+        if String_Eq(part, "cstr") { return "const char*"; }
+        if String_Eq(part, "void") { return "void"; }
+        if String_Eq(part, "bool") { return "bool"; }
+        if String_Eq(part, "uint") { return "unsigned int"; }
+        if String_Eq(part, "float") { return "float"; }
+        if String_Eq(part, "double") || String_Eq(part, "float64") { return "double"; }
+        if String_EndsWith(part, "Ptr") {
+            let base: String = String_Slice(part, 0, String_Len(part) - 3);
+            return String_Concat(CBE_FatPartToC(base), "*");
+        }
+        return part; // int, etc.
+    }
+
+    // Emit typedefs for common BuxFn_* shapes (fat function pointers)
+    func CBE_EmitFatFuncTypedefs(cbe: *CEmitter, mod: *HirModule) {
+        StringBuilder_Append(&cbe.sb, "/* Fat function pointer types (code + env) */\n");
+        // Always emit core shapes
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int_int");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_bool_int");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_void_void");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_int_void");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_cstr_int");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_int_cstr");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_bool_cstr");
+        CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int_cstr");
+        // Scan module for any other BuxFn_* names (deduped via #ifndef in EmitOne)
+        var i: int = 0;
+        while i < mod.funcCount {
+            CBE_MaybeEmitExtraFat(cbe, mod.funcs[i].retTypeName);
+            var p: int = 0;
+            while p < mod.funcs[i].paramCount {
+                var ptype: String = "";
+                if p == 0 { ptype = mod.funcs[i].param0.typeName; }
+                else if p == 1 { ptype = mod.funcs[i].param1.typeName; }
+                else if p == 2 { ptype = mod.funcs[i].param2.typeName; }
+                else if p == 3 { ptype = mod.funcs[i].param3.typeName; }
+                else if p == 4 { ptype = mod.funcs[i].param4.typeName; }
+                else if p == 5 { ptype = mod.funcs[i].param5.typeName; }
+                else if p == 6 { ptype = mod.funcs[i].param6.typeName; }
+                else if p == 7 { ptype = mod.funcs[i].param7.typeName; }
+                else if p == 8 { ptype = mod.funcs[i].param8.typeName; }
+                CBE_MaybeEmitExtraFat(cbe, ptype);
+                p = p + 1;
+            }
+            i = i + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "\n");
+    }
+
+    func CBE_MaybeEmitExtraFat(cbe: *CEmitter, name: String) {
+        if String_Eq(name, "") { return; }
+        if !String_StartsWith(name, "BuxFn_") { return; }
+        CBE_EmitOneFatTypedef(cbe, name);
+    }
+
+    func CBE_CollectBuxFn(names: *String, count: *int, name: String) {
+        if String_Eq(name, "") { return; }
+        if !String_StartsWith(name, "BuxFn_") { return; }
+        if *count >= 64 { return; }
+        var i: int = 0;
+        while i < *count {
+            if String_Eq(names[i], name) { return; }
+            i = i + 1;
+        }
+        names[*count] = name;
+        *count = *count + 1;
+    }
+
+    // BuxFn_ret_p0_p1 → typedef with code pointer
+    func CBE_EmitOneFatTypedef(cbe: *CEmitter, fatName: String) {
+        // Split fatName after "BuxFn_" into parts by '_'
+        let prefixLen: uint = 6; // "BuxFn_"
+        let rest: String = String_Slice(fatName, prefixLen, String_Len(fatName) - prefixLen);
+        // Parse parts: first = ret, rest = params (use simple split)
+        let partCount: uint = String_SplitCount(rest, "_");
+        if partCount == 0 { return; }
+        let retPart: String = String_SplitPart(rest, "_", 0);
+        let retC: String = CBE_FatPartToC(retPart);
+
+        // Guard against redefinition if the same name is emitted twice
+        StringBuilder_Append(&cbe.sb, "#ifndef ");
+        StringBuilder_Append(&cbe.sb, fatName);
+        StringBuilder_Append(&cbe.sb, "_DEFINED\n#define ");
+        StringBuilder_Append(&cbe.sb, fatName);
+        StringBuilder_Append(&cbe.sb, "_DEFINED\n");
+
+        StringBuilder_Append(&cbe.sb, "typedef struct ");
+        StringBuilder_Append(&cbe.sb, fatName);
+        StringBuilder_Append(&cbe.sb, " {\n    ");
+        // code field: ret (*code)(void* env, params...)
+        StringBuilder_Append(&cbe.sb, retC);
+        StringBuilder_Append(&cbe.sb, " (*code)(void* env");
+        var pi: uint = 1;
+        while pi < partCount {
+            let pPart: String = String_SplitPart(rest, "_", pi);
+            if !(pi == 1 && String_Eq(pPart, "void") && partCount == 2) {
+                StringBuilder_Append(&cbe.sb, ", ");
+                StringBuilder_Append(&cbe.sb, CBE_FatPartToC(pPart));
+            }
+            pi = pi + 1;
+        }
+        StringBuilder_Append(&cbe.sb, ");\n    void* env;\n} ");
+        StringBuilder_Append(&cbe.sb, fatName);
+        StringBuilder_Append(&cbe.sb, ";\n#endif\n");
+    }
+
+    func CBE_EmitMakerDecl(cbe: *CEmitter, f: *HirFunc) {
+        // Infer fat type from thunk: skip __env, use user params + ret
+        var fatName: String = "BuxFn_";
+        var retC: String = f.retTypeName;
+        if String_Eq(retC, "") { retC = "int"; }
+        fatName = String_Concat(fatName, Lcx_SanitizeFatPart(retC));
+        var pi: int = 1; // skip __env
+        while pi < f.paramCount {
+            var ptype: String = "int";
+            if pi == 1 { ptype = f.param1.typeName; }
+            else if pi == 2 { ptype = f.param2.typeName; }
+            else if pi == 3 { ptype = f.param3.typeName; }
+            else if pi == 4 { ptype = f.param4.typeName; }
+            else if pi == 5 { ptype = f.param5.typeName; }
+            else if pi == 6 { ptype = f.param6.typeName; }
+            else if pi == 7 { ptype = f.param7.typeName; }
+            else if pi == 8 { ptype = f.param8.typeName; }
+            if String_Eq(ptype, "") { ptype = "int"; }
+            fatName = String_Concat(fatName, "_");
+            fatName = String_Concat(fatName, Lcx_SanitizeFatPart(ptype));
+            pi = pi + 1;
+        }
+        if f.paramCount <= 1 {
+            fatName = String_Concat(fatName, "_void");
+        }
+        StringBuilder_Append(&cbe.sb, fatName);
+        StringBuilder_Append(&cbe.sb, " __make_");
+        StringBuilder_Append(&cbe.sb, f.name);
+        StringBuilder_Append(&cbe.sb, "(");
+        var ci: int = 0;
+        while ci < f.captureCount {
+            if ci > 0 { StringBuilder_Append(&cbe.sb, ", "); }
+            var capType: String = "int";
+            var capName: String = "c";
+            if ci == 0 { capName = f.captureName0; capType = CBackend_TypeToC(f.captureType0); }
+            else if ci == 1 { capName = f.captureName1; capType = CBackend_TypeToC(f.captureType1); }
+            else if ci == 2 { capName = f.captureName2; capType = CBackend_TypeToC(f.captureType2); }
+            else if ci == 3 { capName = f.captureName3; capType = CBackend_TypeToC(f.captureType3); }
+            else if ci == 4 { capName = f.captureName4; capType = CBackend_TypeToC(f.captureType4); }
+            else if ci == 5 { capName = f.captureName5; capType = CBackend_TypeToC(f.captureType5); }
+            else if ci == 6 { capName = f.captureName6; capType = CBackend_TypeToC(f.captureType6); }
+            else if ci == 7 { capName = f.captureName7; capType = CBackend_TypeToC(f.captureType7); }
+            StringBuilder_Append(&cbe.sb, capType);
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, capName);
+            ci = ci + 1;
+        }
+        StringBuilder_Append(&cbe.sb, ")");
+    }
+
+    func CBE_EmitMakerFunc(cbe: *CEmitter, f: *HirFunc) {
+        CBE_EmitMakerDecl(cbe, f);
+        StringBuilder_Append(&cbe.sb, " {\n");
+        StringBuilder_Append(&cbe.sb, "    ");
+        StringBuilder_Append(&cbe.sb, f.envStructName);
+        StringBuilder_Append(&cbe.sb, "* __e = (");
+        StringBuilder_Append(&cbe.sb, f.envStructName);
+        StringBuilder_Append(&cbe.sb, "*)bux_alloc(sizeof(");
+        StringBuilder_Append(&cbe.sb, f.envStructName);
+        StringBuilder_Append(&cbe.sb, "));\n");
+        var ci: int = 0;
+        while ci < f.captureCount {
+            var capName: String = "";
+            if ci == 0 { capName = f.captureName0; }
+            else if ci == 1 { capName = f.captureName1; }
+            else if ci == 2 { capName = f.captureName2; }
+            else if ci == 3 { capName = f.captureName3; }
+            else if ci == 4 { capName = f.captureName4; }
+            else if ci == 5 { capName = f.captureName5; }
+            else if ci == 6 { capName = f.captureName6; }
+            else if ci == 7 { capName = f.captureName7; }
+            StringBuilder_Append(&cbe.sb, "    __e->");
+            StringBuilder_Append(&cbe.sb, capName);
+            StringBuilder_Append(&cbe.sb, " = ");
+            StringBuilder_Append(&cbe.sb, capName);
+            StringBuilder_Append(&cbe.sb, ";\n");
+            ci = ci + 1;
+        }
+        // Build fat return type name same as decl
+        var fatName: String = "BuxFn_";
+        var retC: String = f.retTypeName;
+        if String_Eq(retC, "") { retC = "int"; }
+        fatName = String_Concat(fatName, Lcx_SanitizeFatPart(retC));
+        var pi: int = 1;
+        while pi < f.paramCount {
+            var ptype: String = "int";
+            if pi == 1 { ptype = f.param1.typeName; }
+            else if pi == 2 { ptype = f.param2.typeName; }
+            else if pi == 3 { ptype = f.param3.typeName; }
+            else if pi == 4 { ptype = f.param4.typeName; }
+            else if pi == 5 { ptype = f.param5.typeName; }
+            else if pi == 6 { ptype = f.param6.typeName; }
+            else if pi == 7 { ptype = f.param7.typeName; }
+            else if pi == 8 { ptype = f.param8.typeName; }
+            if String_Eq(ptype, "") { ptype = "int"; }
+            fatName = String_Concat(fatName, "_");
+            fatName = String_Concat(fatName, Lcx_SanitizeFatPart(ptype));
+            pi = pi + 1;
+        }
+        if f.paramCount <= 1 {
+            fatName = String_Concat(fatName, "_void");
+        }
+        StringBuilder_Append(&cbe.sb, "    return (");
+        StringBuilder_Append(&cbe.sb, fatName);
+        StringBuilder_Append(&cbe.sb, "){ .code = ");
+        StringBuilder_Append(&cbe.sb, f.name);
+        StringBuilder_Append(&cbe.sb, ", .env = __e };\n}\n\n");
+    }
+
+    // Emit adapters for any non-closure function (used when taken as value)
+    func CBE_EmitAllAdapters(cbe: *CEmitter, mod: *HirModule) {
+        StringBuilder_Append(&cbe.sb, "/* Fat-func adapters for named functions */\n");
+        var i: int = 0;
+        while i < mod.funcCount {
+            let fname: String = mod.funcs[i].name;
+            // Skip closures, makers, adapters themselves
+            if String_StartsWith(fname, "__closure_") || String_StartsWith(fname, "__make_") || String_StartsWith(fname, "__adapt_") {
+                i = i + 1;
                 continue;
             }
-            // Indent
-            var sp: int = 0;
-            while sp < cbe.indent {
+            if CBE_FuncHasGeneric(&mod.funcs[i]) {
+                i = i + 1;
+                continue;
+            }
+            // Only emit adapter if function has body
+            if mod.funcs[i].body == null as *HirNode {
+                i = i + 1;
+                continue;
+            }
+            // Adapter signature: ret __adapt_F(void* env, params...) { return F(params); }
+            var retC: String = mod.funcs[i].retTypeName;
+            if String_Eq(retC, "") { retC = "void"; }
+            StringBuilder_Append(&cbe.sb, "static ");
+            StringBuilder_Append(&cbe.sb, retC);
+            StringBuilder_Append(&cbe.sb, " __adapt_");
+            StringBuilder_Append(&cbe.sb, fname);
+            StringBuilder_Append(&cbe.sb, "(void* env");
+            var p: int = 0;
+            while p < mod.funcs[i].paramCount {
+                // Skip if first param is already __env (shouldn't for named funcs)
+                var pname: String = "";
+                var ptype: String = "int";
+                if p == 0 { pname = mod.funcs[i].param0.name; ptype = mod.funcs[i].param0.typeName; }
+                else if p == 1 { pname = mod.funcs[i].param1.name; ptype = mod.funcs[i].param1.typeName; }
+                else if p == 2 { pname = mod.funcs[i].param2.name; ptype = mod.funcs[i].param2.typeName; }
+                else if p == 3 { pname = mod.funcs[i].param3.name; ptype = mod.funcs[i].param3.typeName; }
+                else if p == 4 { pname = mod.funcs[i].param4.name; ptype = mod.funcs[i].param4.typeName; }
+                else if p == 5 { pname = mod.funcs[i].param5.name; ptype = mod.funcs[i].param5.typeName; }
+                else if p == 6 { pname = mod.funcs[i].param6.name; ptype = mod.funcs[i].param6.typeName; }
+                else if p == 7 { pname = mod.funcs[i].param7.name; ptype = mod.funcs[i].param7.typeName; }
+                else if p == 8 { pname = mod.funcs[i].param8.name; ptype = mod.funcs[i].param8.typeName; }
+                if String_Eq(ptype, "") { ptype = "int"; }
+                StringBuilder_Append(&cbe.sb, ", ");
+                StringBuilder_Append(&cbe.sb, ptype);
+                StringBuilder_Append(&cbe.sb, " ");
+                StringBuilder_Append(&cbe.sb, pname);
+                p = p + 1;
+            }
+            StringBuilder_Append(&cbe.sb, ") {\n    (void)env;\n");
+            if String_Eq(retC, "void") {
                 StringBuilder_Append(&cbe.sb, "    ");
-                sp = sp + 1;
+                StringBuilder_Append(&cbe.sb, fname);
+                StringBuilder_Append(&cbe.sb, "(");
+            } else {
+                StringBuilder_Append(&cbe.sb, "    return ");
+                StringBuilder_Append(&cbe.sb, fname);
+                StringBuilder_Append(&cbe.sb, "(");
             }
-            CBE_EmitExpr(cbe, child);
-            // Add semicolon for statements that need it
-            if child.kind != hBlock && child.kind != hIf && child.kind != hWhile && child.kind != hLoop && child.kind != hBreak && child.kind != hContinue {
-                StringBuilder_Append(&cbe.sb, ";");
+            p = 0;
+            while p < mod.funcs[i].paramCount {
+                if p > 0 { StringBuilder_Append(&cbe.sb, ", "); }
+                var pname: String = "";
+                if p == 0 { pname = mod.funcs[i].param0.name; }
+                else if p == 1 { pname = mod.funcs[i].param1.name; }
+                else if p == 2 { pname = mod.funcs[i].param2.name; }
+                else if p == 3 { pname = mod.funcs[i].param3.name; }
+                else if p == 4 { pname = mod.funcs[i].param4.name; }
+                else if p == 5 { pname = mod.funcs[i].param5.name; }
+                else if p == 6 { pname = mod.funcs[i].param6.name; }
+                else if p == 7 { pname = mod.funcs[i].param7.name; }
+                else if p == 8 { pname = mod.funcs[i].param8.name; }
+                StringBuilder_Append(&cbe.sb, pname);
+                p = p + 1;
             }
-            StringBuilder_Append(&cbe.sb, "\n");
-            child = child.child3;
-        }
-        return;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Emit function declaration
-// ---------------------------------------------------------------------------
-
-// Infer C type for a BuxFn mangled part (int, cstr, uint, void, ...)
-func CBE_FatPartToC(part: String) -> String {
-    if String_Eq(part, "cstr") { return "const char*"; }
-    if String_Eq(part, "void") { return "void"; }
-    if String_Eq(part, "bool") { return "bool"; }
-    if String_Eq(part, "uint") { return "unsigned int"; }
-    if String_Eq(part, "float") { return "float"; }
-    if String_Eq(part, "double") || String_Eq(part, "float64") { return "double"; }
-    if String_EndsWith(part, "Ptr") {
-        let base: String = String_Slice(part, 0, String_Len(part) - 3);
-        return String_Concat(CBE_FatPartToC(base), "*");
-    }
-    return part; // int, etc.
-}
-
-// Emit typedefs for common BuxFn_* shapes (fat function pointers)
-func CBE_EmitFatFuncTypedefs(cbe: *CEmitter, mod: *HirModule) {
-    StringBuilder_Append(&cbe.sb, "/* Fat function pointer types (code + env) */\n");
-    // Always emit core shapes
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int_int");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_bool_int");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_void_void");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_void");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_cstr_int");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_cstr");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_bool_cstr");
-    CBE_EmitOneFatTypedef(cbe, "BuxFn_int_int_cstr");
-    // Scan module for any other BuxFn_* names (deduped via #ifndef in EmitOne)
-    var i: int = 0;
-    while i < mod.funcCount {
-        CBE_MaybeEmitExtraFat(cbe, mod.funcs[i].retTypeName);
-        var p: int = 0;
-        while p < mod.funcs[i].paramCount {
-            var ptype: String = "";
-            if p == 0 { ptype = mod.funcs[i].param0.typeName; }
-            else if p == 1 { ptype = mod.funcs[i].param1.typeName; }
-            else if p == 2 { ptype = mod.funcs[i].param2.typeName; }
-            else if p == 3 { ptype = mod.funcs[i].param3.typeName; }
-            else if p == 4 { ptype = mod.funcs[i].param4.typeName; }
-            else if p == 5 { ptype = mod.funcs[i].param5.typeName; }
-            else if p == 6 { ptype = mod.funcs[i].param6.typeName; }
-            else if p == 7 { ptype = mod.funcs[i].param7.typeName; }
-            else if p == 8 { ptype = mod.funcs[i].param8.typeName; }
-            CBE_MaybeEmitExtraFat(cbe, ptype);
-            p = p + 1;
-        }
-        i = i + 1;
-    }
-    StringBuilder_Append(&cbe.sb, "\n");
-}
-
-func CBE_MaybeEmitExtraFat(cbe: *CEmitter, name: String) {
-    if String_Eq(name, "") { return; }
-    if !String_StartsWith(name, "BuxFn_") { return; }
-    CBE_EmitOneFatTypedef(cbe, name);
-}
-
-func CBE_CollectBuxFn(names: *String, count: *int, name: String) {
-    if String_Eq(name, "") { return; }
-    if !String_StartsWith(name, "BuxFn_") { return; }
-    if *count >= 64 { return; }
-    var i: int = 0;
-    while i < *count {
-        if String_Eq(names[i], name) { return; }
-        i = i + 1;
-    }
-    names[*count] = name;
-    *count = *count + 1;
-}
-
-// BuxFn_ret_p0_p1 → typedef with code pointer
-func CBE_EmitOneFatTypedef(cbe: *CEmitter, fatName: String) {
-    // Split fatName after "BuxFn_" into parts by '_'
-    let prefixLen: uint = 6; // "BuxFn_"
-    let rest: String = String_Slice(fatName, prefixLen, String_Len(fatName) - prefixLen);
-    // Parse parts: first = ret, rest = params (use simple split)
-    let partCount: uint = String_SplitCount(rest, "_");
-    if partCount == 0 { return; }
-    let retPart: String = String_SplitPart(rest, "_", 0);
-    let retC: String = CBE_FatPartToC(retPart);
-
-    // Guard against redefinition if the same name is emitted twice
-    StringBuilder_Append(&cbe.sb, "#ifndef ");
-    StringBuilder_Append(&cbe.sb, fatName);
-    StringBuilder_Append(&cbe.sb, "_DEFINED\n#define ");
-    StringBuilder_Append(&cbe.sb, fatName);
-    StringBuilder_Append(&cbe.sb, "_DEFINED\n");
-
-    StringBuilder_Append(&cbe.sb, "typedef struct ");
-    StringBuilder_Append(&cbe.sb, fatName);
-    StringBuilder_Append(&cbe.sb, " {\n    ");
-    // code field: ret (*code)(void* env, params...)
-    StringBuilder_Append(&cbe.sb, retC);
-    StringBuilder_Append(&cbe.sb, " (*code)(void* env");
-    var pi: uint = 1;
-    while pi < partCount {
-        let pPart: String = String_SplitPart(rest, "_", pi);
-        if !(pi == 1 && String_Eq(pPart, "void") && partCount == 2) {
-            StringBuilder_Append(&cbe.sb, ", ");
-            StringBuilder_Append(&cbe.sb, CBE_FatPartToC(pPart));
-        }
-        pi = pi + 1;
-    }
-    StringBuilder_Append(&cbe.sb, ");\n    void* env;\n} ");
-    StringBuilder_Append(&cbe.sb, fatName);
-    StringBuilder_Append(&cbe.sb, ";\n#endif\n");
-}
-
-func CBE_EmitMakerDecl(cbe: *CEmitter, f: *HirFunc) {
-    // Infer fat type from thunk: skip __env, use user params + ret
-    var fatName: String = "BuxFn_";
-    var retC: String = f.retTypeName;
-    if String_Eq(retC, "") { retC = "int"; }
-    fatName = String_Concat(fatName, Lcx_SanitizeFatPart(retC));
-    var pi: int = 1; // skip __env
-    while pi < f.paramCount {
-        var ptype: String = "int";
-        if pi == 1 { ptype = f.param1.typeName; }
-        else if pi == 2 { ptype = f.param2.typeName; }
-        else if pi == 3 { ptype = f.param3.typeName; }
-        else if pi == 4 { ptype = f.param4.typeName; }
-        else if pi == 5 { ptype = f.param5.typeName; }
-        else if pi == 6 { ptype = f.param6.typeName; }
-        else if pi == 7 { ptype = f.param7.typeName; }
-        else if pi == 8 { ptype = f.param8.typeName; }
-        if String_Eq(ptype, "") { ptype = "int"; }
-        fatName = String_Concat(fatName, "_");
-        fatName = String_Concat(fatName, Lcx_SanitizeFatPart(ptype));
-        pi = pi + 1;
-    }
-    if f.paramCount <= 1 {
-        fatName = String_Concat(fatName, "_void");
-    }
-    StringBuilder_Append(&cbe.sb, fatName);
-    StringBuilder_Append(&cbe.sb, " __make_");
-    StringBuilder_Append(&cbe.sb, f.name);
-    StringBuilder_Append(&cbe.sb, "(");
-    var ci: int = 0;
-    while ci < f.captureCount {
-        if ci > 0 { StringBuilder_Append(&cbe.sb, ", "); }
-        var capType: String = "int";
-        var capName: String = "c";
-        if ci == 0 { capName = f.captureName0; capType = CBackend_TypeToC(f.captureType0); }
-        else if ci == 1 { capName = f.captureName1; capType = CBackend_TypeToC(f.captureType1); }
-        else if ci == 2 { capName = f.captureName2; capType = CBackend_TypeToC(f.captureType2); }
-        else if ci == 3 { capName = f.captureName3; capType = CBackend_TypeToC(f.captureType3); }
-        else if ci == 4 { capName = f.captureName4; capType = CBackend_TypeToC(f.captureType4); }
-        else if ci == 5 { capName = f.captureName5; capType = CBackend_TypeToC(f.captureType5); }
-        else if ci == 6 { capName = f.captureName6; capType = CBackend_TypeToC(f.captureType6); }
-        else if ci == 7 { capName = f.captureName7; capType = CBackend_TypeToC(f.captureType7); }
-        StringBuilder_Append(&cbe.sb, capType);
-        StringBuilder_Append(&cbe.sb, " ");
-        StringBuilder_Append(&cbe.sb, capName);
-        ci = ci + 1;
-    }
-    StringBuilder_Append(&cbe.sb, ")");
-}
-
-func CBE_EmitMakerFunc(cbe: *CEmitter, f: *HirFunc) {
-    CBE_EmitMakerDecl(cbe, f);
-    StringBuilder_Append(&cbe.sb, " {\n");
-    StringBuilder_Append(&cbe.sb, "    ");
-    StringBuilder_Append(&cbe.sb, f.envStructName);
-    StringBuilder_Append(&cbe.sb, "* __e = (");
-    StringBuilder_Append(&cbe.sb, f.envStructName);
-    StringBuilder_Append(&cbe.sb, "*)bux_alloc(sizeof(");
-    StringBuilder_Append(&cbe.sb, f.envStructName);
-    StringBuilder_Append(&cbe.sb, "));\n");
-    var ci: int = 0;
-    while ci < f.captureCount {
-        var capName: String = "";
-        if ci == 0 { capName = f.captureName0; }
-        else if ci == 1 { capName = f.captureName1; }
-        else if ci == 2 { capName = f.captureName2; }
-        else if ci == 3 { capName = f.captureName3; }
-        else if ci == 4 { capName = f.captureName4; }
-        else if ci == 5 { capName = f.captureName5; }
-        else if ci == 6 { capName = f.captureName6; }
-        else if ci == 7 { capName = f.captureName7; }
-        StringBuilder_Append(&cbe.sb, "    __e->");
-        StringBuilder_Append(&cbe.sb, capName);
-        StringBuilder_Append(&cbe.sb, " = ");
-        StringBuilder_Append(&cbe.sb, capName);
-        StringBuilder_Append(&cbe.sb, ";\n");
-        ci = ci + 1;
-    }
-    // Build fat return type name same as decl
-    var fatName: String = "BuxFn_";
-    var retC: String = f.retTypeName;
-    if String_Eq(retC, "") { retC = "int"; }
-    fatName = String_Concat(fatName, Lcx_SanitizeFatPart(retC));
-    var pi: int = 1;
-    while pi < f.paramCount {
-        var ptype: String = "int";
-        if pi == 1 { ptype = f.param1.typeName; }
-        else if pi == 2 { ptype = f.param2.typeName; }
-        else if pi == 3 { ptype = f.param3.typeName; }
-        else if pi == 4 { ptype = f.param4.typeName; }
-        else if pi == 5 { ptype = f.param5.typeName; }
-        else if pi == 6 { ptype = f.param6.typeName; }
-        else if pi == 7 { ptype = f.param7.typeName; }
-        else if pi == 8 { ptype = f.param8.typeName; }
-        if String_Eq(ptype, "") { ptype = "int"; }
-        fatName = String_Concat(fatName, "_");
-        fatName = String_Concat(fatName, Lcx_SanitizeFatPart(ptype));
-        pi = pi + 1;
-    }
-    if f.paramCount <= 1 {
-        fatName = String_Concat(fatName, "_void");
-    }
-    StringBuilder_Append(&cbe.sb, "    return (");
-    StringBuilder_Append(&cbe.sb, fatName);
-    StringBuilder_Append(&cbe.sb, "){ .code = ");
-    StringBuilder_Append(&cbe.sb, f.name);
-    StringBuilder_Append(&cbe.sb, ", .env = __e };\n}\n\n");
-}
-
-// Emit adapters for any non-closure function (used when taken as value)
-func CBE_EmitAllAdapters(cbe: *CEmitter, mod: *HirModule) {
-    StringBuilder_Append(&cbe.sb, "/* Fat-func adapters for named functions */\n");
-    var i: int = 0;
-    while i < mod.funcCount {
-        let fname: String = mod.funcs[i].name;
-        // Skip closures, makers, adapters themselves
-        if String_StartsWith(fname, "__closure_") || String_StartsWith(fname, "__make_") || String_StartsWith(fname, "__adapt_") {
+            StringBuilder_Append(&cbe.sb, ");\n}\n\n");
             i = i + 1;
-            continue;
         }
-        if CBE_FuncHasGeneric(&mod.funcs[i]) {
-            i = i + 1;
-            continue;
-        }
-        // Only emit adapter if function has body
-        if mod.funcs[i].body == null as *HirNode {
-            i = i + 1;
-            continue;
-        }
-        // Adapter signature: ret __adapt_F(void* env, params...) { return F(params); }
-        var retC: String = mod.funcs[i].retTypeName;
-        if String_Eq(retC, "") { retC = "void"; }
-        StringBuilder_Append(&cbe.sb, "static ");
-        StringBuilder_Append(&cbe.sb, retC);
-        StringBuilder_Append(&cbe.sb, " __adapt_");
-        StringBuilder_Append(&cbe.sb, fname);
-        StringBuilder_Append(&cbe.sb, "(void* env");
-        var p: int = 0;
-        while p < mod.funcs[i].paramCount {
-            // Skip if first param is already __env (shouldn't for named funcs)
-            var pname: String = "";
-            var ptype: String = "int";
-            if p == 0 { pname = mod.funcs[i].param0.name; ptype = mod.funcs[i].param0.typeName; }
-            else if p == 1 { pname = mod.funcs[i].param1.name; ptype = mod.funcs[i].param1.typeName; }
-            else if p == 2 { pname = mod.funcs[i].param2.name; ptype = mod.funcs[i].param2.typeName; }
-            else if p == 3 { pname = mod.funcs[i].param3.name; ptype = mod.funcs[i].param3.typeName; }
-            else if p == 4 { pname = mod.funcs[i].param4.name; ptype = mod.funcs[i].param4.typeName; }
-            else if p == 5 { pname = mod.funcs[i].param5.name; ptype = mod.funcs[i].param5.typeName; }
-            else if p == 6 { pname = mod.funcs[i].param6.name; ptype = mod.funcs[i].param6.typeName; }
-            else if p == 7 { pname = mod.funcs[i].param7.name; ptype = mod.funcs[i].param7.typeName; }
-            else if p == 8 { pname = mod.funcs[i].param8.name; ptype = mod.funcs[i].param8.typeName; }
-            if String_Eq(ptype, "") { ptype = "int"; }
-            StringBuilder_Append(&cbe.sb, ", ");
-            StringBuilder_Append(&cbe.sb, ptype);
+    }
+
+    func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
+        // Return type
+        if String_Eq(f.retTypeName, "") || String_Eq(f.retTypeName, "void") {
+            StringBuilder_Append(&cbe.sb, "void ");
+        } else {
+            StringBuilder_Append(&cbe.sb, f.retTypeName);
             StringBuilder_Append(&cbe.sb, " ");
-            StringBuilder_Append(&cbe.sb, pname);
-            p = p + 1;
         }
-        StringBuilder_Append(&cbe.sb, ") {\n    (void)env;\n");
-        if String_Eq(retC, "void") {
-            StringBuilder_Append(&cbe.sb, "    ");
-            StringBuilder_Append(&cbe.sb, fname);
-            StringBuilder_Append(&cbe.sb, "(");
-        } else {
-            StringBuilder_Append(&cbe.sb, "    return ");
-            StringBuilder_Append(&cbe.sb, fname);
-            StringBuilder_Append(&cbe.sb, "(");
-        }
-        p = 0;
-        while p < mod.funcs[i].paramCount {
-            if p > 0 { StringBuilder_Append(&cbe.sb, ", "); }
+
+        StringBuilder_Append(&cbe.sb, f.name);
+        StringBuilder_Append(&cbe.sb, "(");
+
+        // Parameters
+        var i: int = 0;
+        while i < f.paramCount {
+            if i > 0 {
+                StringBuilder_Append(&cbe.sb, ", ");
+            }
+            // Use param type info
             var pname: String = "";
-            if p == 0 { pname = mod.funcs[i].param0.name; }
-            else if p == 1 { pname = mod.funcs[i].param1.name; }
-            else if p == 2 { pname = mod.funcs[i].param2.name; }
-            else if p == 3 { pname = mod.funcs[i].param3.name; }
-            else if p == 4 { pname = mod.funcs[i].param4.name; }
-            else if p == 5 { pname = mod.funcs[i].param5.name; }
-            else if p == 6 { pname = mod.funcs[i].param6.name; }
-            else if p == 7 { pname = mod.funcs[i].param7.name; }
-            else if p == 8 { pname = mod.funcs[i].param8.name; }
-            StringBuilder_Append(&cbe.sb, pname);
-            p = p + 1;
+            var ptype: String = "";
+            if i == 0 { pname = f.param0.name; ptype = f.param0.typeName; }
+            if i == 1 { pname = f.param1.name; ptype = f.param1.typeName; }
+            if i == 2 { pname = f.param2.name; ptype = f.param2.typeName; }
+            if i == 3 { pname = f.param3.name; ptype = f.param3.typeName; }
+            if i == 4 { pname = f.param4.name; ptype = f.param4.typeName; }
+            if i == 5 { pname = f.param5.name; ptype = f.param5.typeName; }
+            if i == 6 { pname = f.param6.name; ptype = f.param6.typeName; }
+            if i == 7 { pname = f.param7.name; ptype = f.param7.typeName; }
+            if i == 8 { pname = f.param8.name; ptype = f.param8.typeName; }
+            // Emit type + name
+            if String_Eq(ptype, "") {
+                ptype = "int";
+            }
+            StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ptype, pname));
+            i = i + 1;
         }
-        StringBuilder_Append(&cbe.sb, ");\n}\n\n");
-        i = i + 1;
-    }
-}
 
-func CBE_EmitFuncDecl(cbe: *CEmitter, f: *HirFunc) {
-    // Return type
-    if String_Eq(f.retTypeName, "") || String_Eq(f.retTypeName, "void") {
-        StringBuilder_Append(&cbe.sb, "void ");
-    } else {
-        StringBuilder_Append(&cbe.sb, f.retTypeName);
-        StringBuilder_Append(&cbe.sb, " ");
+        StringBuilder_Append(&cbe.sb, ")");
     }
 
-    StringBuilder_Append(&cbe.sb, f.name);
-    StringBuilder_Append(&cbe.sb, "(");
+    // ---------------------------------------------------------------------------
+    // Helpers for detecting generic declarations (not yet monomorphized)
+    // ---------------------------------------------------------------------------
 
-    // Parameters
-    var i: int = 0;
-    while i < f.paramCount {
-        if i > 0 {
-            StringBuilder_Append(&cbe.sb, ", ");
+    func CBE_IsGenericTypeName(name: String) -> bool {
+        if String_Eq(name, "T") || String_Eq(name, "K") || String_Eq(name, "V") { return true; }
+        if String_Eq(name, "T*") || String_Eq(name, "K*") || String_Eq(name, "V*") { return true; }
+        // Any type name containing '<' is a generic instantiation or parameter
+        if String_Contains(name, "<") { return true; }
+        // Generic container structs and their pointer variants
+        if String_Eq(name, "Array") || String_Eq(name, "Array*") { return true; }
+        if String_Eq(name, "Channel") || String_Eq(name, "Channel*") { return true; }
+        if String_Eq(name, "Iter") || String_Eq(name, "Iter*") { return true; }
+        if String_Eq(name, "Set") || String_Eq(name, "Set*") { return true; }
+        if String_Eq(name, "SetEntry") || String_Eq(name, "SetEntry*") { return true; }
+        if String_Eq(name, "Map") || String_Eq(name, "Map*") { return true; }
+        if String_Eq(name, "MapEntry") || String_Eq(name, "MapEntry*") { return true; }
+        if String_Eq(name, "StringMap") || String_Eq(name, "StringMap*") { return true; }
+        if String_Eq(name, "StringMapEntry") || String_Eq(name, "StringMapEntry*") { return true; }
+        if String_Eq(name, "Slice") || String_Eq(name, "Slice*") { return true; }
+        return false;
+    }
+
+    func CBE_StructHasGeneric(st: *HirStruct) -> bool {
+        var fi: int = 0;
+        while fi < st.fieldCount {
+            if CBE_IsGenericTypeName(st.fields[fi].typeName) { return true; }
+            fi = fi + 1;
         }
-        // Use param type info
-        var pname: String = "";
-        var ptype: String = "";
-        if i == 0 { pname = f.param0.name; ptype = f.param0.typeName; }
-        if i == 1 { pname = f.param1.name; ptype = f.param1.typeName; }
-        if i == 2 { pname = f.param2.name; ptype = f.param2.typeName; }
-        if i == 3 { pname = f.param3.name; ptype = f.param3.typeName; }
-        if i == 4 { pname = f.param4.name; ptype = f.param4.typeName; }
-        if i == 5 { pname = f.param5.name; ptype = f.param5.typeName; }
-        if i == 6 { pname = f.param6.name; ptype = f.param6.typeName; }
-        if i == 7 { pname = f.param7.name; ptype = f.param7.typeName; }
-        if i == 8 { pname = f.param8.name; ptype = f.param8.typeName; }
-        // Emit type + name
-        if String_Eq(ptype, "") {
-            ptype = "int";
+        return false;
+    }
+
+    func CBE_FuncHasGeneric(f: *HirFunc) -> bool {
+        var pi: int = 0;
+        while pi < f.paramCount {
+            var ptype: String = "";
+            if pi == 0 { ptype = f.param0.typeName; }
+            if pi == 1 { ptype = f.param1.typeName; }
+            if pi == 2 { ptype = f.param2.typeName; }
+            if pi == 3 { ptype = f.param3.typeName; }
+            if pi == 4 { ptype = f.param4.typeName; }
+            if pi == 5 { ptype = f.param5.typeName; }
+            if pi == 6 { ptype = f.param6.typeName; }
+            if pi == 7 { ptype = f.param7.typeName; }
+            if pi == 8 { ptype = f.param8.typeName; }
+            if CBE_IsGenericTypeName(ptype) { return true; }
+            pi = pi + 1;
         }
-        StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ptype, pname));
-        i = i + 1;
+        if CBE_IsGenericTypeName(f.retTypeName) { return true; }
+        return false;
     }
 
-    StringBuilder_Append(&cbe.sb, ")");
-}
-
-// ---------------------------------------------------------------------------
-// Helpers for detecting generic declarations (not yet monomorphized)
-// ---------------------------------------------------------------------------
-
-func CBE_IsGenericTypeName(name: String) -> bool {
-    if String_Eq(name, "T") || String_Eq(name, "K") || String_Eq(name, "V") { return true; }
-    if String_Eq(name, "T*") || String_Eq(name, "K*") || String_Eq(name, "V*") { return true; }
-    // Any type name containing '<' is a generic instantiation or parameter
-    if String_Contains(name, "<") { return true; }
-    // Generic container structs and their pointer variants
-    if String_Eq(name, "Array") || String_Eq(name, "Array*") { return true; }
-    if String_Eq(name, "Channel") || String_Eq(name, "Channel*") { return true; }
-    if String_Eq(name, "Iter") || String_Eq(name, "Iter*") { return true; }
-    if String_Eq(name, "Set") || String_Eq(name, "Set*") { return true; }
-    if String_Eq(name, "SetEntry") || String_Eq(name, "SetEntry*") { return true; }
-    if String_Eq(name, "Map") || String_Eq(name, "Map*") { return true; }
-    if String_Eq(name, "MapEntry") || String_Eq(name, "MapEntry*") { return true; }
-    if String_Eq(name, "StringMap") || String_Eq(name, "StringMap*") { return true; }
-    if String_Eq(name, "StringMapEntry") || String_Eq(name, "StringMapEntry*") { return true; }
-    if String_Eq(name, "Slice") || String_Eq(name, "Slice*") { return true; }
-    return false;
-}
-
-func CBE_StructHasGeneric(st: *HirStruct) -> bool {
-    var fi: int = 0;
-    while fi < st.fieldCount {
-        if CBE_IsGenericTypeName(st.fields[fi].typeName) { return true; }
-        fi = fi + 1;
+    func CBE_IsArrayTypeName(name: String) -> bool {
+        if String_Eq(name, "") { return false; }
+        if String_StartsWith(name, "Array") { return true; }
+        return false;
     }
-    return false;
-}
 
-func CBE_FuncHasGeneric(f: *HirFunc) -> bool {
-    var pi: int = 0;
-    while pi < f.paramCount {
-        var ptype: String = "";
-        if pi == 0 { ptype = f.param0.typeName; }
-        if pi == 1 { ptype = f.param1.typeName; }
-        if pi == 2 { ptype = f.param2.typeName; }
-        if pi == 3 { ptype = f.param3.typeName; }
-        if pi == 4 { ptype = f.param4.typeName; }
-        if pi == 5 { ptype = f.param5.typeName; }
-        if pi == 6 { ptype = f.param6.typeName; }
-        if pi == 7 { ptype = f.param7.typeName; }
-        if pi == 8 { ptype = f.param8.typeName; }
-        if CBE_IsGenericTypeName(ptype) { return true; }
-        pi = pi + 1;
+    func CBE_IsPrimitiveTypeName(name: String) -> bool {
+        if String_Eq(name, "int") || String_Eq(name, "") { return true; }
+        if String_Eq(name, "String") { return true; }
+        if String_Eq(name, "bool") { return true; }
+        if String_Eq(name, "uint32") { return true; }
+        if String_Eq(name, "uint64") { return true; }
+        if String_Eq(name, "int64") { return true; }
+        if String_Eq(name, "float32") { return true; }
+        if String_Eq(name, "float64") { return true; }
+        if String_Eq(name, "uint8") { return true; }
+        if String_Eq(name, "uint16") { return true; }
+        if String_Eq(name, "int8") { return true; }
+        if String_Eq(name, "int16") { return true; }
+        if String_Eq(name, "uint") { return true; }
+        if String_Eq(name, "char8") { return true; }
+        if String_Eq(name, "void") { return true; }
+        if String_Eq(name, "size_t") { return true; }
+        return false;
     }
-    if CBE_IsGenericTypeName(f.retTypeName) { return true; }
-    return false;
-}
 
-func CBE_IsArrayTypeName(name: String) -> bool {
-    if String_Eq(name, "") { return false; }
-    if String_StartsWith(name, "Array") { return true; }
-    return false;
-}
-
-func CBE_IsPrimitiveTypeName(name: String) -> bool {
-    if String_Eq(name, "int") || String_Eq(name, "") { return true; }
-    if String_Eq(name, "String") { return true; }
-    if String_Eq(name, "bool") { return true; }
-    if String_Eq(name, "uint32") { return true; }
-    if String_Eq(name, "uint64") { return true; }
-    if String_Eq(name, "int64") { return true; }
-    if String_Eq(name, "float32") { return true; }
-    if String_Eq(name, "float64") { return true; }
-    if String_Eq(name, "uint8") { return true; }
-    if String_Eq(name, "uint16") { return true; }
-    if String_Eq(name, "int8") { return true; }
-    if String_Eq(name, "int16") { return true; }
-    if String_Eq(name, "uint") { return true; }
-    if String_Eq(name, "char8") { return true; }
-    if String_Eq(name, "void") { return true; }
-    if String_Eq(name, "size_t") { return true; }
-    return false;
-}
-
-func CBE_StructHasValueStructField(st: *HirStruct) -> bool {
-    var fi: int = 0;
-    while fi < st.fieldCount {
-        let ft: String = st.fields[fi].typeName;
-        if !CBE_IsPrimitiveTypeName(ft) && !String_EndsWith(ft, "*") {
-            return true;
+    func CBE_StructHasValueStructField(st: *HirStruct) -> bool {
+        var fi: int = 0;
+        while fi < st.fieldCount {
+            let ft: String = st.fields[fi].typeName;
+            if !CBE_IsPrimitiveTypeName(ft) && !String_EndsWith(ft, "*") {
+                return true;
+            }
+            fi = fi + 1;
         }
-        fi = fi + 1;
+        return false;
     }
-    return false;
-}
 
-func CBE_EmitStructDef(cbe: *CEmitter, st: *HirStruct) {
-    if String_Eq(st.name, "") { return; }
-    StringBuilder_Append(&cbe.sb, "struct ");
-    StringBuilder_Append(&cbe.sb, st.name);
-    StringBuilder_Append(&cbe.sb, " {\n");
-    var fi: int = 0;
-    while fi < st.fieldCount {
-        StringBuilder_Append(&cbe.sb, "    ");
-        var ft: String = st.fields[fi].typeName;
-        if String_Eq(ft, "int") || String_Eq(ft, "") {
-            StringBuilder_Append(&cbe.sb, "int");
-        } else if String_Eq(ft, "String") {
-            StringBuilder_Append(&cbe.sb, "String");
-        } else if String_Eq(ft, "bool") {
-            StringBuilder_Append(&cbe.sb, "bool");
-        } else if String_Eq(ft, "uint32") {
-            StringBuilder_Append(&cbe.sb, "uint32");
-        } else {
-            StringBuilder_Append(&cbe.sb, ft);
+    func CBE_EmitStructDef(cbe: *CEmitter, st: *HirStruct) {
+        if String_Eq(st.name, "") { return; }
+        StringBuilder_Append(&cbe.sb, "struct ");
+        StringBuilder_Append(&cbe.sb, st.name);
+        StringBuilder_Append(&cbe.sb, " {\n");
+        var fi: int = 0;
+        while fi < st.fieldCount {
+            StringBuilder_Append(&cbe.sb, "    ");
+            var ft: String = st.fields[fi].typeName;
+            if String_Eq(ft, "int") || String_Eq(ft, "") {
+                StringBuilder_Append(&cbe.sb, "int");
+            } else if String_Eq(ft, "String") {
+                StringBuilder_Append(&cbe.sb, "String");
+            } else if String_Eq(ft, "bool") {
+                StringBuilder_Append(&cbe.sb, "bool");
+            } else if String_Eq(ft, "uint32") {
+                StringBuilder_Append(&cbe.sb, "uint32");
+            } else {
+                StringBuilder_Append(&cbe.sb, ft);
+            }
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, st.fields[fi].name);
+            StringBuilder_Append(&cbe.sb, ";\n");
+            fi = fi + 1;
         }
-        StringBuilder_Append(&cbe.sb, " ");
-        StringBuilder_Append(&cbe.sb, st.fields[fi].name);
-        StringBuilder_Append(&cbe.sb, ";\n");
-        fi = fi + 1;
+        StringBuilder_Append(&cbe.sb, "};\n\n");
     }
-    StringBuilder_Append(&cbe.sb, "};\n\n");
-}
 
-func CBE_LookupFieldType(mod: *HirModule, structName: String, fieldName: String) -> String {
-    var si: int = 0;
-    while si < mod.structCount {
-        if String_Eq(mod.structs[si].name, structName) {
-            var fi: int = 0;
-            while fi < mod.structs[si].fieldCount {
-                if String_Eq(mod.structs[si].fields[fi].name, fieldName) {
-                    let ft: String = mod.structs[si].fields[fi].typeName;
-                    if ft != null as String { return ft; }
-                    return "";
+    func CBE_LookupFieldType(mod: *HirModule, structName: String, fieldName: String) -> String {
+        var si: int = 0;
+        while si < mod.structCount {
+            if String_Eq(mod.structs[si].name, structName) {
+                var fi: int = 0;
+                while fi < mod.structs[si].fieldCount {
+                    if String_Eq(mod.structs[si].fields[fi].name, fieldName) {
+                        let ft: String = mod.structs[si].fields[fi].typeName;
+                        if ft != null as String { return ft; }
+                        return "";
+                    }
+                    fi = fi + 1;
                 }
-                fi = fi + 1;
+            }
+            si = si + 1;
+        }
+        return "";
+    }
+
+    func CBE_GetExprTypeName(mod: *HirModule, node: *HirNode) -> String {
+        if node == null as *HirNode { return ""; }
+        if node.kind == hVar {
+            if node.typeName != null as String { return node.typeName; }
+            return "";
+        }
+        if node.kind == hFieldPtr {
+            let baseType: String = CBE_GetExprTypeName(mod, node.child1);
+            var structName: String = baseType;
+            if String_EndsWith(baseType, "*") {
+                let len: uint = String_Len(baseType);
+                if len > 1 {
+                    structName = String_Slice(baseType, 0, len - 1);
+                }
+            }
+            if !String_Eq(structName, "") {
+                return CBE_LookupFieldType(mod, structName, node.strValue);
             }
         }
-        si = si + 1;
-    }
-    return "";
-}
-
-func CBE_GetExprTypeName(mod: *HirModule, node: *HirNode) -> String {
-    if node == null as *HirNode { return ""; }
-    if node.kind == hVar {
         if node.typeName != null as String { return node.typeName; }
         return "";
     }
-    if node.kind == hFieldPtr {
-        let baseType: String = CBE_GetExprTypeName(mod, node.child1);
-        var structName: String = baseType;
-        if String_EndsWith(baseType, "*") {
-            let len: uint = String_Len(baseType);
-            if len > 1 {
-                structName = String_Slice(baseType, 0, len - 1);
-            }
-        }
-        if !String_Eq(structName, "") {
-            return CBE_LookupFieldType(mod, structName, node.strValue);
-        }
-    }
-    if node.typeName != null as String { return node.typeName; }
-    return "";
-}
 
-// ---------------------------------------------------------------------------
-// Generate complete C module
-// ---------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Generate complete C module
+    // ---------------------------------------------------------------------------
 
-func CBackend_Generate(mod: *HirModule) -> String {
-    let cbe: *CEmitter = bux_alloc(sizeof(CEmitter)) as *CEmitter;
-    cbe.sb = StringBuilder_NewCap(8192);
-    cbe.indent = 0;
-    cbe.mod = mod;
-    cbe.deferCount = 0;
-    cbe.movedCount = 0;
-    cbe.tmpCounter = 0;
-
-    // Header
-    StringBuilder_Append(&cbe.sb, "// Generated by Bux C Backend v2\n");
-    StringBuilder_Append(&cbe.sb, "#include <stdint.h>\n");
-    StringBuilder_Append(&cbe.sb, "#include <stdbool.h>\n");
-    StringBuilder_Append(&cbe.sb, "#include <string.h>\n");
-    StringBuilder_Append(&cbe.sb, "#include <stdio.h>\n");
-    StringBuilder_Append(&cbe.sb, "#include <stdlib.h>\n\n");
-    // Type aliases
-    StringBuilder_Append(&cbe.sb, "typedef const char* String;\n");
-    StringBuilder_Append(&cbe.sb, "typedef unsigned char uint8;\n");
-    StringBuilder_Append(&cbe.sb, "typedef unsigned short uint16;\n");
-    StringBuilder_Append(&cbe.sb, "typedef unsigned int uint32;\n");
-    StringBuilder_Append(&cbe.sb, "typedef unsigned long long uint64;\n");
-    StringBuilder_Append(&cbe.sb, "typedef signed char int8;\n");
-    StringBuilder_Append(&cbe.sb, "typedef short int16;\n");
-    StringBuilder_Append(&cbe.sb, "typedef long long int64;\n");
-    StringBuilder_Append(&cbe.sb, "typedef float float32;\n");
-    StringBuilder_Append(&cbe.sb, "typedef double float64;\n");
-    StringBuilder_Append(&cbe.sb, "typedef char char8;\n\n");
-    // Runtime declarations
-    StringBuilder_Append(&cbe.sb, "void* bux_alloc(unsigned int size);\n");
-    StringBuilder_Append(&cbe.sb, "void bux_free(void* ptr);\n");
-    StringBuilder_Append(&cbe.sb, "unsigned long long bux_index_check(unsigned long long index, unsigned long long len);\n");
-    StringBuilder_Append(&cbe.sb, "int64 bux_add_i64_checked(int64 a, int64 b);\n");
-    StringBuilder_Append(&cbe.sb, "int64 bux_sub_i64_checked(int64 a, int64 b);\n");
-    StringBuilder_Append(&cbe.sb, "int64 bux_mul_i64_checked(int64 a, int64 b);\n");
-    StringBuilder_Append(&cbe.sb, "int64 bux_neg_i64_checked(int64 a);\n\n");
-
-    // Forward declare all struct types (skip empty names)
-    var si: int = 0;
-    while si < mod.structCount {
-        if !String_Eq(mod.structs[si].name, "") {
-            StringBuilder_Append(&cbe.sb, "typedef struct ");
-            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-            StringBuilder_Append(&cbe.sb, " ");
-            StringBuilder_Append(&cbe.sb, mod.structs[si].name);
-            StringBuilder_Append(&cbe.sb, ";\n");
-        }
-        si = si + 1;
-    }
-    StringBuilder_Append(&cbe.sb, "\n");
-
-    // Tuple typedefs before enums/structs that embed them by value
-    StringBuilder_Append(&cbe.sb, "/* Tuple types */\n");
-    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int {\n    int _0;\n    int _1;\n} Tuple_int_int;\n");
-    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int_int {\n    int _0;\n    int _1;\n    int _2;\n} Tuple_int_int_int;\n");
-    StringBuilder_Append(&cbe.sb, "typedef struct Tuple_Empty {\n    char _pad;\n} Tuple_Empty;\n\n");
-
-    // Struct definitions before enums (enums may embed structs by value, e.g. Shape::Dot(Point))
-    // Pass 1: emit structs with no value-typed struct fields (leaf structs)
-    si = 0;
-    while si < mod.structCount {
-        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        if CBE_StructHasValueStructField(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        CBE_EmitStructDef(cbe, &mod.structs[si]);
-        si = si + 1;
-    }
-    // Pass 2: emit structs that contain value-typed struct fields
-    si = 0;
-    while si < mod.structCount {
-        if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        if !CBE_StructHasValueStructField(&mod.structs[si]) {
-            si = si + 1;
-            continue;
-        }
-        CBE_EmitStructDef(cbe, &mod.structs[si]);
-        si = si + 1;
-    }
-
-    // Enum definitions
-    var ei: int = 0;
-    while ei < mod.enumCount {
-        let en: *HirEnum = &mod.enums[ei];
-        var hasData: bool = false;
-        var vi: int = 0;
-        while vi < en.variantCount {
-            if en.variants[vi].fieldCount > 0 {
-                hasData = true;
-            }
-            vi = vi + 1;
-        }
-        if !hasData {
-            // Simple enum: emit as plain C enum (no struct wrapper)
-            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
-            vi = 0;
-            while vi < en.variantCount {
-                StringBuilder_Append(&cbe.sb, "    ");
-                StringBuilder_Append(&cbe.sb, en.name);
-                StringBuilder_Append(&cbe.sb, "_");
-                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
-                if vi < en.variantCount - 1 {
-                    StringBuilder_Append(&cbe.sb, ",");
-                }
-                StringBuilder_Append(&cbe.sb, "\n");
-                vi = vi + 1;
-            }
-            StringBuilder_Append(&cbe.sb, "} ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, ";\n\n");
-        } else {
-            // Algebraic enum: tag enum + data union + struct
-            // 1. Tag enum
-            StringBuilder_Append(&cbe.sb, "typedef enum {\n");
-            vi = 0;
-            while vi < en.variantCount {
-                StringBuilder_Append(&cbe.sb, "    ");
-                StringBuilder_Append(&cbe.sb, en.name);
-                StringBuilder_Append(&cbe.sb, "_");
-                StringBuilder_Append(&cbe.sb, en.variants[vi].name);
-                if vi < en.variantCount - 1 {
-                    StringBuilder_Append(&cbe.sb, ",");
-                }
-                StringBuilder_Append(&cbe.sb, "\n");
-                vi = vi + 1;
-            }
-            StringBuilder_Append(&cbe.sb, "} ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, "_Tag;\n\n");
-            // 2. Data union
-            StringBuilder_Append(&cbe.sb, "typedef union {\n");
-            vi = 0;
-            while vi < en.variantCount {
-                let ev: *HirEnumVariant = &en.variants[vi];
-                if ev.fieldCount > 0 {
-                    // Prefer stored C type name (handles Tuple_*, named types)
-                    var ft0: String = CBackend_TypeToC(ev.fieldType0);
-                    if !String_Eq(ev.fieldTypeName0, "") { ft0 = ev.fieldTypeName0; }
-                    var ft1: String = CBackend_TypeToC(ev.fieldType1);
-                    if !String_Eq(ev.fieldTypeName1, "") { ft1 = ev.fieldTypeName1; }
-                    if ev.fieldCount == 1 {
-                        StringBuilder_Append(&cbe.sb, "    ");
-                        StringBuilder_Append(&cbe.sb, ft0);
-                        StringBuilder_Append(&cbe.sb, " ");
-                        StringBuilder_Append(&cbe.sb, ev.name);
-                        StringBuilder_Append(&cbe.sb, "_0;\n");
-                    } else {
-                        // Nested anonymous struct (layout matches bootstrap data.Variant.Variant_i)
-                        StringBuilder_Append(&cbe.sb, "    struct {\n");
-                        StringBuilder_Append(&cbe.sb, "        ");
-                        StringBuilder_Append(&cbe.sb, ft0);
-                        StringBuilder_Append(&cbe.sb, " ");
-                        StringBuilder_Append(&cbe.sb, ev.fieldName0);
-                        StringBuilder_Append(&cbe.sb, ";\n");
-                        if ev.fieldCount > 1 {
-                            StringBuilder_Append(&cbe.sb, "        ");
-                            StringBuilder_Append(&cbe.sb, ft1);
-                            StringBuilder_Append(&cbe.sb, " ");
-                            StringBuilder_Append(&cbe.sb, ev.fieldName1);
-                            StringBuilder_Append(&cbe.sb, ";\n");
-                        }
-                        StringBuilder_Append(&cbe.sb, "    } ");
-                        StringBuilder_Append(&cbe.sb, ev.name);
-                        StringBuilder_Append(&cbe.sb, ";\n");
-                    }
-                }
-                vi = vi + 1;
-            }
-            StringBuilder_Append(&cbe.sb, "} ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, "_Data;\n\n");
-            // 3. Main struct
-            StringBuilder_Append(&cbe.sb, "typedef struct {\n");
-            StringBuilder_Append(&cbe.sb, "    ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, "_Tag tag;\n");
-            StringBuilder_Append(&cbe.sb, "    ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, "_Data data;\n");
-            StringBuilder_Append(&cbe.sb, "} ");
-            StringBuilder_Append(&cbe.sb, en.name);
-            StringBuilder_Append(&cbe.sb, ";\n\n");
-        }
-        ei = ei + 1;
-    }
-
-    // Constant definitions
-    var ci: int = 0;
-    while ci < mod.constCount {
-        StringBuilder_Append(&cbe.sb, "#define ");
-        StringBuilder_Append(&cbe.sb, mod.consts[ci].name);
-        StringBuilder_Append(&cbe.sb, " ");
-        StringBuilder_Append(&cbe.sb, String_FromInt(mod.consts[ci].value as int64));
-        StringBuilder_Append(&cbe.sb, "\n");
-        ci = ci + 1;
-    }
-    if mod.constCount > 0 {
-        StringBuilder_Append(&cbe.sb, "\n");
-    }
-
-    // Fat function-pointer typedefs (BuxFn_*) — before forward decls
-    CBE_EmitFatFuncTypedefs(cbe, mod);
-
-    // Env structs for capturing closures (no static instance — heap per value)
-    var ei2: int = 0;
-    while ei2 < mod.funcCount {
-        if mod.funcs[ei2].captureCount > 0 && !String_Eq(mod.funcs[ei2].envStructName, "") {
-            StringBuilder_Append(&cbe.sb, "typedef struct ");
-            StringBuilder_Append(&cbe.sb, mod.funcs[ei2].envStructName);
-            StringBuilder_Append(&cbe.sb, " {\n");
-            var ci2: int = 0;
-            while ci2 < mod.funcs[ei2].captureCount {
-                var capName: String = "";
-                var capType: String = "int";
-                if ci2 == 0 { capName = mod.funcs[ei2].captureName0; capType = CBackend_TypeToC(mod.funcs[ei2].captureType0); }
-                else if ci2 == 1 { capName = mod.funcs[ei2].captureName1; capType = CBackend_TypeToC(mod.funcs[ei2].captureType1); }
-                else if ci2 == 2 { capName = mod.funcs[ei2].captureName2; capType = CBackend_TypeToC(mod.funcs[ei2].captureType2); }
-                else if ci2 == 3 { capName = mod.funcs[ei2].captureName3; capType = CBackend_TypeToC(mod.funcs[ei2].captureType3); }
-                else if ci2 == 4 { capName = mod.funcs[ei2].captureName4; capType = CBackend_TypeToC(mod.funcs[ei2].captureType4); }
-                else if ci2 == 5 { capName = mod.funcs[ei2].captureName5; capType = CBackend_TypeToC(mod.funcs[ei2].captureType5); }
-                else if ci2 == 6 { capName = mod.funcs[ei2].captureName6; capType = CBackend_TypeToC(mod.funcs[ei2].captureType6); }
-                else if ci2 == 7 { capName = mod.funcs[ei2].captureName7; capType = CBackend_TypeToC(mod.funcs[ei2].captureType7); }
-                StringBuilder_Append(&cbe.sb, "    ");
-                StringBuilder_Append(&cbe.sb, capType);
-                StringBuilder_Append(&cbe.sb, " ");
-                StringBuilder_Append(&cbe.sb, capName);
-                StringBuilder_Append(&cbe.sb, ";\n");
-                ci2 = ci2 + 1;
-            }
-            StringBuilder_Append(&cbe.sb, "} ");
-            StringBuilder_Append(&cbe.sb, mod.funcs[ei2].envStructName);
-            StringBuilder_Append(&cbe.sb, ";\n\n");
-        }
-        ei2 = ei2 + 1;
-    }
-
-    // Forward declarations for all functions (skip generics)
-    var i: int = 0;
-    while i < mod.funcCount {
-        if !CBE_FuncHasGeneric(&mod.funcs[i]) {
-            CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
-            StringBuilder_Append(&cbe.sb, ";\n");
-            // Maker for capturing closures
-            if mod.funcs[i].captureCount > 0 {
-                CBE_EmitMakerDecl(cbe, &mod.funcs[i]);
-                StringBuilder_Append(&cbe.sb, ";\n");
-            }
-        }
-        i = i + 1;
-    }
-    StringBuilder_Append(&cbe.sb, "\n");
-
-    // Extern declarations
-    i = 0;
-    while i < mod.externCount {
-        CBE_EmitFuncDecl(cbe, &mod.externFuncs[i]);
-        StringBuilder_Append(&cbe.sb, ";\n");
-        i = i + 1;
-    }
-    StringBuilder_Append(&cbe.sb, "\n");
-
-    // Adapters before function bodies (bodies may take funcs as values)
-    CBE_EmitAllAdapters(cbe, mod);
-
-    // Function definitions (skip generics)
-    var hasMain: bool = false;
-    i = 0;
-    while i < mod.funcCount {
-        if String_Eq(mod.funcs[i].name, "Main") { hasMain = true; }
-        // Skip generic functions
-        if CBE_FuncHasGeneric(&mod.funcs[i]) {
-            i = i + 1;
-            continue;
-        }
-        // Skip forward declarations (functions without body)
-        let body: *HirNode = mod.funcs[i].body;
-        if body == null as *HirNode {
-            i = i + 1;
-            continue;
-        }
-        CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
-        StringBuilder_Append(&cbe.sb, " {\n");
-        // Capturing closure thunk: materialize env from fat-func env pointer
-        if mod.funcs[i].captureCount > 0 && !String_Eq(mod.funcs[i].envStructName, "") && !String_Eq(mod.funcs[i].envInstanceName, "") {
-            StringBuilder_Append(&cbe.sb, "    ");
-            StringBuilder_Append(&cbe.sb, mod.funcs[i].envStructName);
-            StringBuilder_Append(&cbe.sb, " ");
-            StringBuilder_Append(&cbe.sb, mod.funcs[i].envInstanceName);
-            StringBuilder_Append(&cbe.sb, " = *((");
-            StringBuilder_Append(&cbe.sb, mod.funcs[i].envStructName);
-            StringBuilder_Append(&cbe.sb, "*)__env);\n");
-        } else if mod.funcs[i].paramCount > 0 {
-            // Capture-less closure still has __env
-            if String_Eq(mod.funcs[i].param0.name, "__env") {
-                StringBuilder_Append(&cbe.sb, "    (void)__env;\n");
-            }
-        }
-        // Body
-        cbe.checkedFunc = mod.funcs[i].checkedFunc;
+    func CBackend_Generate(mod: *HirModule) -> String {
+        let cbe: *CEmitter = bux_alloc(sizeof(CEmitter)) as *CEmitter;
+        cbe.sb = StringBuilder_NewCap(8192);
+        cbe.indent = 0;
+        cbe.mod = mod;
         cbe.deferCount = 0;
         cbe.movedCount = 0;
         cbe.tmpCounter = 0;
-        cbe.currentRetType = mod.funcs[i].retTypeName;
-        var hasReturn: bool = false;
-        cbe.indent = 1;
-        CBE_EmitExpr(cbe, body);
-        CBE_EmitDefers(cbe);
-        cbe.indent = 0;
-        // Check if body has a return statement
-        var stmt: *HirNode = body.child1;
-        while stmt != null as *HirNode {
-            if stmt.kind == hReturn { hasReturn = true; }
-            stmt = stmt.child3;
-        }
-        // Add default return 0 only if function returns int and has no explicit return
-        if String_Eq(mod.funcs[i].retTypeName, "int") && !hasReturn {
-            StringBuilder_Append(&cbe.sb, "    return 0;\n");
-        }
-        StringBuilder_Append(&cbe.sb, "\n}\n\n");
-        // After capturing closure thunk, emit heap-env maker
-        if mod.funcs[i].captureCount > 0 {
-            CBE_EmitMakerFunc(cbe, &mod.funcs[i]);
-        }
-        i = i + 1;
-    }
 
-    // Generate C main wrapper if Main function exists
-    if hasMain {
-        StringBuilder_Append(&cbe.sb, "extern int g_argc;\n");
-        StringBuilder_Append(&cbe.sb, "extern char** g_argv;\n");
-        StringBuilder_Append(&cbe.sb, "int main(int argc, char** argv) {\n");
-        StringBuilder_Append(&cbe.sb, "    g_argc = argc;\n");
-        StringBuilder_Append(&cbe.sb, "    g_argv = argv;\n");
-        StringBuilder_Append(&cbe.sb, "    return Main();\n");
-        StringBuilder_Append(&cbe.sb, "}\n");
-    }
+        // Header
+        StringBuilder_Append(&cbe.sb, "// Generated by Bux C Backend v2\n");
+        StringBuilder_Append(&cbe.sb, "#include <stdint.h>\n");
+        StringBuilder_Append(&cbe.sb, "#include <stdbool.h>\n");
+        StringBuilder_Append(&cbe.sb, "#include <string.h>\n");
+        StringBuilder_Append(&cbe.sb, "#include <stdio.h>\n");
+        StringBuilder_Append(&cbe.sb, "#include <stdlib.h>\n\n");
+        // Type aliases
+        StringBuilder_Append(&cbe.sb, "typedef const char* String;\n");
+        StringBuilder_Append(&cbe.sb, "typedef unsigned char uint8;\n");
+        StringBuilder_Append(&cbe.sb, "typedef unsigned short uint16;\n");
+        StringBuilder_Append(&cbe.sb, "typedef unsigned int uint32;\n");
+        StringBuilder_Append(&cbe.sb, "typedef unsigned long long uint64;\n");
+        StringBuilder_Append(&cbe.sb, "typedef signed char int8;\n");
+        StringBuilder_Append(&cbe.sb, "typedef short int16;\n");
+        StringBuilder_Append(&cbe.sb, "typedef long long int64;\n");
+        StringBuilder_Append(&cbe.sb, "typedef float float32;\n");
+        StringBuilder_Append(&cbe.sb, "typedef double float64;\n");
+        StringBuilder_Append(&cbe.sb, "typedef char char8;\n\n");
+        // Runtime declarations
+        StringBuilder_Append(&cbe.sb, "void* bux_alloc(unsigned int size);\n");
+        StringBuilder_Append(&cbe.sb, "void bux_free(void* ptr);\n");
+        StringBuilder_Append(&cbe.sb, "unsigned long long bux_index_check(unsigned long long index, unsigned long long len);\n");
+        StringBuilder_Append(&cbe.sb, "int64 bux_add_i64_checked(int64 a, int64 b);\n");
+        StringBuilder_Append(&cbe.sb, "int64 bux_sub_i64_checked(int64 a, int64 b);\n");
+        StringBuilder_Append(&cbe.sb, "int64 bux_mul_i64_checked(int64 a, int64 b);\n");
+        StringBuilder_Append(&cbe.sb, "int64 bux_neg_i64_checked(int64 a);\n\n");
 
-    return StringBuilder_Build(&cbe.sb);
-}
+        // Forward declare all struct types (skip empty names)
+        var si: int = 0;
+        while si < mod.structCount {
+            if !String_Eq(mod.structs[si].name, "") {
+                StringBuilder_Append(&cbe.sb, "typedef struct ");
+                StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+                StringBuilder_Append(&cbe.sb, " ");
+                StringBuilder_Append(&cbe.sb, mod.structs[si].name);
+                StringBuilder_Append(&cbe.sb, ";\n");
+            }
+            si = si + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "\n");
+
+        // Tuple typedefs before enums/structs that embed them by value
+        StringBuilder_Append(&cbe.sb, "/* Tuple types */\n");
+        StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int {\n    int _0;\n    int _1;\n} Tuple_int_int;\n");
+        StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int_int {\n    int _0;\n    int _1;\n    int _2;\n} Tuple_int_int_int;\n");
+        StringBuilder_Append(&cbe.sb, "typedef struct Tuple_Empty {\n    char _pad;\n} Tuple_Empty;\n\n");
+
+        // Struct definitions before enums (enums may embed structs by value, e.g. Shape::Dot(Point))
+        // Pass 1: emit structs with no value-typed struct fields (leaf structs)
+        si = 0;
+        while si < mod.structCount {
+            if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
+                si = si + 1;
+                continue;
+            }
+            if CBE_StructHasValueStructField(&mod.structs[si]) {
+                si = si + 1;
+                continue;
+            }
+            CBE_EmitStructDef(cbe, &mod.structs[si]);
+            si = si + 1;
+        }
+        // Pass 2: emit structs that contain value-typed struct fields
+        si = 0;
+        while si < mod.structCount {
+            if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
+                si = si + 1;
+                continue;
+            }
+            if !CBE_StructHasValueStructField(&mod.structs[si]) {
+                si = si + 1;
+                continue;
+            }
+            CBE_EmitStructDef(cbe, &mod.structs[si]);
+            si = si + 1;
+        }
+
+        // Enum definitions
+        var ei: int = 0;
+        while ei < mod.enumCount {
+            let en: *HirEnum = &mod.enums[ei];
+            var hasData: bool = false;
+            var vi: int = 0;
+            while vi < en.variantCount {
+                if en.variants[vi].fieldCount > 0 {
+                    hasData = true;
+                }
+                vi = vi + 1;
+            }
+            if !hasData {
+                // Simple enum: emit as plain C enum (no struct wrapper)
+                StringBuilder_Append(&cbe.sb, "typedef enum {\n");
+                vi = 0;
+                while vi < en.variantCount {
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    StringBuilder_Append(&cbe.sb, en.name);
+                    StringBuilder_Append(&cbe.sb, "_");
+                    StringBuilder_Append(&cbe.sb, en.variants[vi].name);
+                    if vi < en.variantCount - 1 {
+                        StringBuilder_Append(&cbe.sb, ",");
+                    }
+                    StringBuilder_Append(&cbe.sb, "\n");
+                    vi = vi + 1;
+                }
+                StringBuilder_Append(&cbe.sb, "} ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, ";\n\n");
+            } else {
+                // Algebraic enum: tag enum + data union + struct
+                // 1. Tag enum
+                StringBuilder_Append(&cbe.sb, "typedef enum {\n");
+                vi = 0;
+                while vi < en.variantCount {
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    StringBuilder_Append(&cbe.sb, en.name);
+                    StringBuilder_Append(&cbe.sb, "_");
+                    StringBuilder_Append(&cbe.sb, en.variants[vi].name);
+                    if vi < en.variantCount - 1 {
+                        StringBuilder_Append(&cbe.sb, ",");
+                    }
+                    StringBuilder_Append(&cbe.sb, "\n");
+                    vi = vi + 1;
+                }
+                StringBuilder_Append(&cbe.sb, "} ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_Tag;\n\n");
+                // 2. Data union
+                StringBuilder_Append(&cbe.sb, "typedef union {\n");
+                vi = 0;
+                while vi < en.variantCount {
+                    let ev: *HirEnumVariant = &en.variants[vi];
+                    if ev.fieldCount > 0 {
+                        // Prefer stored C type name (handles Tuple_*, named types)
+                        var ft0: String = CBackend_TypeToC(ev.fieldType0);
+                        if !String_Eq(ev.fieldTypeName0, "") { ft0 = ev.fieldTypeName0; }
+                        var ft1: String = CBackend_TypeToC(ev.fieldType1);
+                        if !String_Eq(ev.fieldTypeName1, "") { ft1 = ev.fieldTypeName1; }
+                        if ev.fieldCount == 1 {
+                            StringBuilder_Append(&cbe.sb, "    ");
+                            StringBuilder_Append(&cbe.sb, ft0);
+                            StringBuilder_Append(&cbe.sb, " ");
+                            StringBuilder_Append(&cbe.sb, ev.name);
+                            StringBuilder_Append(&cbe.sb, "_0;\n");
+                        } else {
+                            // Nested anonymous struct (layout matches bootstrap data.Variant.Variant_i)
+                            StringBuilder_Append(&cbe.sb, "    struct {\n");
+                            StringBuilder_Append(&cbe.sb, "        ");
+                            StringBuilder_Append(&cbe.sb, ft0);
+                            StringBuilder_Append(&cbe.sb, " ");
+                            StringBuilder_Append(&cbe.sb, ev.fieldName0);
+                            StringBuilder_Append(&cbe.sb, ";\n");
+                            if ev.fieldCount > 1 {
+                                StringBuilder_Append(&cbe.sb, "        ");
+                                StringBuilder_Append(&cbe.sb, ft1);
+                                StringBuilder_Append(&cbe.sb, " ");
+                                StringBuilder_Append(&cbe.sb, ev.fieldName1);
+                                StringBuilder_Append(&cbe.sb, ";\n");
+                            }
+                            StringBuilder_Append(&cbe.sb, "    } ");
+                            StringBuilder_Append(&cbe.sb, ev.name);
+                            StringBuilder_Append(&cbe.sb, ";\n");
+                        }
+                    }
+                    vi = vi + 1;
+                }
+                StringBuilder_Append(&cbe.sb, "} ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_Data;\n\n");
+                // 3. Main struct
+                StringBuilder_Append(&cbe.sb, "typedef struct {\n");
+                StringBuilder_Append(&cbe.sb, "    ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_Tag tag;\n");
+                StringBuilder_Append(&cbe.sb, "    ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, "_Data data;\n");
+                StringBuilder_Append(&cbe.sb, "} ");
+                StringBuilder_Append(&cbe.sb, en.name);
+                StringBuilder_Append(&cbe.sb, ";\n\n");
+            }
+            ei = ei + 1;
+        }
+
+        // Constant definitions
+        var ci: int = 0;
+        while ci < mod.constCount {
+            StringBuilder_Append(&cbe.sb, "#define ");
+            StringBuilder_Append(&cbe.sb, mod.consts[ci].name);
+            StringBuilder_Append(&cbe.sb, " ");
+            StringBuilder_Append(&cbe.sb, String_FromInt(mod.consts[ci].value as int64));
+            StringBuilder_Append(&cbe.sb, "\n");
+            ci = ci + 1;
+        }
+        if mod.constCount > 0 {
+            StringBuilder_Append(&cbe.sb, "\n");
+        }
+
+        // Fat function-pointer typedefs (BuxFn_*) — before forward decls
+        CBE_EmitFatFuncTypedefs(cbe, mod);
+
+        // Env structs for capturing closures (no static instance — heap per value)
+        var ei2: int = 0;
+        while ei2 < mod.funcCount {
+            if mod.funcs[ei2].captureCount > 0 && !String_Eq(mod.funcs[ei2].envStructName, "") {
+                StringBuilder_Append(&cbe.sb, "typedef struct ");
+                StringBuilder_Append(&cbe.sb, mod.funcs[ei2].envStructName);
+                StringBuilder_Append(&cbe.sb, " {\n");
+                var ci2: int = 0;
+                while ci2 < mod.funcs[ei2].captureCount {
+                    var capName: String = "";
+                    var capType: String = "int";
+                    if ci2 == 0 { capName = mod.funcs[ei2].captureName0; capType = CBackend_TypeToC(mod.funcs[ei2].captureType0); }
+                    else if ci2 == 1 { capName = mod.funcs[ei2].captureName1; capType = CBackend_TypeToC(mod.funcs[ei2].captureType1); }
+                    else if ci2 == 2 { capName = mod.funcs[ei2].captureName2; capType = CBackend_TypeToC(mod.funcs[ei2].captureType2); }
+                    else if ci2 == 3 { capName = mod.funcs[ei2].captureName3; capType = CBackend_TypeToC(mod.funcs[ei2].captureType3); }
+                    else if ci2 == 4 { capName = mod.funcs[ei2].captureName4; capType = CBackend_TypeToC(mod.funcs[ei2].captureType4); }
+                    else if ci2 == 5 { capName = mod.funcs[ei2].captureName5; capType = CBackend_TypeToC(mod.funcs[ei2].captureType5); }
+                    else if ci2 == 6 { capName = mod.funcs[ei2].captureName6; capType = CBackend_TypeToC(mod.funcs[ei2].captureType6); }
+                    else if ci2 == 7 { capName = mod.funcs[ei2].captureName7; capType = CBackend_TypeToC(mod.funcs[ei2].captureType7); }
+                    StringBuilder_Append(&cbe.sb, "    ");
+                    StringBuilder_Append(&cbe.sb, capType);
+                    StringBuilder_Append(&cbe.sb, " ");
+                    StringBuilder_Append(&cbe.sb, capName);
+                    StringBuilder_Append(&cbe.sb, ";\n");
+                    ci2 = ci2 + 1;
+                }
+                StringBuilder_Append(&cbe.sb, "} ");
+                StringBuilder_Append(&cbe.sb, mod.funcs[ei2].envStructName);
+                StringBuilder_Append(&cbe.sb, ";\n\n");
+            }
+            ei2 = ei2 + 1;
+        }
+
+        // Forward declarations for all functions (skip generics)
+        var i: int = 0;
+        while i < mod.funcCount {
+            if !CBE_FuncHasGeneric(&mod.funcs[i]) {
+                CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
+                StringBuilder_Append(&cbe.sb, ";\n");
+                // Maker for capturing closures
+                if mod.funcs[i].captureCount > 0 {
+                    CBE_EmitMakerDecl(cbe, &mod.funcs[i]);
+                    StringBuilder_Append(&cbe.sb, ";\n");
+                }
+            }
+            i = i + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "\n");
+
+        // Extern declarations
+        i = 0;
+        while i < mod.externCount {
+            CBE_EmitFuncDecl(cbe, &mod.externFuncs[i]);
+            StringBuilder_Append(&cbe.sb, ";\n");
+            i = i + 1;
+        }
+        StringBuilder_Append(&cbe.sb, "\n");
+
+        // Adapters before function bodies (bodies may take funcs as values)
+        CBE_EmitAllAdapters(cbe, mod);
+
+        // Function definitions (skip generics)
+        var hasMain: bool = false;
+        i = 0;
+        while i < mod.funcCount {
+            if String_Eq(mod.funcs[i].name, "Main") { hasMain = true; }
+            // Skip generic functions
+            if CBE_FuncHasGeneric(&mod.funcs[i]) {
+                i = i + 1;
+                continue;
+            }
+            // Skip forward declarations (functions without body)
+            let body: *HirNode = mod.funcs[i].body;
+            if body == null as *HirNode {
+                i = i + 1;
+                continue;
+            }
+            CBE_EmitFuncDecl(cbe, &mod.funcs[i]);
+            StringBuilder_Append(&cbe.sb, " {\n");
+            // Capturing closure thunk: materialize env from fat-func env pointer
+            if mod.funcs[i].captureCount > 0 && !String_Eq(mod.funcs[i].envStructName, "") && !String_Eq(mod.funcs[i].envInstanceName, "") {
+                StringBuilder_Append(&cbe.sb, "    ");
+                StringBuilder_Append(&cbe.sb, mod.funcs[i].envStructName);
+                StringBuilder_Append(&cbe.sb, " ");
+                StringBuilder_Append(&cbe.sb, mod.funcs[i].envInstanceName);
+                StringBuilder_Append(&cbe.sb, " = *((");
+                StringBuilder_Append(&cbe.sb, mod.funcs[i].envStructName);
+                StringBuilder_Append(&cbe.sb, "*)__env);\n");
+            } else if mod.funcs[i].paramCount > 0 {
+                // Capture-less closure still has __env
+                if String_Eq(mod.funcs[i].param0.name, "__env") {
+                    StringBuilder_Append(&cbe.sb, "    (void)__env;\n");
+                }
+            }
+            // Body
+            cbe.checkedFunc = mod.funcs[i].checkedFunc;
+            cbe.deferCount = 0;
+            cbe.movedCount = 0;
+            cbe.tmpCounter = 0;
+            cbe.currentRetType = mod.funcs[i].retTypeName;
+            var hasReturn: bool = false;
+            cbe.indent = 1;
+            CBE_EmitExpr(cbe, body);
+            CBE_EmitDefers(cbe);
+            cbe.indent = 0;
+            // Check if body has a return statement
+            var stmt: *HirNode = body.child1;
+            while stmt != null as *HirNode {
+                if stmt.kind == hReturn { hasReturn = true; }
+                stmt = stmt.child3;
+            }
+            // Add default return 0 only if function returns int and has no explicit return
+            if String_Eq(mod.funcs[i].retTypeName, "int") && !hasReturn {
+                StringBuilder_Append(&cbe.sb, "    return 0;\n");
+            }
+            StringBuilder_Append(&cbe.sb, "\n}\n\n");
+            // After capturing closure thunk, emit heap-env maker
+            if mod.funcs[i].captureCount > 0 {
+                CBE_EmitMakerFunc(cbe, &mod.funcs[i]);
+            }
+            i = i + 1;
+        }
+
+        // Generate C main wrapper if Main function exists
+        if hasMain {
+            StringBuilder_Append(&cbe.sb, "extern int g_argc;\n");
+            StringBuilder_Append(&cbe.sb, "extern char** g_argv;\n");
+            StringBuilder_Append(&cbe.sb, "int main(int argc, char** argv) {\n");
+            StringBuilder_Append(&cbe.sb, "    g_argc = argc;\n");
+            StringBuilder_Append(&cbe.sb, "    g_argv = argv;\n");
+            StringBuilder_Append(&cbe.sb, "    return Main();\n");
+            StringBuilder_Append(&cbe.sb, "}\n");
+        }
+
+        return StringBuilder_Build(&cbe.sb);
+    }
 
 }

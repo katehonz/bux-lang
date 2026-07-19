@@ -1,6 +1,9 @@
-import std/[os, strutils, terminal, strformat, osproc, sets]
+import std/[os, strutils, terminal, strformat, osproc, sets, algorithm, tables]
 import lexer, parser, ast, sema, manifest, hir_lower, lir_lower, lir_c_backend
 import source_location
+import fmt
+import docgen
+import registry
 
 type
   ColorMode* = enum
@@ -21,15 +24,24 @@ Usage: bux [options] <command> [command-options]
 Commands:
   new <name>          Create a new Bux package
   init                Initialize a Bux package in the current directory
-  add <name> [ver]    Add a dependency (--path, --git)
+  add <name> [ver]    Add a dependency (--path, --git, or registry)
   install             Resolve and install dependencies
+  search [query]      Search the package registry
   build               Build the current package
   run                 Build and run the current package
   test                Run tests in tests/ directory
   check               Type-check the current package
+  fmt [path]          Format .bux sources (default: .)
+  doc [path]          Generate Markdown API docs from /// comments
   clean               Remove build artifacts
   help                Show this help message
   version             Show version
+
+Command options:
+  test --filter <s>   Only run tests whose name contains <s>
+  fmt  --check        Exit 1 if any file would be reformatted (CI)
+  doc  --out <file>   Write docs to file (default: stdout)
+  add  --path / --git Explicit source; else resolve via registry
 
 Global options:
   --color <auto|on|off>   Control colored output (default: auto)
@@ -192,6 +204,14 @@ proc hintForMessage(msg: string): string =
     return "provide the missing argument (positional or named)"
   if "use of moved value" in m:
     return "the value was moved; clone it or restructure ownership"
+  if "cannot return reference to local" in m:
+    return "return a value, or return a reference borrowed from a function parameter"
+  if "lifetime elision failed" in m:
+    return "add an explicit lifetime, e.g. func F<'a>(x: &'a T, y: &'a U) -> &'a T"
+  if "lifetime mismatch" in m:
+    return "returned reference must share a lifetime with the return type (annotate with 'a)"
+  if "no input reference to borrow from" in m:
+    return "add a '&T' parameter to borrow from, or return an owned value"
   if "shared reference" in m or "checked function" in m:
     return "use '&mut T' for mutation, or drop @[Checked] for unchecked code"
   if "double mutable borrow" in m or "already mutably borrowed" in m:
@@ -378,7 +398,11 @@ proc cmdAdd*(args: seq[string], opts: GlobalOptions): int =
         printError("--git requires a value", useColor)
         return 1
     else:
-      version = args[i]
+      if not args[i].startsWith("-"):
+        version = args[i]
+      else:
+        printError(&"unknown add option '{args[i]}'", useColor)
+        return 1
     inc i
   # Append to bux.toml
   var depLine = ""
@@ -387,7 +411,19 @@ proc cmdAdd*(args: seq[string], opts: GlobalOptions): int =
   elif gitUrl.len > 0:
     depLine = &"{depName} = {{ Version = \"{version}\", Source = \"{gitUrl}\" }}"
   else:
-    depLine = &"{depName} = \"{version}\""
+    # Registry resolve (E.1)
+    let reg = loadRegistry()
+    if reg.path.len == 0:
+      printError("no package registry found (set BUX_REGISTRY or install config/registry.toml)", useColor)
+      return 1
+    let pkg = registryLookup(reg, depName, version)
+    if pkg.name.len == 0:
+      printError(&"package '{depName}' not found in registry ({reg.path})", useColor)
+      printError("hint: bux search  |  bux add name --git <url>  |  bux add name --path <dir>", useColor)
+      return 1
+    depLine = formatRegistryDepLine(depName, pkg)
+    if not opts.quiet:
+      printInfo(&"Resolved '{depName}' {pkg.version} from registry {reg.path}", useColor)
   var content = readFile(manifestPath)
   # Ensure [Dependencies] section exists
   if content.find("[Dependencies]") < 0:
@@ -397,6 +433,34 @@ proc cmdAdd*(args: seq[string], opts: GlobalOptions): int =
   writeFile(manifestPath, content)
   if not opts.quiet:
     printInfo(&"Added dependency '{depName}' to bux.toml", useColor)
+  return 0
+
+proc cmdSearch*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let query = if args.len > 0: args[0] else: ""
+  let reg = loadRegistry()
+  if reg.path.len == 0:
+    printError("no package registry found (set BUX_REGISTRY)", useColor)
+    return 1
+  if not opts.quiet:
+    echo &"Registry: {reg.path}"
+  let hits = registrySearch(reg, query)
+  if hits.len == 0:
+    if not opts.quiet:
+      echo "No packages matched."
+    return 1
+  # Dedupe by name showing latest version
+  var seen = initTable[string, RegistryPackage]()
+  for p in hits:
+    seen[p.name.toLowerAscii()] = p
+  var names: seq[string] = @[]
+  for k in seen.keys:
+    names.add(k)
+  names.sort(system.cmp)
+  for k in names:
+    let p = seen[k]
+    let desc = if p.description.len > 0: p.description else: p.source
+    echo &"  {p.name}  {p.version}  — {desc}"
   return 0
 
 proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
@@ -411,6 +475,7 @@ proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
   let cacheDir = getHomeDir() / ".bux" / "packages"
   if not dirExists(cacheDir):
     createDir(cacheDir)
+  let reg = loadRegistry()
   # Resolve each dependency
   for dep in man.dependencies:
     case dep.kind
@@ -433,20 +498,43 @@ proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
       if not dirExists(depDir):
         if not opts.quiet:
           printInfo(&"Cloning '{dep.name}' from {dep.gitUrl}...", useColor)
-        let (outp, code) = execCmdEx(&"git clone {dep.gitUrl} {depDir} 2>&1")
+        let (outp, code) = execCmdEx(&"git clone --quiet {quoteShell(dep.gitUrl)} {quoteShell(depDir)} 2>&1")
         if code != 0:
           printError(&"failed to clone {dep.gitUrl}: {outp}", useColor)
           return 1
       else:
         if not opts.quiet:
           printInfo(&"Using cached '{dep.name}' from {depDir}", useColor)
+      # Lock stores git URL; build loads from cache by name
       lock.entries.add(LockEntry(name: dep.name, version: dep.gitVersion, source: dep.gitUrl))
     of dkVersion:
-      # For version-based deps without a registry, we just record them
-      # TODO: lookup in registry
-      lock.entries.add(LockEntry(name: dep.name, version: dep.versionReq, source: "registry"))
-      if not opts.quiet:
-        printInfo(&"Recorded dependency '{dep.name}' = {dep.versionReq}", useColor)
+      # Registry lookup (E.1)
+      if reg.path.len == 0:
+        printError(&"cannot resolve '{dep.name}': no package registry (set BUX_REGISTRY)", useColor)
+        return 1
+      let pkg = registryLookup(reg, dep.name, dep.versionReq)
+      if pkg.name.len == 0:
+        printError(&"package '{dep.name}' not found in registry", useColor)
+        return 1
+      if pkg.resolvedPath.len > 0 and dirExists(pkg.resolvedPath):
+        lock.entries.add(LockEntry(name: dep.name, version: pkg.version, source: pkg.resolvedPath))
+        if not opts.quiet:
+          printInfo(&"Resolved '{dep.name}' {pkg.version} → {pkg.resolvedPath}", useColor)
+      elif isGitSource(pkg.source):
+        let depDir = cacheDir / dep.name
+        if not dirExists(depDir):
+          if not opts.quiet:
+            printInfo(&"Cloning '{dep.name}' from {pkg.source}...", useColor)
+          let (outp, code) = execCmdEx(&"git clone --quiet {quoteShell(pkg.source)} {quoteShell(depDir)} 2>&1")
+          if code != 0:
+            printError(&"failed to clone {pkg.source}: {outp}", useColor)
+            return 1
+        lock.entries.add(LockEntry(name: dep.name, version: pkg.version, source: pkg.source))
+        if not opts.quiet:
+          printInfo(&"Resolved '{dep.name}' {pkg.version} → git {pkg.source}", useColor)
+      else:
+        printError(&"registry entry '{dep.name}' has unusable source '{pkg.source}'", useColor)
+        return 1
   # Save lockfile
   let lockPath = root / "bux.lock"
   saveLockfile(lockPath, lock)
@@ -722,18 +810,93 @@ proc cmdClean*(args: seq[string], opts: GlobalOptions): int =
     printInfo("clean: build directory removed", useColor)
   return 0
 
+proc parseTestArgs(args: seq[string]): tuple[filter: string, paths: seq[string], ok: bool] =
+  ## Parse `test` args: optional `--filter <s>` / `--filter=<s>`, rest are ignored paths.
+  result.filter = ""
+  result.paths = @[]
+  result.ok = true
+  var i = 0
+  while i < args.len:
+    let a = args[i]
+    if a == "--filter":
+      if i + 1 >= args.len:
+        stderr.writeLine("error: --filter requires an argument")
+        result.ok = false
+        return
+      inc i
+      result.filter = args[i]
+    elif a.startsWith("--filter="):
+      result.filter = a["--filter=".len .. ^1]
+    elif a == "--help" or a == "-h":
+      echo "Usage: bux test [--filter <name>] [project-dir]"
+      echo "  --filter <name>   Only run tests whose filename contains <name>"
+      result.ok = false  # treat as early exit without error in caller? use special
+      # Signal help via empty filter and a sentinel path
+      result.paths = @["__help__"]
+      return
+    elif a.startsWith("-"):
+      stderr.writeLine(&"error: unknown test option '{a}'")
+      result.ok = false
+      return
+    else:
+      result.paths.add(a)
+    inc i
+
+proc parseFmtArgs(args: seq[string]): tuple[checkOnly: bool, paths: seq[string], ok: bool, help: bool] =
+  result.checkOnly = false
+  result.paths = @[]
+  result.ok = true
+  result.help = false
+  var i = 0
+  while i < args.len:
+    let a = args[i]
+    if a == "--check":
+      result.checkOnly = true
+    elif a == "--help" or a == "-h":
+      result.help = true
+      return
+    elif a.startsWith("-"):
+      stderr.writeLine(&"error: unknown fmt option '{a}'")
+      result.ok = false
+      return
+    else:
+      result.paths.add(a)
+    inc i
+
 proc cmdTest*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
-  let root = getCurrentDir()
+  let (filter, paths, ok) = parseTestArgs(args)
+  if not ok:
+    if paths.len == 1 and paths[0] == "__help__":
+      return 0
+    return 1
+  let root = if paths.len > 0: absolutePath(paths[0]) else: getCurrentDir()
   let testsDir = root / "tests"
   var testFiles: seq[string] = @[]
   if dirExists(testsDir):
     for kind, path in walkDir(testsDir):
       if kind == pcFile and path.endsWith(".bux"):
+        let testName = splitFile(path).name
+        if filter.len > 0 and filter notin testName:
+          continue
         testFiles.add(path)
+  testFiles.sort(system.cmp)
   if testFiles.len == 0:
-    printError("no tests found in tests/ directory", useColor)
+    if filter.len > 0:
+      printError(&"no tests matching filter '{filter}' in tests/", useColor)
+    else:
+      printError("no tests found in tests/ directory", useColor)
     return 1
+
+  if not opts.quiet:
+    if filter.len > 0:
+      echo &"Running tests (filter: {filter}) in {testsDir}"
+    else:
+      echo &"Running tests in {testsDir}"
+    echo "┌──────────────────────────────┬────────┐"
+    echo "│ Test                         │ Status │"
+    echo "├──────────────────────────────┼────────┤"
+
   var passed = 0
   var failed = 0
   for testFile in testFiles:
@@ -742,25 +905,167 @@ proc cmdTest*(args: seq[string], opts: GlobalOptions): int =
     removeDir(tmpDir)
     createDir(tmpDir / "src")
     copyFile(testFile, tmpDir / "src" / "Main.bux")
-    writeFile(tmpDir / "bux.toml", "[package]\nname = \"" & testName & "\"\nversion = \"0.1.0\"\n")
+    writeFile(tmpDir / "bux.toml",
+      "[Package]\nName    = \"" & testName & "\"\nVersion = \"0.1.0\"\nType    = \"bin\"\n\n[Build]\nOutput = \"Bin\"\n")
     let buildRes = cmdBuild(@[tmpDir], opts)
+    var status: string
+    var statusOk = false
     if buildRes != 0:
-      printError(&"  FAIL {testName} (build)", useColor)
+      status = "FAIL"
+      failed += 1
+    else:
+      var execFile = tmpDir / "build" / testName
+      if not fileExists(execFile):
+        execFile = tmpDir / "build" / "bux_out"
+      let exitCode = execCmd(execFile)
+      if exitCode == 0:
+        status = "PASS"
+        statusOk = true
+        passed += 1
+      else:
+        status = &"FAIL:{exitCode}"
+        failed += 1
+    removeDir(tmpDir)
+
+    if not opts.quiet:
+      # Pad name to 28 chars for the table column
+      var nameCol = testName
+      if nameCol.len > 28:
+        nameCol = nameCol[0 .. 24] & "..."
+      else:
+        nameCol = nameCol & repeat(' ', 28 - nameCol.len)
+      var stCol = status
+      if stCol.len < 6:
+        stCol = stCol & repeat(' ', 6 - stCol.len)
+      if useColor:
+        if statusOk:
+          stdout.setForegroundColor(fgGreen)
+        else:
+          stdout.setForegroundColor(fgRed)
+        stdout.writeLine(&"│ {nameCol} │ {stCol} │")
+        stdout.resetAttributes()
+      else:
+        echo &"│ {nameCol} │ {stCol} │"
+
+  if not opts.quiet:
+    echo "└──────────────────────────────┴────────┘"
+    echo &"\nResults: {passed} passed, {failed} failed, {testFiles.len} total"
+  # CI-friendly exit codes: 0 = all pass, 1 = some failed
+  return if failed > 0: 1 else: 0
+
+proc cmdFmt*(args: seq[string], opts: GlobalOptions): int =
+  let useColor = shouldUseColor(opts)
+  let (checkOnly, paths, ok, help) = parseFmtArgs(args)
+  if not ok:
+    return 1
+  if help:
+    echo "Usage: bux fmt [--check] [path...]"
+    echo "  --check   Do not write; exit 1 if any file would be reformatted"
+    echo "  path      File or directory (default: .)"
+    return 0
+
+  let targets = if paths.len > 0: paths else: @["."]
+  var files: seq[string] = @[]
+  for t in targets:
+    let collected = collectBuxFiles(t)
+    for f in collected:
+      if f notin files:
+        files.add(f)
+  files.sort(system.cmp)
+
+  if files.len == 0:
+    printError("no .bux files found", useColor)
+    return 1
+
+  var changed = 0
+  var failed = 0
+  var unchanged = 0
+  for path in files:
+    let (okf, didChange, msg) = formatFile(path, checkOnly)
+    if not okf:
+      printError(&"{path}: {msg}", useColor)
       failed += 1
       continue
-    var execFile = tmpDir / "build" / testName
-    if not fileExists(execFile):
-      execFile = tmpDir / "build" / "bux_out"
-    let exitCode = execCmd(execFile)
-    if exitCode == 0:
-      printInfo(&"  PASS {testName}", useColor)
-      passed += 1
+    if didChange:
+      changed += 1
+      if not opts.quiet:
+        if checkOnly:
+          printError(&"  would reformat {path}", useColor)
+        else:
+          printInfo(&"  formatted {path}", useColor)
     else:
-      printError(&"  FAIL {testName} (exit {exitCode})", useColor)
-      failed += 1
-    removeDir(tmpDir)
-  echo &"\nResults: {passed} passed, {failed} failed"
-  return if failed > 0: 1 else: 0
+      unchanged += 1
+      if opts.verbose and not opts.quiet:
+        echo &"  ok {path}"
+
+  if not opts.quiet:
+    if checkOnly:
+      echo &"\nfmt --check: {changed} would reformat, {unchanged} ok, {failed} errors"
+    else:
+      echo &"\nFormatted {changed}/{files.len} files ({unchanged} already clean)"
+
+  if failed > 0:
+    return 1
+  if checkOnly and changed > 0:
+    return 1
+  return 0
+
+proc cmdDoc*(args: seq[string], opts: GlobalOptions): int =
+  ## Generate Markdown docs from `///` / adjacent `/* */` comments.
+  var outPath = ""
+  var paths: seq[string] = @[]
+  var i = 0
+  while i < args.len:
+    let a = args[i]
+    if a == "--out" or a == "-o":
+      if i + 1 >= args.len:
+        stderr.writeLine("error: --out requires a path")
+        return 1
+      inc i
+      outPath = args[i]
+    elif a.startsWith("--out="):
+      outPath = a["--out=".len .. ^1]
+    elif a == "--help" or a == "-h":
+      echo "Usage: bux doc [--out file.md] [path...]"
+      echo "  Scans .bux files for /// and /* */ docs preceding declarations."
+      echo "  Default path: lib/ (stdlib) when omitted."
+      return 0
+    elif a.startsWith("-"):
+      stderr.writeLine(&"error: unknown doc option '{a}'")
+      return 1
+    else:
+      paths.add(a)
+    inc i
+
+  if paths.len == 0:
+    # Prefer stdlib if present
+    if dirExists("lib"):
+      paths = @["lib"]
+    else:
+      paths = @["."]
+
+  let items = generateDocs(paths)
+  let title =
+    if paths.len == 1 and paths[0] == "lib": "Bux Standard Library"
+    else: "API Reference"
+  let md = renderMarkdown(items, title)
+
+  if outPath.len > 0:
+    try:
+      let parent = parentDir(outPath)
+      if parent.len > 0 and not dirExists(parent):
+        createDir(parent)
+      writeFile(outPath, md)
+      if not opts.quiet:
+        echo &"Wrote {items.len} documented items → {outPath}"
+    except CatchableError as e:
+      stderr.writeLine("error: " & e.msg)
+      return 1
+  else:
+    stdout.write(md)
+  if items.len == 0 and not opts.quiet:
+    stderr.writeLine("warning: no /// or /* */ documented declarations found")
+  return 0
 
 proc cmdVersion*(args: seq[string], opts: GlobalOptions): int =
   echo "bux 0.1.0 (bootstrap)"
@@ -782,10 +1087,13 @@ proc runCli*(args: seq[string]): int =
   of "init": return cmdInit(cmdArgs, opts)
   of "add": return cmdAdd(cmdArgs, opts)
   of "install": return cmdInstall(cmdArgs, opts)
+  of "search": return cmdSearch(cmdArgs, opts)
   of "build": return cmdBuild(cmdArgs, opts)
   of "run": return cmdRun(cmdArgs, opts)
   of "check": return cmdCheck(cmdArgs, opts)
   of "test": return cmdTest(cmdArgs, opts)
+  of "fmt": return cmdFmt(cmdArgs, opts)
+  of "doc": return cmdDoc(cmdArgs, opts)
   of "clean": return cmdClean(cmdArgs, opts)
   of "version", "--version", "-v": return cmdVersion(cmdArgs, opts)
   of "help", "--help", "-h":

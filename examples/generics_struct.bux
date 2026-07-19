@@ -31,21 +31,21 @@ func Main() -> int {
     PrintLine("Box value:");
     PrintInt(b.Get());
     PrintLine("");
-    
+
     b.Set(100);
     PrintLine("Box after Set(100):");
     PrintInt(b.Get());
     PrintLine("");
-    
+
     let p: Pair<int, String> = Pair<int, String> { first: 10, second: "hello" };
     PrintLine("Pair first:");
     PrintInt(p.GetFirst());
     PrintLine("");
-    
+
     let bp: *Box<int> = &b;
     PrintLine("Box via pointer:");
     PrintInt(bp.Get());
     PrintLine("");
-    
+
     return 0;
 }

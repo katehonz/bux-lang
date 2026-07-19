@@ -1,0 +1,7 @@
+error: type errors in project
+error: cannot return reference to local variable
+  --> FILE:4:5
+    |
+ 4 |     return &x;
+    |     ^^^^^^
+   = help: return a value, or return a reference borrowed from a function parameter

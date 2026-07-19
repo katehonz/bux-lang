@@ -604,6 +604,44 @@ Moves happen in three contexts:
   msg = "reassigned";    // OK: reinitialization
   PrintLine(msg);
   ```
+- **No dangling returns**: cannot return a reference to a local (or by-value parameter)
+  ```bux
+  @[Checked]
+  func Bad(p: &int) -> &int {
+      var x: int = 1;
+      return &x;   // ERROR: cannot return reference to local variable
+  }
+  ```
+
+### Lifetime elision (C.1)
+
+In `@[Checked]` functions, most reference signatures need **no** lifetime annotations.
+Elision applies the usual single-input rules:
+
+1. Each elided input `&T` / `&mut T` parameter gets a distinct lifetime.
+2. If there is **exactly one** input lifetime, it is assigned to all elided outputs.
+3. If the first parameter is named `self` / `Self`, that input lifetime is preferred for outputs.
+4. Multiple input references + elided return → **error** (write an explicit lifetime).
+
+```bux
+// Elided — one input ref, return shares its lifetime
+@[Checked]
+func Identity(p: &int) -> &int {
+    return p;   // OK
+}
+
+// Explicit — required when several inputs could be returned
+@[Checked]
+func Pick<'a>(a: &'a int, b: &'a int) -> &'a int {
+    return a;
+}
+
+// Syntax: &'a T  and  &mut / &'a mut T  (lifetime before `mut`)
+// Type parameters: func F<'a, T>(...)
+```
+
+Unchecked functions ignore lifetime rules (C-like). Explicit `'a` is optional
+documentation when a single input would already elide correctly.
 
 ---
 

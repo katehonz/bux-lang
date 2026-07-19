@@ -1,0 +1,22 @@
+# Bux package registry index (E.1)
+# Used by `bux add <name>` and `bux install` when no --path/--git is given.
+#
+# Override with: export BUX_REGISTRY=/path/to/registry.toml
+# Or copy to:    ~/.bux/registry.toml
+#
+# source forms:
+#   file:relative/or/absolute   — local package (relative to this file)
+#   path:relative/or/absolute   — same as file:
+#   https://...git              — git clone into ~/.bux/packages/<name>
+
+[[package]]
+name = "greet"
+version = "0.1.0"
+source = "file:../registry/packages/greet"
+description = "Tiny Hello helper library (demo registry package)"
+
+[[package]]
+name = "greet"
+version = "0.1.1"
+source = "file:../registry/packages/greet"
+description = "Tiny Hello helper library (demo registry package, patch)"

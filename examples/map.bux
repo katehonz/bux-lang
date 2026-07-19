@@ -5,26 +5,26 @@ import Std::Map::{Map, Map_New, Map_Set, Map_Get, Map_Has, Map_Free};
 func Main() -> int {
     PrintLine("=== Map<int, String> ===");
     let m: Map<int, String> = Map_New<int, String>(16);
-    
+
     Map_Set<int, String>(&m, 1, "one");
     Map_Set<int, String>(&m, 2, "two");
     Map_Set<int, String>(&m, 3, "three");
-    
+
     PrintLine("Get 1:");
     PrintLine(Map_Get<int, String>(&m, 1));
-    
+
     PrintLine("Get 2:");
     PrintLine(Map_Get<int, String>(&m, 2));
-    
+
     if Map_Has<int, String>(&m, 1) {
         PrintLine("Has 1: yes");
     }
-    
+
     // Test update
     Map_Set<int, String>(&m, 2, "updated");
     PrintLine("Updated 2:");
     PrintLine(Map_Get<int, String>(&m, 2));
-    
+
     Map_Free<int, String>(&m);
     return 0;
 }

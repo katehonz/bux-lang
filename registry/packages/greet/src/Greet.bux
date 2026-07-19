@@ -1,0 +1,14 @@
+// greet — demo registry package (E.1)
+module Greet {
+
+    /// Return a greeting for `name`.
+    func Greet_Hello(name: String) -> String {
+        return String_Concat("Hello, ", String_Concat(name, "!"));
+    }
+
+    /// Return the package version string.
+    func Greet_Version() -> String {
+        return "0.1.1";
+    }
+
+}

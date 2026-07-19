@@ -1,0 +1,7 @@
+[Package]
+Name    = "return_local_ref"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"

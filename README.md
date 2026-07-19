@@ -246,7 +246,7 @@ func Main() -> int {
 | **Package Manager** | `bux add`, `bux install`, `bux.lock`, path + git deps |
 | **Cross-Compilation** | `--target <triple>` via clang (e.g. `aarch64-linux-gnu`) |
 | **Diagnostics** | Rust-style snippets, multi-char underlines, `= help:` hints |
-| **Tooling** | `bux new/build/run/test/check/fmt`, LSP (`tools/lsp_server.nim` + `buxc check`) |
+| **Tooling** | `bux new/build/run/test/check/fmt/doc`, LSP 0.4.0 (locals + inferred lets) |
 
 ---
 
@@ -299,6 +299,8 @@ bux/
 | [`docs/Stdlib.md`](docs/Stdlib.md) | Standard library API |
 | [`docs/BuildAndTest.md`](docs/BuildAndTest.md) | Build, test, and tooling |
 | [`docs/QUALITY_PLAN.md`](docs/QUALITY_PLAN.md) | Roadmap toward a “good” v1.0 |
+| [`docs/Packages.md`](docs/Packages.md) | Package manager + registry |
+| [`docs/SEMVER.md`](docs/SEMVER.md) | Versioning policy |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Feature status (constructs) |
 | [`PLAN.md`](PLAN.md) | Long-form phase plan |
 
@@ -319,14 +321,33 @@ make test-errors
 # Full unit + example suite
 make test
 
+# Full-tree format check (lib/ examples/ src/ tests/ apps/)
+make fmt-check
+# Reformat those trees
+make fmt
+
+# Stdlib behavioral goldens (Array / String / collections)
+make test-stdlib
+
+# Generate stdlib API docs from /// comments
+make docs
+
 # Build self-hosted compiler (Bux → C → native)
 make selfhost
 
-# Run all tests
-make test
+# Package tests (filter + summary table)
+./buxc test --filter first _test_runner
 
-# Run example programs
-make test-examples
+# Format / CI format check
+./buxc fmt path/to/file.bux
+./buxc fmt --check path/
+
+# API docs
+./buxc doc --out docs/api/stdlib.md lib/
+
+# Package registry
+./buxc search greet
+make test-registry          # add greet → install → build temp app
 
 # Verify selfhost binary parity (buxc2 → buxc3, identical)
 make selfhost-loop

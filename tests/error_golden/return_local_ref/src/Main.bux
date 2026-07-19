@@ -1,0 +1,10 @@
+@[Checked]
+func Dangle(p: &int) -> &int {
+    var x: int = 42;
+    return &x;
+}
+
+@[Checked]
+func Main() -> int {
+    return 0;
+}

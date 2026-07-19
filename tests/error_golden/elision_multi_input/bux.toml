@@ -1,0 +1,7 @@
+[Package]
+Name    = "elision_multi_input"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"

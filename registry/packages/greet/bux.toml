@@ -1,0 +1,9 @@
+[Package]
+Name    = "greet"
+Version = "0.1.1"
+Type    = "lib"
+Authors = ["Bux Core"]
+License = "MIT"
+
+[Build]
+Output = "Lib"

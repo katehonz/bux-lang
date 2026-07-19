@@ -1,0 +1,50 @@
+// Stdlib golden: Array helpers + Contains/IndexOf/Extend
+import Std::Io::{PrintLine};
+import Std::Array::{
+    Array, Array_New, Array_Push, Array_Pop, Array_Clear, Array_IsEmpty,
+    Array_First, Array_Last, Array_Cap, Array_Reserve, Array_Len, Array_Get,
+    Array_Contains, Array_IndexOf, Array_Extend, Array_Free
+};
+import Std::Test::{
+    Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_Pass
+};
+
+func Main() -> int {
+    var arr: Array<int> = Array_New<int>(2);
+    Array_Reserve<int>(&arr, 8);
+    Test_AssertTrue(Array_Cap<int>(&arr) >= 8);
+    Test_AssertTrue(Array_IsEmpty<int>(&arr));
+
+    Array_Push<int>(&arr, 10);
+    Array_Push<int>(&arr, 20);
+    Array_Push<int>(&arr, 30);
+
+    Test_AssertFalse(Array_IsEmpty<int>(&arr));
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 3);
+    Test_AssertEqInt(Array_First<int>(&arr), 10);
+    Test_AssertEqInt(Array_Last<int>(&arr), 30);
+    Test_AssertTrue(Array_Contains<int>(&arr, 20));
+    Test_AssertFalse(Array_Contains<int>(&arr, 99));
+    Test_AssertEqInt(Array_IndexOf<int>(&arr, 30), 2);
+
+    let popped: int = Array_Pop<int>(&arr);
+    Test_AssertEqInt(popped, 30);
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 2);
+
+    var extra: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&extra, 40);
+    Array_Push<int>(&extra, 50);
+    Array_Extend<int>(&arr, &extra);
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 4);
+    Test_AssertEqInt(Array_Get<int>(&arr, 3), 50);
+
+    Array_Clear<int>(&arr);
+    Test_AssertTrue(Array_IsEmpty<int>(&arr));
+    Test_AssertTrue(Array_Cap<int>(&arr) >= 8);
+
+    Array_Free<int>(&arr);
+    Array_Free<int>(&extra);
+    PrintLine("stdlib_array: ok");
+    Test_Pass("stdlib_array");
+    return 0;
+}

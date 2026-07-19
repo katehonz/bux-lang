@@ -1,28 +1,28 @@
 module Std::Io {
 
-extern func PrintLine(s: String);
-extern func Print(s: String);
-extern func PrintInt(n: int);
-extern func PrintInt64(n: int64);
-extern func PrintFloat(f: float64);
-extern func PrintBool(b: bool);
-extern func ReadLine() -> String;
-extern func bux_read_file(path: String) -> String;
-extern func bux_write_file(path: String, content: String) -> int;
-extern func bux_file_exists(path: String) -> int;
+    extern func PrintLine(s: String);
+    extern func Print(s: String);
+    extern func PrintInt(n: int);
+    extern func PrintInt64(n: int64);
+    extern func PrintFloat(f: float64);
+    extern func PrintBool(b: bool);
+    extern func ReadLine() -> String;
+    extern func bux_read_file(path: String) -> String;
+    extern func bux_write_file(path: String, content: String) -> int;
+    extern func bux_file_exists(path: String) -> int;
 
-func ReadFile(path: String) -> String {
-    return bux_read_file(path);
-}
+    func ReadFile(path: String) -> String {
+        return bux_read_file(path);
+    }
 
-func WriteFile(path: String, content: String) -> bool {
-    let r: int = bux_write_file(path, content);
-    return r != 0;
-}
+    func WriteFile(path: String, content: String) -> bool {
+        let r: int = bux_write_file(path, content);
+        return r != 0;
+    }
 
-func FileExists(path: String) -> bool {
-    let r: int = bux_file_exists(path);
-    return r != 0;
-}
+    func FileExists(path: String) -> bool {
+        let r: int = bux_file_exists(path);
+        return r != 0;
+    }
 
 }

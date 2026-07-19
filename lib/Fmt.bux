@@ -8,93 +8,93 @@
 
 module Std::Fmt {
 
-import Std::String::{
-    String_Eq,
-    String_FromInt,
-    String_FromFloat,
-    String_FromBool,
-    StringBuilder,
-    StringBuilder_New,
-    StringBuilder_Append,
-    StringBuilder_Build,
-    String_Chars
-};
+    import Std::String::{
+        String_Eq,
+        String_FromInt,
+        String_FromFloat,
+        String_FromBool,
+        StringBuilder,
+        StringBuilder_New,
+        StringBuilder_Append,
+        StringBuilder_Build,
+        String_Chars
+    };
 
-extern func bux_strlen(s: String) -> uint;
-extern func bux_str_to_int(s: String) -> int64;
-extern func bux_alloc(size: uint) -> *void;
+    extern func bux_strlen(s: String) -> uint;
+    extern func bux_str_to_int(s: String) -> int64;
+    extern func bux_alloc(size: uint) -> *void;
 
-// Core formatting engine: replace {0}..{9} in template with args
-func Fmt_Format(tmpl: String, argStrs: *String, argCount: int) -> String {
-    let sb: StringBuilder = StringBuilder_New();
-    var i: uint = 0;
-    let tmplLen: uint = bux_strlen(tmpl);
-    while i < tmplLen {
-        // Check for {
-        let ch: String = String_Chars(tmpl, i);
-        if String_Eq(ch, "{") {
-            let digitIdx: uint = i + 1;
-            if digitIdx < tmplLen {
-                let digitCh: String = String_Chars(tmpl, digitIdx);
-                let d: int64 = bux_str_to_int(digitCh);
-                if d >= 0 && d < argCount as int64 {
-                    // Consume {d}
-                    i = i + 2; // skip past digit
-                    // Check for closing }
-                    if i < tmplLen {
-                        let closeCh: String = String_Chars(tmpl, i);
-                        if String_Eq(closeCh, "}") {
-                            i = i + 1; // skip }
-                            let argStr: String = argStrs[d as uint];
-                            StringBuilder_Append(&sb, argStr);
-                            continue;
+    // Core formatting engine: replace {0}..{9} in template with args
+    func Fmt_Format(tmpl: String, argStrs: *String, argCount: int) -> String {
+        let sb: StringBuilder = StringBuilder_New();
+        var i: uint = 0;
+        let tmplLen: uint = bux_strlen(tmpl);
+        while i < tmplLen {
+            // Check for {
+            let ch: String = String_Chars(tmpl, i);
+            if String_Eq(ch, "{") {
+                let digitIdx: uint = i + 1;
+                if digitIdx < tmplLen {
+                    let digitCh: String = String_Chars(tmpl, digitIdx);
+                    let d: int64 = bux_str_to_int(digitCh);
+                    if d >= 0 && d < argCount as int64 {
+                        // Consume {d}
+                        i = i + 2; // skip past digit
+                        // Check for closing }
+                        if i < tmplLen {
+                            let closeCh: String = String_Chars(tmpl, i);
+                            if String_Eq(closeCh, "}") {
+                                i = i + 1; // skip }
+                                let argStr: String = argStrs[d as uint];
+                                StringBuilder_Append(&sb, argStr);
+                                continue;
+                            }
                         }
                     }
                 }
             }
+            // Normal character: append it
+            StringBuilder_Append(&sb, ch);
+            i = i + 1;
         }
-        // Normal character: append it
-        StringBuilder_Append(&sb, ch);
-        i = i + 1;
+        return StringBuilder_Build(&sb);
     }
-    return StringBuilder_Build(&sb);
-}
 
-// Convenience wrappers
-func Fmt_Fmt1(tmpl: String, a1: String) -> String {
-    var args: *String = bux_alloc(sizeof(String)) as *String;
-    args[0] = a1;
-    return Fmt_Format(tmpl, args, 1);
-}
+    // Convenience wrappers
+    func Fmt_Fmt1(tmpl: String, a1: String) -> String {
+        var args: *String = bux_alloc(sizeof(String)) as *String;
+        args[0] = a1;
+        return Fmt_Format(tmpl, args, 1);
+    }
 
-func Fmt_FmtInt(tmpl: String, val: int64) -> String {
-    let s: String = String_FromInt(val);
-    return Fmt_Fmt1(tmpl, s);
-}
+    func Fmt_FmtInt(tmpl: String, val: int64) -> String {
+        let s: String = String_FromInt(val);
+        return Fmt_Fmt1(tmpl, s);
+    }
 
-func Fmt_FmtBool(tmpl: String, val: bool) -> String {
-    let s: String = String_FromBool(val);
-    return Fmt_Fmt1(tmpl, s);
-}
+    func Fmt_FmtBool(tmpl: String, val: bool) -> String {
+        let s: String = String_FromBool(val);
+        return Fmt_Fmt1(tmpl, s);
+    }
 
-func Fmt_FmtFloat(tmpl: String, val: float64) -> String {
-    let s: String = String_FromFloat(val);
-    return Fmt_Fmt1(tmpl, s);
-}
+    func Fmt_FmtFloat(tmpl: String, val: float64) -> String {
+        let s: String = String_FromFloat(val);
+        return Fmt_Fmt1(tmpl, s);
+    }
 
-func Fmt_Fmt2(tmpl: String, a1: String, a2: String) -> String {
-    var args: *String = bux_alloc(2 * sizeof(String)) as *String;
-    args[0] = a1;
-    args[1] = a2;
-    return Fmt_Format(tmpl, args, 2);
-}
+    func Fmt_Fmt2(tmpl: String, a1: String, a2: String) -> String {
+        var args: *String = bux_alloc(2 * sizeof(String)) as *String;
+        args[0] = a1;
+        args[1] = a2;
+        return Fmt_Format(tmpl, args, 2);
+    }
 
-func Fmt_Fmt3(tmpl: String, a1: String, a2: String, a3: String) -> String {
-    var args: *String = bux_alloc(3 * sizeof(String)) as *String;
-    args[0] = a1;
-    args[1] = a2;
-    args[2] = a3;
-    return Fmt_Format(tmpl, args, 3);
-}
+    func Fmt_Fmt3(tmpl: String, a1: String, a2: String, a3: String) -> String {
+        var args: *String = bux_alloc(3 * sizeof(String)) as *String;
+        args[0] = a1;
+        args[1] = a2;
+        args[2] = a3;
+        return Fmt_Format(tmpl, args, 3);
+    }
 
 }

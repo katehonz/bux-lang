@@ -1,0 +1,9 @@
+@[Checked]
+func Pick(a: &int, b: &int) -> &int {
+    return a;
+}
+
+@[Checked]
+func Main() -> int {
+    return 0;
+}

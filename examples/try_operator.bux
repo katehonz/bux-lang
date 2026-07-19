@@ -39,7 +39,7 @@ func ComputeWithError() -> Result {
 
 func Main() -> int {
     PrintLine("Try operator demo:");
-    
+
     let r1: Result = Compute();
     if r1.tag == Result_Ok {
         PrintLine("Compute() = ");
@@ -48,11 +48,11 @@ func Main() -> int {
     } else {
         PrintLine("Compute() failed");
     }
-    
+
     let r2: Result = ComputeWithError();
     if r2.tag == Result_Err {
         PrintLine("ComputeWithError() failed as expected");
     }
-    
+
     return 0;
 }

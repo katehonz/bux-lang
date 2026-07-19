@@ -2,721 +2,1190 @@
 // Validates types, resolves identifiers, checks function calls.
 module Sema {
 
-extern func bux_string_concat(a: String, b: String) -> String;
-extern func bux_int_to_str(n: int64) -> String;
-extern func bux_strlen(s: String) -> uint;
-extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+    extern func bux_string_concat(a: String, b: String) -> String;
+    extern func bux_int_to_str(n: int64) -> String;
+    extern func bux_strlen(s: String) -> uint;
+    extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
 
-// ---------------------------------------------------------------------------
-// Sema context
-// ---------------------------------------------------------------------------
-struct Sema {
-    module: *Module;
-    scope: *Scope;
-    typeTable: *void;
-    methodTable: *void;
-    diagCount: int;
-    diags: *SemaDiag;
-    hasError: bool;
-    currentRetType: int;    // return type of the function being checked
-    checkedFunc: bool;      // true inside @[Checked] function
-    releaseFunc: bool;      // true inside @[Release] function
-    movedCount: int;        // number of moved variables
-    movedName0: String;     // inline moved var names (up to 8)
-    movedName1: String;
-    movedName2: String;
-    movedName3: String;
-    movedName4: String;
-    movedName5: String;
-    movedName6: String;
-    movedName7: String;
-    closureDepth: int;      // nesting depth inside closures
-    currentClosureExpr: *Expr; // current closure being analyzed (for capture tracking)
-    closureScope: *Scope;   // scope at which the current closure was entered
-    // Trait bounds tables
-    interfaceTable: *InterfaceEntry;
-    interfaceCount: int;
-    methodEntries: *MethodEntry;
-    methodCount: int;
-}
-
-struct SemaDiag {
-    line: uint32;
-    column: uint32;
-    message: String;
-}
-
-// ---------------------------------------------------------------------------
-// Interface / Method tables for trait bounds checking
-// ---------------------------------------------------------------------------
-
-struct InterfaceEntry {
-    name: String,
-    decl: *Decl,
-}
-
-struct MethodEntry {
-    typeName: String,
-    methodName: String,
-    decl: *Decl,
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostics
-// ---------------------------------------------------------------------------
-
-func Sema_EmitError(sema: *Sema, line: uint32, col: uint32, msg: String) {
-    if sema.diagCount < 256 {
-        sema.diags[sema.diagCount] = SemaDiag { line: line, column: col, message: msg };
-        sema.diagCount = sema.diagCount + 1;
+    // ---------------------------------------------------------------------------
+    // Sema context
+    // ---------------------------------------------------------------------------
+    struct Sema {
+        module: *Module;
+        scope: *Scope;
+        typeTable: *void;
+        methodTable: *void;
+        diagCount: int;
+        diags: *SemaDiag;
+        hasError: bool;
+        currentRetType: int;    // return type of the function being checked
+        checkedFunc: bool;      // true inside @[Checked] function
+        releaseFunc: bool;      // true inside @[Release] function
+        movedCount: int;        // number of moved variables
+        movedName0: String;     // inline moved var names (up to 8)
+        movedName1: String;
+        movedName2: String;
+        movedName3: String;
+        movedName4: String;
+        movedName5: String;
+        movedName6: String;
+        movedName7: String;
+        // Lifetime elision (C.1) — binding name → lifetime id (up to 8)
+        ltCount: int;
+        ltName0: String;
+        ltName1: String;
+        ltName2: String;
+        ltName3: String;
+        ltName4: String;
+        ltName5: String;
+        ltName6: String;
+        ltName7: String;
+        ltVal0: String;
+        ltVal1: String;
+        ltVal2: String;
+        ltVal3: String;
+        ltVal4: String;
+        ltVal5: String;
+        ltVal6: String;
+        ltVal7: String;
+        returnLifetime: String; // expected return ref lifetime ("" if not a ref return)
+        ltAnon: int;            // next #elidedN counter
+        closureDepth: int;      // nesting depth inside closures
+        currentClosureExpr: *Expr; // current closure being analyzed (for capture tracking)
+        closureScope: *Scope;   // scope at which the current closure was entered
+        // Trait bounds tables
+        interfaceTable: *InterfaceEntry;
+        interfaceCount: int;
+        methodEntries: *MethodEntry;
+        methodCount: int;
     }
-    sema.hasError = true;
-}
 
-// ---------------------------------------------------------------------------
-// Symbol zero-init helper (bootstrap C backend does not zero-init structs)
-// ---------------------------------------------------------------------------
+    struct SemaDiag {
+        line: uint32;
+        column: uint32;
+        message: String;
+    }
 
-func Sema_ZeroInitSymbol(sym: *Symbol) {
-    sym.kind = 0;
-    sym.name = "";
-    sym.typeKind = 0;
-    sym.typeName = "";
-    sym.refType = null as *TypeExpr;
-    sym.isMutable = false;
-    sym.isPublic = false;
-    sym.decl = null as *Decl;
-}
+    // ---------------------------------------------------------------------------
+    // Interface / Method tables for trait bounds checking
+    // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Build a tekFunc TypeExpr from a function declaration
-// ---------------------------------------------------------------------------
+    struct InterfaceEntry {
+        name: String,
+        decl: *Decl,
+    }
 
-func Sema_BuildFuncTypeExprFromDecl(decl: *Decl) -> *TypeExpr {
-    let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-    te.kind = tekFunc;
-    te.line = decl.line;
-    te.column = decl.column;
-    te.funcRet = decl.retType;
-    te.funcParamCount = decl.paramCount;
-    var head: *TypeExprList = null as *TypeExprList;
-    var tail: *TypeExprList = null as *TypeExprList;
-    var i: int = 0;
-    while i < decl.paramCount && i < 9 {
-        var p: Param;
-        if i == 0 { p = decl.param0; }
-        else if i == 1 { p = decl.param1; }
-        else if i == 2 { p = decl.param2; }
-        else if i == 3 { p = decl.param3; }
-        else if i == 4 { p = decl.param4; }
-        else if i == 5 { p = decl.param5; }
-        else if i == 6 { p = decl.param6; }
-        else if i == 7 { p = decl.param7; }
-        else { p = decl.param8; }
-        if p.refParamType != null as *TypeExpr {
-            let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
-            node.te = p.refParamType;
-            node.next = null as *TypeExprList;
-            if head == null as *TypeExprList {
-                head = node;
-            } else {
-                tail.next = node;
-            }
-            tail = node;
+    struct MethodEntry {
+        typeName: String,
+        methodName: String,
+        decl: *Decl,
+    }
+
+    // ---------------------------------------------------------------------------
+    // Diagnostics
+    // ---------------------------------------------------------------------------
+
+    func Sema_EmitError(sema: *Sema, line: uint32, col: uint32, msg: String) {
+        if sema.diagCount < 256 {
+            sema.diags[sema.diagCount] = SemaDiag { line: line, column: col, message: msg };
+            sema.diagCount = sema.diagCount + 1;
         }
-        i = i + 1;
-    }
-    te.funcParams = head;
-    return te;
-}
-
-// ---------------------------------------------------------------------------
-// Type resolution from TypeExpr → Type constants
-// ---------------------------------------------------------------------------
-
-func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
-    if te == null as *TypeExpr { return tyUnknown; }
-
-    if te.kind == tekPointer {
-        return tyPointer;
+        sema.hasError = true;
     }
 
-    if te.kind == tekFunc {
-        return tyFunc;
-    }
+    // ---------------------------------------------------------------------------
+    // Symbol zero-init helper (bootstrap C backend does not zero-init structs)
+    // ---------------------------------------------------------------------------
 
-    if te.kind == tekTuple {
-        // Tuples lower to named C structs (Tuple_int_int, ...)
-        return tyNamed;
-    }
-
-    return Type_FromName(te.typeName);
-}
-
-// ---------------------------------------------------------------------------
-// Type predicates
-// ---------------------------------------------------------------------------
-
-func Sema_IsNumeric(kind: int) -> bool {
-    if kind == tyUnknown || kind == tyNamed || kind == tyTypeParam { return true; }
-    if kind == tyInt8 || kind == tyInt16 || kind == tyInt32 || kind == tyInt64 || kind == tyInt { return true; }
-    if kind == tyUInt8 || kind == tyUInt16 || kind == tyUInt32 || kind == tyUInt64 || kind == tyUInt { return true; }
-    if kind == tyFloat32 || kind == tyFloat64 { return true; }
-    return false;
-}
-
-func Sema_IsBool(kind: int) -> bool {
-    return kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32;
-}
-
-// ---------------------------------------------------------------------------
-// Block checking helper
-// ---------------------------------------------------------------------------
-
-func Sema_CheckBlock(sema: *Sema, block: *Block) {
-    if block == null as *Block { return; }
-    // Create child scope for block (matching Nim bootstrap behavior)
-    var blockScope: Scope = Scope_NewChild(sema.scope);
-    let prevScope: *Scope = sema.scope;
-    sema.scope = &blockScope;
-    var stmt: *Stmt = block.firstStmt;
-    while stmt != null as *Stmt {
-        Sema_CheckStmt(sema, stmt);
-        stmt = stmt.nextStmt;
-    }
-    sema.scope = prevScope;
-}
-
-// ---------------------------------------------------------------------------
-// Call argument resolution: inject defaults and reorder named args
-// ---------------------------------------------------------------------------
-
-func Sema_ResolveCallArgs(sema: *Sema, expr: *Expr) {
-    if expr == null as *Expr || expr.kind != ekCall { return; }
-    if expr.child1 == null as *Expr || expr.child1.kind != ekIdent { return; }
-    let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
-    if sym.kind != skFunc || sym.decl == null as *Decl { return; }
-    let decl: *Decl = sym.decl;
-    if decl.paramCount == 0 { return; }
-
-    // Check if any named args present
-    var hasNamed: bool = false;
-    var arg: *ExprList = expr.callArgs;
-    while arg != null as *ExprList {
-        if !String_Eq(arg.argName, "") { hasNamed = true; }
-        arg = arg.next;
-    }
-    if !hasNamed && expr.callArgCount >= decl.paramCount { return; }
-
-    // Build new linked list in param order
-    var newFirst: *ExprList = null as *ExprList;
-    var newLast: *ExprList = null as *ExprList;
-    var newCount: int = 0;
-    var usedPositional: int = 0;
-    var positionalAfterNamed: bool = false;
-
-    var i: int = 0;
-    while i < decl.paramCount {
-        var p: *Param = null as *Param;
-        if i == 0 { p = &decl.param0; }
-        else if i == 1 { p = &decl.param1; }
-        else if i == 2 { p = &decl.param2; }
-        else if i == 3 { p = &decl.param3; }
-        else if i == 4 { p = &decl.param4; }
-        else if i == 5 { p = &decl.param5; }
-        else if i == 6 { p = &decl.param6; }
-        else if i == 7 { p = &decl.param7; }
-        else if i == 8 { p = &decl.param8; }
-
-        var matched: *Expr = null as *Expr;
-
-        // Look for positional arg at this index
-        if usedPositional < expr.callArgCount {
-            var posIdx: int = 0;
-            var posArg: *ExprList = expr.callArgs;
-            while posArg != null as *ExprList {
-                if String_Eq(posArg.argName, "") {
-                    if posIdx == usedPositional {
-                        matched = posArg.expr;
-                        usedPositional = usedPositional + 1;
-                        break;
-                    }
-                    posIdx = posIdx + 1;
-                }
-                posArg = posArg.next;
-            }
-        }
-
-        // Look for named arg matching this param
-        if matched == null as *Expr {
-            var namedArg: *ExprList = expr.callArgs;
-            while namedArg != null as *ExprList {
-                if String_Eq(namedArg.argName, p.name) {
-                    matched = namedArg.expr;
-                    break;
-                }
-                namedArg = namedArg.next;
-            }
-        }
-
-        // Use default if available
-        if matched == null as *Expr && p.defaultExpr != null as *Expr {
-            matched = p.defaultExpr;
-        }
-
-        if matched != null as *Expr {
-            let node: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
-            node.expr = matched;
-            node.next = null as *ExprList;
-            node.argName = "";
-            if newFirst == null as *ExprList {
-                newFirst = node;
-                newLast = node;
-            } else {
-                newLast.next = node;
-                newLast = node;
-            }
-            newCount = newCount + 1;
-        }
-
-        i = i + 1;
-    }
-
-    expr.callArgs = newFirst;
-    expr.callArgCount = newCount;
-}
-
-// ---------------------------------------------------------------------------
-// Borrow checker helpers (inline array, matching Decl param pattern)
-// ---------------------------------------------------------------------------
-
-func Sema_AddMoved(sema: *Sema, name: String) {
-    if sema == null as *Sema { return; }
-    if sema.movedCount >= 8 { return; }
-    if sema.movedCount == 0 { sema.movedName0 = name; }
-    else if sema.movedCount == 1 { sema.movedName1 = name; }
-    else if sema.movedCount == 2 { sema.movedName2 = name; }
-    else if sema.movedCount == 3 { sema.movedName3 = name; }
-    else if sema.movedCount == 4 { sema.movedName4 = name; }
-    else if sema.movedCount == 5 { sema.movedName5 = name; }
-    else if sema.movedCount == 6 { sema.movedName6 = name; }
-    else if sema.movedCount == 7 { sema.movedName7 = name; }
-    sema.movedCount = sema.movedCount + 1;
-}
-
-func Sema_IsMoved(sema: *Sema, name: String) -> bool {
-    if sema == null as *Sema { return false; }
-    if sema.movedCount > 0 && String_Eq(sema.movedName0, name) { return true; }
-    if sema.movedCount > 1 && String_Eq(sema.movedName1, name) { return true; }
-    if sema.movedCount > 2 && String_Eq(sema.movedName2, name) { return true; }
-    if sema.movedCount > 3 && String_Eq(sema.movedName3, name) { return true; }
-    if sema.movedCount > 4 && String_Eq(sema.movedName4, name) { return true; }
-    if sema.movedCount > 5 && String_Eq(sema.movedName5, name) { return true; }
-    if sema.movedCount > 6 && String_Eq(sema.movedName6, name) { return true; }
-    if sema.movedCount > 7 && String_Eq(sema.movedName7, name) { return true; }
-    return false;
-}
-
-func Sema_RemoveMoved(sema: *Sema, name: String) {
-    if sema == null as *Sema { return; }
-    var found: int = -1;
-    if sema.movedCount > 0 && String_Eq(sema.movedName0, name) { found = 0; }
-    else if sema.movedCount > 1 && String_Eq(sema.movedName1, name) { found = 1; }
-    else if sema.movedCount > 2 && String_Eq(sema.movedName2, name) { found = 2; }
-    else if sema.movedCount > 3 && String_Eq(sema.movedName3, name) { found = 3; }
-    else if sema.movedCount > 4 && String_Eq(sema.movedName4, name) { found = 4; }
-    else if sema.movedCount > 5 && String_Eq(sema.movedName5, name) { found = 5; }
-    else if sema.movedCount > 6 && String_Eq(sema.movedName6, name) { found = 6; }
-    else if sema.movedCount > 7 && String_Eq(sema.movedName7, name) { found = 7; }
-    if found >= 0 {
-        var i: int = found;
-        while i < sema.movedCount - 1 {
-            if i == 0 { sema.movedName0 = sema.movedName1; }
-            else if i == 1 { sema.movedName1 = sema.movedName2; }
-            else if i == 2 { sema.movedName2 = sema.movedName3; }
-            else if i == 3 { sema.movedName3 = sema.movedName4; }
-            else if i == 4 { sema.movedName4 = sema.movedName5; }
-            else if i == 5 { sema.movedName5 = sema.movedName6; }
-            else if i == 6 { sema.movedName6 = sema.movedName7; }
-            i = i + 1;
-        }
-        sema.movedCount = sema.movedCount - 1;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Capture tracking for closures
-// ---------------------------------------------------------------------------
-
-func Sema_AddCapture(closureExpr: *Expr, name: String, typeKind: int) {
-    if closureExpr == null as *Expr { return; }
-    // Check if already captured
-    var i: int = 0;
-    while i < closureExpr.captureCount {
-        var capName: String = "";
-        if i == 0 { capName = closureExpr.captureName0; }
-        else if i == 1 { capName = closureExpr.captureName1; }
-        else if i == 2 { capName = closureExpr.captureName2; }
-        else if i == 3 { capName = closureExpr.captureName3; }
-        else if i == 4 { capName = closureExpr.captureName4; }
-        else if i == 5 { capName = closureExpr.captureName5; }
-        else if i == 6 { capName = closureExpr.captureName6; }
-        else if i == 7 { capName = closureExpr.captureName7; }
-        if String_Eq(capName, name) { return; }
-        i = i + 1;
-    }
-    // Add new capture (up to 8)
-    if closureExpr.captureCount < 8 {
-        let idx: int = closureExpr.captureCount;
-        if idx == 0 { closureExpr.captureName0 = name; closureExpr.captureType0 = typeKind; }
-        else if idx == 1 { closureExpr.captureName1 = name; closureExpr.captureType1 = typeKind; }
-        else if idx == 2 { closureExpr.captureName2 = name; closureExpr.captureType2 = typeKind; }
-        else if idx == 3 { closureExpr.captureName3 = name; closureExpr.captureType3 = typeKind; }
-        else if idx == 4 { closureExpr.captureName4 = name; closureExpr.captureType4 = typeKind; }
-        else if idx == 5 { closureExpr.captureName5 = name; closureExpr.captureType5 = typeKind; }
-        else if idx == 6 { closureExpr.captureName6 = name; closureExpr.captureType6 = typeKind; }
-        else if idx == 7 { closureExpr.captureName7 = name; closureExpr.captureType7 = typeKind; }
-        closureExpr.captureCount = closureExpr.captureCount + 1;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Expression type checking
-// ---------------------------------------------------------------------------
-
-// Bind identifiers from a match pattern into the current scope.
-// Enum payloads: Option::Some(value) → value:int (from variant field type).
-func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
-    if pat == null as *Pattern { return; }
-    // Guarded: bind from inner pattern only (`p if cond`)
-    if pat.kind == pkGuarded {
-        Sema_BindPattern(sema, pat.patChild1, subject);
-        return;
-    }
-    if pat.kind == pkIdent {
-        var sym: Symbol;
-        Sema_ZeroInitSymbol(&sym);
-        sym.kind = skVar;
-        sym.name = pat.patIdent;
-        sym.typeKind = tyInt;
-        sym.typeName = "int";
-        if subject != null as *Expr && subject.refType != null as *TypeExpr {
-            sym.refType = subject.refType;
-            sym.typeName = subject.refType.typeName;
-            sym.typeKind = Sema_ResolveType(sema, subject.refType);
-        }
+    func Sema_ZeroInitSymbol(sym: *Symbol) {
+        sym.kind = 0;
+        sym.name = "";
+        sym.typeKind = 0;
+        sym.typeName = "";
+        sym.refType = null as *TypeExpr;
         sym.isMutable = false;
         sym.isPublic = false;
         sym.decl = null as *Decl;
-        discard Scope_Define(sema.scope, sym);
-        return;
     }
-    if pat.kind == pkEnum {
-        // Resolve enum + variant field types for payload bindings
-        var enumName: String = "";
-        var variantName: String = pat.patEnumPath;
-        if String_Contains(pat.patEnumPath, "::") {
-            enumName = String_SplitPart(pat.patEnumPath, "::", 0);
-            variantName = String_SplitPart(pat.patEnumPath, "::", 1);
-        } else if subject != null as *Expr && subject.refType != null as *TypeExpr {
-            enumName = subject.refType.typeName;
-        }
-        var fieldType0: String = "int";
-        var fieldType1: String = "int";
-        var fieldCount: int = 0;
-        if !String_Eq(enumName, "") {
-            let enumSym: Symbol = Scope_Lookup(sema.scope, enumName);
-            if enumSym.decl != null as *Decl && enumSym.decl.kind == dkEnum {
-                var vi: int = 0;
-                while vi < enumSym.decl.variantCount {
-                    var v: *EnumVariant = null as *EnumVariant;
-                    if vi == 0 { v = &enumSym.decl.variant0; }
-                    else if vi == 1 { v = &enumSym.decl.variant1; }
-                    else if vi == 2 { v = &enumSym.decl.variant2; }
-                    else if vi == 3 { v = &enumSym.decl.variant3; }
-                    else if vi == 4 { v = &enumSym.decl.variant4; }
-                    else if vi == 5 { v = &enumSym.decl.variant5; }
-                    else if vi == 6 { v = &enumSym.decl.variant6; }
-                    else if vi == 7 { v = &enumSym.decl.variant7; }
-                    else if vi == 8 { v = &enumSym.decl.variant8; }
-                    if v != null as *EnumVariant && String_Eq(v.name, variantName) {
-                        fieldCount = v.fieldCount;
-                        if !String_Eq(v.fieldTypeName0, "") { fieldType0 = v.fieldTypeName0; }
-                        if !String_Eq(v.fieldTypeName1, "") { fieldType1 = v.fieldTypeName1; }
-                    }
-                    vi = vi + 1;
-                }
-            }
-        }
-        var arg: *Pattern = pat.patArgs;
-        var ai: int = 0;
-        while arg != null as *Pattern {
-            var ftype: String = "int";
-            if ai == 0 { ftype = fieldType0; }
-            else if ai == 1 { ftype = fieldType1; }
-            if arg.kind == pkIdent {
-                var bsym: Symbol;
-                Sema_ZeroInitSymbol(&bsym);
-                bsym.kind = skVar;
-                bsym.name = arg.patIdent;
-                bsym.typeName = ftype;
-                bsym.typeKind = tyInt;
-                if String_Eq(ftype, "String") || String_Eq(ftype, "str") { bsym.typeKind = tyStr; }
-                else if String_Eq(ftype, "bool") { bsym.typeKind = tyBool; }
-                else if String_Eq(ftype, "float64") || String_Eq(ftype, "float") { bsym.typeKind = tyFloat64; }
-                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                te.kind = tekNamed;
-                te.typeName = ftype;
-                bsym.refType = te;
-                bsym.isMutable = false;
-                bsym.isPublic = false;
-                bsym.decl = null as *Decl;
-                discard Scope_Define(sema.scope, bsym);
-            } else {
-                // Nested pattern: synthesize a fake subject expr with payload type
-                let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
-                let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                fte.kind = tekNamed;
-                fte.typeName = ftype;
-                fake.refType = fte;
-                Sema_BindPattern(sema, arg, fake);
-            }
-            arg = arg.patNext;
-            ai = ai + 1;
-        }
-        return;
-    }
-    // Tuple pattern: (a, b) — bind elements from subject tuple types
-    if pat.kind == pkTuple {
-        var ei: int = 0;
-        var elem: *Pattern = pat.patArgs;
-        while elem != null as *Pattern {
-            var ety: String = "int";
-            if subject != null as *Expr && subject.refType != null as *TypeExpr {
-                if subject.refType.kind == tekTuple {
-                    if ei == 0 && !String_Eq(subject.refType.typeArgName0, "") {
-                        ety = subject.refType.typeArgName0;
-                    } else if ei == 1 && !String_Eq(subject.refType.typeArgName1, "") {
-                        ety = subject.refType.typeArgName1;
-                    }
-                }
-            }
-            if elem.kind == pkIdent {
-                var bsym: Symbol;
-                Sema_ZeroInitSymbol(&bsym);
-                bsym.kind = skVar;
-                bsym.name = elem.patIdent;
-                bsym.typeName = ety;
-                bsym.typeKind = tyInt;
-                if String_Eq(ety, "String") || String_Eq(ety, "str") { bsym.typeKind = tyStr; }
-                else if String_Eq(ety, "bool") { bsym.typeKind = tyBool; }
-                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                te.kind = tekNamed;
-                te.typeName = ety;
-                bsym.refType = te;
-                bsym.isMutable = false;
-                discard Scope_Define(sema.scope, bsym);
-            } else {
-                let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
-                let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                fte.kind = tekNamed;
-                fte.typeName = ety;
-                fake.refType = fte;
-                Sema_BindPattern(sema, elem, fake);
-            }
-            elem = elem.patNext;
-            ei = ei + 1;
-        }
-        return;
-    }
-    // Struct pattern: Point { x: a, y: b }
-    if pat.kind == pkStruct {
-        var structName: String = pat.patStructName;
-        if String_Eq(structName, "") && subject != null as *Expr && subject.refType != null as *TypeExpr {
-            structName = subject.refType.typeName;
-        }
-        var field: *Pattern = pat.patArgs;
-        while field != null as *Pattern {
-            var ftype: String = "int";
-            if !String_Eq(structName, "") {
-                let ssym: Symbol = Scope_Lookup(sema.scope, structName);
-                if ssym.decl != null as *Decl && ssym.decl.kind == dkStruct && ssym.decl.fields != null as *StructField {
-                    var fi: int = 0;
-                    while fi < ssym.decl.fieldCount {
-                        let sf: StructField = ssym.decl.fields[fi];
-                        var fname: String = field.patFieldName;
-                        if String_Eq(fname, "") { fname = field.patIdent; }
-                        if String_Eq(sf.name, fname) {
-                            if sf.refFieldType != null as *TypeExpr && !String_Eq(sf.refFieldType.typeName, "") {
-                                ftype = sf.refFieldType.typeName;
-                            }
-                        }
-                        fi = fi + 1;
-                    }
-                }
-            }
-            if field.kind == pkIdent {
-                var bsym: Symbol;
-                Sema_ZeroInitSymbol(&bsym);
-                bsym.kind = skVar;
-                bsym.name = field.patIdent;
-                bsym.typeName = ftype;
-                bsym.typeKind = tyInt;
-                if String_Eq(ftype, "String") || String_Eq(ftype, "str") { bsym.typeKind = tyStr; }
-                else if String_Eq(ftype, "bool") { bsym.typeKind = tyBool; }
-                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                te.kind = tekNamed;
-                te.typeName = ftype;
-                bsym.refType = te;
-                bsym.isMutable = false;
-                discard Scope_Define(sema.scope, bsym);
-            } else {
-                let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
-                let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                fte.kind = tekNamed;
-                fte.typeName = ftype;
-                fake.refType = fte;
-                Sema_BindPattern(sema, field, fake);
-            }
-            field = field.patNext;
-        }
-        return;
-    }
-}
 
-func Sema_IsMutRefDeref(target: *Expr) -> bool {
-    if target == null as *Expr { return false; }
-    if target.kind != ekUnary { return false; }
-    if target.intValue != tkStar { return false; }
-    let operand: *Expr = target.child1;
-    if operand == null as *Expr { return false; }
-    if operand.refType == null as *TypeExpr { return false; }
-    return operand.refType.kind == tekMutRef;
-}
+    // ---------------------------------------------------------------------------
+    // Build a tekFunc TypeExpr from a function declaration
+    // ---------------------------------------------------------------------------
 
-func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
-    if expr == null as *Expr { return tyUnknown; }
-    let kind: int = expr.kind;
-
-    // Literal
-    if kind == ekLiteral {
-        let tk: int = expr.tokKind;
+    func Sema_BuildFuncTypeExprFromDecl(decl: *Decl) -> *TypeExpr {
         let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-        te.kind = tekNamed;
-        if tk == tkIntLiteral { te.typeName = "int"; expr.refType = te; return tyInt; }
-        if tk == tkFloatLiteral { te.typeName = "float64"; expr.refType = te; return tyFloat64; }
-        if tk == tkStringLiteral { te.typeName = "String"; expr.refType = te; return tyStr; }
-        if tk == tkBoolLiteral { te.typeName = "bool"; expr.refType = te; return tyBool; }
-        if tk == tkCharLiteral { te.typeName = "char32"; expr.refType = te; return tyChar32; }
-        if tk == tkNull {
-            te.typeName = "*void";
-            expr.refType = te;
+        te.kind = tekFunc;
+        te.line = decl.line;
+        te.column = decl.column;
+        te.funcRet = decl.retType;
+        te.funcParamCount = decl.paramCount;
+        var head: *TypeExprList = null as *TypeExprList;
+        var tail: *TypeExprList = null as *TypeExprList;
+        var i: int = 0;
+        while i < decl.paramCount && i < 9 {
+            var p: Param;
+            if i == 0 { p = decl.param0; }
+            else if i == 1 { p = decl.param1; }
+            else if i == 2 { p = decl.param2; }
+            else if i == 3 { p = decl.param3; }
+            else if i == 4 { p = decl.param4; }
+            else if i == 5 { p = decl.param5; }
+            else if i == 6 { p = decl.param6; }
+            else if i == 7 { p = decl.param7; }
+            else { p = decl.param8; }
+            if p.refParamType != null as *TypeExpr {
+                let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
+                node.te = p.refParamType;
+                node.next = null as *TypeExprList;
+                if head == null as *TypeExprList {
+                    head = node;
+                } else {
+                    tail.next = node;
+                }
+                tail = node;
+            }
+            i = i + 1;
+        }
+        te.funcParams = head;
+        return te;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Type resolution from TypeExpr → Type constants
+    // ---------------------------------------------------------------------------
+
+    func Sema_ResolveType(sema: *Sema, te: *TypeExpr) -> int {
+        if te == null as *TypeExpr { return tyUnknown; }
+
+        if te.kind == tekPointer {
             return tyPointer;
         }
-        return tyUnknown;
+
+        if te.kind == tekFunc {
+            return tyFunc;
+        }
+
+        if te.kind == tekTuple {
+            // Tuples lower to named C structs (Tuple_int_int, ...)
+            return tyNamed;
+        }
+
+        return Type_FromName(te.typeName);
     }
 
-    // Identifier — look up in scope
-    if kind == ekIdent {
-        // Borrow check: use-after-move in @[Checked] functions
-        if sema.checkedFunc && !sema.releaseFunc && Sema_IsMoved(sema, expr.strValue) {
-            Sema_EmitError(sema, expr.line, expr.column,
-                String_Concat("use of moved value '", String_Concat(expr.strValue, "'")));
+    // ---------------------------------------------------------------------------
+    // Type predicates
+    // ---------------------------------------------------------------------------
+
+    func Sema_IsNumeric(kind: int) -> bool {
+        if kind == tyUnknown || kind == tyNamed || kind == tyTypeParam { return true; }
+        if kind == tyInt8 || kind == tyInt16 || kind == tyInt32 || kind == tyInt64 || kind == tyInt { return true; }
+        if kind == tyUInt8 || kind == tyUInt16 || kind == tyUInt32 || kind == tyUInt64 || kind == tyUInt { return true; }
+        if kind == tyFloat32 || kind == tyFloat64 { return true; }
+        return false;
+    }
+
+    func Sema_IsBool(kind: int) -> bool {
+        return kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Block checking helper
+    // ---------------------------------------------------------------------------
+
+    func Sema_CheckBlock(sema: *Sema, block: *Block) {
+        if block == null as *Block { return; }
+        // Create child scope for block (matching Nim bootstrap behavior)
+        var blockScope: Scope = Scope_NewChild(sema.scope);
+        let prevScope: *Scope = sema.scope;
+        sema.scope = &blockScope;
+        var stmt: *Stmt = block.firstStmt;
+        while stmt != null as *Stmt {
+            Sema_CheckStmt(sema, stmt);
+            stmt = stmt.nextStmt;
         }
-        let sym: Symbol = Scope_Lookup(sema.scope, expr.strValue);
-        if sym.kind == 0 && !String_Eq(sym.name, expr.strValue) {
-            let errMsg: String = String_Concat("undeclared identifier '", expr.strValue);
-            let errMsg2: String = String_Concat(errMsg, "'");
-            Sema_EmitError(sema, expr.line, expr.column, errMsg2);
-            return tyUnknown;
+        sema.scope = prevScope;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Call argument resolution: inject defaults and reorder named args
+    // ---------------------------------------------------------------------------
+
+    func Sema_ResolveCallArgs(sema: *Sema, expr: *Expr) {
+        if expr == null as *Expr || expr.kind != ekCall { return; }
+        if expr.child1 == null as *Expr || expr.child1.kind != ekIdent { return; }
+        let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
+        if sym.kind != skFunc || sym.decl == null as *Decl { return; }
+        let decl: *Decl = sym.decl;
+        if decl.paramCount == 0 { return; }
+
+        // Check if any named args present
+        var hasNamed: bool = false;
+        var arg: *ExprList = expr.callArgs;
+        while arg != null as *ExprList {
+            if !String_Eq(arg.argName, "") { hasNamed = true; }
+            arg = arg.next;
         }
-        if sym.refType != null as *TypeExpr {
-            expr.refType = sym.refType;
-        } else if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
-            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-            te.kind = tekNamed;
-            te.typeName = sym.typeName;
-            expr.refType = te;
-        }
-        // Capture tracking: if inside closure and identifier is not local but from parent scope
-        if sema.closureDepth > 0 && sema.currentClosureExpr != null as *Expr && sema.closureScope != null as *Scope {
-            let localSym: Symbol = Scope_LookupUpTo(sema.scope, expr.strValue, sema.closureScope);
-            if localSym.kind == 0 && !String_Eq(localSym.name, expr.strValue) {
-                // Not local to closure scope — check if it's a variable from outer scope
-                if sym.kind == skVar {
-                    Sema_AddCapture(sema.currentClosureExpr, expr.strValue, sym.typeKind);
+        if !hasNamed && expr.callArgCount >= decl.paramCount { return; }
+
+        // Build new linked list in param order
+        var newFirst: *ExprList = null as *ExprList;
+        var newLast: *ExprList = null as *ExprList;
+        var newCount: int = 0;
+        var usedPositional: int = 0;
+        var positionalAfterNamed: bool = false;
+
+        var i: int = 0;
+        while i < decl.paramCount {
+            var p: *Param = null as *Param;
+            if i == 0 { p = &decl.param0; }
+            else if i == 1 { p = &decl.param1; }
+            else if i == 2 { p = &decl.param2; }
+            else if i == 3 { p = &decl.param3; }
+            else if i == 4 { p = &decl.param4; }
+            else if i == 5 { p = &decl.param5; }
+            else if i == 6 { p = &decl.param6; }
+            else if i == 7 { p = &decl.param7; }
+            else if i == 8 { p = &decl.param8; }
+
+            var matched: *Expr = null as *Expr;
+
+            // Look for positional arg at this index
+            if usedPositional < expr.callArgCount {
+                var posIdx: int = 0;
+                var posArg: *ExprList = expr.callArgs;
+                while posArg != null as *ExprList {
+                    if String_Eq(posArg.argName, "") {
+                        if posIdx == usedPositional {
+                            matched = posArg.expr;
+                            usedPositional = usedPositional + 1;
+                            break;
+                        }
+                        posIdx = posIdx + 1;
+                    }
+                    posArg = posArg.next;
                 }
             }
+
+            // Look for named arg matching this param
+            if matched == null as *Expr {
+                var namedArg: *ExprList = expr.callArgs;
+                while namedArg != null as *ExprList {
+                    if String_Eq(namedArg.argName, p.name) {
+                        matched = namedArg.expr;
+                        break;
+                    }
+                    namedArg = namedArg.next;
+                }
+            }
+
+            // Use default if available
+            if matched == null as *Expr && p.defaultExpr != null as *Expr {
+                matched = p.defaultExpr;
+            }
+
+            if matched != null as *Expr {
+                let node: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                node.expr = matched;
+                node.next = null as *ExprList;
+                node.argName = "";
+                if newFirst == null as *ExprList {
+                    newFirst = node;
+                    newLast = node;
+                } else {
+                    newLast.next = node;
+                    newLast = node;
+                }
+                newCount = newCount + 1;
+            }
+
+            i = i + 1;
         }
-        return sym.typeKind;
+
+        expr.callArgs = newFirst;
+        expr.callArgCount = newCount;
     }
 
-    // self
-    if kind == ekSelf {
-        let sym: Symbol = Scope_Lookup(sema.scope, "self");
-        if sym.kind == 0 && !String_Eq(sym.name, "self") {
-            Sema_EmitError(sema, expr.line, expr.column, "self outside method");
-            return tyUnknown;
-        }
-        return sym.typeKind;
+    // ---------------------------------------------------------------------------
+    // Borrow checker helpers (inline array, matching Decl param pattern)
+    // ---------------------------------------------------------------------------
+
+    func Sema_AddMoved(sema: *Sema, name: String) {
+        if sema == null as *Sema { return; }
+        if sema.movedCount >= 8 { return; }
+        if sema.movedCount == 0 { sema.movedName0 = name; }
+        else if sema.movedCount == 1 { sema.movedName1 = name; }
+        else if sema.movedCount == 2 { sema.movedName2 = name; }
+        else if sema.movedCount == 3 { sema.movedName3 = name; }
+        else if sema.movedCount == 4 { sema.movedName4 = name; }
+        else if sema.movedCount == 5 { sema.movedName5 = name; }
+        else if sema.movedCount == 6 { sema.movedName6 = name; }
+        else if sema.movedCount == 7 { sema.movedName7 = name; }
+        sema.movedCount = sema.movedCount + 1;
     }
 
-    // Binary
-    if kind == ekBinary {
-        let left: int = Sema_CheckExpr(sema, expr.child1);
-        let right: int = Sema_CheckExpr(sema, expr.child2);
-        let op: int = expr.intValue;
+    func Sema_IsMoved(sema: *Sema, name: String) -> bool {
+        if sema == null as *Sema { return false; }
+        if sema.movedCount > 0 && String_Eq(sema.movedName0, name) { return true; }
+        if sema.movedCount > 1 && String_Eq(sema.movedName1, name) { return true; }
+        if sema.movedCount > 2 && String_Eq(sema.movedName2, name) { return true; }
+        if sema.movedCount > 3 && String_Eq(sema.movedName3, name) { return true; }
+        if sema.movedCount > 4 && String_Eq(sema.movedName4, name) { return true; }
+        if sema.movedCount > 5 && String_Eq(sema.movedName5, name) { return true; }
+        if sema.movedCount > 6 && String_Eq(sema.movedName6, name) { return true; }
+        if sema.movedCount > 7 && String_Eq(sema.movedName7, name) { return true; }
+        return false;
+    }
 
-        // Borrow check: reject assignment through raw pointer in @[Checked] functions.
-        // Allow writes through &mut T references.
-        if sema.checkedFunc && !sema.releaseFunc && op == tkAssign &&
-           expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar &&
-           !Sema_IsMutRefDeref(expr.child1) {
-            Sema_EmitError(sema, expr.line, expr.column,
-                "cannot assign through raw pointer in checked function — use '&mut T' instead");
+    func Sema_RemoveMoved(sema: *Sema, name: String) {
+        if sema == null as *Sema { return; }
+        var found: int = -1;
+        if sema.movedCount > 0 && String_Eq(sema.movedName0, name) { found = 0; }
+        else if sema.movedCount > 1 && String_Eq(sema.movedName1, name) { found = 1; }
+        else if sema.movedCount > 2 && String_Eq(sema.movedName2, name) { found = 2; }
+        else if sema.movedCount > 3 && String_Eq(sema.movedName3, name) { found = 3; }
+        else if sema.movedCount > 4 && String_Eq(sema.movedName4, name) { found = 4; }
+        else if sema.movedCount > 5 && String_Eq(sema.movedName5, name) { found = 5; }
+        else if sema.movedCount > 6 && String_Eq(sema.movedName6, name) { found = 6; }
+        else if sema.movedCount > 7 && String_Eq(sema.movedName7, name) { found = 7; }
+        if found >= 0 {
+            var i: int = found;
+            while i < sema.movedCount - 1 {
+                if i == 0 { sema.movedName0 = sema.movedName1; }
+                else if i == 1 { sema.movedName1 = sema.movedName2; }
+                else if i == 2 { sema.movedName2 = sema.movedName3; }
+                else if i == 3 { sema.movedName3 = sema.movedName4; }
+                else if i == 4 { sema.movedName4 = sema.movedName5; }
+                else if i == 5 { sema.movedName5 = sema.movedName6; }
+                else if i == 6 { sema.movedName6 = sema.movedName7; }
+                i = i + 1;
+            }
+            sema.movedCount = sema.movedCount - 1;
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Lifetime elision helpers (C.1) — selfhost parity with bootstrap
+    // ---------------------------------------------------------------------------
+
+    func Sema_ClearLifetimes(sema: *Sema) {
+        if sema == null as *Sema { return; }
+        sema.ltCount = 0;
+        sema.returnLifetime = "";
+        sema.ltAnon = 0;
+    }
+
+    func Sema_SetVarLifetime(sema: *Sema, name: String, lt: String) {
+        if sema == null as *Sema { return; }
+        if String_Eq(name, "") { return; }
+        // Update existing binding
+        if sema.ltCount > 0 && String_Eq(sema.ltName0, name) { sema.ltVal0 = lt; return; }
+        if sema.ltCount > 1 && String_Eq(sema.ltName1, name) { sema.ltVal1 = lt; return; }
+        if sema.ltCount > 2 && String_Eq(sema.ltName2, name) { sema.ltVal2 = lt; return; }
+        if sema.ltCount > 3 && String_Eq(sema.ltName3, name) { sema.ltVal3 = lt; return; }
+        if sema.ltCount > 4 && String_Eq(sema.ltName4, name) { sema.ltVal4 = lt; return; }
+        if sema.ltCount > 5 && String_Eq(sema.ltName5, name) { sema.ltVal5 = lt; return; }
+        if sema.ltCount > 6 && String_Eq(sema.ltName6, name) { sema.ltVal6 = lt; return; }
+        if sema.ltCount > 7 && String_Eq(sema.ltName7, name) { sema.ltVal7 = lt; return; }
+        if sema.ltCount >= 8 { return; }
+        if sema.ltCount == 0 { sema.ltName0 = name; sema.ltVal0 = lt; }
+        else if sema.ltCount == 1 { sema.ltName1 = name; sema.ltVal1 = lt; }
+        else if sema.ltCount == 2 { sema.ltName2 = name; sema.ltVal2 = lt; }
+        else if sema.ltCount == 3 { sema.ltName3 = name; sema.ltVal3 = lt; }
+        else if sema.ltCount == 4 { sema.ltName4 = name; sema.ltVal4 = lt; }
+        else if sema.ltCount == 5 { sema.ltName5 = name; sema.ltVal5 = lt; }
+        else if sema.ltCount == 6 { sema.ltName6 = name; sema.ltVal6 = lt; }
+        else if sema.ltCount == 7 { sema.ltName7 = name; sema.ltVal7 = lt; }
+        sema.ltCount = sema.ltCount + 1;
+    }
+
+    func Sema_GetVarLifetime(sema: *Sema, name: String) -> String {
+        if sema == null as *Sema { return ""; }
+        if sema.ltCount > 0 && String_Eq(sema.ltName0, name) { return sema.ltVal0; }
+        if sema.ltCount > 1 && String_Eq(sema.ltName1, name) { return sema.ltVal1; }
+        if sema.ltCount > 2 && String_Eq(sema.ltName2, name) { return sema.ltVal2; }
+        if sema.ltCount > 3 && String_Eq(sema.ltName3, name) { return sema.ltVal3; }
+        if sema.ltCount > 4 && String_Eq(sema.ltName4, name) { return sema.ltVal4; }
+        if sema.ltCount > 5 && String_Eq(sema.ltName5, name) { return sema.ltVal5; }
+        if sema.ltCount > 6 && String_Eq(sema.ltName6, name) { return sema.ltVal6; }
+        if sema.ltCount > 7 && String_Eq(sema.ltName7, name) { return sema.ltVal7; }
+        return "";
+    }
+
+    func Sema_DeclParam(decl: *Decl, i: int) -> *Param {
+        if decl == null as *Decl { return null as *Param; }
+        if i == 0 { return &decl.param0; }
+        if i == 1 { return &decl.param1; }
+        if i == 2 { return &decl.param2; }
+        if i == 3 { return &decl.param3; }
+        if i == 4 { return &decl.param4; }
+        if i == 5 { return &decl.param5; }
+        if i == 6 { return &decl.param6; }
+        if i == 7 { return &decl.param7; }
+        if i == 8 { return &decl.param8; }
+        return null as *Param;
+    }
+
+    func Sema_ApplyLifetimeElision(sema: *Sema, decl: *Decl) {
+        // Rust-style elision for @[Checked] functions (single-input + self).
+        Sema_ClearLifetimes(sema);
+        if sema == null as *Sema || decl == null as *Decl { return; }
+        if !sema.checkedFunc || sema.releaseFunc { return; }
+
+        var inputLt0: String = "";
+        var inputCount: int = 0;
+        var firstParamName: String = "";
+        var i: int = 0;
+        while i < decl.paramCount {
+            let p: *Param = Sema_DeclParam(decl, i);
+            if p != null as *Param && p.refParamType != null as *TypeExpr {
+                let pk: int = p.refParamType.kind;
+                if pk == tekRef || pk == tekMutRef {
+                    var lt: String = p.refParamType.refLifetime;
+                    if String_Eq(lt, "") {
+                        lt = String_Concat("#elided", bux_int_to_str(sema.ltAnon as int64));
+                        sema.ltAnon = sema.ltAnon + 1;
+                    }
+                    Sema_SetVarLifetime(sema, p.name, lt);
+                    if inputCount == 0 { inputLt0 = lt; }
+                    inputCount = inputCount + 1;
+                }
+            }
+            if i == 0 && p != null as *Param {
+                firstParamName = p.name;
+            }
+            i = i + 1;
         }
 
-        // Borrow check: reinitialization after move
-        if sema.checkedFunc && !sema.releaseFunc && op == tkAssign {
-            if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
-                Sema_RemoveMoved(sema, expr.child1.strValue);
+        if decl.retType == null as *TypeExpr { return; }
+        let rk: int = decl.retType.kind;
+        if rk != tekRef && rk != tekMutRef { return; }
+
+        var rlt: String = decl.retType.refLifetime;
+        if String_Eq(rlt, "") {
+            if inputCount == 1 {
+                rlt = inputLt0;
+            } else if inputCount == 0 {
+                rlt = "#out";
+            } else if String_Eq(firstParamName, "self") || String_Eq(firstParamName, "Self") {
+                rlt = inputLt0;
+            } else {
+                Sema_EmitError(sema, decl.line, decl.column,
+                "lifetime elision failed: return type needs an explicit lifetime (multiple input references); e.g. func F<'a>(a: &'a T, b: &'a U) -> &'a T");
+                rlt = "#ambiguous";
             }
         }
+        sema.returnLifetime = rlt;
+    }
 
-        // Assignment operators return target type
-        if op == tkAssign || (op >= tkPlusAssign && op <= tkShrAssign) {
-            return left;
+    func Sema_ExtractBorrowedIdent(expr: *Expr) -> String {
+        // Identify source var of &x
+        if expr == null as *Expr { return ""; }
+        if expr.kind == ekUnary && expr.intValue == tkAmp {
+            if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                return expr.child1.strValue;
+            }
+            if expr.child1 != null as *Expr && expr.child1.kind == ekUnary &&
+            expr.child1.intValue == tkAmp && expr.child1.child1 != null as *Expr &&
+            expr.child1.child1.kind == ekIdent {
+                return expr.child1.child1.strValue;
+            }
+        }
+        return "";
+    }
+
+    func Sema_ExprRefLifetime(sema: *Sema, expr: *Expr) -> String {
+        if sema == null as *Sema || expr == null as *Expr { return ""; }
+        if expr.kind == ekIdent {
+            return Sema_GetVarLifetime(sema, expr.strValue);
+        }
+        if expr.kind == ekUnary && expr.intValue == tkAmp {
+            let name: String = Sema_ExtractBorrowedIdent(expr);
+            if String_Eq(name, "") { return "#local"; }
+            let existing: String = Sema_GetVarLifetime(sema, name);
+            if !String_Eq(existing, "") {
+                // Reborrow of an existing ref binding keeps its lifetime
+                let sym: Symbol = Scope_Lookup(sema.scope, name);
+                if sym.refType != null as *TypeExpr {
+                    if sym.refType.kind == tekRef || sym.refType.kind == tekMutRef {
+                        return existing;
+                    }
+                }
+                // Named as input lifetime but not a ref type? still use it
+                return existing;
+            }
+            return "#local";
+        }
+        if expr.kind == ekUnary && expr.intValue == tkStar {
+            return Sema_ExprRefLifetime(sema, expr.child1);
+        }
+        if expr.kind == ekField {
+            let baseLt: String = Sema_ExprRefLifetime(sema, expr.child1);
+            if !String_Eq(baseLt, "") { return baseLt; }
+            if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                let bl: String = Sema_GetVarLifetime(sema, expr.child1.strValue);
+                if !String_Eq(bl, "") { return bl; }
+                return "#local";
+            }
+            return "";
+        }
+        return "";
+    }
+
+    func Sema_CheckReturnLifetime(sema: *Sema, retExpr: *Expr, line: uint32, col: uint32) {
+        if sema == null as *Sema { return; }
+        if !sema.checkedFunc || sema.releaseFunc { return; }
+        if String_Eq(sema.returnLifetime, "") { return; }
+        if retExpr == null as *Expr { return; }
+
+        let got: String = Sema_ExprRefLifetime(sema, retExpr);
+        if String_Eq(sema.returnLifetime, "#out") {
+            Sema_EmitError(sema, line, col,
+            "cannot return a reference: function has no input reference to borrow from");
+            return;
+        }
+        if String_Eq(got, "#local") {
+            Sema_EmitError(sema, line, col, "cannot return reference to local variable");
+            return;
+        }
+        if String_Eq(got, "") { return; }
+        if String_Eq(got, "#ambiguous") || String_Eq(sema.returnLifetime, "#ambiguous") { return; }
+        // Explicit lifetime mismatch
+        if String_StartsWith(got, "'") && String_StartsWith(sema.returnLifetime, "'") &&
+        !String_Eq(got, sema.returnLifetime) {
+            Sema_EmitError(sema, line, col,
+            String_Concat("lifetime mismatch: returning '",
+            String_Concat(got, String_Concat("' but function returns '",
+            String_Concat(sema.returnLifetime, "'")))));
+            return;
+        }
+        if String_StartsWith(got, "#elided") && String_StartsWith(sema.returnLifetime, "#elided") &&
+        !String_Eq(got, sema.returnLifetime) {
+            Sema_EmitError(sema, line, col,
+            "lifetime mismatch: returned reference does not outlive the return type (multiple input references; annotate with an explicit lifetime)");
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Capture tracking for closures
+    // ---------------------------------------------------------------------------
+
+    func Sema_AddCapture(closureExpr: *Expr, name: String, typeKind: int) {
+        if closureExpr == null as *Expr { return; }
+        // Check if already captured
+        var i: int = 0;
+        while i < closureExpr.captureCount {
+            var capName: String = "";
+            if i == 0 { capName = closureExpr.captureName0; }
+            else if i == 1 { capName = closureExpr.captureName1; }
+            else if i == 2 { capName = closureExpr.captureName2; }
+            else if i == 3 { capName = closureExpr.captureName3; }
+            else if i == 4 { capName = closureExpr.captureName4; }
+            else if i == 5 { capName = closureExpr.captureName5; }
+            else if i == 6 { capName = closureExpr.captureName6; }
+            else if i == 7 { capName = closureExpr.captureName7; }
+            if String_Eq(capName, name) { return; }
+            i = i + 1;
+        }
+        // Add new capture (up to 8)
+        if closureExpr.captureCount < 8 {
+            let idx: int = closureExpr.captureCount;
+            if idx == 0 { closureExpr.captureName0 = name; closureExpr.captureType0 = typeKind; }
+            else if idx == 1 { closureExpr.captureName1 = name; closureExpr.captureType1 = typeKind; }
+            else if idx == 2 { closureExpr.captureName2 = name; closureExpr.captureType2 = typeKind; }
+            else if idx == 3 { closureExpr.captureName3 = name; closureExpr.captureType3 = typeKind; }
+            else if idx == 4 { closureExpr.captureName4 = name; closureExpr.captureType4 = typeKind; }
+            else if idx == 5 { closureExpr.captureName5 = name; closureExpr.captureType5 = typeKind; }
+            else if idx == 6 { closureExpr.captureName6 = name; closureExpr.captureType6 = typeKind; }
+            else if idx == 7 { closureExpr.captureName7 = name; closureExpr.captureType7 = typeKind; }
+            closureExpr.captureCount = closureExpr.captureCount + 1;
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Expression type checking
+    // ---------------------------------------------------------------------------
+
+    // Bind identifiers from a match pattern into the current scope.
+    // Enum payloads: Option::Some(value) → value:int (from variant field type).
+    func Sema_BindPattern(sema: *Sema, pat: *Pattern, subject: *Expr) {
+        if pat == null as *Pattern { return; }
+        // Guarded: bind from inner pattern only (`p if cond`)
+        if pat.kind == pkGuarded {
+            Sema_BindPattern(sema, pat.patChild1, subject);
+            return;
+        }
+        if pat.kind == pkIdent {
+            var sym: Symbol;
+            Sema_ZeroInitSymbol(&sym);
+            sym.kind = skVar;
+            sym.name = pat.patIdent;
+            sym.typeKind = tyInt;
+            sym.typeName = "int";
+            if subject != null as *Expr && subject.refType != null as *TypeExpr {
+                sym.refType = subject.refType;
+                sym.typeName = subject.refType.typeName;
+                sym.typeKind = Sema_ResolveType(sema, subject.refType);
+            }
+            sym.isMutable = false;
+            sym.isPublic = false;
+            sym.decl = null as *Decl;
+            discard Scope_Define(sema.scope, sym);
+            return;
+        }
+        if pat.kind == pkEnum {
+            // Resolve enum + variant field types for payload bindings
+            var enumName: String = "";
+            var variantName: String = pat.patEnumPath;
+            if String_Contains(pat.patEnumPath, "::") {
+                enumName = String_SplitPart(pat.patEnumPath, "::", 0);
+                variantName = String_SplitPart(pat.patEnumPath, "::", 1);
+            } else if subject != null as *Expr && subject.refType != null as *TypeExpr {
+                enumName = subject.refType.typeName;
+            }
+            var fieldType0: String = "int";
+            var fieldType1: String = "int";
+            var fieldCount: int = 0;
+            if !String_Eq(enumName, "") {
+                let enumSym: Symbol = Scope_Lookup(sema.scope, enumName);
+                if enumSym.decl != null as *Decl && enumSym.decl.kind == dkEnum {
+                    var vi: int = 0;
+                    while vi < enumSym.decl.variantCount {
+                        var v: *EnumVariant = null as *EnumVariant;
+                        if vi == 0 { v = &enumSym.decl.variant0; }
+                        else if vi == 1 { v = &enumSym.decl.variant1; }
+                        else if vi == 2 { v = &enumSym.decl.variant2; }
+                        else if vi == 3 { v = &enumSym.decl.variant3; }
+                        else if vi == 4 { v = &enumSym.decl.variant4; }
+                        else if vi == 5 { v = &enumSym.decl.variant5; }
+                        else if vi == 6 { v = &enumSym.decl.variant6; }
+                        else if vi == 7 { v = &enumSym.decl.variant7; }
+                        else if vi == 8 { v = &enumSym.decl.variant8; }
+                        if v != null as *EnumVariant && String_Eq(v.name, variantName) {
+                            fieldCount = v.fieldCount;
+                            if !String_Eq(v.fieldTypeName0, "") { fieldType0 = v.fieldTypeName0; }
+                            if !String_Eq(v.fieldTypeName1, "") { fieldType1 = v.fieldTypeName1; }
+                        }
+                        vi = vi + 1;
+                    }
+                }
+            }
+            var arg: *Pattern = pat.patArgs;
+            var ai: int = 0;
+            while arg != null as *Pattern {
+                var ftype: String = "int";
+                if ai == 0 { ftype = fieldType0; }
+                else if ai == 1 { ftype = fieldType1; }
+                if arg.kind == pkIdent {
+                    var bsym: Symbol;
+                    Sema_ZeroInitSymbol(&bsym);
+                    bsym.kind = skVar;
+                    bsym.name = arg.patIdent;
+                    bsym.typeName = ftype;
+                    bsym.typeKind = tyInt;
+                    if String_Eq(ftype, "String") || String_Eq(ftype, "str") { bsym.typeKind = tyStr; }
+                    else if String_Eq(ftype, "bool") { bsym.typeKind = tyBool; }
+                    else if String_Eq(ftype, "float64") || String_Eq(ftype, "float") { bsym.typeKind = tyFloat64; }
+                    let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    te.kind = tekNamed;
+                    te.typeName = ftype;
+                    bsym.refType = te;
+                    bsym.isMutable = false;
+                    bsym.isPublic = false;
+                    bsym.decl = null as *Decl;
+                    discard Scope_Define(sema.scope, bsym);
+                } else {
+                    // Nested pattern: synthesize a fake subject expr with payload type
+                    let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                    let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    fte.kind = tekNamed;
+                    fte.typeName = ftype;
+                    fake.refType = fte;
+                    Sema_BindPattern(sema, arg, fake);
+                }
+                arg = arg.patNext;
+                ai = ai + 1;
+            }
+            return;
+        }
+        // Tuple pattern: (a, b) — bind elements from subject tuple types
+        if pat.kind == pkTuple {
+            var ei: int = 0;
+            var elem: *Pattern = pat.patArgs;
+            while elem != null as *Pattern {
+                var ety: String = "int";
+                if subject != null as *Expr && subject.refType != null as *TypeExpr {
+                    if subject.refType.kind == tekTuple {
+                        if ei == 0 && !String_Eq(subject.refType.typeArgName0, "") {
+                            ety = subject.refType.typeArgName0;
+                        } else if ei == 1 && !String_Eq(subject.refType.typeArgName1, "") {
+                            ety = subject.refType.typeArgName1;
+                        }
+                    }
+                }
+                if elem.kind == pkIdent {
+                    var bsym: Symbol;
+                    Sema_ZeroInitSymbol(&bsym);
+                    bsym.kind = skVar;
+                    bsym.name = elem.patIdent;
+                    bsym.typeName = ety;
+                    bsym.typeKind = tyInt;
+                    if String_Eq(ety, "String") || String_Eq(ety, "str") { bsym.typeKind = tyStr; }
+                    else if String_Eq(ety, "bool") { bsym.typeKind = tyBool; }
+                    let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    te.kind = tekNamed;
+                    te.typeName = ety;
+                    bsym.refType = te;
+                    bsym.isMutable = false;
+                    discard Scope_Define(sema.scope, bsym);
+                } else {
+                    let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                    let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    fte.kind = tekNamed;
+                    fte.typeName = ety;
+                    fake.refType = fte;
+                    Sema_BindPattern(sema, elem, fake);
+                }
+                elem = elem.patNext;
+                ei = ei + 1;
+            }
+            return;
+        }
+        // Struct pattern: Point { x: a, y: b }
+        if pat.kind == pkStruct {
+            var structName: String = pat.patStructName;
+            if String_Eq(structName, "") && subject != null as *Expr && subject.refType != null as *TypeExpr {
+                structName = subject.refType.typeName;
+            }
+            var field: *Pattern = pat.patArgs;
+            while field != null as *Pattern {
+                var ftype: String = "int";
+                if !String_Eq(structName, "") {
+                    let ssym: Symbol = Scope_Lookup(sema.scope, structName);
+                    if ssym.decl != null as *Decl && ssym.decl.kind == dkStruct && ssym.decl.fields != null as *StructField {
+                        var fi: int = 0;
+                        while fi < ssym.decl.fieldCount {
+                            let sf: StructField = ssym.decl.fields[fi];
+                            var fname: String = field.patFieldName;
+                            if String_Eq(fname, "") { fname = field.patIdent; }
+                            if String_Eq(sf.name, fname) {
+                                if sf.refFieldType != null as *TypeExpr && !String_Eq(sf.refFieldType.typeName, "") {
+                                    ftype = sf.refFieldType.typeName;
+                                }
+                            }
+                            fi = fi + 1;
+                        }
+                    }
+                }
+                if field.kind == pkIdent {
+                    var bsym: Symbol;
+                    Sema_ZeroInitSymbol(&bsym);
+                    bsym.kind = skVar;
+                    bsym.name = field.patIdent;
+                    bsym.typeName = ftype;
+                    bsym.typeKind = tyInt;
+                    if String_Eq(ftype, "String") || String_Eq(ftype, "str") { bsym.typeKind = tyStr; }
+                    else if String_Eq(ftype, "bool") { bsym.typeKind = tyBool; }
+                    let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    te.kind = tekNamed;
+                    te.typeName = ftype;
+                    bsym.refType = te;
+                    bsym.isMutable = false;
+                    discard Scope_Define(sema.scope, bsym);
+                } else {
+                    let fake: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                    let fte: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                    fte.kind = tekNamed;
+                    fte.typeName = ftype;
+                    fake.refType = fte;
+                    Sema_BindPattern(sema, field, fake);
+                }
+                field = field.patNext;
+            }
+            return;
+        }
+    }
+
+    func Sema_IsMutRefDeref(target: *Expr) -> bool {
+        if target == null as *Expr { return false; }
+        if target.kind != ekUnary { return false; }
+        if target.intValue != tkStar { return false; }
+        let operand: *Expr = target.child1;
+        if operand == null as *Expr { return false; }
+        if operand.refType == null as *TypeExpr { return false; }
+        return operand.refType.kind == tekMutRef;
+    }
+
+    func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
+        if expr == null as *Expr { return tyUnknown; }
+        let kind: int = expr.kind;
+
+        // Literal
+        if kind == ekLiteral {
+            let tk: int = expr.tokKind;
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            if tk == tkIntLiteral { te.typeName = "int"; expr.refType = te; return tyInt; }
+            if tk == tkFloatLiteral { te.typeName = "float64"; expr.refType = te; return tyFloat64; }
+            if tk == tkStringLiteral { te.typeName = "String"; expr.refType = te; return tyStr; }
+            if tk == tkBoolLiteral { te.typeName = "bool"; expr.refType = te; return tyBool; }
+            if tk == tkCharLiteral { te.typeName = "char32"; expr.refType = te; return tyChar32; }
+            if tk == tkNull {
+                te.typeName = "*void";
+                expr.refType = te;
+                return tyPointer;
+            }
+            return tyUnknown;
         }
 
-        // Operator overloading: check method table
-        var opMethodName: String = "";
-        if op == tkPlus { opMethodName = "operator_add"; }
-        else if op == tkMinus { opMethodName = "operator_sub"; }
-        else if op == tkStar { opMethodName = "operator_mul"; }
-        else if op == tkSlash { opMethodName = "operator_div"; }
-        else if op == tkPercent { opMethodName = "operator_mod"; }
-        else if op == tkEq { opMethodName = "operator_eq"; }
-        else if op == tkNe { opMethodName = "operator_ne"; }
-        else if op == tkLt { opMethodName = "operator_lt"; }
-        else if op == tkLe { opMethodName = "operator_le"; }
-        else if op == tkGt { opMethodName = "operator_gt"; }
-        else if op == tkGe { opMethodName = "operator_ge"; }
-        else if op == tkAmp { opMethodName = "operator_bitand"; }
-        else if op == tkPipe { opMethodName = "operator_bitor"; }
-        else if op == tkCaret { opMethodName = "operator_xor"; }
-        else if op == tkShl { opMethodName = "operator_shl"; }
-        else if op == tkShr { opMethodName = "operator_shr"; }
+        // Identifier — look up in scope
+        if kind == ekIdent {
+            // Borrow check: use-after-move in @[Checked] functions
+            if sema.checkedFunc && !sema.releaseFunc && Sema_IsMoved(sema, expr.strValue) {
+                Sema_EmitError(sema, expr.line, expr.column,
+                String_Concat("use of moved value '", String_Concat(expr.strValue, "'")));
+            }
+            let sym: Symbol = Scope_Lookup(sema.scope, expr.strValue);
+            if sym.kind == 0 && !String_Eq(sym.name, expr.strValue) {
+                let errMsg: String = String_Concat("undeclared identifier '", expr.strValue);
+                let errMsg2: String = String_Concat(errMsg, "'");
+                Sema_EmitError(sema, expr.line, expr.column, errMsg2);
+                return tyUnknown;
+            }
+            if sym.refType != null as *TypeExpr {
+                expr.refType = sym.refType;
+            } else if sym.typeName != null as String && !String_Eq(sym.typeName, "") {
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = sym.typeName;
+                expr.refType = te;
+            }
+            // Capture tracking: if inside closure and identifier is not local but from parent scope
+            if sema.closureDepth > 0 && sema.currentClosureExpr != null as *Expr && sema.closureScope != null as *Scope {
+                let localSym: Symbol = Scope_LookupUpTo(sema.scope, expr.strValue, sema.closureScope);
+                if localSym.kind == 0 && !String_Eq(localSym.name, expr.strValue) {
+                    // Not local to closure scope — check if it's a variable from outer scope
+                    if sym.kind == skVar {
+                        Sema_AddCapture(sema.currentClosureExpr, expr.strValue, sym.typeKind);
+                    }
+                }
+            }
+            return sym.typeKind;
+        }
 
-        if !String_Eq(opMethodName, "") && left == tyNamed {
+        // self
+        if kind == ekSelf {
+            let sym: Symbol = Scope_Lookup(sema.scope, "self");
+            if sym.kind == 0 && !String_Eq(sym.name, "self") {
+                Sema_EmitError(sema, expr.line, expr.column, "self outside method");
+                return tyUnknown;
+            }
+            return sym.typeKind;
+        }
+
+        // Binary
+        if kind == ekBinary {
+            let left: int = Sema_CheckExpr(sema, expr.child1);
+            let right: int = Sema_CheckExpr(sema, expr.child2);
+            let op: int = expr.intValue;
+
+            // Borrow check: reject assignment through raw pointer in @[Checked] functions.
+            // Allow writes through &mut T references.
+            if sema.checkedFunc && !sema.releaseFunc && op == tkAssign &&
+            expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar &&
+            !Sema_IsMutRefDeref(expr.child1) {
+                Sema_EmitError(sema, expr.line, expr.column,
+                "cannot assign through raw pointer in checked function — use '&mut T' instead");
+            }
+
+            // Borrow check: reinitialization after move
+            if sema.checkedFunc && !sema.releaseFunc && op == tkAssign {
+                if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                    Sema_RemoveMoved(sema, expr.child1.strValue);
+                }
+            }
+
+            // Assignment operators return target type
+            if op == tkAssign || (op >= tkPlusAssign && op <= tkShrAssign) {
+                return left;
+            }
+
+            // Operator overloading: check method table
+            var opMethodName: String = "";
+            if op == tkPlus { opMethodName = "operator_add"; }
+            else if op == tkMinus { opMethodName = "operator_sub"; }
+            else if op == tkStar { opMethodName = "operator_mul"; }
+            else if op == tkSlash { opMethodName = "operator_div"; }
+            else if op == tkPercent { opMethodName = "operator_mod"; }
+            else if op == tkEq { opMethodName = "operator_eq"; }
+            else if op == tkNe { opMethodName = "operator_ne"; }
+            else if op == tkLt { opMethodName = "operator_lt"; }
+            else if op == tkLe { opMethodName = "operator_le"; }
+            else if op == tkGt { opMethodName = "operator_gt"; }
+            else if op == tkGe { opMethodName = "operator_ge"; }
+            else if op == tkAmp { opMethodName = "operator_bitand"; }
+            else if op == tkPipe { opMethodName = "operator_bitor"; }
+            else if op == tkCaret { opMethodName = "operator_xor"; }
+            else if op == tkShl { opMethodName = "operator_shl"; }
+            else if op == tkShr { opMethodName = "operator_shr"; }
+
+            if !String_Eq(opMethodName, "") && left == tyNamed {
+                var receiverTypeName: String = "";
+                if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
+                    receiverTypeName = expr.child1.refType.typeName;
+                }
+                if !String_Eq(receiverTypeName, "") {
+                    var i: int = 0;
+                    while i < sema.methodCount {
+                        if String_Eq(sema.methodEntries[i].typeName, receiverTypeName) &&
+                        String_Eq(sema.methodEntries[i].methodName, opMethodName) {
+                            let methodDecl: *Decl = sema.methodEntries[i].decl;
+                            if methodDecl != null as *Decl && methodDecl.paramCount == 2 {
+                                if methodDecl.retType != null as *TypeExpr {
+                                    expr.refType = methodDecl.retType;
+                                    return Sema_ResolveType(sema, methodDecl.retType);
+                                }
+                                return tyUnknown;
+                            }
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+
+            // Comparison operators return bool
+            if op >= tkEq && op <= tkGe { return tyBool; }
+            // Logical operators return bool
+            if op == tkAmpAmp || op == tkPipePipe || op == tkBang { return tyBool; }
+            // Arithmetic returns wider type
+            if !Sema_IsNumeric(left) || !Sema_IsNumeric(right) {
+                Sema_EmitError(sema, expr.line, expr.column, "arithmetic requires numeric operands");
+            }
+            if left == tyFloat64 || right == tyFloat64 { return tyFloat64; }
+            return tyInt;
+        }
+
+        // Unary
+        if kind == ekUnary {
+            let operand: int = Sema_CheckExpr(sema, expr.child1);
+            let op: int = expr.intValue;
+            if op == tkStar {
+                return tyUnknown;
+            }
+            if op == tkBang { return tyBool; }
+            if op == tkAmp {
+                if expr.child1.refType != null as *TypeExpr {
+                    expr.refType = expr.child1.refType;
+                }
+                return tyPointer;
+            }
+            return operand;
+        }
+
+        // Assign
+        if kind == ekAssign {
+            let target: int = Sema_CheckExpr(sema, expr.child1);
+            let value: int = Sema_CheckExpr(sema, expr.child2);
+            // Borrow check: reject assignment through raw pointer in @[Checked] functions.
+            // Allow writes through &mut T references.
+            if sema.checkedFunc && !sema.releaseFunc &&
+            expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar &&
+            !Sema_IsMutRefDeref(expr.child1) {
+                Sema_EmitError(sema, expr.line, expr.column,
+                "cannot assign through raw pointer in checked function — use '&mut T' instead");
+            }
+            return target;
+        }
+
+        // Call
+        if kind == ekCall {
+            let calleeType: int = Sema_CheckExpr(sema, expr.child1);
+            Sema_ResolveCallArgs(sema, expr);
+            var arg: *ExprList = expr.callArgs;
+            while arg != null as *ExprList {
+                discard Sema_CheckExpr(sema, arg.expr);
+                arg = arg.next;
+            }
+            // Borrow check: reject double mutable borrow in @[Checked] functions
+            if sema.checkedFunc && !sema.releaseFunc {
+                var a: *ExprList = expr.callArgs;
+                var ai: int = 0;
+                while a != null as *ExprList {
+                    if a.expr != null as *Expr && a.expr.kind == ekUnary && a.expr.intValue == tkAmp {
+                        if a.expr.child1 != null as *Expr && a.expr.child1.kind == ekIdent {
+                            let name1: String = a.expr.child1.strValue;
+                            var b: *ExprList = a.next;
+                            var bi: int = ai + 1;
+                            while b != null as *ExprList {
+                                if b.expr != null as *Expr && b.expr.kind == ekUnary && b.expr.intValue == tkAmp {
+                                    if b.expr.child1 != null as *Expr && b.expr.child1.kind == ekIdent {
+                                        if String_Eq(name1, b.expr.child1.strValue) {
+                                            Sema_EmitError(sema, expr.line, expr.column,
+                                            String_Concat("mutable borrow conflict: multiple &mut references to '", String_Concat(name1, "'")));
+                                        }
+                                    }
+                                }
+                                b = b.next;
+                                bi = bi + 1;
+                            }
+                        }
+                    }
+                    a = a.next;
+                    ai = ai + 1;
+                }
+            }
+            // Trait bounds + inference for generic calls: Max / Iter_Map / Array_Push
+            if expr.child1.kind == ekIdent {
+                let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
+                if sym.kind == skFunc && sym.decl != null as *Decl {
+                    // Implicit generic type argument inference
+                    if expr.child1.genericTypeArgCount == 0 && sym.decl.typeParamCount > 0 {
+                        Sema_InferGenericArgs(sema, sym.decl, expr);
+                    }
+                    if expr.child1.genericTypeArgCount > 0 {
+                        Sema_CheckTraitBounds(sema, sym.decl, expr.child1.genericTypeArg0, expr.child1.genericTypeArg1, expr.child1.genericTypeArgCount, expr.line, expr.column);
+                    }
+                }
+            }
+            // Indirect call through function-typed value
+            if calleeType == tyFunc {
+                if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekFunc {
+                    if expr.child1.refType.funcRet != null as *TypeExpr {
+                        expr.refType = expr.child1.refType.funcRet;
+                        return Sema_ResolveType(sema, expr.child1.refType.funcRet);
+                    }
+                    return tyVoid;
+                }
+            }
+            // Direct call to named function — substitute return type with inferred args
+            if expr.child1.kind == ekIdent {
+                let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
+                if sym.kind == skFunc && sym.decl != null as *Decl {
+                    if sym.decl.retType != null as *TypeExpr {
+                        var retTe: *TypeExpr = sym.decl.retType;
+                        // Substitute type params in return type when we inferred args
+                        if expr.child1.genericTypeArgCount > 0 {
+                            retTe = Sema_SubstTypeExpr(sym.decl.retType,
+                            sym.decl.typeParam0, expr.child1.genericTypeArg0,
+                            sym.decl.typeParam1, expr.child1.genericTypeArg1,
+                            expr.child1.genericTypeArgCount);
+                        }
+                        expr.refType = retTe;
+                        return Sema_ResolveType(sema, retTe);
+                    }
+                }
+            }
+            return tyUnknown;
+        }
+
+        // Ternary
+        if kind == ekTernary {
+            return Sema_CheckExpr(sema, expr.child2); // then type
+        }
+
+        // Cast — return target type
+        if kind == ekCast {
+            // Must type-check the operand (enables generic inference on nested calls)
+            if expr.child1 != null as *Expr {
+                discard Sema_CheckExpr(sema, expr.child1);
+            }
+            if expr.refType != null as *TypeExpr {
+                return Sema_ResolveType(sema, expr.refType);
+            }
+            return tyUnknown;
+        }
+
+        // Try (?)
+        if kind == ekTry {
+            let inner: int = Sema_CheckExpr(sema, expr.child1);
+            return inner; // simplified
+        }
+
+        // spawn Callee(args)
+        if kind == ekSpawn {
+            discard Sema_CheckExpr(sema, expr.child1);
+            if expr.child2 != null as *Expr {
+                discard Sema_CheckExpr(sema, expr.child2);
+            }
+            // Determine if callee is async
+            var calleeName: String = "";
+            if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                calleeName = expr.child1.strValue;
+            }
+            if !String_Eq(calleeName, "") {
+                let sym: Symbol = Scope_Lookup(sema.scope, calleeName);
+                if sym.decl != null as *Decl && sym.decl.kind == dkFunc && sym.decl.isAsync {
+                    expr.boolValue = true;
+                }
+            }
+            return tyPointer;
+        }
+
+        // Struct init: TypeName { field: value, ... }
+        if kind == ekStructInit {
+            return tyNamed;
+        }
+
+        // Tuple expression (a, b, ...)
+        if kind == ekTuple {
+            var cur: *ExprList = expr.callArgs;
+            while cur != null as *ExprList {
+                discard Sema_CheckExpr(sema, cur.expr);
+                cur = cur.next;
+            }
+            // Build Tuple_* type name from element types (default int)
+            var tname: String = "Tuple";
+            var i: int = 0;
+            while i < expr.callArgCount {
+                tname = String_Concat(tname, "_int");
+                i = i + 1;
+            }
+            if expr.callArgCount == 0 { tname = "Tuple_Empty"; }
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekTuple;
+            te.typeName = tname;
+            te.tupleCount = expr.callArgCount;
+            expr.refType = te;
+            return tyNamed;
+        }
+
+        // Field access
+        if kind == ekField {
+            discard Sema_CheckExpr(sema, expr.child1);
+            // Tuple field .0 / .1 stored as "_0" / "_1" → element type (int for now)
+            if String_StartsWith(expr.strValue, "_") {
+                // Propagate element type as int; real C type is Tuple field
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = "int";
+                expr.refType = te;
+                return tyInt;
+            }
+            return tyUnknown;
+        }
+
+        // Index
+        if kind == ekIndex {
+            let obj: int = Sema_CheckExpr(sema, expr.child1);
+            let idx: int = Sema_CheckExpr(sema, expr.child2);
+            if !Sema_IsNumeric(idx) && idx != tyUnknown {
+                Sema_EmitError(sema, expr.line, expr.column, "index must be integer");
+            }
+            // Operator overloading: check method table for operator_index_get
             var receiverTypeName: String = "";
             if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
-                receiverTypeName = expr.child1.refType.typeName;
+                let refTe: *TypeExpr = expr.child1.refType;
+                if refTe.kind == tekNamed {
+                    receiverTypeName = refTe.typeName;
+                } else if refTe.kind == tekPointer && refTe.pointerPointee != null as *TypeExpr && refTe.pointerPointee.kind == tekNamed {
+                    receiverTypeName = refTe.pointerPointee.typeName;
+                }
             }
             if !String_Eq(receiverTypeName, "") {
                 var i: int = 0;
                 while i < sema.methodCount {
                     if String_Eq(sema.methodEntries[i].typeName, receiverTypeName) &&
-                       String_Eq(sema.methodEntries[i].methodName, opMethodName) {
+                    String_Eq(sema.methodEntries[i].methodName, "operator_index_get") {
                         let methodDecl: *Decl = sema.methodEntries[i].decl;
                         if methodDecl != null as *Decl && methodDecl.paramCount == 2 {
                             if methodDecl.retType != null as *TypeExpr {
@@ -729,1392 +1198,1173 @@ func Sema_CheckExpr(sema: *Sema, expr: *Expr) -> int {
                     i = i + 1;
                 }
             }
-        }
-
-        // Comparison operators return bool
-        if op >= tkEq && op <= tkGe { return tyBool; }
-        // Logical operators return bool
-        if op == tkAmpAmp || op == tkPipePipe || op == tkBang { return tyBool; }
-        // Arithmetic returns wider type
-        if !Sema_IsNumeric(left) || !Sema_IsNumeric(right) {
-            Sema_EmitError(sema, expr.line, expr.column, "arithmetic requires numeric operands");
-        }
-        if left == tyFloat64 || right == tyFloat64 { return tyFloat64; }
-        return tyInt;
-    }
-
-    // Unary
-    if kind == ekUnary {
-        let operand: int = Sema_CheckExpr(sema, expr.child1);
-        let op: int = expr.intValue;
-        if op == tkStar {
             return tyUnknown;
         }
-        if op == tkBang { return tyBool; }
-        if op == tkAmp {
-            if expr.child1.refType != null as *TypeExpr {
-                expr.refType = expr.child1.refType;
-            }
-            return tyPointer;
-        }
-        return operand;
-    }
 
-    // Assign
-    if kind == ekAssign {
-        let target: int = Sema_CheckExpr(sema, expr.child1);
-        let value: int = Sema_CheckExpr(sema, expr.child2);
-        // Borrow check: reject assignment through raw pointer in @[Checked] functions.
-        // Allow writes through &mut T references.
-        if sema.checkedFunc && !sema.releaseFunc &&
-           expr.child1 != null as *Expr && expr.child1.kind == ekUnary && expr.child1.intValue == tkStar &&
-           !Sema_IsMutRefDeref(expr.child1) {
-            Sema_EmitError(sema, expr.line, expr.column,
-                "cannot assign through raw pointer in checked function — use '&mut T' instead");
-        }
-        return target;
-    }
-
-    // Call
-    if kind == ekCall {
-        let calleeType: int = Sema_CheckExpr(sema, expr.child1);
-        Sema_ResolveCallArgs(sema, expr);
-        var arg: *ExprList = expr.callArgs;
-        while arg != null as *ExprList {
-            discard Sema_CheckExpr(sema, arg.expr);
-            arg = arg.next;
-        }
-        // Borrow check: reject double mutable borrow in @[Checked] functions
-        if sema.checkedFunc && !sema.releaseFunc {
-            var a: *ExprList = expr.callArgs;
-            var ai: int = 0;
-            while a != null as *ExprList {
-                if a.expr != null as *Expr && a.expr.kind == ekUnary && a.expr.intValue == tkAmp {
-                    if a.expr.child1 != null as *Expr && a.expr.child1.kind == ekIdent {
-                        let name1: String = a.expr.child1.strValue;
-                        var b: *ExprList = a.next;
-                        var bi: int = ai + 1;
-                        while b != null as *ExprList {
-                            if b.expr != null as *Expr && b.expr.kind == ekUnary && b.expr.intValue == tkAmp {
-                                if b.expr.child1 != null as *Expr && b.expr.child1.kind == ekIdent {
-                                    if String_Eq(name1, b.expr.child1.strValue) {
-                                        Sema_EmitError(sema, expr.line, expr.column,
-                                            String_Concat("mutable borrow conflict: multiple &mut references to '", String_Concat(name1, "'")));
-                                    }
-                                }
-                            }
-                            b = b.next;
-                            bi = bi + 1;
-                        }
-                    }
-                }
-                a = a.next;
-                ai = ai + 1;
-            }
-        }
-        // Trait bounds + inference for generic calls: Max / Iter_Map / Array_Push
-        if expr.child1.kind == ekIdent {
-            let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
-            if sym.kind == skFunc && sym.decl != null as *Decl {
-                // Implicit generic type argument inference
-                if expr.child1.genericTypeArgCount == 0 && sym.decl.typeParamCount > 0 {
-                    Sema_InferGenericArgs(sema, sym.decl, expr);
-                }
-                if expr.child1.genericTypeArgCount > 0 {
-                    Sema_CheckTraitBounds(sema, sym.decl, expr.child1.genericTypeArg0, expr.child1.genericTypeArg1, expr.child1.genericTypeArgCount, expr.line, expr.column);
+        // Block expression (boolValue = true means unsafe block)
+        if kind == ekBlock {
+            if expr.refBlock != null as *Block {
+                if expr.boolValue {
+                    let prevChecked: bool = sema.checkedFunc;
+                    sema.checkedFunc = false;
+                    Sema_CheckBlock(sema, expr.refBlock);
+                    sema.checkedFunc = prevChecked;
+                } else {
+                    Sema_CheckBlock(sema, expr.refBlock);
                 }
             }
+            return tyVoid;
         }
-        // Indirect call through function-typed value
-        if calleeType == tyFunc {
-            if expr.child1.refType != null as *TypeExpr && expr.child1.refType.kind == tekFunc {
-                if expr.child1.refType.funcRet != null as *TypeExpr {
-                    expr.refType = expr.child1.refType.funcRet;
-                    return Sema_ResolveType(sema, expr.child1.refType.funcRet);
-                }
-                return tyVoid;
-            }
-        }
-        // Direct call to named function — substitute return type with inferred args
-        if expr.child1.kind == ekIdent {
-            let sym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
-            if sym.kind == skFunc && sym.decl != null as *Decl {
-                if sym.decl.retType != null as *TypeExpr {
-                    var retTe: *TypeExpr = sym.decl.retType;
-                    // Substitute type params in return type when we inferred args
-                    if expr.child1.genericTypeArgCount > 0 {
-                        retTe = Sema_SubstTypeExpr(sym.decl.retType,
-                            sym.decl.typeParam0, expr.child1.genericTypeArg0,
-                            sym.decl.typeParam1, expr.child1.genericTypeArg1,
-                            expr.child1.genericTypeArgCount);
-                    }
-                    expr.refType = retTe;
-                    return Sema_ResolveType(sema, retTe);
-                }
-            }
-        }
-        return tyUnknown;
-    }
 
-    // Ternary
-    if kind == ekTernary {
-        return Sema_CheckExpr(sema, expr.child2); // then type
-    }
-
-    // Cast — return target type
-    if kind == ekCast {
-        // Must type-check the operand (enables generic inference on nested calls)
-        if expr.child1 != null as *Expr {
-            discard Sema_CheckExpr(sema, expr.child1);
-        }
-        if expr.refType != null as *TypeExpr {
-            return Sema_ResolveType(sema, expr.refType);
-        }
-        return tyUnknown;
-    }
-
-    // Try (?)
-    if kind == ekTry {
-        let inner: int = Sema_CheckExpr(sema, expr.child1);
-        return inner; // simplified
-    }
-
-    // spawn Callee(args)
-    if kind == ekSpawn {
-        discard Sema_CheckExpr(sema, expr.child1);
-        if expr.child2 != null as *Expr {
-            discard Sema_CheckExpr(sema, expr.child2);
-        }
-        // Determine if callee is async
-        var calleeName: String = "";
-        if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
-            calleeName = expr.child1.strValue;
-        }
-        if !String_Eq(calleeName, "") {
-            let sym: Symbol = Scope_Lookup(sema.scope, calleeName);
-            if sym.decl != null as *Decl && sym.decl.kind == dkFunc && sym.decl.isAsync {
-                expr.boolValue = true;
-            }
-        }
-        return tyPointer;
-    }
-
-    // Struct init: TypeName { field: value, ... }
-    if kind == ekStructInit {
-        return tyNamed;
-    }
-
-    // Tuple expression (a, b, ...)
-    if kind == ekTuple {
-        var cur: *ExprList = expr.callArgs;
-        while cur != null as *ExprList {
-            discard Sema_CheckExpr(sema, cur.expr);
-            cur = cur.next;
-        }
-        // Build Tuple_* type name from element types (default int)
-        var tname: String = "Tuple";
-        var i: int = 0;
-        while i < expr.callArgCount {
-            tname = String_Concat(tname, "_int");
-            i = i + 1;
-        }
-        if expr.callArgCount == 0 { tname = "Tuple_Empty"; }
-        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-        te.kind = tekTuple;
-        te.typeName = tname;
-        te.tupleCount = expr.callArgCount;
-        expr.refType = te;
-        return tyNamed;
-    }
-
-    // Field access
-    if kind == ekField {
-        discard Sema_CheckExpr(sema, expr.child1);
-        // Tuple field .0 / .1 stored as "_0" / "_1" → element type (int for now)
-        if String_StartsWith(expr.strValue, "_") {
-            // Propagate element type as int; real C type is Tuple field
-            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-            te.kind = tekNamed;
-            te.typeName = "int";
-            expr.refType = te;
-            return tyInt;
-        }
-        return tyUnknown;
-    }
-
-    // Index
-    if kind == ekIndex {
-        let obj: int = Sema_CheckExpr(sema, expr.child1);
-        let idx: int = Sema_CheckExpr(sema, expr.child2);
-        if !Sema_IsNumeric(idx) && idx != tyUnknown {
-            Sema_EmitError(sema, expr.line, expr.column, "index must be integer");
-        }
-        // Operator overloading: check method table for operator_index_get
-        var receiverTypeName: String = "";
-        if expr.child1 != null as *Expr && expr.child1.refType != null as *TypeExpr {
-            let refTe: *TypeExpr = expr.child1.refType;
-            if refTe.kind == tekNamed {
-                receiverTypeName = refTe.typeName;
-            } else if refTe.kind == tekPointer && refTe.pointerPointee != null as *TypeExpr && refTe.pointerPointee.kind == tekNamed {
-                receiverTypeName = refTe.pointerPointee.typeName;
-            }
-        }
-        if !String_Eq(receiverTypeName, "") {
-            var i: int = 0;
-            while i < sema.methodCount {
-                if String_Eq(sema.methodEntries[i].typeName, receiverTypeName) &&
-                   String_Eq(sema.methodEntries[i].methodName, "operator_index_get") {
-                    let methodDecl: *Decl = sema.methodEntries[i].decl;
-                    if methodDecl != null as *Decl && methodDecl.paramCount == 2 {
-                        if methodDecl.retType != null as *TypeExpr {
-                            expr.refType = methodDecl.retType;
-                            return Sema_ResolveType(sema, methodDecl.retType);
-                        }
-                        return tyUnknown;
-                    }
-                }
-                i = i + 1;
-            }
-        }
-        return tyUnknown;
-    }
-
-    // Block expression (boolValue = true means unsafe block)
-    if kind == ekBlock {
-        if expr.refBlock != null as *Block {
-            if expr.boolValue {
-                let prevChecked: bool = sema.checkedFunc;
-                sema.checkedFunc = false;
-                Sema_CheckBlock(sema, expr.refBlock);
-                sema.checkedFunc = prevChecked;
-            } else {
-                Sema_CheckBlock(sema, expr.refBlock);
-            }
-        }
-        return tyVoid;
-    }
-
-    // Match expression
-    if kind == ekMatch {
-        discard Sema_CheckExpr(sema, expr.child1); // subject
-        var armType: int = tyUnknown;
-        var first: bool = true;
-        var arm: *MatchArm = expr.matchArms;
-        while arm != null as *MatchArm {
-            // Pattern bindings: Option::Some(value) → define value in arm scope
-            let armScope: Scope = Scope_NewChild(sema.scope);
-            let savedScope: *Scope = sema.scope;
-            sema.scope = &armScope;
-            Sema_BindPattern(sema, arm.pattern, expr.child1);
-            // Type-check `p if guard` (must be bool; sees pattern bindings)
-            if arm.pattern != null as *Pattern && arm.pattern.kind == pkGuarded {
-                if arm.pattern.patGuardExpr != null as *Expr {
-                    let gt: int = Sema_CheckExpr(sema, arm.pattern.patGuardExpr);
-                    if gt != tyBool && gt != tyUnknown {
-                        Sema_EmitError(sema, arm.pattern.line, arm.pattern.column,
+        // Match expression
+        if kind == ekMatch {
+            discard Sema_CheckExpr(sema, expr.child1); // subject
+            var armType: int = tyUnknown;
+            var first: bool = true;
+            var arm: *MatchArm = expr.matchArms;
+            while arm != null as *MatchArm {
+                // Pattern bindings: Option::Some(value) → define value in arm scope
+                let armScope: Scope = Scope_NewChild(sema.scope);
+                let savedScope: *Scope = sema.scope;
+                sema.scope = &armScope;
+                Sema_BindPattern(sema, arm.pattern, expr.child1);
+                // Type-check `p if guard` (must be bool; sees pattern bindings)
+                if arm.pattern != null as *Pattern && arm.pattern.kind == pkGuarded {
+                    if arm.pattern.patGuardExpr != null as *Expr {
+                        let gt: int = Sema_CheckExpr(sema, arm.pattern.patGuardExpr);
+                        if gt != tyBool && gt != tyUnknown {
+                            Sema_EmitError(sema, arm.pattern.line, arm.pattern.column,
                             "match guard condition must be bool");
+                        }
                     }
                 }
+                let bt: int = Sema_CheckExpr(sema, arm.body);
+                sema.scope = savedScope;
+                if first {
+                    armType = bt;
+                    first = false;
+                }
+                arm = arm.next;
             }
-            let bt: int = Sema_CheckExpr(sema, arm.body);
-            sema.scope = savedScope;
-            if first {
-                armType = bt;
-                first = false;
+            // Propagate type of first arm for codegen (result temp type)
+            if armType == tyStr {
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = "String";
+                expr.refType = te;
+            } else if armType == tyBool {
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = "bool";
+                expr.refType = te;
+            } else if armType == tyInt || armType == tyUnknown {
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = "int";
+                expr.refType = te;
+                if armType == tyUnknown { armType = tyInt; }
+            } else {
+                let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.typeName = "int";
+                expr.refType = te;
             }
-            arm = arm.next;
+            return armType;
         }
-        // Propagate type of first arm for codegen (result temp type)
-        if armType == tyStr {
+
+        // String interpolation f"...{expr}..." → String
+        if kind == ekStringInterp {
+            var part: *ExprList = expr.callArgs;
+            while part != null as *ExprList {
+                discard Sema_CheckExpr(sema, part.expr);
+                part = part.next;
+            }
             let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
             te.kind = tekNamed;
             te.typeName = "String";
             expr.refType = te;
-        } else if armType == tyBool {
-            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-            te.kind = tekNamed;
-            te.typeName = "bool";
-            expr.refType = te;
-        } else if armType == tyInt || armType == tyUnknown {
-            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-            te.kind = tekNamed;
-            te.typeName = "int";
-            expr.refType = te;
-            if armType == tyUnknown { armType = tyInt; }
-        } else {
-            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-            te.kind = tekNamed;
-            te.typeName = "int";
-            expr.refType = te;
+            return tyStr;
         }
-        return armType;
-    }
 
-    // String interpolation f"...{expr}..." → String
-    if kind == ekStringInterp {
-        var part: *ExprList = expr.callArgs;
-        while part != null as *ExprList {
-            discard Sema_CheckExpr(sema, part.expr);
-            part = part.next;
-        }
-        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-        te.kind = tekNamed;
-        te.typeName = "String";
-        expr.refType = te;
-        return tyStr;
-    }
+        // Closure: |params| -> Ret { body }
+        if kind == ekClosure {
+            let savedRetType: int = sema.currentRetType;
+            let savedScope: *Scope = sema.scope;
+            let savedClosureDepth: int = sema.closureDepth;
+            let savedClosureExpr: *Expr = sema.currentClosureExpr;
+            let savedClosureScope: *Scope = sema.closureScope;
+            let childScope: Scope = Scope_NewChild(sema.scope);
+            sema.scope = &childScope;
 
-    // Closure: |params| -> Ret { body }
-    if kind == ekClosure {
-        let savedRetType: int = sema.currentRetType;
-        let savedScope: *Scope = sema.scope;
-        let savedClosureDepth: int = sema.closureDepth;
-        let savedClosureExpr: *Expr = sema.currentClosureExpr;
-        let savedClosureScope: *Scope = sema.closureScope;
-        let childScope: Scope = Scope_NewChild(sema.scope);
-        sema.scope = &childScope;
+            // Set up closure tracking
+            sema.closureDepth = sema.closureDepth + 1;
+            sema.currentClosureExpr = expr;
+            sema.closureScope = &childScope;
+            expr.captureCount = 0;
 
-        // Set up closure tracking
-        sema.closureDepth = sema.closureDepth + 1;
-        sema.currentClosureExpr = expr;
-        sema.closureScope = &childScope;
-        expr.captureCount = 0;
-
-        // Set return type from annotation, or unknown for inference
-        var closureRetType: int = tyUnknown;
-        if expr.refType != null as *TypeExpr {
-            closureRetType = Sema_ResolveType(sema, expr.refType);
-        }
-        sema.currentRetType = closureRetType;
-
-        // Register params in child scope
-        let params: *Decl = expr.closureParams;
-        if params != null as *Decl {
-            var i: int = 0;
-            while i < params.paramCount {
-                var p: Param;
-                if i == 0 { p = params.param0; }
-                else if i == 1 { p = params.param1; }
-                else if i == 2 { p = params.param2; }
-                else if i == 3 { p = params.param3; }
-                else if i == 4 { p = params.param4; }
-                else if i == 5 { p = params.param5; }
-                else if i == 6 { p = params.param6; }
-                else if i == 7 { p = params.param7; }
-                else if i == 8 { p = params.param8; }
-
-                if !String_Eq(p.name, "") {
-                    var sym: Symbol;
-                    sym.kind = skVar;
-                    sym.name = p.name;
-                    sym.typeKind = tyUnknown;
-                    if p.refParamType != null as *TypeExpr {
-                        sym.typeKind = Sema_ResolveType(sema, p.refParamType);
-                        sym.refType = p.refParamType;
-                    }
-                    sym.typeName = "";
-                    sym.isMutable = false;
-                    sym.isPublic = false;
-                    sym.decl = null as *Decl;
-                    discard Scope_Define(sema.scope, sym);
-                }
-                i = i + 1;
+            // Set return type from annotation, or unknown for inference
+            var closureRetType: int = tyUnknown;
+            if expr.refType != null as *TypeExpr {
+                closureRetType = Sema_ResolveType(sema, expr.refType);
             }
+            sema.currentRetType = closureRetType;
+
+            // Register params in child scope
+            let params: *Decl = expr.closureParams;
+            if params != null as *Decl {
+                var i: int = 0;
+                while i < params.paramCount {
+                    var p: Param;
+                    if i == 0 { p = params.param0; }
+                    else if i == 1 { p = params.param1; }
+                    else if i == 2 { p = params.param2; }
+                    else if i == 3 { p = params.param3; }
+                    else if i == 4 { p = params.param4; }
+                    else if i == 5 { p = params.param5; }
+                    else if i == 6 { p = params.param6; }
+                    else if i == 7 { p = params.param7; }
+                    else if i == 8 { p = params.param8; }
+
+                    if !String_Eq(p.name, "") {
+                        var sym: Symbol;
+                        sym.kind = skVar;
+                        sym.name = p.name;
+                        sym.typeKind = tyUnknown;
+                        if p.refParamType != null as *TypeExpr {
+                            sym.typeKind = Sema_ResolveType(sema, p.refParamType);
+                            sym.refType = p.refParamType;
+                        }
+                        sym.typeName = "";
+                        sym.isMutable = false;
+                        sym.isPublic = false;
+                        sym.decl = null as *Decl;
+                        discard Scope_Define(sema.scope, sym);
+                    }
+                    i = i + 1;
+                }
+            }
+
+            // Check body
+            if expr.refBlock != null as *Block {
+                Sema_CheckBlock(sema, expr.refBlock);
+            }
+
+            // Restore
+            sema.scope = savedScope;
+            sema.currentRetType = savedRetType;
+            sema.closureDepth = savedClosureDepth;
+            sema.currentClosureExpr = savedClosureExpr;
+            sema.closureScope = savedClosureScope;
+
+            // Build function type expression for later use
+            let funcType: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            funcType.kind = tekFunc;
+            funcType.funcRet = expr.refType;
+            funcType.funcParamCount = params.paramCount;
+            // Build param type list
+            if params.paramCount > 0 {
+                var head: *TypeExprList = null as *TypeExprList;
+                var tail: *TypeExprList = null as *TypeExprList;
+                var i: int = 0;
+                while i < params.paramCount {
+                    var p: Param;
+                    if i == 0 { p = params.param0; }
+                    else if i == 1 { p = params.param1; }
+                    else if i == 2 { p = params.param2; }
+                    else if i == 3 { p = params.param3; }
+                    else if i == 4 { p = params.param4; }
+                    else if i == 5 { p = params.param5; }
+                    else if i == 6 { p = params.param6; }
+                    else if i == 7 { p = params.param7; }
+                    else if i == 8 { p = params.param8; }
+
+                    let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
+                    node.te = p.refParamType;
+                    node.next = null as *TypeExprList;
+                    if head == null as *TypeExprList {
+                        head = node;
+                        tail = node;
+                    } else {
+                        tail.next = node;
+                        tail = node;
+                    }
+                    i = i + 1;
+                }
+                funcType.funcParams = head;
+            }
+            expr.refType = funcType;
+
+            return tyFunc;
         }
 
-        // Check body
-        if expr.refBlock != null as *Block {
-            Sema_CheckBlock(sema, expr.refBlock);
-        }
+        return tyUnknown;
+    }
 
-        // Restore
-        sema.scope = savedScope;
-        sema.currentRetType = savedRetType;
-        sema.closureDepth = savedClosureDepth;
-        sema.currentClosureExpr = savedClosureExpr;
-        sema.closureScope = savedClosureScope;
+    // ---------------------------------------------------------------------------
+    // Statement checking
+    // ---------------------------------------------------------------------------
 
-        // Build function type expression for later use
-        let funcType: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-        funcType.kind = tekFunc;
-        funcType.funcRet = expr.refType;
-        funcType.funcParamCount = params.paramCount;
-        // Build param type list
-        if params.paramCount > 0 {
-            var head: *TypeExprList = null as *TypeExprList;
-            var tail: *TypeExprList = null as *TypeExprList;
-            var i: int = 0;
-            while i < params.paramCount {
-                var p: Param;
-                if i == 0 { p = params.param0; }
-                else if i == 1 { p = params.param1; }
-                else if i == 2 { p = params.param2; }
-                else if i == 3 { p = params.param3; }
-                else if i == 4 { p = params.param4; }
-                else if i == 5 { p = params.param5; }
-                else if i == 6 { p = params.param6; }
-                else if i == 7 { p = params.param7; }
-                else if i == 8 { p = params.param8; }
+    func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
+        if stmt == null as *Stmt { return; }
+        let kind: int = stmt.kind;
 
-                let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
-                node.te = p.refParamType;
-                node.next = null as *TypeExprList;
-                if head == null as *TypeExprList {
-                    head = node;
-                    tail = node;
+        // Let/var
+        if kind == skLet {
+            let initType: int = Sema_CheckExpr(sema, stmt.child1);
+            // Borrow check: move tracking
+            if sema.checkedFunc && !sema.releaseFunc && stmt.child1 != null as *Expr && stmt.child1.kind == ekIdent {
+                Sema_AddMoved(sema, stmt.child1.strValue);
+            }
+            // Register variable in scope
+            var sym: Symbol;
+            sym.kind = skVar;
+            sym.name = stmt.strValue;
+            sym.typeKind = initType;
+            sym.typeName = "";
+            sym.refType = null as *TypeExpr;
+            if stmt.refStmtType != null as *TypeExpr {
+                sym.refType = stmt.refStmtType;
+                if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
+                    sym.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
                 } else {
-                    tail.next = node;
-                    tail = node;
+                    sym.typeName = stmt.refStmtType.typeName;
                 }
-                i = i + 1;
+            } else if stmt.child1 != null as *Expr && stmt.child1.refType != null as *TypeExpr {
+                // Infer type from initializer expression
+                sym.refType = stmt.child1.refType;
+                stmt.refStmtType = stmt.child1.refType;
+                if stmt.child1.refType.kind == tekPointer && stmt.child1.refType.pointerPointee != null as *TypeExpr {
+                    sym.typeName = String_Concat(stmt.child1.refType.pointerPointee.typeName, "*");
+                } else {
+                    sym.typeName = stmt.child1.refType.typeName;
+                }
             }
-            funcType.funcParams = head;
-        }
-        expr.refType = funcType;
-
-        return tyFunc;
-    }
-
-    return tyUnknown;
-}
-
-// ---------------------------------------------------------------------------
-// Statement checking
-// ---------------------------------------------------------------------------
-
-func Sema_CheckStmt(sema: *Sema, stmt: *Stmt) {
-    if stmt == null as *Stmt { return; }
-    let kind: int = stmt.kind;
-
-    // Let/var
-    if kind == skLet {
-        let initType: int = Sema_CheckExpr(sema, stmt.child1);
-        // Borrow check: move tracking
-        if sema.checkedFunc && !sema.releaseFunc && stmt.child1 != null as *Expr && stmt.child1.kind == ekIdent {
-            Sema_AddMoved(sema, stmt.child1.strValue);
-        }
-        // Register variable in scope
-        var sym: Symbol;
-        sym.kind = skVar;
-        sym.name = stmt.strValue;
-        sym.typeKind = initType;
-        sym.typeName = "";
-        sym.refType = null as *TypeExpr;
-        if stmt.refStmtType != null as *TypeExpr {
-            sym.refType = stmt.refStmtType;
-            if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
-                sym.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
-            } else {
-                sym.typeName = stmt.refStmtType.typeName;
-            }
-        } else if stmt.child1 != null as *Expr && stmt.child1.refType != null as *TypeExpr {
-            // Infer type from initializer expression
-            sym.refType = stmt.child1.refType;
-            stmt.refStmtType = stmt.child1.refType;
-            if stmt.child1.refType.kind == tekPointer && stmt.child1.refType.pointerPointee != null as *TypeExpr {
-                sym.typeName = String_Concat(stmt.child1.refType.pointerPointee.typeName, "*");
-            } else {
-                sym.typeName = stmt.child1.refType.typeName;
-            }
-        }
-        sym.isMutable = stmt.boolValue;
-        sym.isPublic = false;
-        sym.decl = null as *Decl;
-        discard Scope_Define(sema.scope, sym);
-        return;
-    }
-
-    // Return
-    if kind == skReturn {
-        if stmt.child1 != null as *Expr {
-            let retType: int = Sema_CheckExpr(sema, stmt.child1);
-            if sema.currentRetType != tyUnknown && retType != tyUnknown {
-                if retType != sema.currentRetType {
-                    // Be permissive: allow numeric widening, pointer compatibility
-                    if !Sema_IsNumeric(retType) || !Sema_IsNumeric(sema.currentRetType) {
-                        // Allow pointer-type compatibility (String <-> *T, *T <-> *U)
-                        let retIsPtr: bool = retType == tyPointer || retType == tyStr;
-                        let expectedIsPtr: bool = sema.currentRetType == tyPointer || sema.currentRetType == tyStr;
-                        if !retIsPtr || !expectedIsPtr {
-                            Sema_EmitError(sema, stmt.line, stmt.column, "return type mismatch");
-                        }
+            sym.isMutable = stmt.boolValue;
+            sym.isPublic = false;
+            sym.decl = null as *Decl;
+            discard Scope_Define(sema.scope, sym);
+            // Propagate ref lifetime for return-site checks
+            if sema.checkedFunc && !sema.releaseFunc && stmt.child1 != null as *Expr {
+                var isRefBind: bool = false;
+                if stmt.refStmtType != null as *TypeExpr {
+                    if stmt.refStmtType.kind == tekRef || stmt.refStmtType.kind == tekMutRef {
+                        isRefBind = true;
+                    }
+                }
+                if !isRefBind && stmt.child1.refType != null as *TypeExpr {
+                    if stmt.child1.refType.kind == tekRef || stmt.child1.refType.kind == tekMutRef {
+                        isRefBind = true;
+                    }
+                }
+                // Also treat address-of as creating a ref binding
+                if !isRefBind && stmt.child1.kind == ekUnary && stmt.child1.intValue == tkAmp {
+                    isRefBind = true;
+                }
+                if isRefBind {
+                    let lt: String = Sema_ExprRefLifetime(sema, stmt.child1);
+                    if !String_Eq(lt, "") {
+                        Sema_SetVarLifetime(sema, stmt.strValue, lt);
                     }
                 }
             }
-        } else {
-            if sema.currentRetType != tyVoid && sema.currentRetType != tyUnknown {
-                Sema_EmitError(sema, stmt.line, stmt.column, "missing return value");
-            }
-        }
-        return;
-    }
-
-    // If
-    if kind == skIf {
-        let condType: int = Sema_CheckExpr(sema, stmt.child1);
-        if !Sema_IsBool(condType) && condType != tyUnknown {
-            Sema_EmitError(sema, stmt.line, stmt.column, "if condition must be bool");
-        }
-        Sema_CheckBlock(sema, stmt.refStmtBlock);
-        Sema_CheckBlock(sema, stmt.refStmtElse);
-        return;
-    }
-
-    // While
-    if kind == skWhile {
-        let condType: int = Sema_CheckExpr(sema, stmt.child1);
-        if !Sema_IsBool(condType) && condType != tyUnknown {
-            Sema_EmitError(sema, stmt.line, stmt.column, "while condition must be bool");
-        }
-        Sema_CheckBlock(sema, stmt.refStmtBlock);
-        return;
-    }
-
-    // Do-while
-    if kind == skDoWhile {
-        Sema_CheckBlock(sema, stmt.refStmtBlock);
-        let condType: int = Sema_CheckExpr(sema, stmt.child1);
-        if !Sema_IsBool(condType) && condType != tyUnknown {
-            Sema_EmitError(sema, stmt.line, stmt.column, "do-while condition must be bool");
-        }
-        return;
-    }
-
-    // Loop
-    if kind == skLoop {
-        Sema_CheckBlock(sema, stmt.refStmtBlock);
-        return;
-    }
-
-    // For
-    if kind == skFor {
-        let iterType: int = Sema_CheckExpr(sema, stmt.child1);
-        var forScope: Scope = Scope_NewChild(sema.scope);
-        var loopSym: Symbol;
-        loopSym.kind = skVar;
-        loopSym.name = stmt.strValue;
-        loopSym.typeKind = tyUnknown;
-        loopSym.typeName = "";
-        loopSym.refType = null as *TypeExpr;
-        loopSym.isMutable = true;
-        loopSym.isPublic = false;
-        loopSym.decl = null as *Decl;
-
-        // Determine loop variable type from iterator expression
-        if stmt.child1 != null as *Expr {
-            // Range-based: type from lower bound (selfhost parses .. as ekBinary)
-            if stmt.child1.kind == ekRange || (stmt.child1.kind == ekBinary && (stmt.child1.intValue == tkDotDot || stmt.child1.intValue == tkDotDotEqual)) {
-                let boundType: int = Sema_CheckExpr(sema, stmt.child1.child1);
-                loopSym.typeKind = boundType;
-            }
-            // Array-based: extract element type from Array<T> annotation
-            if stmt.child1.kind == ekIdent {
-                let sym: Symbol = Scope_Lookup(sema.scope, stmt.child1.strValue);
-                if sym.refType != null as *TypeExpr {
-                    if String_Eq(sym.refType.typeName, "Array") && sym.refType.typeArgCount > 0 {
-                        let elemTe: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                        elemTe.kind = tekNamed;
-                        elemTe.typeName = sym.refType.typeArgName0;
-                        elemTe.line = stmt.line;
-                        elemTe.column = stmt.column;
-                        loopSym.typeKind = Sema_ResolveType(sema, elemTe);
-                        loopSym.typeName = sym.refType.typeArgName0;
-                        loopSym.refType = elemTe;
-                    }
-                }
-            }
+            return;
         }
 
-        discard Scope_Define(&forScope, loopSym);
-        let prevScope: *Scope = sema.scope;
-        sema.scope = &forScope;
-        Sema_CheckBlock(sema, stmt.refStmtBlock);
-        sema.scope = prevScope;
-        return;
-    }
-
-    // Match (legacy skMatch — prefer ekMatch via skExpr)
-    if kind == skMatch {
-        discard Sema_CheckExpr(sema, stmt.child1);
-        return;
-    }
-
-    // Break / Continue
-    if kind == skBreak || kind == skContinue {
-        return;
-    }
-
-    // Expression statement
-    if kind == skExpr && stmt.child1 != null as *Expr {
-        discard Sema_CheckExpr(sema, stmt.child1);
-        return;
-    }
-
-    // Decl (nested)
-    if kind == skDecl {
-        if stmt.refStmtDecl != null as *Decl && stmt.refStmtDecl.kind == dkFunc {
-            Sema_EmitError(sema, stmt.line, stmt.column, "nested functions not yet supported");
-        }
-        return;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Collect globals (register functions, structs, enums in scope)
-// ---------------------------------------------------------------------------
-
-func Sema_CollectGlobals(sema: *Sema) {
-    var decl: *Decl = sema.module.firstItem;
-    var funcCount: int = 0;
-    var lastDecl: *Decl = null as *Decl;
-    while decl != null as *Decl {
-        lastDecl = decl;
-        let dk: int = decl.kind;
-
-        // Function
-        if dk == dkFunc {
-            var sym: Symbol;
-            Sema_ZeroInitSymbol(&sym);
-            sym.kind = skFunc;
-            sym.name = decl.strValue;
-            sym.typeKind = tyFunc;
-            sym.refType = Sema_BuildFuncTypeExprFromDecl(decl);
-            sym.isPublic = decl.isPublic;
-            sym.decl = decl;
-            discard Scope_Define(sema.scope, sym);
-        }
-
-        // Struct
-        if dk == dkStruct {
-            var sym: Symbol;
-            Sema_ZeroInitSymbol(&sym);
-            sym.kind = skType;
-            sym.name = decl.strValue;
-            sym.typeKind = tyNamed;
-            sym.isPublic = decl.isPublic;
-            sym.decl = decl;
-            discard Scope_Define(sema.scope, sym);
-        }
-
-        // Enum
-        if dk == dkEnum {
-            var sym: Symbol;
-            Sema_ZeroInitSymbol(&sym);
-            sym.kind = skType;
-            sym.name = decl.strValue;
-            sym.typeKind = tyNamed;
-            sym.isPublic = decl.isPublic;
-            sym.decl = decl;
-            discard Scope_Define(sema.scope, sym);
-
-            // Register enum variants as constants
-            var vi: int = 0;
-            while vi < decl.variantCount && vi < 9 {
-                var v: EnumVariant;
-                if vi == 0 { v = decl.variant0; }
-                else if vi == 1 { v = decl.variant1; }
-                else if vi == 2 { v = decl.variant2; }
-                else if vi == 3 { v = decl.variant3; }
-                else if vi == 4 { v = decl.variant4; }
-                else if vi == 5 { v = decl.variant5; }
-                else if vi == 6 { v = decl.variant6; }
-                else if vi == 7 { v = decl.variant7; }
-                else if vi == 8 { v = decl.variant8; }
-                if v.name == null as String || String_Eq(v.name, "") {
-                    vi = vi + 1;
-                    continue;
-                }
-                let variantName: String = String_Concat(decl.strValue, "_");
-                let variantName2: String = String_Concat(variantName, v.name);
-                var vSym: Symbol;
-                vSym.kind = skConst;
-                vSym.name = variantName2;
-                vSym.typeKind = tyNamed;
-                vSym.typeName = String_Concat(decl.strValue, "_Tag");
-                vSym.refType = null as *TypeExpr;
-                vSym.isMutable = false;
-                vSym.isPublic = decl.isPublic;
-                vSym.decl = decl;
-                discard Scope_Define(sema.scope, vSym);
-                vi = vi + 1;
-            }
-        }
-
-        // Const
-        if dk == dkConst {
-            var sym: Symbol;
-            Sema_ZeroInitSymbol(&sym);
-            sym.kind = skConst;
-            sym.name = decl.strValue;
-            if decl.constType != null as *TypeExpr {
-                sym.typeKind = Sema_ResolveType(sema, decl.constType);
-                sym.typeName = decl.constType.typeName;
-                sym.refType = decl.constType;
-            } else {
-                sym.typeKind = tyInt;
-            }
-            sym.isMutable = false;
-            sym.isPublic = decl.isPublic;
-            sym.decl = decl;
-            discard Scope_Define(sema.scope, sym);
-        }
-
-        // Extern function
-        if dk == dkExternFunc {
-            var sym: Symbol;
-            Sema_ZeroInitSymbol(&sym);
-            sym.kind = skFunc;
-            sym.name = decl.strValue;
-            sym.typeKind = tyFunc;
-            sym.isPublic = true;
-            sym.decl = decl;
-            discard Scope_Define(sema.scope, sym);
-        }
-
-        // Interface
-        if dk == dkInterface {
-            if sema.interfaceCount < 64 {
-                sema.interfaceTable[sema.interfaceCount].name = decl.strValue;
-                sema.interfaceTable[sema.interfaceCount].decl = decl;
-                sema.interfaceCount = sema.interfaceCount + 1;
-            }
-        }
-
-        // Impl block (inherent methods or trait implementations)
-        if dk == dkImpl {
-            let implTypeName: String = decl.strValue;
-            var m: *Decl = decl.childDecl1;
-            while m != null as *Decl {
-                if m.kind == dkFunc {
-                    if sema.methodCount < 256 {
-                        sema.methodEntries[sema.methodCount].typeName = implTypeName;
-                        sema.methodEntries[sema.methodCount].methodName = m.strValue;
-                        sema.methodEntries[sema.methodCount].decl = m;
-                        sema.methodCount = sema.methodCount + 1;
-                    }
-                    // Also define TypeName_MethodName in scope so auto-drop can find it
-                    let methodSymName: String = String_Concat(implTypeName, "_");
-                    let methodSymName2: String = String_Concat(methodSymName, m.strValue);
-                    var methodSym: Symbol;
-                    Sema_ZeroInitSymbol(&methodSym);
-                    methodSym.kind = skFunc;
-                    methodSym.name = methodSymName2;
-                    methodSym.typeKind = tyFunc;
-                    methodSym.isPublic = decl.isPublic;
-                    methodSym.decl = m;
-                    discard Scope_Define(sema.scope, methodSym);
-                }
-                m = m.childDecl2;
-            }
-        }
-
-        decl = decl.childDecl2;
-    }
-
-    // Pass 2: resolve imports by looking up actual symbols
-    decl = sema.module.firstItem;
-    while decl != null as *Decl {
-        let dk: int = decl.kind;
-
-        if dk == dkUse {
-            if decl.useKind == 1 {
-                // Glob import: add all public symbols from scope
-                var scope: *Scope = sema.scope;
-                while scope != null as *Scope {
-                    var i: int = 0;
-                    while i < scope.count {
-                        let sym: Symbol = scope.symbols[i];
-                        if sym.isPublic {
-                            let existing: Symbol = Scope_LookupLocal(sema.scope, sym.name);
-                            if String_Eq(existing.name, "") {
-                                discard Scope_Define(sema.scope, sym);
+        // Return
+        if kind == skReturn {
+            if stmt.child1 != null as *Expr {
+                let retType: int = Sema_CheckExpr(sema, stmt.child1);
+                if sema.currentRetType != tyUnknown && retType != tyUnknown {
+                    if retType != sema.currentRetType {
+                        // Be permissive: allow numeric widening, pointer compatibility
+                        if !Sema_IsNumeric(retType) || !Sema_IsNumeric(sema.currentRetType) {
+                            // Allow pointer-type compatibility (String <-> *T, *T <-> *U)
+                            let retIsPtr: bool = retType == tyPointer || retType == tyStr;
+                            let expectedIsPtr: bool = sema.currentRetType == tyPointer || sema.currentRetType == tyStr;
+                            if !retIsPtr || !expectedIsPtr {
+                                Sema_EmitError(sema, stmt.line, stmt.column, "return type mismatch");
                             }
                         }
-                        i = i + 1;
-                    }
-                    scope = scope.parent;
-                }
-            } else if decl.useKind == 2 {
-                // Multi-import: resolve each name
-                let namesStr: String = decl.useNames;
-                if !String_Eq(namesStr, "") {
-                    var start: uint = 0;
-                    var pos: uint = 0;
-                    let totalLen: uint = String_Len(namesStr);
-                    while pos <= totalLen {
-                        let atEnd: bool = pos == totalLen;
-                        let isComma: bool = false;
-                        if pos < totalLen {
-                            let chStr: String = bux_str_slice(namesStr, pos, 1);
-                            isComma = String_Eq(chStr, ",");
-                        }
-                        if atEnd || isComma {
-                            let nameLen: uint = pos - start;
-                            if nameLen > 0 {
-                                let name: String = bux_str_slice(namesStr, start, nameLen);
-                                let found: Symbol = Scope_Lookup(sema.scope, name);
-                                if !String_Eq(found.name, "") && found.isPublic {
-                                    let existing: Symbol = Scope_LookupLocal(sema.scope, name);
-                                    if String_Eq(existing.name, "") {
-                                        discard Scope_Define(sema.scope, found);
-                                    }
-                                }
-                            }
-                            start = pos + 1;
-                        }
-                        pos = pos + 1;
                     }
                 }
+                // C.1 lifetime: reject dangling returns / elision mismatches
+                Sema_CheckReturnLifetime(sema, stmt.child1, stmt.line, stmt.column);
             } else {
-                // Single import: resolve last path segment
-                let path: String = decl.usePath;
-                if !String_Eq(path, "") {
-                    var lastSeg: String = path;
-                    let containsColons: int = bux_str_contains(path, "::");
-                    if containsColons != 0 {
-                        let pathLen: uint = String_Len(path);
-                        var tryPos: uint = 0;
-                        while tryPos < pathLen {
-                            let slice: String = bux_str_slice(path, tryPos, pathLen - tryPos);
-                            if String_StartsWith(slice, "::") {
-                                lastSeg = bux_str_slice(slice, 2, String_Len(slice) - 2);
-                            }
-                            tryPos = tryPos + 1;
-                        }
-                    }
-                    let found: Symbol = Scope_Lookup(sema.scope, lastSeg);
-                    if !String_Eq(found.name, "") && found.isPublic {
-                        let existing: Symbol = Scope_LookupLocal(sema.scope, lastSeg);
-                        if String_Eq(existing.name, "") {
-                            discard Scope_Define(sema.scope, found);
+                if sema.currentRetType != tyVoid && sema.currentRetType != tyUnknown {
+                    Sema_EmitError(sema, stmt.line, stmt.column, "missing return value");
+                }
+            }
+            return;
+        }
+
+        // If
+        if kind == skIf {
+            let condType: int = Sema_CheckExpr(sema, stmt.child1);
+            if !Sema_IsBool(condType) && condType != tyUnknown {
+                Sema_EmitError(sema, stmt.line, stmt.column, "if condition must be bool");
+            }
+            Sema_CheckBlock(sema, stmt.refStmtBlock);
+            Sema_CheckBlock(sema, stmt.refStmtElse);
+            return;
+        }
+
+        // While
+        if kind == skWhile {
+            let condType: int = Sema_CheckExpr(sema, stmt.child1);
+            if !Sema_IsBool(condType) && condType != tyUnknown {
+                Sema_EmitError(sema, stmt.line, stmt.column, "while condition must be bool");
+            }
+            Sema_CheckBlock(sema, stmt.refStmtBlock);
+            return;
+        }
+
+        // Do-while
+        if kind == skDoWhile {
+            Sema_CheckBlock(sema, stmt.refStmtBlock);
+            let condType: int = Sema_CheckExpr(sema, stmt.child1);
+            if !Sema_IsBool(condType) && condType != tyUnknown {
+                Sema_EmitError(sema, stmt.line, stmt.column, "do-while condition must be bool");
+            }
+            return;
+        }
+
+        // Loop
+        if kind == skLoop {
+            Sema_CheckBlock(sema, stmt.refStmtBlock);
+            return;
+        }
+
+        // For
+        if kind == skFor {
+            let iterType: int = Sema_CheckExpr(sema, stmt.child1);
+            var forScope: Scope = Scope_NewChild(sema.scope);
+            var loopSym: Symbol;
+            loopSym.kind = skVar;
+            loopSym.name = stmt.strValue;
+            loopSym.typeKind = tyUnknown;
+            loopSym.typeName = "";
+            loopSym.refType = null as *TypeExpr;
+            loopSym.isMutable = true;
+            loopSym.isPublic = false;
+            loopSym.decl = null as *Decl;
+
+            // Determine loop variable type from iterator expression
+            if stmt.child1 != null as *Expr {
+                // Range-based: type from lower bound (selfhost parses .. as ekBinary)
+                if stmt.child1.kind == ekRange || (stmt.child1.kind == ekBinary && (stmt.child1.intValue == tkDotDot || stmt.child1.intValue == tkDotDotEqual)) {
+                    let boundType: int = Sema_CheckExpr(sema, stmt.child1.child1);
+                    loopSym.typeKind = boundType;
+                }
+                // Array-based: extract element type from Array<T> annotation
+                if stmt.child1.kind == ekIdent {
+                    let sym: Symbol = Scope_Lookup(sema.scope, stmt.child1.strValue);
+                    if sym.refType != null as *TypeExpr {
+                        if String_Eq(sym.refType.typeName, "Array") && sym.refType.typeArgCount > 0 {
+                            let elemTe: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                            elemTe.kind = tekNamed;
+                            elemTe.typeName = sym.refType.typeArgName0;
+                            elemTe.line = stmt.line;
+                            elemTe.column = stmt.column;
+                            loopSym.typeKind = Sema_ResolveType(sema, elemTe);
+                            loopSym.typeName = sym.refType.typeArgName0;
+                            loopSym.refType = elemTe;
                         }
                     }
                 }
             }
+
+            discard Scope_Define(&forScope, loopSym);
+            let prevScope: *Scope = sema.scope;
+            sema.scope = &forScope;
+            Sema_CheckBlock(sema, stmt.refStmtBlock);
+            sema.scope = prevScope;
+            return;
         }
 
-        decl = decl.childDecl2;
-    }
+        // Match (legacy skMatch — prefer ekMatch via skExpr)
+        if kind == skMatch {
+            discard Sema_CheckExpr(sema, stmt.child1);
+            return;
+        }
 
-    // Pass 3: auto-register func Type_Method(self: Type, ...) as methods
-    decl = sema.module.firstItem;
-    while decl != null as *Decl {
-        if decl.kind == dkFunc && decl.paramCount > 0 {
-            let selfParam: Param = decl.param0;
-            if String_Eq(selfParam.name, "self") {
-                var typeName: String = "";
-                var i: int = bux_strlen(decl.strValue) as int - 1;
-                while i > 0 {
-                    if decl.strValue[i] as int == 95 { // '_'
-                        let prefix: String = bux_str_slice(decl.strValue, 0, i as uint);
-                        let typeSym: Symbol = Scope_Lookup(sema.scope, prefix);
-                        if typeSym.kind == skType && typeSym.decl != null as *Decl && typeSym.decl.kind == dkStruct {
-                            typeName = prefix;
-                            break;
-                        }
-                    }
-                    i = i - 1;
-                }
-                if !String_Eq(typeName, "") {
-                    let methodName: String = bux_str_slice(decl.strValue, (i + 1) as uint, bux_strlen(decl.strValue) - (i + 1) as uint);
-                    if sema.methodCount < 256 {
-                        sema.methodEntries[sema.methodCount].typeName = typeName;
-                        sema.methodEntries[sema.methodCount].methodName = methodName;
-                        sema.methodEntries[sema.methodCount].decl = decl;
-                        sema.methodCount = sema.methodCount + 1;
-                    }
-                }
+        // Break / Continue
+        if kind == skBreak || kind == skContinue {
+            return;
+        }
+
+        // Expression statement
+        if kind == skExpr && stmt.child1 != null as *Expr {
+            discard Sema_CheckExpr(sema, stmt.child1);
+            return;
+        }
+
+        // Decl (nested)
+        if kind == skDecl {
+            if stmt.refStmtDecl != null as *Decl && stmt.refStmtDecl.kind == dkFunc {
+                Sema_EmitError(sema, stmt.line, stmt.column, "nested functions not yet supported");
             }
-        }
-        decl = decl.childDecl2;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Trait bounds checking
-// ---------------------------------------------------------------------------
-
-func Sema_FindInterface(sema: *Sema, name: String) -> *Decl {
-    var i: int = 0;
-    while i < sema.interfaceCount {
-        if String_Eq(sema.interfaceTable[i].name, name) {
-            return sema.interfaceTable[i].decl;
-        }
-        i = i + 1;
-    }
-    return null as *Decl;
-}
-
-func Sema_TypeHasMethod(sema: *Sema, typeName: String, methodName: String) -> bool {
-    var i: int = 0;
-    while i < sema.methodCount {
-        if String_Eq(sema.methodEntries[i].typeName, typeName) && String_Eq(sema.methodEntries[i].methodName, methodName) {
-            return true;
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
-func Sema_TypeImplements(sema: *Sema, typeName: String, interfaceName: String) -> bool {
-    let iface: *Decl = Sema_FindInterface(sema, interfaceName);
-    if iface == null as *Decl {
-        return true; // Unknown interface — be permissive
-    }
-    var req: *Decl = iface.childDecl1;
-    while req != null as *Decl {
-        if req.kind == dkFunc {
-            if !Sema_TypeHasMethod(sema, typeName, req.strValue) {
-                return false;
-            }
-        }
-        req = req.childDecl2;
-    }
-    return true;
-}
-
-// Extract element type name from a collection TypeExpr.
-// Handles both explicit generic types (Array<int>) and mangled types (Array_int).
-func Sema_ExtractElemType(te: *TypeExpr) -> String {
-    if te == null as *TypeExpr { return ""; }
-    // Pointer: unwrap and recurse
-    if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
-        return Sema_ExtractElemType(te.pointerPointee);
-    }
-    if te.kind == tekNamed {
-        // Explicit generic: Array<int>
-        if String_Eq(te.typeName, "Array") || String_Eq(te.typeName, "Iter") {
-            if te.typeArgCount > 0 {
-                return te.typeArgName0;
-            }
-        }
-        // Mangled: Array_int, Iter_string
-        let name: String = te.typeName;
-        let len: uint = bux_strlen(name);
-        // Check for "Array_" prefix
-        if len > 6 && name[0] as int == 65 && name[1] as int == 114 && name[2] as int == 114 && name[3] as int == 97 && name[4] as int == 121 && name[5] as int == 95 {
-            return bux_str_slice(name, 6, len - 6);
-        }
-        // Check for "Iter_" prefix
-        if len > 5 && name[0] as int == 73 && name[1] as int == 116 && name[2] as int == 101 && name[3] as int == 114 && name[4] as int == 95 {
-            return bux_str_slice(name, 5, len - 5);
-        }
-    }
-    return "";
-}
-
-// Substitute type params in a TypeExpr (shallow clone). Used for call return types
-// after inference: Array<U> + U=String → Array with typeArgName0=String / Array_String.
-func Sema_SubstTypeExpr(te: *TypeExpr, p0: String, a0: String, p1: String, a1: String, argc: int) -> *TypeExpr {
-    if te == null as *TypeExpr { return null as *TypeExpr; }
-    let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-    r.kind = te.kind;
-    r.line = te.line;
-    r.column = te.column;
-    r.typeName = te.typeName;
-    r.pathStr = te.pathStr;
-    r.pathCount = te.pathCount;
-    r.typeArgName0 = te.typeArgName0;
-    r.typeArgName1 = te.typeArgName1;
-    r.typeArgCount = te.typeArgCount;
-    r.sliceElement = te.sliceElement;
-    r.pointerPointee = te.pointerPointee;
-    r.funcParams = te.funcParams;
-    r.funcRet = te.funcRet;
-    r.funcParamCount = te.funcParamCount;
-    r.tupleElems = te.tupleElems;
-    r.tupleCount = te.tupleCount;
-
-    if te.kind == tekNamed {
-        // Bare type param → concrete named type
-        if te.typeArgCount == 0 {
-            if argc >= 1 && String_Eq(te.typeName, p0) {
-                r.typeName = a0;
-                return r;
-            }
-            if argc >= 2 && String_Eq(te.typeName, p1) {
-                r.typeName = a1;
-                return r;
-            }
-        }
-        // Named with type args: Array<U> → Array_String (mangled) for downstream mono
-        if te.typeArgCount > 0 {
-            var na0: String = te.typeArgName0;
-            var na1: String = te.typeArgName1;
-            if argc >= 1 && String_Eq(na0, p0) { na0 = a0; }
-            if argc >= 2 && String_Eq(na0, p1) { na0 = a1; }
-            if argc >= 1 && String_Eq(na1, p0) { na1 = a0; }
-            if argc >= 2 && String_Eq(na1, p1) { na1 = a1; }
-            r.typeArgName0 = na0;
-            r.typeArgName1 = na1;
-            // Mangle for monomorphized struct name (Array_int, Iter_String)
-            if te.typeArgCount == 1 && !String_Eq(na0, "") {
-                r.typeName = String_Concat(String_Concat(te.typeName, "_"), na0);
-                r.typeArgCount = 0;
-                r.typeArgName0 = "";
-            } else if te.typeArgCount >= 2 {
-                r.typeName = String_Concat(String_Concat(te.typeName, "_"),
-                    String_Concat(na0, String_Concat("_", na1)));
-                r.typeArgCount = 0;
-                r.typeArgName0 = "";
-                r.typeArgName1 = "";
-            }
-            return r;
-        }
-    }
-    if te.kind == tekPointer || te.kind == tekRef || te.kind == tekMutRef {
-        r.pointerPointee = Sema_SubstTypeExpr(te.pointerPointee, p0, a0, p1, a1, argc);
-        return r;
-    }
-    if te.kind == tekFunc {
-        r.funcRet = Sema_SubstTypeExpr(te.funcRet, p0, a0, p1, a1, argc);
-        return r;
-    }
-    return r;
-}
-
-// Bind a type param name on the call callee if not already set.
-func Sema_BindInferredArg(expr: *Expr, funcDecl: *Decl, tpName: String, typeName: String) {
-    if String_Eq(tpName, "") || String_Eq(typeName, "") { return; }
-    if expr.child1 == null as *Expr { return; }
-    if funcDecl.typeParamCount >= 1 && String_Eq(tpName, funcDecl.typeParam0) {
-        if String_Eq(expr.child1.genericTypeArg0, "") {
-            expr.child1.genericTypeArg0 = typeName;
-        }
-        if expr.child1.genericTypeArgCount < 1 { expr.child1.genericTypeArgCount = 1; }
-    }
-    if funcDecl.typeParamCount >= 2 && String_Eq(tpName, funcDecl.typeParam1) {
-        if String_Eq(expr.child1.genericTypeArg1, "") {
-            expr.child1.genericTypeArg1 = typeName;
-        }
-        if expr.child1.genericTypeArgCount < 2 { expr.child1.genericTypeArgCount = 2; }
-    }
-}
-
-// Resolve concrete type name for a value expression (for bare type-param params).
-func Sema_ArgTypeName(argExpr: *Expr) -> String {
-    if argExpr == null as *Expr { return ""; }
-    var argType: *TypeExpr = argExpr.refType;
-    if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
-        if argExpr.child1 != null as *Expr { argType = argExpr.child1.refType; }
-    }
-    if argType == null as *TypeExpr { return ""; }
-    if argType.kind == tekNamed { return argType.typeName; }
-    if argType.kind == tekPointer && argType.pointerPointee != null as *TypeExpr {
-        if argType.pointerPointee.kind == tekNamed {
-            return argType.pointerPointee.typeName;
-        }
-    }
-    return "";
-}
-
-// Infer type args from a param TypeExpr pattern against a concrete arg TypeExpr.
-func Sema_UnifyInfer(expr: *Expr, funcDecl: *Decl, pattern: *TypeExpr, concrete: *TypeExpr) {
-    if pattern == null as *TypeExpr || concrete == null as *TypeExpr { return; }
-
-    // Bare type param: T / Acc / U
-    if pattern.kind == tekNamed && pattern.typeArgCount == 0 {
-        if String_Eq(pattern.typeName, funcDecl.typeParam0) || String_Eq(pattern.typeName, funcDecl.typeParam1) {
-            var cn: String = "";
-            if concrete.kind == tekNamed { cn = concrete.typeName; }
-            Sema_BindInferredArg(expr, funcDecl, pattern.typeName, cn);
             return;
         }
     }
 
-    // *T / &T — unwrap pointer/ref on both sides
-    if pattern.kind == tekPointer || pattern.kind == tekRef || pattern.kind == tekMutRef {
-        var conc: *TypeExpr = concrete;
-        if concrete.kind == tekPointer || concrete.kind == tekRef || concrete.kind == tekMutRef {
-            conc = concrete.pointerPointee;
-        }
-        Sema_UnifyInfer(expr, funcDecl, pattern.pointerPointee, conc);
-        return;
-    }
+    // ---------------------------------------------------------------------------
+    // Collect globals (register functions, structs, enums in scope)
+    // ---------------------------------------------------------------------------
 
-    // Named with type args: Iter<T>, Array<U>, Map<K,V>
-    if pattern.kind == tekNamed && pattern.typeArgCount > 0 {
-        // concrete may be Iter with typeArgName0, or mangled Iter_int
-        if concrete.kind == tekNamed {
-            if concrete.typeArgCount > 0 {
-                if pattern.typeArgCount >= 1 && !String_Eq(pattern.typeArgName0, "") {
-                    let te0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                    te0.kind = tekNamed;
-                    te0.typeName = pattern.typeArgName0;
-                    te0.typeArgCount = 0;
-                    let ce0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                    ce0.kind = tekNamed;
-                    ce0.typeName = concrete.typeArgName0;
-                    ce0.typeArgCount = 0;
-                    Sema_UnifyInfer(expr, funcDecl, te0, ce0);
-                }
-                if pattern.typeArgCount >= 2 && !String_Eq(pattern.typeArgName1, "") {
-                    let te1: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                    te1.kind = tekNamed;
-                    te1.typeName = pattern.typeArgName1;
-                    te1.typeArgCount = 0;
-                    let ce1: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                    ce1.kind = tekNamed;
-                    ce1.typeName = concrete.typeArgName1;
-                    ce1.typeArgCount = 0;
-                    Sema_UnifyInfer(expr, funcDecl, te1, ce1);
-                }
-            } else {
-                // Mangled Array_int / Iter_String
-                let elem: String = Sema_ExtractElemType(concrete);
-                if !String_Eq(elem, "") && pattern.typeArgCount >= 1 {
-                    let te0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                    te0.kind = tekNamed;
-                    te0.typeName = pattern.typeArgName0;
-                    te0.typeArgCount = 0;
-                    let ce0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
-                    ce0.kind = tekNamed;
-                    ce0.typeName = elem;
-                    ce0.typeArgCount = 0;
-                    Sema_UnifyInfer(expr, funcDecl, te0, ce0);
-                }
+    func Sema_CollectGlobals(sema: *Sema) {
+        var decl: *Decl = sema.module.firstItem;
+        var funcCount: int = 0;
+        var lastDecl: *Decl = null as *Decl;
+        while decl != null as *Decl {
+            lastDecl = decl;
+            let dk: int = decl.kind;
+
+            // Function
+            if dk == dkFunc {
+                var sym: Symbol;
+                Sema_ZeroInitSymbol(&sym);
+                sym.kind = skFunc;
+                sym.name = decl.strValue;
+                sym.typeKind = tyFunc;
+                sym.refType = Sema_BuildFuncTypeExprFromDecl(decl);
+                sym.isPublic = decl.isPublic;
+                sym.decl = decl;
+                discard Scope_Define(sema.scope, sym);
             }
-        }
-        return;
-    }
 
-    // func(T)->U  vs  concrete function type
-    if pattern.kind == tekFunc {
-        var conc: *TypeExpr = concrete;
-        // Named function used as value: build tekFunc from its decl if needed — refType may already be tekFunc
-        if conc.kind == tekFunc {
-            // Params
-            var pp: *TypeExprList = pattern.funcParams;
-            var cp: *TypeExprList = conc.funcParams;
-            while pp != null as *TypeExprList && cp != null as *TypeExprList {
-                Sema_UnifyInfer(expr, funcDecl, pp.te, cp.te);
-                pp = pp.next;
-                cp = cp.next;
+            // Struct
+            if dk == dkStruct {
+                var sym: Symbol;
+                Sema_ZeroInitSymbol(&sym);
+                sym.kind = skType;
+                sym.name = decl.strValue;
+                sym.typeKind = tyNamed;
+                sym.isPublic = decl.isPublic;
+                sym.decl = decl;
+                discard Scope_Define(sema.scope, sym);
             }
-            if pattern.funcRet != null as *TypeExpr && conc.funcRet != null as *TypeExpr {
-                Sema_UnifyInfer(expr, funcDecl, pattern.funcRet, conc.funcRet);
-            }
-        }
-        return;
-    }
-}
 
-// Infer generic type arguments from call arguments (structural).
-// Handles *Array<T>, *Iter<T>, func(T)->U, bare Acc, etc.
-func Sema_InferGenericArgs(sema: *Sema, funcDecl: *Decl, expr: *Expr) {
-    if expr.callArgs == null as *ExprList { return; }
-    if expr.child1 == null as *Expr { return; }
-    var argList: *ExprList = expr.callArgs;
-    var pi: int = 0;
-    while argList != null as *ExprList && pi < funcDecl.paramCount {
-        let argExpr: *Expr = argList.expr;
-        if argExpr == null as *Expr { argList = argList.next; pi = pi + 1; continue; }
+            // Enum
+            if dk == dkEnum {
+                var sym: Symbol;
+                Sema_ZeroInitSymbol(&sym);
+                sym.kind = skType;
+                sym.name = decl.strValue;
+                sym.typeKind = tyNamed;
+                sym.isPublic = decl.isPublic;
+                sym.decl = decl;
+                discard Scope_Define(sema.scope, sym);
 
-        var paramType: *TypeExpr = null as *TypeExpr;
-        if pi == 0 { paramType = funcDecl.param0.refParamType; }
-        else if pi == 1 { paramType = funcDecl.param1.refParamType; }
-        else if pi == 2 { paramType = funcDecl.param2.refParamType; }
-        else if pi == 3 { paramType = funcDecl.param3.refParamType; }
-        else if pi == 4 { paramType = funcDecl.param4.refParamType; }
-        else if pi == 5 { paramType = funcDecl.param5.refParamType; }
-        else if pi == 6 { paramType = funcDecl.param6.refParamType; }
-        else if pi == 7 { paramType = funcDecl.param7.refParamType; }
-        else if pi == 8 { paramType = funcDecl.param8.refParamType; }
-
-        var argType: *TypeExpr = argExpr.refType;
-        // &x → use type of x, wrap as pointer if pattern expects pointer
-        if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
-            if argExpr.child1 != null as *Expr {
-                argType = argExpr.child1.refType;
-            }
-        }
-        // Named function as value: synthesize tekFunc from its declaration
-        if (argType == null as *TypeExpr || argType.kind != tekFunc) && argExpr.kind == ekIdent {
-            let fsym: Symbol = Scope_Lookup(sema.scope, argExpr.strValue);
-            if fsym.kind == skFunc && fsym.decl != null as *Decl {
-                argType = Sema_BuildFuncTypeExprFromDecl(fsym.decl);
-            }
-        }
-
-        if paramType != null as *TypeExpr && argType != null as *TypeExpr {
-            Sema_UnifyInfer(expr, funcDecl, paramType, argType);
-            // If pattern is *T and arg is bare T (from &x we unwrapped), re-wrap
-            if (paramType.kind == tekPointer || paramType.kind == tekRef || paramType.kind == tekMutRef)
-                && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
-                // already handled via unwrap of pattern against pointee type of variable
-                if argExpr.child1 != null as *Expr && argExpr.child1.refType != null as *TypeExpr {
-                    Sema_UnifyInfer(expr, funcDecl, paramType.pointerPointee, argExpr.child1.refType);
+                // Register enum variants as constants
+                var vi: int = 0;
+                while vi < decl.variantCount && vi < 9 {
+                    var v: EnumVariant;
+                    if vi == 0 { v = decl.variant0; }
+                    else if vi == 1 { v = decl.variant1; }
+                    else if vi == 2 { v = decl.variant2; }
+                    else if vi == 3 { v = decl.variant3; }
+                    else if vi == 4 { v = decl.variant4; }
+                    else if vi == 5 { v = decl.variant5; }
+                    else if vi == 6 { v = decl.variant6; }
+                    else if vi == 7 { v = decl.variant7; }
+                    else if vi == 8 { v = decl.variant8; }
+                    if v.name == null as String || String_Eq(v.name, "") {
+                        vi = vi + 1;
+                        continue;
+                    }
+                    let variantName: String = String_Concat(decl.strValue, "_");
+                    let variantName2: String = String_Concat(variantName, v.name);
+                    var vSym: Symbol;
+                    vSym.kind = skConst;
+                    vSym.name = variantName2;
+                    vSym.typeKind = tyNamed;
+                    vSym.typeName = String_Concat(decl.strValue, "_Tag");
+                    vSym.refType = null as *TypeExpr;
+                    vSym.isMutable = false;
+                    vSym.isPublic = decl.isPublic;
+                    vSym.decl = decl;
+                    discard Scope_Define(sema.scope, vSym);
+                    vi = vi + 1;
                 }
             }
-        }
-        argList = argList.next;
-        pi = pi + 1;
-    }
-}
 
-func Sema_CheckTraitBounds(sema: *Sema, funcDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int, line: uint32, col: uint32) {
-    // Trait bounds checking
-    if funcDecl.typeParamCount >= 1 && typeArgCount >= 1 && !String_Eq(funcDecl.typeParam0Bound, "") {
-        if !Sema_TypeImplements(sema, typeArg0, funcDecl.typeParam0Bound) {
-            let errMsg: String = String_Concat("type '", String_Concat(typeArg0, "' does not implement trait '"));
-            let errMsg2: String = String_Concat(errMsg, String_Concat(funcDecl.typeParam0Bound, "'"));
-            Sema_EmitError(sema, line, col, errMsg2);
-        }
-    }
-    if funcDecl.typeParamCount >= 2 && typeArgCount >= 2 && !String_Eq(funcDecl.typeParam1Bound, "") {
-        if !Sema_TypeImplements(sema, typeArg1, funcDecl.typeParam1Bound) {
-            let errMsg: String = String_Concat("type '", String_Concat(typeArg1, "' does not implement trait '"));
-            let errMsg2: String = String_Concat(errMsg, String_Concat(funcDecl.typeParam1Bound, "'"));
-            Sema_EmitError(sema, line, col, errMsg2);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Analyze — main entry point
-// ---------------------------------------------------------------------------
-
-func Sema_Analyze(mod: *Module) -> *Sema {
-    let s: *Sema = bux_alloc(sizeof(Sema)) as *Sema;
-    s.module = mod;
-    s.scope = bux_alloc(sizeof(Scope)) as *Scope;
-    s.scope.symbols = bux_alloc(1024 as uint * sizeof(Symbol)) as *Symbol;
-    s.scope.count = 0;
-    s.scope.parent = null as *Scope;
-    s.hasError = false;
-    s.diagCount = 0;
-    s.diags = bux_alloc(256 as uint * sizeof(SemaDiag)) as *SemaDiag;
-    s.typeTable = null as *void;
-    s.methodTable = null as *void;
-    s.currentRetType = tyVoid;
-    s.interfaceTable = bux_alloc(64 as uint * sizeof(InterfaceEntry)) as *InterfaceEntry;
-    s.interfaceCount = 0;
-    s.methodEntries = bux_alloc(256 as uint * sizeof(MethodEntry)) as *MethodEntry;
-    s.methodCount = 0;
-
-    // First pass: collect globals
-    Sema_CollectGlobals(s);
-
-    // Second pass: check function bodies
-    var decl: *Decl = mod.firstItem;
-    while decl != null as *Decl {
-        if decl.kind == dkFunc && decl.refBody != null as *Block {
-            // Create function scope (child of global)
-            var funcScope: Scope = Scope_NewChild(s.scope);
-
-            // Add type params to scope
-            if decl.typeParamCount >= 1 {
-                var tpSym: Symbol;
-                Sema_ZeroInitSymbol(&tpSym);
-                tpSym.kind = skType;
-                tpSym.name = decl.typeParam0;
-                tpSym.typeKind = tyTypeParam;
-                tpSym.decl = null as *Decl;
-                discard Scope_Define(&funcScope, tpSym);
-            }
-            if decl.typeParamCount >= 2 {
-                var tpSym2: Symbol;
-                Sema_ZeroInitSymbol(&tpSym2);
-                tpSym2.kind = skType;
-                tpSym2.name = decl.typeParam1;
-                tpSym2.typeKind = tyTypeParam;
-                tpSym2.decl = null as *Decl;
-                discard Scope_Define(&funcScope, tpSym2);
+            // Const
+            if dk == dkConst {
+                var sym: Symbol;
+                Sema_ZeroInitSymbol(&sym);
+                sym.kind = skConst;
+                sym.name = decl.strValue;
+                if decl.constType != null as *TypeExpr {
+                    sym.typeKind = Sema_ResolveType(sema, decl.constType);
+                    sym.typeName = decl.constType.typeName;
+                    sym.refType = decl.constType;
+                } else {
+                    sym.typeKind = tyInt;
+                }
+                sym.isMutable = false;
+                sym.isPublic = decl.isPublic;
+                sym.decl = decl;
+                discard Scope_Define(sema.scope, sym);
             }
 
-            // Add parameters to scope
-            var i: int = 0;
-            while i < decl.paramCount {
-                var p: *Param = null as *Param;
-                if i == 0 { p = &decl.param0; }
-                else if i == 1 { p = &decl.param1; }
-                else if i == 2 { p = &decl.param2; }
-                else if i == 3 { p = &decl.param3; }
-                else if i == 4 { p = &decl.param4; }
-                else if i == 5 { p = &decl.param5; }
-                else if i == 6 { p = &decl.param6; }
-                else if i == 7 { p = &decl.param7; }
-                else if i == 8 { p = &decl.param8; }
-                var pSym: Symbol;
-                Sema_ZeroInitSymbol(&pSym);
-                pSym.kind = skVar;
-                if p != null as *Param && p.refParamType != null as *TypeExpr {
-                    pSym.typeKind = Sema_ResolveType(s, p.refParamType);
-                    pSym.refType = p.refParamType;
-                    if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
-                        pSym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
-                    } else {
-                        pSym.typeName = p.refParamType.typeName;
+            // Extern function
+            if dk == dkExternFunc {
+                var sym: Symbol;
+                Sema_ZeroInitSymbol(&sym);
+                sym.kind = skFunc;
+                sym.name = decl.strValue;
+                sym.typeKind = tyFunc;
+                sym.isPublic = true;
+                sym.decl = decl;
+                discard Scope_Define(sema.scope, sym);
+            }
+
+            // Interface
+            if dk == dkInterface {
+                if sema.interfaceCount < 64 {
+                    sema.interfaceTable[sema.interfaceCount].name = decl.strValue;
+                    sema.interfaceTable[sema.interfaceCount].decl = decl;
+                    sema.interfaceCount = sema.interfaceCount + 1;
+                }
+            }
+
+            // Impl block (inherent methods or trait implementations)
+            if dk == dkImpl {
+                let implTypeName: String = decl.strValue;
+                var m: *Decl = decl.childDecl1;
+                while m != null as *Decl {
+                    if m.kind == dkFunc {
+                        if sema.methodCount < 256 {
+                            sema.methodEntries[sema.methodCount].typeName = implTypeName;
+                            sema.methodEntries[sema.methodCount].methodName = m.strValue;
+                            sema.methodEntries[sema.methodCount].decl = m;
+                            sema.methodCount = sema.methodCount + 1;
+                        }
+                        // Also define TypeName_MethodName in scope so auto-drop can find it
+                        let methodSymName: String = String_Concat(implTypeName, "_");
+                        let methodSymName2: String = String_Concat(methodSymName, m.strValue);
+                        var methodSym: Symbol;
+                        Sema_ZeroInitSymbol(&methodSym);
+                        methodSym.kind = skFunc;
+                        methodSym.name = methodSymName2;
+                        methodSym.typeKind = tyFunc;
+                        methodSym.isPublic = decl.isPublic;
+                        methodSym.decl = m;
+                        discard Scope_Define(sema.scope, methodSym);
+                    }
+                    m = m.childDecl2;
+                }
+            }
+
+            decl = decl.childDecl2;
+        }
+
+        // Pass 2: resolve imports by looking up actual symbols
+        decl = sema.module.firstItem;
+        while decl != null as *Decl {
+            let dk: int = decl.kind;
+
+            if dk == dkUse {
+                if decl.useKind == 1 {
+                    // Glob import: add all public symbols from scope
+                    var scope: *Scope = sema.scope;
+                    while scope != null as *Scope {
+                        var i: int = 0;
+                        while i < scope.count {
+                            let sym: Symbol = scope.symbols[i];
+                            if sym.isPublic {
+                                let existing: Symbol = Scope_LookupLocal(sema.scope, sym.name);
+                                if String_Eq(existing.name, "") {
+                                    discard Scope_Define(sema.scope, sym);
+                                }
+                            }
+                            i = i + 1;
+                        }
+                        scope = scope.parent;
+                    }
+                } else if decl.useKind == 2 {
+                    // Multi-import: resolve each name
+                    let namesStr: String = decl.useNames;
+                    if !String_Eq(namesStr, "") {
+                        var start: uint = 0;
+                        var pos: uint = 0;
+                        let totalLen: uint = String_Len(namesStr);
+                        while pos <= totalLen {
+                            let atEnd: bool = pos == totalLen;
+                            let isComma: bool = false;
+                            if pos < totalLen {
+                                let chStr: String = bux_str_slice(namesStr, pos, 1);
+                                isComma = String_Eq(chStr, ",");
+                            }
+                            if atEnd || isComma {
+                                let nameLen: uint = pos - start;
+                                if nameLen > 0 {
+                                    let name: String = bux_str_slice(namesStr, start, nameLen);
+                                    let found: Symbol = Scope_Lookup(sema.scope, name);
+                                    if !String_Eq(found.name, "") && found.isPublic {
+                                        let existing: Symbol = Scope_LookupLocal(sema.scope, name);
+                                        if String_Eq(existing.name, "") {
+                                            discard Scope_Define(sema.scope, found);
+                                        }
+                                    }
+                                }
+                                start = pos + 1;
+                            }
+                            pos = pos + 1;
+                        }
                     }
                 } else {
-                    pSym.typeKind = tyInt;
-                    pSym.typeName = "";
+                    // Single import: resolve last path segment
+                    let path: String = decl.usePath;
+                    if !String_Eq(path, "") {
+                        var lastSeg: String = path;
+                        let containsColons: int = bux_str_contains(path, "::");
+                        if containsColons != 0 {
+                            let pathLen: uint = String_Len(path);
+                            var tryPos: uint = 0;
+                            while tryPos < pathLen {
+                                let slice: String = bux_str_slice(path, tryPos, pathLen - tryPos);
+                                if String_StartsWith(slice, "::") {
+                                    lastSeg = bux_str_slice(slice, 2, String_Len(slice) - 2);
+                                }
+                                tryPos = tryPos + 1;
+                            }
+                        }
+                        let found: Symbol = Scope_Lookup(sema.scope, lastSeg);
+                        if !String_Eq(found.name, "") && found.isPublic {
+                            let existing: Symbol = Scope_LookupLocal(sema.scope, lastSeg);
+                            if String_Eq(existing.name, "") {
+                                discard Scope_Define(sema.scope, found);
+                            }
+                        }
+                    }
                 }
-                pSym.isMutable = false;
-                pSym.isPublic = false;
-                pSym.decl = null as *Decl;
-                if i == 0 { pSym.name = decl.param0.name; }
-                else if i == 1 { pSym.name = decl.param1.name; }
-                else if i == 2 { pSym.name = decl.param2.name; }
-                else if i == 3 { pSym.name = decl.param3.name; }
-                else if i == 4 { pSym.name = decl.param4.name; }
-                else if i == 5 { pSym.name = decl.param5.name; }
-                else if i == 6 { pSym.name = decl.param6.name; }
-                else if i == 7 { pSym.name = decl.param7.name; }
-                else if i == 8 { pSym.name = decl.param8.name; }
-                discard Scope_Define(&funcScope, pSym);
-                i = i + 1;
             }
 
-            // Switch to function scope and check body statements
-            let prevScope: *Scope = s.scope;
-            s.scope = &funcScope;
-
-            // Set current function return type
-            if decl.retType != null as *TypeExpr {
-                s.currentRetType = Sema_ResolveType(s, decl.retType);
-            } else {
-    s.currentRetType = tyVoid;
-    s.checkedFunc = false;
-    s.movedCount = 0;
-            }
-
-            // Enable borrow checking for @[Checked] functions
-            let wasChecked: bool = s.checkedFunc;
-            s.checkedFunc = decl.isChecked != 0;
-            let wasRelease: bool = s.releaseFunc;
-            s.releaseFunc = decl.isRelease != 0;
-
-            // Check body statements
-            var stmt: *Stmt = decl.refBody.firstStmt;
-            while stmt != null as *Stmt {
-                Sema_CheckStmt(s, stmt);
-                stmt = stmt.nextStmt;
-            }
-
-            s.checkedFunc = wasChecked;
-            s.releaseFunc = wasRelease;
-            s.scope = prevScope;
+            decl = decl.childDecl2;
         }
-        decl = decl.childDecl2;
+
+        // Pass 3: auto-register func Type_Method(self: Type, ...) as methods
+        decl = sema.module.firstItem;
+        while decl != null as *Decl {
+            if decl.kind == dkFunc && decl.paramCount > 0 {
+                let selfParam: Param = decl.param0;
+                if String_Eq(selfParam.name, "self") {
+                    var typeName: String = "";
+                    var i: int = bux_strlen(decl.strValue) as int - 1;
+                    while i > 0 {
+                        if decl.strValue[i] as int == 95 { // '_'
+                            let prefix: String = bux_str_slice(decl.strValue, 0, i as uint);
+                            let typeSym: Symbol = Scope_Lookup(sema.scope, prefix);
+                            if typeSym.kind == skType && typeSym.decl != null as *Decl && typeSym.decl.kind == dkStruct {
+                                typeName = prefix;
+                                break;
+                            }
+                        }
+                        i = i - 1;
+                    }
+                    if !String_Eq(typeName, "") {
+                        let methodName: String = bux_str_slice(decl.strValue, (i + 1) as uint, bux_strlen(decl.strValue) - (i + 1) as uint);
+                        if sema.methodCount < 256 {
+                            sema.methodEntries[sema.methodCount].typeName = typeName;
+                            sema.methodEntries[sema.methodCount].methodName = methodName;
+                            sema.methodEntries[sema.methodCount].decl = decl;
+                            sema.methodCount = sema.methodCount + 1;
+                        }
+                    }
+                }
+            }
+            decl = decl.childDecl2;
+        }
     }
 
-    return s;
-}
+    // ---------------------------------------------------------------------------
+    // Trait bounds checking
+    // ---------------------------------------------------------------------------
 
-func Sema_HasError(sema: *Sema) -> bool {
-    return sema.hasError;
-}
+    func Sema_FindInterface(sema: *Sema, name: String) -> *Decl {
+        var i: int = 0;
+        while i < sema.interfaceCount {
+            if String_Eq(sema.interfaceTable[i].name, name) {
+                return sema.interfaceTable[i].decl;
+            }
+            i = i + 1;
+        }
+        return null as *Decl;
+    }
 
-func Sema_DiagCount(sema: *Sema) -> int {
-    return sema.diagCount;
-}
+    func Sema_TypeHasMethod(sema: *Sema, typeName: String, methodName: String) -> bool {
+        var i: int = 0;
+        while i < sema.methodCount {
+            if String_Eq(sema.methodEntries[i].typeName, typeName) && String_Eq(sema.methodEntries[i].methodName, methodName) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
 
-func Sema_Free(sema: *Sema) {
-    bux_free(sema.scope.symbols as *void);
-    bux_free(sema.scope as *void);
-    bux_free(sema.diags as *void);
-    bux_free(sema as *void);
-}
+    func Sema_TypeImplements(sema: *Sema, typeName: String, interfaceName: String) -> bool {
+        let iface: *Decl = Sema_FindInterface(sema, interfaceName);
+        if iface == null as *Decl {
+            return true; // Unknown interface — be permissive
+        }
+        var req: *Decl = iface.childDecl1;
+        while req != null as *Decl {
+            if req.kind == dkFunc {
+                if !Sema_TypeHasMethod(sema, typeName, req.strValue) {
+                    return false;
+                }
+            }
+            req = req.childDecl2;
+        }
+        return true;
+    }
+
+    // Extract element type name from a collection TypeExpr.
+    // Handles both explicit generic types (Array<int>) and mangled types (Array_int).
+    func Sema_ExtractElemType(te: *TypeExpr) -> String {
+        if te == null as *TypeExpr { return ""; }
+        // Pointer: unwrap and recurse
+        if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+            return Sema_ExtractElemType(te.pointerPointee);
+        }
+        if te.kind == tekNamed {
+            // Explicit generic: Array<int>
+            if String_Eq(te.typeName, "Array") || String_Eq(te.typeName, "Iter") {
+                if te.typeArgCount > 0 {
+                    return te.typeArgName0;
+                }
+            }
+            // Mangled: Array_int, Iter_string
+            let name: String = te.typeName;
+            let len: uint = bux_strlen(name);
+            // Check for "Array_" prefix
+            if len > 6 && name[0] as int == 65 && name[1] as int == 114 && name[2] as int == 114 && name[3] as int == 97 && name[4] as int == 121 && name[5] as int == 95 {
+                return bux_str_slice(name, 6, len - 6);
+            }
+            // Check for "Iter_" prefix
+            if len > 5 && name[0] as int == 73 && name[1] as int == 116 && name[2] as int == 101 && name[3] as int == 114 && name[4] as int == 95 {
+                return bux_str_slice(name, 5, len - 5);
+            }
+        }
+        return "";
+    }
+
+    // Substitute type params in a TypeExpr (shallow clone). Used for call return types
+    // after inference: Array<U> + U=String → Array with typeArgName0=String / Array_String.
+    func Sema_SubstTypeExpr(te: *TypeExpr, p0: String, a0: String, p1: String, a1: String, argc: int) -> *TypeExpr {
+        if te == null as *TypeExpr { return null as *TypeExpr; }
+        let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        r.kind = te.kind;
+        r.line = te.line;
+        r.column = te.column;
+        r.typeName = te.typeName;
+        r.pathStr = te.pathStr;
+        r.pathCount = te.pathCount;
+        r.typeArgName0 = te.typeArgName0;
+        r.typeArgName1 = te.typeArgName1;
+        r.typeArgCount = te.typeArgCount;
+        r.sliceElement = te.sliceElement;
+        r.pointerPointee = te.pointerPointee;
+        r.funcParams = te.funcParams;
+        r.funcRet = te.funcRet;
+        r.funcParamCount = te.funcParamCount;
+        r.tupleElems = te.tupleElems;
+        r.tupleCount = te.tupleCount;
+
+        if te.kind == tekNamed {
+            // Bare type param → concrete named type
+            if te.typeArgCount == 0 {
+                if argc >= 1 && String_Eq(te.typeName, p0) {
+                    r.typeName = a0;
+                    return r;
+                }
+                if argc >= 2 && String_Eq(te.typeName, p1) {
+                    r.typeName = a1;
+                    return r;
+                }
+            }
+            // Named with type args: Array<U> → Array_String (mangled) for downstream mono
+            if te.typeArgCount > 0 {
+                var na0: String = te.typeArgName0;
+                var na1: String = te.typeArgName1;
+                if argc >= 1 && String_Eq(na0, p0) { na0 = a0; }
+                if argc >= 2 && String_Eq(na0, p1) { na0 = a1; }
+                if argc >= 1 && String_Eq(na1, p0) { na1 = a0; }
+                if argc >= 2 && String_Eq(na1, p1) { na1 = a1; }
+                r.typeArgName0 = na0;
+                r.typeArgName1 = na1;
+                // Mangle for monomorphized struct name (Array_int, Iter_String)
+                if te.typeArgCount == 1 && !String_Eq(na0, "") {
+                    r.typeName = String_Concat(String_Concat(te.typeName, "_"), na0);
+                    r.typeArgCount = 0;
+                    r.typeArgName0 = "";
+                } else if te.typeArgCount >= 2 {
+                    r.typeName = String_Concat(String_Concat(te.typeName, "_"),
+                    String_Concat(na0, String_Concat("_", na1)));
+                    r.typeArgCount = 0;
+                    r.typeArgName0 = "";
+                    r.typeArgName1 = "";
+                }
+                return r;
+            }
+        }
+        if te.kind == tekPointer || te.kind == tekRef || te.kind == tekMutRef {
+            r.pointerPointee = Sema_SubstTypeExpr(te.pointerPointee, p0, a0, p1, a1, argc);
+            return r;
+        }
+        if te.kind == tekFunc {
+            r.funcRet = Sema_SubstTypeExpr(te.funcRet, p0, a0, p1, a1, argc);
+            return r;
+        }
+        return r;
+    }
+
+    // Bind a type param name on the call callee if not already set.
+    func Sema_BindInferredArg(expr: *Expr, funcDecl: *Decl, tpName: String, typeName: String) {
+        if String_Eq(tpName, "") || String_Eq(typeName, "") { return; }
+        if expr.child1 == null as *Expr { return; }
+        if funcDecl.typeParamCount >= 1 && String_Eq(tpName, funcDecl.typeParam0) {
+            if String_Eq(expr.child1.genericTypeArg0, "") {
+                expr.child1.genericTypeArg0 = typeName;
+            }
+            if expr.child1.genericTypeArgCount < 1 { expr.child1.genericTypeArgCount = 1; }
+        }
+        if funcDecl.typeParamCount >= 2 && String_Eq(tpName, funcDecl.typeParam1) {
+            if String_Eq(expr.child1.genericTypeArg1, "") {
+                expr.child1.genericTypeArg1 = typeName;
+            }
+            if expr.child1.genericTypeArgCount < 2 { expr.child1.genericTypeArgCount = 2; }
+        }
+    }
+
+    // Resolve concrete type name for a value expression (for bare type-param params).
+    func Sema_ArgTypeName(argExpr: *Expr) -> String {
+        if argExpr == null as *Expr { return ""; }
+        var argType: *TypeExpr = argExpr.refType;
+        if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
+            if argExpr.child1 != null as *Expr { argType = argExpr.child1.refType; }
+        }
+        if argType == null as *TypeExpr { return ""; }
+        if argType.kind == tekNamed { return argType.typeName; }
+        if argType.kind == tekPointer && argType.pointerPointee != null as *TypeExpr {
+            if argType.pointerPointee.kind == tekNamed {
+                return argType.pointerPointee.typeName;
+            }
+        }
+        return "";
+    }
+
+    // Infer type args from a param TypeExpr pattern against a concrete arg TypeExpr.
+    func Sema_UnifyInfer(expr: *Expr, funcDecl: *Decl, pattern: *TypeExpr, concrete: *TypeExpr) {
+        if pattern == null as *TypeExpr || concrete == null as *TypeExpr { return; }
+
+        // Bare type param: T / Acc / U
+        if pattern.kind == tekNamed && pattern.typeArgCount == 0 {
+            if String_Eq(pattern.typeName, funcDecl.typeParam0) || String_Eq(pattern.typeName, funcDecl.typeParam1) {
+                var cn: String = "";
+                if concrete.kind == tekNamed { cn = concrete.typeName; }
+                Sema_BindInferredArg(expr, funcDecl, pattern.typeName, cn);
+                return;
+            }
+        }
+
+        // *T / &T — unwrap pointer/ref on both sides
+        if pattern.kind == tekPointer || pattern.kind == tekRef || pattern.kind == tekMutRef {
+            var conc: *TypeExpr = concrete;
+            if concrete.kind == tekPointer || concrete.kind == tekRef || concrete.kind == tekMutRef {
+                conc = concrete.pointerPointee;
+            }
+            Sema_UnifyInfer(expr, funcDecl, pattern.pointerPointee, conc);
+            return;
+        }
+
+        // Named with type args: Iter<T>, Array<U>, Map<K,V>
+        if pattern.kind == tekNamed && pattern.typeArgCount > 0 {
+            // concrete may be Iter with typeArgName0, or mangled Iter_int
+            if concrete.kind == tekNamed {
+                if concrete.typeArgCount > 0 {
+                    if pattern.typeArgCount >= 1 && !String_Eq(pattern.typeArgName0, "") {
+                        let te0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                        te0.kind = tekNamed;
+                        te0.typeName = pattern.typeArgName0;
+                        te0.typeArgCount = 0;
+                        let ce0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                        ce0.kind = tekNamed;
+                        ce0.typeName = concrete.typeArgName0;
+                        ce0.typeArgCount = 0;
+                        Sema_UnifyInfer(expr, funcDecl, te0, ce0);
+                    }
+                    if pattern.typeArgCount >= 2 && !String_Eq(pattern.typeArgName1, "") {
+                        let te1: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                        te1.kind = tekNamed;
+                        te1.typeName = pattern.typeArgName1;
+                        te1.typeArgCount = 0;
+                        let ce1: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                        ce1.kind = tekNamed;
+                        ce1.typeName = concrete.typeArgName1;
+                        ce1.typeArgCount = 0;
+                        Sema_UnifyInfer(expr, funcDecl, te1, ce1);
+                    }
+                } else {
+                    // Mangled Array_int / Iter_String
+                    let elem: String = Sema_ExtractElemType(concrete);
+                    if !String_Eq(elem, "") && pattern.typeArgCount >= 1 {
+                        let te0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                        te0.kind = tekNamed;
+                        te0.typeName = pattern.typeArgName0;
+                        te0.typeArgCount = 0;
+                        let ce0: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                        ce0.kind = tekNamed;
+                        ce0.typeName = elem;
+                        ce0.typeArgCount = 0;
+                        Sema_UnifyInfer(expr, funcDecl, te0, ce0);
+                    }
+                }
+            }
+            return;
+        }
+
+        // func(T)->U  vs  concrete function type
+        if pattern.kind == tekFunc {
+            var conc: *TypeExpr = concrete;
+            // Named function used as value: build tekFunc from its decl if needed — refType may already be tekFunc
+            if conc.kind == tekFunc {
+                // Params
+                var pp: *TypeExprList = pattern.funcParams;
+                var cp: *TypeExprList = conc.funcParams;
+                while pp != null as *TypeExprList && cp != null as *TypeExprList {
+                    Sema_UnifyInfer(expr, funcDecl, pp.te, cp.te);
+                    pp = pp.next;
+                    cp = cp.next;
+                }
+                if pattern.funcRet != null as *TypeExpr && conc.funcRet != null as *TypeExpr {
+                    Sema_UnifyInfer(expr, funcDecl, pattern.funcRet, conc.funcRet);
+                }
+            }
+            return;
+        }
+    }
+
+    // Infer generic type arguments from call arguments (structural).
+    // Handles *Array<T>, *Iter<T>, func(T)->U, bare Acc, etc.
+    func Sema_InferGenericArgs(sema: *Sema, funcDecl: *Decl, expr: *Expr) {
+        if expr.callArgs == null as *ExprList { return; }
+        if expr.child1 == null as *Expr { return; }
+        var argList: *ExprList = expr.callArgs;
+        var pi: int = 0;
+        while argList != null as *ExprList && pi < funcDecl.paramCount {
+            let argExpr: *Expr = argList.expr;
+            if argExpr == null as *Expr { argList = argList.next; pi = pi + 1; continue; }
+
+            var paramType: *TypeExpr = null as *TypeExpr;
+            if pi == 0 { paramType = funcDecl.param0.refParamType; }
+            else if pi == 1 { paramType = funcDecl.param1.refParamType; }
+            else if pi == 2 { paramType = funcDecl.param2.refParamType; }
+            else if pi == 3 { paramType = funcDecl.param3.refParamType; }
+            else if pi == 4 { paramType = funcDecl.param4.refParamType; }
+            else if pi == 5 { paramType = funcDecl.param5.refParamType; }
+            else if pi == 6 { paramType = funcDecl.param6.refParamType; }
+            else if pi == 7 { paramType = funcDecl.param7.refParamType; }
+            else if pi == 8 { paramType = funcDecl.param8.refParamType; }
+
+            var argType: *TypeExpr = argExpr.refType;
+            // &x → use type of x, wrap as pointer if pattern expects pointer
+            if argType == null as *TypeExpr && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
+                if argExpr.child1 != null as *Expr {
+                    argType = argExpr.child1.refType;
+                }
+            }
+            // Named function as value: synthesize tekFunc from its declaration
+            if (argType == null as *TypeExpr || argType.kind != tekFunc) && argExpr.kind == ekIdent {
+                let fsym: Symbol = Scope_Lookup(sema.scope, argExpr.strValue);
+                if fsym.kind == skFunc && fsym.decl != null as *Decl {
+                    argType = Sema_BuildFuncTypeExprFromDecl(fsym.decl);
+                }
+            }
+
+            if paramType != null as *TypeExpr && argType != null as *TypeExpr {
+                Sema_UnifyInfer(expr, funcDecl, paramType, argType);
+                // If pattern is *T and arg is bare T (from &x we unwrapped), re-wrap
+                if (paramType.kind == tekPointer || paramType.kind == tekRef || paramType.kind == tekMutRef)
+                && argExpr.kind == ekUnary && argExpr.intValue == tkAmp {
+                    // already handled via unwrap of pattern against pointee type of variable
+                    if argExpr.child1 != null as *Expr && argExpr.child1.refType != null as *TypeExpr {
+                        Sema_UnifyInfer(expr, funcDecl, paramType.pointerPointee, argExpr.child1.refType);
+                    }
+                }
+            }
+            argList = argList.next;
+            pi = pi + 1;
+        }
+    }
+
+    func Sema_CheckTraitBounds(sema: *Sema, funcDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int, line: uint32, col: uint32) {
+        // Trait bounds checking
+        if funcDecl.typeParamCount >= 1 && typeArgCount >= 1 && !String_Eq(funcDecl.typeParam0Bound, "") {
+            if !Sema_TypeImplements(sema, typeArg0, funcDecl.typeParam0Bound) {
+                let errMsg: String = String_Concat("type '", String_Concat(typeArg0, "' does not implement trait '"));
+                let errMsg2: String = String_Concat(errMsg, String_Concat(funcDecl.typeParam0Bound, "'"));
+                Sema_EmitError(sema, line, col, errMsg2);
+            }
+        }
+        if funcDecl.typeParamCount >= 2 && typeArgCount >= 2 && !String_Eq(funcDecl.typeParam1Bound, "") {
+            if !Sema_TypeImplements(sema, typeArg1, funcDecl.typeParam1Bound) {
+                let errMsg: String = String_Concat("type '", String_Concat(typeArg1, "' does not implement trait '"));
+                let errMsg2: String = String_Concat(errMsg, String_Concat(funcDecl.typeParam1Bound, "'"));
+                Sema_EmitError(sema, line, col, errMsg2);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Analyze — main entry point
+    // ---------------------------------------------------------------------------
+
+    func Sema_Analyze(mod: *Module) -> *Sema {
+        let s: *Sema = bux_alloc(sizeof(Sema)) as *Sema;
+        s.module = mod;
+        s.scope = bux_alloc(sizeof(Scope)) as *Scope;
+        s.scope.symbols = bux_alloc(1024 as uint * sizeof(Symbol)) as *Symbol;
+        s.scope.count = 0;
+        s.scope.parent = null as *Scope;
+        s.hasError = false;
+        s.diagCount = 0;
+        s.diags = bux_alloc(256 as uint * sizeof(SemaDiag)) as *SemaDiag;
+        s.typeTable = null as *void;
+        s.methodTable = null as *void;
+        s.currentRetType = tyVoid;
+        s.interfaceTable = bux_alloc(64 as uint * sizeof(InterfaceEntry)) as *InterfaceEntry;
+        s.interfaceCount = 0;
+        s.methodEntries = bux_alloc(256 as uint * sizeof(MethodEntry)) as *MethodEntry;
+        s.methodCount = 0;
+
+        // First pass: collect globals
+        Sema_CollectGlobals(s);
+
+        // Second pass: check function bodies
+        var decl: *Decl = mod.firstItem;
+        while decl != null as *Decl {
+            if decl.kind == dkFunc && decl.refBody != null as *Block {
+                // Create function scope (child of global)
+                var funcScope: Scope = Scope_NewChild(s.scope);
+
+                // Add type params to scope
+                if decl.typeParamCount >= 1 {
+                    var tpSym: Symbol;
+                    Sema_ZeroInitSymbol(&tpSym);
+                    tpSym.kind = skType;
+                    tpSym.name = decl.typeParam0;
+                    tpSym.typeKind = tyTypeParam;
+                    tpSym.decl = null as *Decl;
+                    discard Scope_Define(&funcScope, tpSym);
+                }
+                if decl.typeParamCount >= 2 {
+                    var tpSym2: Symbol;
+                    Sema_ZeroInitSymbol(&tpSym2);
+                    tpSym2.kind = skType;
+                    tpSym2.name = decl.typeParam1;
+                    tpSym2.typeKind = tyTypeParam;
+                    tpSym2.decl = null as *Decl;
+                    discard Scope_Define(&funcScope, tpSym2);
+                }
+
+                // Add parameters to scope
+                var i: int = 0;
+                while i < decl.paramCount {
+                    var p: *Param = null as *Param;
+                    if i == 0 { p = &decl.param0; }
+                    else if i == 1 { p = &decl.param1; }
+                    else if i == 2 { p = &decl.param2; }
+                    else if i == 3 { p = &decl.param3; }
+                    else if i == 4 { p = &decl.param4; }
+                    else if i == 5 { p = &decl.param5; }
+                    else if i == 6 { p = &decl.param6; }
+                    else if i == 7 { p = &decl.param7; }
+                    else if i == 8 { p = &decl.param8; }
+                    var pSym: Symbol;
+                    Sema_ZeroInitSymbol(&pSym);
+                    pSym.kind = skVar;
+                    if p != null as *Param && p.refParamType != null as *TypeExpr {
+                        pSym.typeKind = Sema_ResolveType(s, p.refParamType);
+                        pSym.refType = p.refParamType;
+                        if p.refParamType.kind == tekPointer && p.refParamType.pointerPointee != null as *TypeExpr {
+                            pSym.typeName = String_Concat(p.refParamType.pointerPointee.typeName, "*");
+                        } else {
+                            pSym.typeName = p.refParamType.typeName;
+                        }
+                    } else {
+                        pSym.typeKind = tyInt;
+                        pSym.typeName = "";
+                    }
+                    pSym.isMutable = false;
+                    pSym.isPublic = false;
+                    pSym.decl = null as *Decl;
+                    if i == 0 { pSym.name = decl.param0.name; }
+                    else if i == 1 { pSym.name = decl.param1.name; }
+                    else if i == 2 { pSym.name = decl.param2.name; }
+                    else if i == 3 { pSym.name = decl.param3.name; }
+                    else if i == 4 { pSym.name = decl.param4.name; }
+                    else if i == 5 { pSym.name = decl.param5.name; }
+                    else if i == 6 { pSym.name = decl.param6.name; }
+                    else if i == 7 { pSym.name = decl.param7.name; }
+                    else if i == 8 { pSym.name = decl.param8.name; }
+                    discard Scope_Define(&funcScope, pSym);
+                    i = i + 1;
+                }
+
+                // Switch to function scope and check body statements
+                let prevScope: *Scope = s.scope;
+                s.scope = &funcScope;
+
+                // Set current function return type
+                if decl.retType != null as *TypeExpr {
+                    s.currentRetType = Sema_ResolveType(s, decl.retType);
+                } else {
+                    s.currentRetType = tyVoid;
+                }
+
+                // Enable borrow checking for @[Checked] functions
+                let wasChecked: bool = s.checkedFunc;
+                s.checkedFunc = decl.isChecked != 0;
+                let wasRelease: bool = s.releaseFunc;
+                s.releaseFunc = decl.isRelease != 0;
+                s.movedCount = 0;
+                // C.1: lifetime elision before walking the body
+                Sema_ApplyLifetimeElision(s, decl);
+
+                // Check body statements
+                var stmt: *Stmt = decl.refBody.firstStmt;
+                while stmt != null as *Stmt {
+                    Sema_CheckStmt(s, stmt);
+                    stmt = stmt.nextStmt;
+                }
+
+                s.checkedFunc = wasChecked;
+                s.releaseFunc = wasRelease;
+                Sema_ClearLifetimes(s);
+                s.scope = prevScope;
+            }
+            decl = decl.childDecl2;
+        }
+
+        return s;
+    }
+
+    func Sema_HasError(sema: *Sema) -> bool {
+        return sema.hasError;
+    }
+
+    func Sema_DiagCount(sema: *Sema) -> int {
+        return sema.diagCount;
+    }
+
+    func Sema_Free(sema: *Sema) {
+        bux_free(sema.scope.symbols as *void);
+        bux_free(sema.scope as *void);
+        bux_free(sema.diags as *void);
+        bux_free(sema as *void);
+    }
 
 }

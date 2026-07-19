@@ -4,10 +4,10 @@
 # Usage: bux-lsp
 # The editor spawns this binary and communicates via stdin/stdout.
 #
-# Hover uses real bootstrap sema types when possible (globals + stdlib);
-# completion/outline still use a fast lightweight scan.
+# Hover uses real bootstrap sema types when possible (globals + stdlib).
+# Locals are position-sensitive (scoped) and include inferred `let` types (v0.4.0).
 
-import std/[json, os, strutils, streams, tables, osproc, sequtils]
+import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
 
 # ---------------------------------------------------------------------------
@@ -88,6 +88,17 @@ type
     detail: string     ## signature / type annotation
     container: string  ## optional parent (module / type)
     fromSema: bool     ## detail came from real type checker
+  ## Scoped local binding for position-sensitive hover / go-to-def
+  LocalBinding = object
+    name: string
+    detail: string     ## e.g. "let x: int" (inferred or annotated)
+    kind: string       ## variable | parameter
+    declLine: int      ## 0-based declaration line
+    declCol: int       ## 0-based start of name
+    scopeStartLine: int ## first line where name is visible
+    scopeEndLine: int   ## last line where name is visible (inclusive)
+    container: string   ## enclosing function name
+    inferred: bool      ## type came from initializer, not annotation
   DocumentState = ref object
     uri: string
     content: string
@@ -97,6 +108,8 @@ type
     ## Full-project type index for hover (includes stdlib after sema enrich)
     typeIndex: Table[string, string]   ## name → type / signature string
     kindIndex: Table[string, string]   ## name → kind label
+    ## Position-sensitive locals (filled by enrichWithSema)
+    locals: seq[LocalBinding]
 
 var
   documents = initTable[string, DocumentState]()
@@ -355,9 +368,15 @@ proc typeExprToStr(te: TypeExpr): string =
   of tekOwn:
     result = "own " & typeExprToStr(te.pointerPointee)
   of tekRef:
-    result = "&" & typeExprToStr(te.pointerPointee)
+    if te.refLifetime.len > 0:
+      result = "&" & te.refLifetime & " " & typeExprToStr(te.pointerPointee)
+    else:
+      result = "&" & typeExprToStr(te.pointerPointee)
   of tekMutRef:
-    result = "&mut " & typeExprToStr(te.pointerPointee)
+    if te.refLifetime.len > 0:
+      result = "&" & te.refLifetime & " mut " & typeExprToStr(te.pointerPointee)
+    else:
+      result = "&mut " & typeExprToStr(te.pointerPointee)
   of tekSlice:
     result = typeExprToStr(te.sliceElement) & "[]"
   of tekTuple:
@@ -590,56 +609,173 @@ proc enrichWithSema(doc: DocumentState) =
       else:
         indexDecl(d)
 
-    # Walk this file's AST for local lets with explicit types (function bodies)
-    proc walkBlock(blk: Block, container: string) =
+    # --- Position-sensitive locals + inferred let types ---
+    doc.locals = @[]
+
+    proc blockEndLine(blk: Block): int =
+      ## Last 0-based line covered by statements in `blk` (best-effort).
+      if blk == nil: return 0
+      result = max(0, int(blk.loc.line) - 1)
+      for stmt in blk.stmts:
+        result = max(result, max(0, int(stmt.loc.line) - 1))
+        case stmt.kind
+        of skIf:
+          result = max(result, blockEndLine(stmt.stmtIfThen))
+          result = max(result, blockEndLine(stmt.stmtIfElse))
+          for br in stmt.stmtIfElseIfs:
+            result = max(result, blockEndLine(br.blk))
+        of skWhile:
+          result = max(result, blockEndLine(stmt.stmtWhileBody))
+        of skDoWhile:
+          result = max(result, blockEndLine(stmt.stmtDoWhileBody))
+        of skLoop:
+          result = max(result, blockEndLine(stmt.stmtLoopBody))
+        of skFor:
+          result = max(result, blockEndLine(stmt.stmtForBody))
+        of skMatch:
+          for arm in stmt.stmtMatchArms:
+            if arm.body != nil and arm.body.kind == ekBlock:
+              result = max(result, blockEndLine(arm.body.exprBlock))
+            elif arm.body != nil:
+              result = max(result, max(0, int(arm.body.loc.line) - 1))
+        of skExpr:
+          if stmt.stmtExpr != nil and stmt.stmtExpr.kind == ekBlock:
+            result = max(result, blockEndLine(stmt.stmtExpr.exprBlock))
+        else:
+          discard
+
+    proc collectLocals(sema: var Sema, blk: Block, sc: Scope, scopeEnd: int,
+                       container: string) =
       if blk == nil: return
+      let endLine = max(scopeEnd, blockEndLine(blk))
       for stmt in blk.stmts:
         case stmt.kind
         of skLet:
           let n = stmt.stmtLetName
           if n.len == 0: continue
-          var typStr = ""
+          var typ: Type = makeUnknown()
+          var inferred = false
           if stmt.stmtLetType != nil:
-            typStr = typeExprToStr(stmt.stmtLetType)
+            typ = sema.resolveType(stmt.stmtLetType)
+          if (typ == nil or typ.isUnknown) and stmt.stmtLetInit != nil:
+            typ = sema.checkExprForLsp(stmt.stmtLetInit, sc)
+            inferred = true
+          elif stmt.stmtLetType == nil and stmt.stmtLetInit != nil:
+            # Explicit absence of annotation — still type the initializer
+            typ = sema.checkExprForLsp(stmt.stmtLetInit, sc)
+            inferred = true
           let kw = if stmt.stmtLetMut: "var" else: "let"
-          let detail = if typStr.len > 0: kw & " " & n & ": " & typStr else: kw & " " & n
-          let loc = stmt.loc
-          let line = max(0, int(loc.line) - 1)
-          let col = max(0, int(loc.column) - 1)
-          # Prefer sema-enriched detail if name already global; else add local
-          if not doc.symbols.hasKey(n) or not doc.symbols[n].fromSema:
-            doc.symbols[n] = SymbolInfo(
-              line: line, col: col, kind: "variable", detail: detail,
-              container: container, fromSema: typStr.len > 0)
-            if n notin doc.ordered:
-              doc.ordered.add(n)
-          if typStr.len > 0:
-            doc.typeIndex[n] = detail
-            doc.kindIndex[n] = "variable"
+          let typStr = if typ != nil and not typ.isUnknown: typ.toString else: ""
+          let detail =
+            if typStr.len > 0: kw & " " & n & ": " & typStr
+            else: kw & " " & n
+          let line = max(0, int(stmt.loc.line) - 1)
+          let col = max(0, int(stmt.loc.column) - 1)
+          doc.locals.add(LocalBinding(
+            name: n, detail: detail, kind: "variable",
+            declLine: line, declCol: col,
+            scopeStartLine: line, scopeEndLine: endLine,
+            container: container, inferred: inferred and typStr.len > 0))
+          # Also keep latest flat entry for outline (position lookup prefers locals)
+          doc.symbols[n] = SymbolInfo(
+            line: line, col: col, kind: "variable", detail: detail,
+            container: container, fromSema: typStr.len > 0)
+          if n notin doc.ordered:
+            doc.ordered.add(n)
+          # Define in scope for subsequent inference
+          let sym = Symbol(kind: skVar, name: n, typ: typ,
+                           isMutable: stmt.stmtLetMut, isOwn: false)
+          discard sc.define(sym)
         of skExpr:
           if stmt.stmtExpr != nil and stmt.stmtExpr.kind == ekBlock:
-            walkBlock(stmt.stmtExpr.exprBlock, container)
+            var child = newScope(sc)
+            collectLocals(sema, stmt.stmtExpr.exprBlock, child,
+                          blockEndLine(stmt.stmtExpr.exprBlock), container)
         of skIf:
-          walkBlock(stmt.stmtIfThen, container)
-          walkBlock(stmt.stmtIfElse, container)
+          var thenSc = newScope(sc)
+          collectLocals(sema, stmt.stmtIfThen, thenSc,
+                        blockEndLine(stmt.stmtIfThen), container)
           for br in stmt.stmtIfElseIfs:
-            walkBlock(br.blk, container)
+            var elifSc = newScope(sc)
+            collectLocals(sema, br.blk, elifSc, blockEndLine(br.blk), container)
+          if stmt.stmtIfElse != nil:
+            var elseSc = newScope(sc)
+            collectLocals(sema, stmt.stmtIfElse, elseSc,
+                          blockEndLine(stmt.stmtIfElse), container)
         of skWhile:
-          walkBlock(stmt.stmtWhileBody, container)
-        of skFor:
-          walkBlock(stmt.stmtForBody, container)
+          var wSc = newScope(sc)
+          collectLocals(sema, stmt.stmtWhileBody, wSc,
+                        blockEndLine(stmt.stmtWhileBody), container)
+        of skDoWhile:
+          var dSc = newScope(sc)
+          collectLocals(sema, stmt.stmtDoWhileBody, dSc,
+                        blockEndLine(stmt.stmtDoWhileBody), container)
         of skLoop:
-          walkBlock(stmt.stmtLoopBody, container)
+          var lSc = newScope(sc)
+          collectLocals(sema, stmt.stmtLoopBody, lSc,
+                        blockEndLine(stmt.stmtLoopBody), container)
+        of skFor:
+          var fSc = newScope(sc)
+          if stmt.stmtForVar.len > 0:
+            let fline = max(0, int(stmt.loc.line) - 1)
+            let fcol = max(0, int(stmt.loc.column) - 1)
+            let fend = blockEndLine(stmt.stmtForBody)
+            # Best-effort: element type unknown without iterator typing
+            let detail = "for " & stmt.stmtForVar
+            doc.locals.add(LocalBinding(
+              name: stmt.stmtForVar, detail: detail, kind: "variable",
+              declLine: fline, declCol: fcol,
+              scopeStartLine: fline, scopeEndLine: fend,
+              container: container, inferred: false))
+            discard fSc.define(Symbol(kind: skVar, name: stmt.stmtForVar,
+                                      typ: makeUnknown(), isMutable: false))
+          collectLocals(sema, stmt.stmtForBody, fSc,
+                        blockEndLine(stmt.stmtForBody), container)
+        of skMatch:
+          for arm in stmt.stmtMatchArms:
+            if arm.body != nil and arm.body.kind == ekBlock:
+              var mSc = newScope(sc)
+              collectLocals(sema, arm.body.exprBlock, mSc,
+                            blockEndLine(arm.body.exprBlock), container)
         else:
           discard
 
+    proc collectFuncLocals(sema: var Sema, d: Decl) =
+      if d == nil or d.kind != dkFunc or d.declFuncBody == nil:
+        return
+      let fname = d.declFuncName
+      let bodyEnd = blockEndLine(d.declFuncBody)
+      var funcScope = newScope(sema.globalScope)
+      # Parameters — visible for entire function body
+      let funcStart = max(0, int(d.loc.line) - 1)
+      for p in d.declFuncParams:
+        if p.name.len == 0: continue
+        var pType = makeUnknown()
+        if p.ptype != nil:
+          pType = sema.resolveType(p.ptype)
+        let typStr = if pType != nil and not pType.isUnknown: pType.toString else: ""
+        let detail =
+          if typStr.len > 0: "param " & p.name & ": " & typStr
+          else: "param " & p.name
+        let pline = max(0, int(p.loc.line) - 1)
+        let pcol = max(0, int(p.loc.column) - 1)
+        doc.locals.add(LocalBinding(
+          name: p.name, detail: detail, kind: "parameter",
+          declLine: pline, declCol: pcol,
+          scopeStartLine: funcStart, scopeEndLine: bodyEnd,
+          container: fname, inferred: false))
+        discard funcScope.define(Symbol(kind: skVar, name: p.name, typ: pType,
+                                        isMutable: false))
+      collectLocals(sema, d.declFuncBody, funcScope, bodyEnd, fname)
+
+    var semaMut = semaCtx
     for d in parseRes.module.items:
-      if d.kind == dkFunc and d.declFuncBody != nil:
-        walkBlock(d.declFuncBody, d.declFuncName)
+      if d.kind == dkFunc:
+        collectFuncLocals(semaMut, d)
       elif d.kind == dkModule:
         for sub in d.declModuleItems:
-          if sub.kind == dkFunc and sub.declFuncBody != nil:
-            walkBlock(sub.declFuncBody, sub.declFuncName)
+          if sub.kind == dkFunc:
+            collectFuncLocals(semaMut, sub)
 
   except:
     discard  # sema failures must not crash the LSP
@@ -862,27 +998,55 @@ proc handleCompletion(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
     return
 
   ensureAnalyzed(doc)
+  if doc.locals.len == 0 and doc.content.len > 0:
+    enrichWithSema(doc)
   let prefix = findWordAt(doc.content, lineNum, col)
 
   var items = newJArray()
+  var offered = initHashSet[string]()
+
+  # Position-sensitive locals / params first (highest priority)
+  for b in doc.locals:
+    if lineNum < b.scopeStartLine or lineNum > b.scopeEndLine: continue
+    if prefix != "" and not b.name.toLowerAscii().startsWith(prefix.toLowerAscii()):
+      continue
+    # Prefer later/narrower binding for same name
+    if offered.contains(b.name):
+      continue
+    offered.incl(b.name)
+    let k = if b.kind == "parameter": 6 else: completionKind("variable")
+    items.add(%*{
+      "label": b.name,
+      "kind": k,
+      "detail": b.detail,
+      "sortText": "0_" & b.name,
+      "documentation": {"kind": "markdown",
+        "value": "```bux\n" & b.detail & "\n```\n\n_" & b.kind &
+                 (if b.inferred: " · inferred" else: "") & "_"}
+    })
+
   for name, info in doc.symbols.pairs:
+    if offered.contains(name): continue
     if prefix == "" or name.toLowerAscii().startsWith(prefix.toLowerAscii()):
+      offered.incl(name)
       items.add(%*{
         "label": name,
         "kind": completionKind(info.kind),
         "detail": info.detail,
+        "sortText": "1_" & name,
         "documentation": {"kind": "markdown", "value": "```bux\n" & info.detail & "\n```\n\n_" & info.kind & "_"}
       })
 
   # Also offer workspace symbols (other open / scanned files)
   for name, ws in workspaceSymbols.pairs:
-    if doc.symbols.hasKey(name):
-      continue
+    if offered.contains(name): continue
     if prefix == "" or name.toLowerAscii().startsWith(prefix.toLowerAscii()):
+      offered.incl(name)
       items.add(%*{
         "label": name,
         "kind": completionKind(ws.info.kind),
         "detail": ws.info.detail & "  (workspace)",
+        "sortText": "2_" & name,
         "documentation": {"kind": "markdown", "value": "```bux\n" & ws.info.detail & "\n```"}
       })
 
@@ -896,10 +1060,31 @@ proc handleCompletion(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
       items.add(%*{
         "label": kw,
         "kind": 14,
-        "detail": "keyword"
+        "detail": "keyword",
+        "sortText": "3_" & kw
       })
 
   sendResponse(stream, id, %*{"isIncomplete": false, "items": items})
+
+# ---------------------------------------------------------------------------
+# Position-sensitive local lookup
+# ---------------------------------------------------------------------------
+
+proc lookupLocalAt*(doc: DocumentState, name: string, line: int): tuple[ok: bool, b: LocalBinding] =
+  ## Innermost local/parameter binding for `name` visible at `line` (0-based).
+  result.ok = false
+  var bestSpan = high(int)
+  var bestStart = -1
+  for b in doc.locals:
+    if b.name != name: continue
+    if line < b.scopeStartLine or line > b.scopeEndLine: continue
+    let span = b.scopeEndLine - b.scopeStartLine
+    # Prefer narrower scope; on ties prefer later declaration (shadowing)
+    if span < bestSpan or (span == bestSpan and b.scopeStartLine >= bestStart):
+      bestSpan = span
+      bestStart = b.scopeStartLine
+      result.b = b
+      result.ok = true
 
 # ---------------------------------------------------------------------------
 # Go-to-definition
@@ -917,13 +1102,26 @@ proc handleDefinition(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
     return
 
   ensureAnalyzed(doc)
+  if doc.locals.len == 0 and doc.content.len > 0:
+    enrichWithSema(doc)
+
   let word = findWordAt(doc.content, lineNum, col)
   if word.len == 0:
     sendResponse(stream, id, %*[])
     return
 
   var locs = newJArray()
-  if doc.symbols.hasKey(word):
+  # Position-sensitive local first
+  let (lok, lb) = lookupLocalAt(doc, word, lineNum)
+  if lok:
+    locs.add(%*{
+      "uri": uri,
+      "range": {
+        "start": {"line": lb.declLine, "character": lb.declCol},
+        "end": {"line": lb.declLine, "character": lb.declCol + word.len}
+      }
+    })
+  elif doc.symbols.hasKey(word):
     let info = doc.symbols[word]
     locs.add(%*{
       "uri": uri,
@@ -949,6 +1147,7 @@ proc handleDefinition(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
 
 proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   ## Hover with accurate range; prefer real sema types when available.
+  ## Locals are resolved by position (shadowing / nested scopes).
   let uri = paramsNode["textDocument"]["uri"].getStr()
   let position = paramsNode["position"]
   let lineNum = position["line"].getInt()
@@ -961,7 +1160,7 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
 
   ensureAnalyzed(doc)
   # Lazy sema enrich on first hover if not yet run (e.g. only didChange so far)
-  if doc.typeIndex.len == 0 and doc.content.len > 0:
+  if (doc.typeIndex.len == 0 or doc.locals.len == 0) and doc.content.len > 0:
     enrichWithSema(doc)
 
   let lines = doc.content.split("\n")
@@ -983,23 +1182,39 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   var detail = ""
   var kind = ""
   var found = false
+  var fromSema = false
+  var inferred = false
+  var scopeNote = ""
 
-  # Prefer file-local symbol (may be sema-upgraded)
-  if doc.symbols.hasKey(word):
+  # 1) Position-sensitive local / parameter
+  let (lok, lb) = lookupLocalAt(doc, word, lineNum)
+  if lok:
+    detail = lb.detail
+    kind = lb.kind
+    found = true
+    fromSema = true
+    inferred = lb.inferred
+    if lb.container.len > 0:
+      scopeNote = " in `" & lb.container & "`"
+
+  # 2) File-level / global symbols (functions, types, …)
+  if not found and doc.symbols.hasKey(word):
     let info = doc.symbols[word]
     detail = info.detail
     kind = info.kind
     found = true
-    # Prefer pure sema typeIndex when richer
+    fromSema = info.fromSema
     if doc.typeIndex.hasKey(word) and doc.typeIndex[word].len >= detail.len:
       detail = doc.typeIndex[word]
       if doc.kindIndex.hasKey(word):
         kind = doc.kindIndex[word]
-  elif doc.typeIndex.hasKey(word):
+      fromSema = true
+  elif not found and doc.typeIndex.hasKey(word):
     detail = doc.typeIndex[word]
     kind = if doc.kindIndex.hasKey(word): doc.kindIndex[word] else: "symbol"
     found = true
-  elif workspaceSymbols.hasKey(word):
+    fromSema = true
+  elif not found and workspaceSymbols.hasKey(word):
     let info = workspaceSymbols[word].info
     detail = info.detail
     kind = info.kind
@@ -1010,10 +1225,12 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
     return
 
   var md = "```bux\n" & detail & "\n```\n\n_" & kind & "_"
-  if doc.symbols.hasKey(word) and doc.symbols[word].fromSema:
+  if scopeNote.len > 0:
+    md &= scopeNote
+  if fromSema:
     md &= " · sema"
-  elif doc.typeIndex.hasKey(word):
-    md &= " · sema"
+  if inferred:
+    md &= " · inferred"
 
   sendResponse(stream, id, %*{
     "contents": {"kind": "markdown", "value": md},
@@ -1022,7 +1239,6 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
       "end": {"line": lineNum, "character": endC}
     }
   })
-
 # ---------------------------------------------------------------------------
 # Document symbols (outline)
 # ---------------------------------------------------------------------------
@@ -1088,7 +1304,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "hoverProvider": true,
         "documentSymbolProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.3.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.4.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()

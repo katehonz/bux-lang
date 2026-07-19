@@ -11,13 +11,13 @@ func Fibonacci(n: int) -> int {
 
 func Main() -> int {
     PrintLine("Fibonacci sequence:");
-    
+
     var i: int = 0;
     while i < 10 {
         let fib: int = Fibonacci(i);
         PrintLine(Fmt_Fmt1("{0}", String_FromInt(fib)));
         i = i + 1;
     }
-    
+
     return 0;
 }

@@ -3,9 +3,9 @@ SRC := bootstrap/main.nim
 OUT := buxc
 BUILD_DIR := build
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked drop_early_return ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked drop_early_return lifetime_elision ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow
 
-.PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden test-errors selfhost-loop lsp
+.PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs
 
 all: build
 
@@ -19,7 +19,7 @@ dev:
 debug: dev
 	@echo "Debug binary: buxc_debug"
 
-test: build test-examples test-errors
+test: build fmt-check test-examples test-errors test-stdlib
 	@echo "Running lexer tests..."
 	$(NIM) c -r tests/lexer_test.nim
 	@echo "Running parser tests..."
@@ -105,6 +105,43 @@ test-errors: build
 	@chmod +x tests/error_golden/run.sh
 	@tests/error_golden/run.sh ./$(OUT)
 
+test-stdlib: build
+	@echo "=== Stdlib golden tests ==="
+	@chmod +x tests/stdlib_golden/run.sh
+	@tests/stdlib_golden/run.sh ./$(OUT)
+
+# Generate stdlib API docs from /// comments → docs/api/stdlib.md
+docs: build
+	@mkdir -p docs/api
+	@./$(OUT) doc --out docs/api/stdlib.md lib/
+	@echo "docs/api/stdlib.md updated"
+
+# CI: full-tree format check (lib / examples / src / tests / apps) + dirty-path smoke.
+fmt-check: build
+	@echo "=== fmt --check (full tree) ==="
+	@./$(OUT) fmt --check lib/
+	@./$(OUT) fmt --check examples/
+	@./$(OUT) fmt --check src/
+	@./$(OUT) fmt --check tests/
+	@./$(OUT) fmt --check apps/
+	@echo "=== fmt --check dirty-path smoke ==="
+	@mkdir -p /tmp/bux_fmt_smoke
+	@printf 'func Main() -> int {\nreturn 0;\n}\n' > /tmp/bux_fmt_smoke/bad.bux
+	@if ./$(OUT) fmt --check /tmp/bux_fmt_smoke/bad.bux >/dev/null 2>&1; then \
+		echo "error: expected --check to fail on dirty file"; exit 1; \
+	fi
+	@echo "fmt --check passed (tree clean + dirty exits 1)"
+
+# One-shot reformat of the same trees (run before committing style-only fixes)
+.PHONY: fmt
+fmt: build
+	@./$(OUT) fmt lib/
+	@./$(OUT) fmt examples/
+	@./$(OUT) fmt src/
+	@./$(OUT) fmt tests/
+	@./$(OUT) fmt apps/
+	@echo "Formatted lib/ examples/ src/ tests/ apps/"
+
 selfhost-loop: build
 	@echo "=== Selfhost loop: bootstrap determinism check ==="
 	@echo "Build A..."
@@ -145,3 +182,17 @@ lsp: tools/bux-lsp
 
 tools/bux-lsp: tools/lsp_server.nim bootstrap/*.nim
 	cd tools && $(NIM) c -d:release --opt:size --path:../bootstrap -o:bux-lsp lsp_server.nim
+
+.PHONY: test-lsp
+test-lsp: lsp
+	@echo "=== LSP unit (locals / inference) ==="
+	$(NIM) r --path:bootstrap tools/test_lsp_locals.nim
+	@echo "=== LSP hover smoke ==="
+	@chmod +x tools/smoke_lsp_hover.sh
+	@tools/smoke_lsp_hover.sh
+
+.PHONY: test-registry
+test-registry: build
+	@echo "=== Registry smoke (E.1) ==="
+	@chmod +x tools/smoke_registry.sh
+	@tools/smoke_registry.sh

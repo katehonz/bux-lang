@@ -11,7 +11,7 @@ extend Rectangle {
     func Area(self: Rectangle) -> int {
         return self.width * self.height;
     }
-    
+
     func Perimeter(self: Rectangle) -> int {
         return 2 * (self.width + self.height);
     }
@@ -19,7 +19,7 @@ extend Rectangle {
 
 func Main() -> int {
     let rect: Rectangle = Rectangle { width: 10, height: 5 };
-    
+
     PrintLine("Rectangle:");
     PrintLine("Width = ");
     PrintInt(rect.width);
@@ -33,6 +33,6 @@ func Main() -> int {
     PrintLine("Perimeter = ");
     PrintInt(rect.Perimeter());
     PrintLine("");
-    
+
     return 0;
 }

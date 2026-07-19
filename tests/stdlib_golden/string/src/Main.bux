@@ -1,0 +1,35 @@
+// Stdlib golden: String_IsEmpty / IsBlank / Repeat / ReplaceAll
+import Std::Io::{PrintLine};
+import Std::String::{
+    String_IsEmpty, String_IsBlank, String_Repeat, String_ReplaceAll,
+    String_Eq, String_Len, String_Contains, String_StartsWith, String_EndsWith
+};
+import Std::Test::{
+    Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_AssertEqString, Test_Pass
+};
+
+func Main() -> int {
+    Test_AssertTrue(String_IsEmpty(""));
+    Test_AssertFalse(String_IsEmpty("x"));
+    Test_AssertTrue(String_IsBlank(""));
+    Test_AssertTrue(String_IsBlank("   \t\n"));
+    Test_AssertFalse(String_IsBlank(" x "));
+
+    Test_AssertEqString(String_Repeat(".", 5), ".....");
+    Test_AssertEqInt(String_Len(String_Repeat("ab", 3)) as int, 6);
+    Test_AssertEqString(String_Repeat("x", 0), "");
+    Test_AssertEqString(String_Repeat("ok", 1), "ok");
+
+    let multi: String = String_ReplaceAll("a-b-a-b-a", "a", "X");
+    Test_AssertEqString(multi, "X-b-X-b-X");
+    let safe: String = String_ReplaceAll("..", ".", "x.");
+    Test_AssertEqString(safe, "x.x.");
+
+    Test_AssertTrue(String_Contains("hello", "ell"));
+    Test_AssertTrue(String_StartsWith("hello", "he"));
+    Test_AssertTrue(String_EndsWith("hello", "lo"));
+
+    PrintLine("stdlib_string: ok");
+    Test_Pass("stdlib_string");
+    return 0;
+}

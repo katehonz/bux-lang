@@ -82,14 +82,14 @@ func SafeDivide(a: int, b: int) -> Option {
 
 func Main() -> int {
     PrintLine("Result demo:");
-    
+
     let r1: Result = Divide(10, 2);
     if Result_IsOk(r1) {
         PrintLine("10 / 2 = ");
         PrintInt(Result_Unwrap(r1));
         PrintLine("");
     }
-    
+
     let r2: Result = Divide(10, 0);
     if Result_IsErr(r2) {
         PrintLine("10 / 0 failed");
@@ -97,20 +97,20 @@ func Main() -> int {
     PrintLine("unwrap_or = ");
     PrintInt(Result_UnwrapOr(r2, -1));
     PrintLine("");
-    
+
     PrintLine("Option demo:");
-    
+
     let o1: Option = SafeDivide(20, 4);
     if Option_IsSome(o1) {
         PrintLine("20 / 4 = ");
         PrintInt(Option_UnwrapOr(o1, 0));
         PrintLine("");
     }
-    
+
     let o2: Option = SafeDivide(20, 0);
     PrintLine("20 / 0 fallback = ");
     PrintInt(Option_UnwrapOr(o2, -1));
     PrintLine("");
-    
+
     return 0;
 }

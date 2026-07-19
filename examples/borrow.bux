@@ -1,8 +1,8 @@
 // borrow.bux — Test explicit borrow expressions
 
 struct Point {
-	x: int;
-	y: int;
+    x: int;
+    y: int;
 }
 
 // NOT @[Checked] — borrow keyword available everywhere
