@@ -59,7 +59,7 @@ if ! grep -q 'renameProvider' "$TMP/out.txt"; then
   echo "FAIL: initialize missing renameProvider"
   exit 1
 fi
-if ! grep -qE '0\.[56]\.0' "$TMP/out.txt"; then
+if ! grep -qE '0\.[567]\.0' "$TMP/out.txt"; then
   echo "WARN: unexpected bux-lsp version in initialize"
 fi
 

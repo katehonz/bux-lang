@@ -8,6 +8,7 @@
 # Locals are position-sensitive (scoped) and include inferred `let` types (v0.4.0).
 # v0.5.0: textDocument/references + rename (scoped locals + workspace globals).
 # v0.6.0: workspace/symbol search.
+# v0.7.0: deeper rename — struct fields, enum variants, .member / ::Variant.
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -90,6 +91,13 @@ type
     detail: string     ## signature / type annotation
     container: string  ## optional parent (module / type)
     fromSema: bool     ## detail came from real type checker
+  ## Struct field / enum variant (type member)
+  MemberInfo = object
+    name: string
+    parent: string     ## owning type name
+    kind: string       ## field | variant
+    line: int          ## 0-based decl line
+    col: int           ## 0-based decl col of member name
   ## Scoped local binding for position-sensitive hover / go-to-def
   LocalBinding = object
     name: string
@@ -112,6 +120,8 @@ type
     kindIndex: Table[string, string]   ## name → kind label
     ## Position-sensitive locals (filled by enrichWithSema)
     locals: seq[LocalBinding]
+    ## Type members for field/variant rename (v0.7)
+    members: seq[MemberInfo]
 
 var
   documents = initTable[string, DocumentState]()
@@ -207,10 +217,94 @@ proc addSymbol(doc: var DocumentState, name: string, info: SymbolInfo) =
     doc.ordered.add(name)
   workspaceSymbols[name] = (uri: doc.uri, info: info)
 
+proc addMember(doc: var DocumentState, m: MemberInfo) =
+  if m.name.len == 0 or m.parent.len == 0:
+    return
+  doc.members.add(m)
+
+proc scanTypeBodyMembers(content: string, openBrace: int, parent, bodyKind: string,
+                         doc: var DocumentState) =
+  ## Scan `{ ... }` after struct/enum for field (`name:`) or variant (`Name` / `Name(`) decls.
+  if openBrace < 0 or openBrace >= content.len or content[openBrace] != '{':
+    return
+  var i = openBrace + 1
+  var depth = 1
+  var inLineComment = false
+  var inBlockComment = false
+  var inString = false
+  var stringDelim = '\0'
+  var escape = false
+  while i < content.len and depth > 0:
+    let c = content[i]
+    if inLineComment:
+      if c == '\n': inLineComment = false
+      inc i
+      continue
+    if inBlockComment:
+      if c == '*' and i + 1 < content.len and content[i + 1] == '/':
+        inBlockComment = false
+        i += 2
+        continue
+      inc i
+      continue
+    if inString:
+      if escape: escape = false
+      elif c == '\\': escape = true
+      elif c == stringDelim: inString = false
+      inc i
+      continue
+    if c == '/' and i + 1 < content.len and content[i + 1] == '/':
+      inLineComment = true
+      i += 2
+      continue
+    if c == '/' and i + 1 < content.len and content[i + 1] == '*':
+      inBlockComment = true
+      i += 2
+      continue
+    if c in {'"', '`'}:
+      inString = true
+      stringDelim = c
+      inc i
+      continue
+    if c == '{':
+      inc depth
+      inc i
+      continue
+    if c == '}':
+      dec depth
+      inc i
+      continue
+    # Only collect at depth 1 (direct body of the type)
+    if depth == 1 and isIdentStart(c):
+      let nameStart = i
+      let name = readIdent(content, i)
+      if name.len == 0:
+        inc i
+        continue
+      # Skip keywords / visibility
+      if name in ["pub", "own", "const", "static", "func", "let", "var"]:
+        continue
+      skipWs(content, i)
+      if bodyKind == "struct" or bodyKind == "union" or bodyKind == "interface":
+        # Field: Name: Type  (or Name,)
+        if i < content.len and content[i] == ':':
+          let (line, col) = lineColAt(content, nameStart)
+          addMember(doc, MemberInfo(
+            name: name, parent: parent, kind: "field", line: line, col: col))
+      elif bodyKind == "enum":
+        # Variant: Name | Name(...) | Name { ... } — not Name:
+        if i >= content.len or content[i] != ':':
+          let (line, col) = lineColAt(content, nameStart)
+          addMember(doc, MemberInfo(
+            name: name, parent: parent, kind: "variant", line: line, col: col))
+      continue
+    inc i
+
 proc analyzeFile(path: string, content: string): DocumentState =
   result = DocumentState(uri: pathToUri(path), content: content)
   result.symbols = initTable[string, SymbolInfo]()
   result.ordered = @[]
+  result.members = @[]
 
   var i = 0
   var inLineComment = false
@@ -348,6 +442,21 @@ proc analyzeFile(path: string, content: string): DocumentState =
                 detail = "type " & name & " = " & rhs
           addSymbol(result, name, SymbolInfo(
             line: line, col: col, kind: kind, detail: detail, container: ""))
+          # Index members inside { ... }
+          if kind in ["struct", "enum", "union", "interface"]:
+            var j = i
+            skipWs(content, j)
+            # skip generic params <T>
+            if j < content.len and content[j] == '<':
+              var gd = 1
+              inc j
+              while j < content.len and gd > 0:
+                if content[j] == '<': inc gd
+                elif content[j] == '>': dec gd
+                inc j
+              skipWs(content, j)
+            if j < content.len and content[j] == '{':
+              scanTypeBodyMembers(content, j, name, kind, result)
         break
     if not matchedTypeKw:
       inc i
@@ -926,6 +1035,7 @@ proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
   let updated = analyzeFile(path, doc.content)
   doc.symbols = updated.symbols
   doc.ordered = updated.ordered
+  doc.members = updated.members
   # Keep / refresh real types for hover (does not replace lightweight outline)
   enrichWithSema(doc)
   let diags = runBuxcDiagnostics(path, doc.content)
@@ -975,6 +1085,7 @@ proc ensureAnalyzed(doc: DocumentState) =
     let updated = analyzeFile(uriToPath(doc.uri), doc.content)
     doc.symbols = updated.symbols
     doc.ordered = updated.ordered
+    doc.members = updated.members
 
 proc completionKind(kind: string): int =
   case kind
@@ -1243,14 +1354,62 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   })
 
 # ---------------------------------------------------------------------------
-# Identifier occurrences (references / rename) — E.1 tooling polish / session 34
+# Identifier occurrences (references / rename) — sessions 34 + 39 (deeper)
 # ---------------------------------------------------------------------------
 
 type
+  IdentAccess = enum
+    iaBare       ## plain ident
+    iaDot        ## .member
+    iaColonColon ## Type::Variant or path::name
+    iaFieldInit  ## Name: inside struct literal / pattern (preceded by `{` or `,`)
   IdentHit = object
     line: int   ## 0-based
     col: int    ## 0-based start of name
     len: int
+    access: IdentAccess
+  RenameTargetKind = enum
+    rtkLocal
+    rtkGlobal
+    rtkMember
+    rtkUnknown
+  RenameTarget = object
+    kind: RenameTargetKind
+    name: string
+    ## For rtkMember
+    parent: string
+    memberKind: string
+    declLine: int
+    declCol: int
+    ## For rtkLocal
+    local: LocalBinding
+
+proc peekAccessBefore(content: string, start: int): IdentAccess =
+  ## Classify how the identifier at `start` is written.
+  var k = start - 1
+  while k >= 0 and content[k] in {' ', '\t'}:
+    dec k
+  if k < 0:
+    return iaBare
+  if content[k] == '.':
+    return iaDot
+  if content[k] == ':' and k > 0 and content[k - 1] == ':':
+    return iaColonColon
+  if content[k] == ':' and (k == 0 or content[k - 1] != ':'):
+    # This is after the name for `name: type` — check from start side instead
+    discard
+  # Field init: after `{` or `,` optional whitespace then name then `:`
+  var j = start + 1
+  while j < content.len and isIdentChar(content[j]):
+    inc j
+  var t = j
+  while t < content.len and content[t] in {' ', '\t'}:
+    inc t
+  if t < content.len and content[t] == ':':
+    # name:  — could be field decl/init if preceded by { or ,
+    if k >= 0 and content[k] in {'{', ',', '\n', ';'}:
+      return iaFieldInit
+  return iaBare
 
 proc collectIdentHits(content, name: string): seq[IdentHit] =
   ## Textual identifier occurrences of `name`, skipping strings/comments.
@@ -1308,7 +1467,9 @@ proc collectIdentHits(content, name: string): seq[IdentHit] =
       let ident = content[start ..< j]
       if ident == name:
         let (line, col) = lineColAt(content, start)
-        result.add(IdentHit(line: line, col: col, len: name.len))
+        result.add(IdentHit(
+          line: line, col: col, len: name.len,
+          access: peekAccessBefore(content, start)))
       i = j
       continue
     inc i
@@ -1326,8 +1487,122 @@ proc locationJson(uri: string, line, col, nameLen: int): JsonNode =
     }
   }
 
+proc lookupMemberAt(doc: DocumentState, name: string, line, col: int): tuple[ok: bool, m: MemberInfo] =
+  ## Prefer member decl under cursor; else member if access is .name / ::name on that line.
+  result.ok = false
+  for m in doc.members:
+    if m.name != name: continue
+    if m.line == line and col >= m.col and col <= m.col + name.len:
+      result.ok = true
+      result.m = m
+      return
+  # Dot / :: access: any member with this name (ambiguous if multiple parents —
+  # pick first; refine if line has Parent. or Parent::)
+  let lines = doc.content.split("\n")
+  if line < 0 or line >= lines.len: return
+  let l = lines[line]
+  var wordStart = min(col, l.len)
+  while wordStart > 0 and l[wordStart - 1] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+    dec wordStart
+  # Find parent type name before `.` or `::`
+  var parentHint = ""
+  var k = wordStart - 1
+  while k >= 0 and l[k] in {' ', '\t'}: dec k
+  if k >= 0 and l[k] == '.':
+    var p = k - 1
+    while p >= 0 and l[p] in {' ', '\t'}: dec p
+    var pe = p
+    while p >= 0 and l[p] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+      dec p
+    if pe > p:
+      parentHint = l[p + 1 .. pe]
+  elif k >= 1 and l[k] == ':' and l[k - 1] == ':':
+    var p = k - 2
+    while p >= 0 and l[p] in {' ', '\t'}: dec p
+    var pe = p
+    while p >= 0 and l[p] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+      dec p
+    if pe > p:
+      parentHint = l[p + 1 .. pe]
+
+  for m in doc.members:
+    if m.name != name: continue
+    if parentHint.len > 0 and m.parent != parentHint: continue
+    result.ok = true
+    result.m = m
+    if parentHint.len > 0:
+      return
+  # If no parent hint and only one member with this name, use it
+  var count = 0
+  var last: MemberInfo
+  for m in doc.members:
+    if m.name == name:
+      inc count
+      last = m
+  if count == 1:
+    result.ok = true
+    result.m = last
+
+proc classifyRenameTarget(doc: DocumentState, word: string, line, col: int): RenameTarget =
+  result.kind = rtkUnknown
+  result.name = word
+  ensureAnalyzed(doc)
+  if doc.locals.len == 0 and doc.content.len > 0:
+    enrichWithSema(doc)
+
+  # 1) Type member (field/variant) when cursor is on decl or qualified access
+  let (mok, mem) = lookupMemberAt(doc, word, line, col)
+  if mok:
+    # Prefer member over local if this is clearly a member access or member decl
+    let lines = doc.content.split("\n")
+    var isMemberCtx = false
+    if line >= 0 and line < lines.len:
+      let l = lines[line]
+      var ws = min(col, l.len)
+      while ws > 0 and l[ws - 1] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+        dec ws
+      let absStart = block:
+        var off = 0
+        for li in 0 ..< line:
+          off += lines[li].len + 1
+        off + ws
+      let acc = peekAccessBefore(doc.content, absStart)
+      isMemberCtx = acc in {iaDot, iaColonColon, iaFieldInit} or
+                    (mem.line == line and mem.col == ws)
+    if isMemberCtx or not lookupLocalAt(doc, word, line).ok:
+      result.kind = rtkMember
+      result.parent = mem.parent
+      result.memberKind = mem.kind
+      result.declLine = mem.line
+      result.declCol = mem.col
+      return
+
+  # 2) Local / param (scoped)
+  let (lok, lb) = lookupLocalAt(doc, word, line)
+  if lok:
+    result.kind = rtkLocal
+    result.local = lb
+    return
+
+  # 3) Global / type / function
+  if doc.symbols.hasKey(word) or doc.typeIndex.hasKey(word) or workspaceSymbols.hasKey(word):
+    result.kind = rtkGlobal
+    return
+
+  result.kind = rtkUnknown
+
+proc hitMatchesMember(h: IdentHit, m: MemberInfo): bool =
+  ## Member rename: decl, .name, ::name, and field init `name:` — not bare locals.
+  if h.line == m.line and h.col == m.col:
+    return true
+  case h.access
+  of iaDot, iaColonColon, iaFieldInit:
+    return true
+  of iaBare:
+    return false
+
 proc collectReferences(doc: DocumentState, word: string, lineNum: int,
-                       includeDecl: bool): seq[JsonNode] =
+                       includeDecl: bool, col: int = 0): seq[JsonNode] =
   ## Collect LSP Location nodes for references at `word` on `lineNum`.
   result = @[]
   if word.len == 0: return
@@ -1335,71 +1610,96 @@ proc collectReferences(doc: DocumentState, word: string, lineNum: int,
   if doc.locals.len == 0 and doc.content.len > 0:
     enrichWithSema(doc)
 
-  let (lok, targetLocal) = lookupLocalAt(doc, word, lineNum)
+  let target = classifyRenameTarget(doc, word, lineNum, col)
   let hits = collectIdentHits(doc.content, word)
 
-  if lok:
-    # Scoped local / param: only occurrences that resolve to the same binding
+  case target.kind
+  of rtkLocal:
     for h in hits:
       let (ok, b) = lookupLocalAt(doc, word, h.line)
-      if not ok or not sameLocal(b, targetLocal):
+      if not ok or not sameLocal(b, target.local):
         continue
-      if not includeDecl and h.line == targetLocal.declLine and h.col == targetLocal.declCol:
+      if not includeDecl and h.line == target.local.declLine and h.col == target.local.declCol:
         continue
       result.add(locationJson(doc.uri, h.line, h.col, h.len))
     return
 
-  # File-level or workspace symbol: all textual hits in this document
-  let isFileSym = doc.symbols.hasKey(word) or doc.typeIndex.hasKey(word)
-  let isWsSym = workspaceSymbols.hasKey(word)
-  if not isFileSym and not isWsSym:
-    # Still report textual hits in current file (e.g. undeclared / mid-edit)
+  of rtkMember:
+    let m = MemberInfo(
+      name: target.name, parent: target.parent, kind: target.memberKind,
+      line: target.declLine, col: target.declCol)
     for h in hits:
-      result.add(locationJson(doc.uri, h.line, h.col, h.len))
-    return
-
-  for h in hits:
-    if not includeDecl and doc.symbols.hasKey(word):
-      let info = doc.symbols[word]
-      if h.line == info.line and h.col == info.col:
+      if not hitMatchesMember(h, m):
         continue
-    result.add(locationJson(doc.uri, h.line, h.col, h.len))
-
-  # Workspace: other open buffers + on-disk .bux under rootPath
-  if isWsSym or isFileSym:
+      if not includeDecl and h.line == m.line and h.col == m.col:
+        continue
+      result.add(locationJson(doc.uri, h.line, h.col, h.len))
+    # Workspace: other files may reference Parent::name or .name
     var seenUri = initHashSet[string]()
     seenUri.incl(doc.uri)
-
     for u, d in documents.pairs:
       if d.content.len == 0 or seenUri.contains(u): continue
       seenUri.incl(u)
+      ensureAnalyzed(d)
       for h in collectIdentHits(d.content, word):
-        result.add(locationJson(u, h.line, h.col, h.len))
+        if hitMatchesMember(h, m):
+          result.add(locationJson(u, h.line, h.col, h.len))
+    return
 
-    if rootPath.len > 0 and dirExists(rootPath):
-      var stack: seq[tuple[dir: string, depth: int]] = @[(rootPath, 0)]
-      while stack.len > 0:
-        let (dir, depth) = stack.pop()
-        if depth > 4: continue
-        let base = dir.extractFilename
-        if base in [".git", "build", "examples_pkg", "node_modules", "vendor", "nimcache"]:
+  of rtkGlobal, rtkUnknown:
+    let isFileSym = doc.symbols.hasKey(word) or doc.typeIndex.hasKey(word)
+    let isWsSym = workspaceSymbols.hasKey(word)
+    if not isFileSym and not isWsSym and target.kind == rtkUnknown:
+      for h in hits:
+        # Unknown bare rename: only bare idents (avoid eating .x members)
+        if h.access == iaBare:
+          result.add(locationJson(doc.uri, h.line, h.col, h.len))
+      return
+
+    for h in hits:
+      if not includeDecl and doc.symbols.hasKey(word):
+        let info = doc.symbols[word]
+        if h.line == info.line and h.col == info.col:
           continue
-        try:
-          for kind, path in walkDir(dir):
-            if kind == pcDir:
-              stack.add((path, depth + 1))
-            elif kind == pcFile and path.endsWith(".bux"):
-              let u = pathToUri(path.absolutePath)
-              if seenUri.contains(u): continue
-              seenUri.incl(u)
-              try:
-                let text = readFile(path)
-                for h in collectIdentHits(text, word):
-                  result.add(locationJson(u, h.line, h.col, h.len))
-              except CatchableError:
-                discard
-        except CatchableError:
-          discard
+      # Global type/func rename: bare + ::qualified, not .member of other types
+      if h.access == iaDot:
+        continue
+      result.add(locationJson(doc.uri, h.line, h.col, h.len))
+
+    if isWsSym or isFileSym:
+      var seenUri = initHashSet[string]()
+      seenUri.incl(doc.uri)
+      for u, d in documents.pairs:
+        if d.content.len == 0 or seenUri.contains(u): continue
+        seenUri.incl(u)
+        for h in collectIdentHits(d.content, word):
+          if h.access == iaDot: continue
+          result.add(locationJson(u, h.line, h.col, h.len))
+      if rootPath.len > 0 and dirExists(rootPath):
+        var stack: seq[tuple[dir: string, depth: int]] = @[(rootPath, 0)]
+        while stack.len > 0:
+          let (dir, depth) = stack.pop()
+          if depth > 4: continue
+          let base = dir.extractFilename
+          if base in [".git", "build", "examples_pkg", "node_modules", "vendor", "nimcache"]:
+            continue
+          try:
+            for kind, path in walkDir(dir):
+              if kind == pcDir:
+                stack.add((path, depth + 1))
+              elif kind == pcFile and path.endsWith(".bux"):
+                let u = pathToUri(path.absolutePath)
+                if seenUri.contains(u): continue
+                seenUri.incl(u)
+                try:
+                  let text = readFile(path)
+                  for h in collectIdentHits(text, word):
+                    if h.access == iaDot: continue
+                    result.add(locationJson(u, h.line, h.col, h.len))
+                except CatchableError:
+                  discard
+          except CatchableError:
+            discard
 
 proc handleReferences(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   let uri = paramsNode["textDocument"]["uri"].getStr()
@@ -1421,7 +1721,7 @@ proc handleReferences(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
     return
 
   var arr = newJArray()
-  for loc in collectReferences(doc, word, lineNum, includeDecl):
+  for loc in collectReferences(doc, word, lineNum, includeDecl, col):
     arr.add(loc)
   sendResponse(stream, id, arr)
 
@@ -1495,7 +1795,7 @@ proc handleRename(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
     sendResponse(stream, id, %*{"changes": newJObject()})
     return
 
-  let refs = collectReferences(doc, word, lineNum, includeDecl = true)
+  let refs = collectReferences(doc, word, lineNum, includeDecl = true, col = col)
   # Group TextEdits by URI
   var byUri = initTable[string, JsonNode]()
   for loc in refs:
@@ -1632,7 +1932,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "renameProvider": {"prepareProvider": true},
         "workspaceSymbolProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.6.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.7.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -1679,6 +1979,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
     let updated = analyzeFile(uriToPath(uri), doc.content)
     doc.symbols = updated.symbols
     doc.ordered = updated.ordered
+    doc.members = updated.members
     # Re-apply typeIndex details onto matching names (don't drop sema types mid-edit)
     for name, detail in doc.typeIndex.pairs:
       if doc.symbols.hasKey(name):

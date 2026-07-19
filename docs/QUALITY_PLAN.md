@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — field-move Drop (bootstrap+**selfhost**), selfhost **#line**, Nexus KA, LSP 0.6  
+> **Текущо:** v0.5.x — field-move Drop, selfhost #line, Nexus KA, **LSP 0.7 deeper rename**  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -610,9 +610,25 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 38 (selfhost field-move + #line)
+
+1. **Field-move Drop** (`src/c_backend.bux`):
+   - `CBE_MarkMovedFromNode` on `hStructInit` / return values (nested fields)
+   - Already skipped Drop via `CBE_IsMoved` in defer emit
+2. **Struct emit fix** (`src/hir_lower.bux`):
+   - Field types `Array<int>` → `Array_int` (etc.) so parent structs are not
+     skipped as “generic” (was incomplete `typedef struct Box Box` only)
+3. **#line maps** (selfhost C backend):
+   - Emit `#line N "file"` on statements when `node.line > 0`
+   - `BUX_DEBUG_FILE` sets the path; `BUX_NO_LINE=1` disables
+4. Verified: selfhost `move_field` PASS; Make() has **no** `Array_Drop(&items)`
+   after field move; `#line` points at `.bux` sources
+
+---
+
 ## Следващи стъпки
 
-1. Selfhost `#line` maps (parity with bootstrap LIR backend)
-2. Selfhost parity for field-move skip Drop (if CBE path differs)
-3. Deeper rename (type members / qualified paths)
-4. LSP call hierarchy (optional)
+1. Deeper rename (type members / qualified paths)
+2. LSP call hierarchy (optional)
+3. Selfhost multi-file `#line` paths without BUX_DEBUG_FILE
+4. Wire selfhost smoke for move_field into CI

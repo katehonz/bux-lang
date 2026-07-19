@@ -196,6 +196,9 @@ test-lsp: lsp
 	@echo "=== LSP workspace/symbol smoke ==="
 	@chmod +x tools/smoke_lsp_workspace.sh
 	@tools/smoke_lsp_workspace.sh
+	@echo "=== LSP deeper rename smoke ==="
+	@chmod +x tools/smoke_lsp_rename_deep.sh
+	@tools/smoke_lsp_rename_deep.sh
 
 .PHONY: test-registry
 test-registry: build
