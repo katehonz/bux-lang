@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — registry HTTP, apps smoke, E.5 benches, **E.4 DWARF `#line` + gdb**  
+> **Текущо:** v0.5.x — E.4 DWARF, E.5 benches, **LSP 0.5 references/rename**, CI apps/dwarf/registry  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---

@@ -6,6 +6,7 @@
 #
 # Hover uses real bootstrap sema types when possible (globals + stdlib).
 # Locals are position-sensitive (scoped) and include inferred `let` types (v0.4.0).
+# v0.5.0: textDocument/references + rename (scoped locals + workspace globals).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -1239,6 +1240,279 @@ proc handleHover(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
       "end": {"line": lineNum, "character": endC}
     }
   })
+
+# ---------------------------------------------------------------------------
+# Identifier occurrences (references / rename) — E.1 tooling polish / session 34
+# ---------------------------------------------------------------------------
+
+type
+  IdentHit = object
+    line: int   ## 0-based
+    col: int    ## 0-based start of name
+    len: int
+
+proc collectIdentHits(content, name: string): seq[IdentHit] =
+  ## Textual identifier occurrences of `name`, skipping strings/comments.
+  result = @[]
+  if name.len == 0 or content.len == 0:
+    return
+  var i = 0
+  var inLineComment = false
+  var inBlockComment = false
+  var inString = false
+  var stringDelim = '\0'
+  var escape = false
+  while i < content.len:
+    let c = content[i]
+    if inLineComment:
+      if c == '\n': inLineComment = false
+      inc i
+      continue
+    if inBlockComment:
+      if c == '*' and i + 1 < content.len and content[i + 1] == '/':
+        inBlockComment = false
+        i += 2
+        continue
+      inc i
+      continue
+    if inString:
+      if escape: escape = false
+      elif c == '\\': escape = true
+      elif c == stringDelim: inString = false
+      inc i
+      continue
+    if c == '/' and i + 1 < content.len and content[i + 1] == '/':
+      inLineComment = true
+      i += 2
+      continue
+    if c == '/' and i + 1 < content.len and content[i + 1] == '*':
+      inBlockComment = true
+      i += 2
+      continue
+    if c in {'"', '`'} or (c == 'f' and i + 1 < content.len and content[i + 1] == '"'):
+      inString = true
+      if c == 'f':
+        stringDelim = '"'
+        i += 2
+      else:
+        stringDelim = c
+        inc i
+      continue
+
+    if isIdentStart(c):
+      let start = i
+      var j = i + 1
+      while j < content.len and isIdentChar(content[j]):
+        inc j
+      let ident = content[start ..< j]
+      if ident == name:
+        let (line, col) = lineColAt(content, start)
+        result.add(IdentHit(line: line, col: col, len: name.len))
+      i = j
+      continue
+    inc i
+
+proc sameLocal*(a, b: LocalBinding): bool =
+  a.name == b.name and a.declLine == b.declLine and a.declCol == b.declCol and
+    a.container == b.container
+
+proc locationJson(uri: string, line, col, nameLen: int): JsonNode =
+  %*{
+    "uri": uri,
+    "range": {
+      "start": {"line": line, "character": col},
+      "end": {"line": line, "character": col + nameLen}
+    }
+  }
+
+proc collectReferences(doc: DocumentState, word: string, lineNum: int,
+                       includeDecl: bool): seq[JsonNode] =
+  ## Collect LSP Location nodes for references at `word` on `lineNum`.
+  result = @[]
+  if word.len == 0: return
+  ensureAnalyzed(doc)
+  if doc.locals.len == 0 and doc.content.len > 0:
+    enrichWithSema(doc)
+
+  let (lok, targetLocal) = lookupLocalAt(doc, word, lineNum)
+  let hits = collectIdentHits(doc.content, word)
+
+  if lok:
+    # Scoped local / param: only occurrences that resolve to the same binding
+    for h in hits:
+      let (ok, b) = lookupLocalAt(doc, word, h.line)
+      if not ok or not sameLocal(b, targetLocal):
+        continue
+      if not includeDecl and h.line == targetLocal.declLine and h.col == targetLocal.declCol:
+        continue
+      result.add(locationJson(doc.uri, h.line, h.col, h.len))
+    return
+
+  # File-level or workspace symbol: all textual hits in this document
+  let isFileSym = doc.symbols.hasKey(word) or doc.typeIndex.hasKey(word)
+  let isWsSym = workspaceSymbols.hasKey(word)
+  if not isFileSym and not isWsSym:
+    # Still report textual hits in current file (e.g. undeclared / mid-edit)
+    for h in hits:
+      result.add(locationJson(doc.uri, h.line, h.col, h.len))
+    return
+
+  for h in hits:
+    if not includeDecl and doc.symbols.hasKey(word):
+      let info = doc.symbols[word]
+      if h.line == info.line and h.col == info.col:
+        continue
+    result.add(locationJson(doc.uri, h.line, h.col, h.len))
+
+  # Workspace: other open buffers + on-disk .bux under rootPath
+  if isWsSym or isFileSym:
+    var seenUri = initHashSet[string]()
+    seenUri.incl(doc.uri)
+
+    for u, d in documents.pairs:
+      if d.content.len == 0 or seenUri.contains(u): continue
+      seenUri.incl(u)
+      for h in collectIdentHits(d.content, word):
+        result.add(locationJson(u, h.line, h.col, h.len))
+
+    if rootPath.len > 0 and dirExists(rootPath):
+      var stack: seq[tuple[dir: string, depth: int]] = @[(rootPath, 0)]
+      while stack.len > 0:
+        let (dir, depth) = stack.pop()
+        if depth > 4: continue
+        let base = dir.extractFilename
+        if base in [".git", "build", "examples_pkg", "node_modules", "vendor", "nimcache"]:
+          continue
+        try:
+          for kind, path in walkDir(dir):
+            if kind == pcDir:
+              stack.add((path, depth + 1))
+            elif kind == pcFile and path.endsWith(".bux"):
+              let u = pathToUri(path.absolutePath)
+              if seenUri.contains(u): continue
+              seenUri.incl(u)
+              try:
+                let text = readFile(path)
+                for h in collectIdentHits(text, word):
+                  result.add(locationJson(u, h.line, h.col, h.len))
+              except CatchableError:
+                discard
+        except CatchableError:
+          discard
+
+proc handleReferences(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let position = paramsNode["position"]
+  let lineNum = position["line"].getInt()
+  let col = position["character"].getInt()
+  var includeDecl = true
+  if paramsNode.hasKey("context") and paramsNode["context"].hasKey("includeDeclaration"):
+    includeDecl = paramsNode["context"]["includeDeclaration"].getBool()
+
+  let doc = getDoc(uri)
+  if doc.content == "":
+    sendResponse(stream, id, %*[])
+    return
+
+  let word = findWordAt(doc.content, lineNum, col)
+  if word.len == 0:
+    sendResponse(stream, id, %*[])
+    return
+
+  var arr = newJArray()
+  for loc in collectReferences(doc, word, lineNum, includeDecl):
+    arr.add(loc)
+  sendResponse(stream, id, arr)
+
+proc isValidIdentName(s: string): bool =
+  if s.len == 0: return false
+  if not isIdentStart(s[0]): return false
+  for i in 1 ..< s.len:
+    if not isIdentChar(s[i]): return false
+  true
+
+proc handlePrepareRename(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let position = paramsNode["position"]
+  let lineNum = position["line"].getInt()
+  let col = position["character"].getInt()
+  let doc = getDoc(uri)
+  if doc.content == "":
+    sendResponse(stream, id, newJNull())
+    return
+  let lines = doc.content.split("\n")
+  if lineNum >= lines.len:
+    sendResponse(stream, id, newJNull())
+    return
+  let l = lines[lineNum]
+  var start = min(col, l.len)
+  var endC = start
+  while start > 0 and l[start - 1] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+    dec start
+  while endC < l.len and l[endC] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+    inc endC
+  if start >= endC:
+    sendResponse(stream, id, newJNull())
+    return
+  let word = l[start ..< endC]
+  # Reject keywords
+  const kws = ["func", "var", "let", "if", "else", "while", "for", "return",
+               "struct", "enum", "true", "false", "null", "self", "match",
+               "import", "module", "type", "const", "pub", "own"]
+  if word in kws:
+    sendResponse(stream, id, newJNull())
+    return
+  sendResponse(stream, id, %*{
+    "range": {
+      "start": {"line": lineNum, "character": start},
+      "end": {"line": lineNum, "character": endC}
+    },
+    "placeholder": word
+  })
+
+proc handleRename(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let position = paramsNode["position"]
+  let lineNum = position["line"].getInt()
+  let col = position["character"].getInt()
+  let newName = if paramsNode.hasKey("newName"): paramsNode["newName"].getStr() else: ""
+
+  if not isValidIdentName(newName):
+    sendError(stream, id, -32602, "invalid identifier: '" & newName & "'")
+    return
+
+  let doc = getDoc(uri)
+  if doc.content == "":
+    sendResponse(stream, id, %*{"changes": newJObject()})
+    return
+
+  let word = findWordAt(doc.content, lineNum, col)
+  if word.len == 0:
+    sendResponse(stream, id, %*{"changes": newJObject()})
+    return
+  if word == newName:
+    sendResponse(stream, id, %*{"changes": newJObject()})
+    return
+
+  let refs = collectReferences(doc, word, lineNum, includeDecl = true)
+  # Group TextEdits by URI
+  var byUri = initTable[string, JsonNode]()
+  for loc in refs:
+    let u = loc["uri"].getStr()
+    if not byUri.hasKey(u):
+      byUri[u] = newJArray()
+    let r = loc["range"]
+    byUri[u].add(%*{
+      "range": r,
+      "newText": newName
+    })
+
+  var changes = newJObject()
+  for u, edits in byUri.pairs:
+    changes[u] = edits
+
+  sendResponse(stream, id, %*{"changes": changes})
+
 # ---------------------------------------------------------------------------
 # Document symbols (outline)
 # ---------------------------------------------------------------------------
@@ -1302,9 +1576,11 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "completionProvider": {"triggerCharacters": [".", ":"]},
         "definitionProvider": true,
         "hoverProvider": true,
-        "documentSymbolProvider": true
+        "documentSymbolProvider": true,
+        "referencesProvider": true,
+        "renameProvider": {"prepareProvider": true}
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.4.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.5.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -1378,6 +1654,15 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
 
   of "textDocument/documentSymbol":
     handleDocumentSymbol(stream, id, paramsNode)
+
+  of "textDocument/references":
+    handleReferences(stream, id, paramsNode)
+
+  of "textDocument/prepareRename":
+    handlePrepareRename(stream, id, paramsNode)
+
+  of "textDocument/rename":
+    handleRename(stream, id, paramsNode)
 
   else:
     if id != nil:

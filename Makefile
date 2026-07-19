@@ -19,7 +19,7 @@ dev:
 debug: dev
 	@echo "Debug binary: buxc_debug"
 
-test: build fmt-check test-examples test-errors test-stdlib
+test: build fmt-check test-examples test-errors test-stdlib test-registry test-dwarf test-apps
 	@echo "Running lexer tests..."
 	$(NIM) c -r tests/lexer_test.nim
 	@echo "Running parser tests..."
@@ -190,6 +190,9 @@ test-lsp: lsp
 	@echo "=== LSP hover smoke ==="
 	@chmod +x tools/smoke_lsp_hover.sh
 	@tools/smoke_lsp_hover.sh
+	@echo "=== LSP references / rename smoke ==="
+	@chmod +x tools/smoke_lsp_rename.sh
+	@tools/smoke_lsp_rename.sh
 
 .PHONY: test-registry
 test-registry: build

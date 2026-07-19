@@ -135,8 +135,10 @@ make test-examples   # all examples/ programs (40+)
 make test-errors     # golden Rust-style diagnostic output
 make test-stdlib     # stdlib golden packages
 make test-registry   # package registry (local + HTTP index)
-make test-apps       # showcase apps build + simpledb/jwt CLI smoke
-make test-dwarf      # #line maps + .debug_info + --release (E.4)
+make test-apps       # showcase apps build + simpledb/jwt CLI smoke (in `make test`)
+make test-dwarf      # #line maps + .debug_info + --release (in `make test`)
+make test-registry   # package registry local + HTTP (in `make test`)
+make test-lsp        # hover + references/rename smokes
 make bench           # micro-benchmarks (Bux + C/Nim/Zig twins)
 make bench-nexus     # wrk throughput vs apps/nexus /api/health
 ```
