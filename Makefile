@@ -199,6 +199,9 @@ test-lsp: lsp
 	@echo "=== LSP deeper rename smoke ==="
 	@chmod +x tools/smoke_lsp_rename_deep.sh
 	@tools/smoke_lsp_rename_deep.sh
+	@echo "=== LSP call hierarchy smoke ==="
+	@chmod +x tools/smoke_lsp_call_hierarchy.sh
+	@tools/smoke_lsp_call_hierarchy.sh
 
 .PHONY: test-registry
 test-registry: build

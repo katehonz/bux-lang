@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — field-move Drop, selfhost #line, Nexus KA, **LSP 0.7 deeper rename**  
+> **Текущо:** v0.5.x — field-move, selfhost #line, Nexus KA, **LSP 0.8 call hierarchy**  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -78,7 +78,7 @@
 
 | # | Задача | Защо | Статус |
 |---|--------|------|--------|
-| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.6.0: refs/rename + **workspace/symbol** |
+| D.1 | LSP: hover, go-to-def, diagnostics | IDE = adoption | ✅ v0.7.0: + **field/variant rename** + workspace/symbol |
 | D.2 | `bux fmt` стабилен + CI check | Единен style | ✅ full-tree format + `make fmt-check` enforce |
 | D.3 | `bux test` с `--filter`, exit codes, summary table | CI-friendly | ✅ `--filter` / summary / exit 0\|1 |
 | D.4 | `bux doc` от `///` comments | Самодокументиращ се stdlib | ✅ bootstrap+selfhost + `make docs` |
@@ -626,9 +626,25 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 39 (LSP 0.7 deeper rename)
+
+1. **Member index** in `analyzeFile`:
+   - struct/union/interface fields (`name: Type`)
+   - enum variants (`Name` / `Name(...)`)
+2. **Access classification** for each hit:
+   - bare / `.member` / `::Variant` / `name:` field-init
+3. **Rename targets**:
+   - **local** — same binding only (shadowing-safe)
+   - **member** — decl + `.x` + `::Red` + `{ x: }` — **not** bare locals named `x`
+   - **global** — bare + `::` paths; skips `.member` false positives
+4. Smoke: `tools/smoke_lsp_rename_deep.sh` (x→px ≥3, Red→Crimson ≥2, local x→xx =2)
+5. Version **bux-lsp 0.7.0**; wired into `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. Deeper rename (type members / qualified paths)
-2. LSP call hierarchy (optional)
-3. Selfhost multi-file `#line` paths without BUX_DEBUG_FILE
-4. Wire selfhost smoke for move_field into CI
+1. LSP call hierarchy (optional)
+2. Selfhost multi-file `#line` paths without BUX_DEBUG_FILE
+3. Wire selfhost smoke for move_field into CI
+4. Rename of method receivers / qualified module paths (edge cases)

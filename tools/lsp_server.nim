@@ -9,6 +9,7 @@
 # v0.5.0: textDocument/references + rename (scoped locals + workspace globals).
 # v0.6.0: workspace/symbol search.
 # v0.7.0: deeper rename — struct fields, enum variants, .member / ::Variant.
+# v0.8.0: call hierarchy (prepare / incoming / outgoing).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -1908,6 +1909,273 @@ proc handleWorkspaceSymbol(stream: FileStream, id: JsonNode, paramsNode: JsonNod
   sendResponse(stream, id, arr)
 
 # ---------------------------------------------------------------------------
+# Call hierarchy (v0.8) — lightweight textual call graph
+# ---------------------------------------------------------------------------
+
+type
+  FuncSym = object
+    name: string
+    uri: string
+    info: SymbolInfo
+  CallSite = object
+    callee: string
+    line: int
+    col: int
+    ## Enclosing function name ("" if top-level / unknown)
+    caller: string
+    callerUri: string
+
+proc listFunctionSymbols(doc: DocumentState): seq[tuple[name: string, info: SymbolInfo]] =
+  result = @[]
+  ensureAnalyzed(doc)
+  for name, info in doc.symbols.pairs:
+    if info.kind == "function":
+      result.add((name, info))
+
+proc allKnownFuncs(): Table[string, FuncSym] =
+  ## name → first seen FuncSym (workspace + open docs)
+  result = initTable[string, FuncSym]()
+  for uri, doc in documents.pairs:
+    for (name, info) in listFunctionSymbols(doc):
+      if not result.hasKey(name):
+        result[name] = FuncSym(name: name, uri: uri, info: info)
+  for name, ws in workspaceSymbols.pairs:
+    if ws.info.kind == "function" and not result.hasKey(name):
+      result[name] = FuncSym(name: name, uri: ws.uri, info: ws.info)
+
+proc enclosingFuncName(doc: DocumentState, line: int): string =
+  ## Nearest function whose decl line ≤ line (same file).
+  result = ""
+  var best = -1
+  for name, info in doc.symbols.pairs:
+    if info.kind != "function": continue
+    if info.line <= line and info.line >= best:
+      best = info.line
+      result = name
+
+proc isCallSiteAt(content: string, start, nameLen: int): bool =
+  ## True if `name` is followed by optional space then `(`.
+  var j = start + nameLen
+  while j < content.len and content[j] in {' ', '\t'}:
+    inc j
+  result = j < content.len and content[j] == '('
+
+proc collectCallSitesInDoc(doc: DocumentState, known: HashSet[string]): seq[CallSite] =
+  result = @[]
+  ensureAnalyzed(doc)
+  if doc.content.len == 0: return
+  for name in known:
+    for h in collectIdentHits(doc.content, name):
+      # absolute offset for call-site check
+      let lines = doc.content.split("\n")
+      if h.line < 0 or h.line >= lines.len: continue
+      var off = 0
+      for li in 0 ..< h.line:
+        off += lines[li].len + 1
+      off += h.col
+      if not isCallSiteAt(doc.content, off, h.len):
+        continue
+      # Skip the function declaration itself (func Name() — also has () )
+      if doc.symbols.hasKey(name):
+        let info = doc.symbols[name]
+        if info.line == h.line and info.col == h.col:
+          continue
+      # Skip .method-style if access is dot (method calls still useful — keep)
+      let caller = enclosingFuncName(doc, h.line)
+      result.add(CallSite(
+        callee: name, line: h.line, col: h.col,
+        caller: caller, callerUri: doc.uri))
+
+proc collectAllCallSites(): seq[CallSite] =
+  result = @[]
+  let funcs = allKnownFuncs()
+  var known = initHashSet[string]()
+  for k in funcs.keys:
+    known.incl(k)
+  if known.len == 0: return
+
+  var seenUri = initHashSet[string]()
+  for uri, doc in documents.pairs:
+    seenUri.incl(uri)
+    result.add(collectCallSitesInDoc(doc, known))
+
+  # Disk scan for other workspace files
+  if rootPath.len > 0 and dirExists(rootPath):
+    var stack: seq[tuple[dir: string, depth: int]] = @[(rootPath, 0)]
+    while stack.len > 0:
+      let (dir, depth) = stack.pop()
+      if depth > 4: continue
+      let base = dir.extractFilename
+      if base in [".git", "build", "examples_pkg", "node_modules", "vendor", "nimcache"]:
+        continue
+      try:
+        for kind, path in walkDir(dir):
+          if kind == pcDir:
+            stack.add((path, depth + 1))
+          elif kind == pcFile and path.endsWith(".bux"):
+            let u = pathToUri(path.absolutePath)
+            if seenUri.contains(u): continue
+            seenUri.incl(u)
+            try:
+              let text = readFile(path)
+              var d = DocumentState(uri: u, content: text)
+              let updated = analyzeFile(path, text)
+              d.symbols = updated.symbols
+              d.ordered = updated.ordered
+              d.members = updated.members
+              result.add(collectCallSitesInDoc(d, known))
+            except CatchableError:
+              discard
+      except CatchableError:
+        discard
+
+proc callHierarchyItem(fs: FuncSym): JsonNode =
+  let nameLen = fs.name.len
+  %*{
+    "name": fs.name,
+    "kind": 12,  # SymbolKind.Function
+    "detail": fs.info.detail,
+    "uri": fs.uri,
+    "range": {
+      "start": {"line": fs.info.line, "character": 0},
+      "end": {"line": fs.info.line, "character": fs.info.col + nameLen}
+    },
+    "selectionRange": {
+      "start": {"line": fs.info.line, "character": fs.info.col},
+      "end": {"line": fs.info.line, "character": fs.info.col + nameLen}
+    }
+  }
+
+proc lookupFuncSym(name, uri: string): FuncSym =
+  result = FuncSym(name: name, uri: uri)
+  if documents.hasKey(uri):
+    let doc = documents[uri]
+    ensureAnalyzed(doc)
+    if doc.symbols.hasKey(name) and doc.symbols[name].kind == "function":
+      result.info = doc.symbols[name]
+      return
+  if workspaceSymbols.hasKey(name) and workspaceSymbols[name].info.kind == "function":
+    result.uri = workspaceSymbols[name].uri
+    result.info = workspaceSymbols[name].info
+    return
+  # Fallback from allKnownFuncs
+  let all = allKnownFuncs()
+  if all.hasKey(name):
+    return all[name]
+
+proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let position = paramsNode["position"]
+  let lineNum = position["line"].getInt()
+  let col = position["character"].getInt()
+  let doc = getDoc(uri)
+  if doc.content == "":
+    sendResponse(stream, id, %*[])
+    return
+  ensureAnalyzed(doc)
+  let word = findWordAt(doc.content, lineNum, col)
+  if word.len == 0:
+    sendResponse(stream, id, %*[])
+    return
+  # Prefer function symbol under cursor
+  if doc.symbols.hasKey(word) and doc.symbols[word].kind == "function":
+    let fs = FuncSym(name: word, uri: uri, info: doc.symbols[word])
+    sendResponse(stream, id, %*[callHierarchyItem(fs)])
+    return
+  if workspaceSymbols.hasKey(word) and workspaceSymbols[word].info.kind == "function":
+    let ws = workspaceSymbols[word]
+    let fs = FuncSym(name: word, uri: ws.uri, info: ws.info)
+    sendResponse(stream, id, %*[callHierarchyItem(fs)])
+    return
+  # Allow prepare on a call site: Foo( → hierarchy for Foo
+  let lines = doc.content.split("\n")
+  if lineNum < lines.len:
+    let l = lines[lineNum]
+    var ws = min(col, l.len)
+    while ws > 0 and l[ws - 1] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+      dec ws
+    var off = 0
+    for li in 0 ..< lineNum:
+      off += lines[li].len + 1
+    off += ws
+    if isCallSiteAt(doc.content, off, word.len):
+      let all = allKnownFuncs()
+      if all.hasKey(word):
+        sendResponse(stream, id, %*[callHierarchyItem(all[word])])
+        return
+  sendResponse(stream, id, %*[])
+
+proc handleIncomingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## Who calls this function?
+  if not paramsNode.hasKey("item"):
+    sendResponse(stream, id, %*[])
+    return
+  let item = paramsNode["item"]
+  let name = item["name"].getStr()
+  let sites = collectAllCallSites()
+  # Group by caller
+  var groups = initTable[string, tuple[fs: FuncSym, ranges: seq[tuple[line, col, len: int]]]]()
+  for s in sites:
+    if s.callee != name: continue
+    if s.caller.len == 0: continue
+    let key = s.callerUri & "#" & s.caller
+    if not groups.hasKey(key):
+      let fs = lookupFuncSym(s.caller, s.callerUri)
+      groups[key] = (fs, @[])
+    groups[key].ranges.add((s.line, s.col, name.len))
+
+  var arr = newJArray()
+  for _, g in groups.pairs:
+    var fromRanges = newJArray()
+    for r in g.ranges:
+      fromRanges.add(%*{
+        "start": {"line": r.line, "character": r.col},
+        "end": {"line": r.line, "character": r.col + r.len}
+      })
+    arr.add(%*{
+      "from": callHierarchyItem(g.fs),
+      "fromRanges": fromRanges
+    })
+  sendResponse(stream, id, arr)
+
+proc handleOutgoingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## What does this function call?
+  if not paramsNode.hasKey("item"):
+    sendResponse(stream, id, %*[])
+    return
+  let item = paramsNode["item"]
+  let name = item["name"].getStr()
+  let uri = if item.hasKey("uri"): item["uri"].getStr() else: ""
+  let sites = collectAllCallSites()
+  # Group by callee among sites whose caller is `name`
+  var groups = initTable[string, tuple[fs: FuncSym, ranges: seq[tuple[line, col, len: int]]]]()
+  for s in sites:
+    if s.caller != name: continue
+    if uri.len > 0 and s.callerUri != uri: continue
+    let key = s.callee
+    if not groups.hasKey(key):
+      let fs = lookupFuncSym(s.callee, s.callerUri)
+      # Prefer known func uri
+      let all = allKnownFuncs()
+      let fs2 = if all.hasKey(s.callee): all[s.callee] else: fs
+      groups[key] = (fs2, @[])
+    groups[key].ranges.add((s.line, s.col, s.callee.len))
+
+  var arr = newJArray()
+  for _, g in groups.pairs:
+    var fromRanges = newJArray()
+    for r in g.ranges:
+      fromRanges.add(%*{
+        "start": {"line": r.line, "character": r.col},
+        "end": {"line": r.line, "character": r.col + r.len}
+      })
+    arr.add(%*{
+      "to": callHierarchyItem(g.fs),
+      "fromRanges": fromRanges
+    })
+  sendResponse(stream, id, arr)
+
+# ---------------------------------------------------------------------------
 # Main message loop
 # ---------------------------------------------------------------------------
 
@@ -1930,9 +2198,10 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "documentSymbolProvider": true,
         "referencesProvider": true,
         "renameProvider": {"prepareProvider": true},
-        "workspaceSymbolProvider": true
+        "workspaceSymbolProvider": true,
+        "callHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.7.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.8.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -2019,6 +2288,15 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
 
   of "workspace/symbol":
     handleWorkspaceSymbol(stream, id, paramsNode)
+
+  of "textDocument/prepareCallHierarchy":
+    handlePrepareCallHierarchy(stream, id, paramsNode)
+
+  of "callHierarchy/incomingCalls":
+    handleIncomingCalls(stream, id, paramsNode)
+
+  of "callHierarchy/outgoingCalls":
+    handleOutgoingCalls(stream, id, paramsNode)
 
   else:
     if id != nil:
