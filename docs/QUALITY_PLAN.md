@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — multi-file #line, **selfhost CI smoke**, LSP 0.8, Nexus KA  
+> **Текущо:** v0.5.x — multi-file #line, selfhost CI, **LSP 0.9 method hierarchy**, Nexus KA  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---

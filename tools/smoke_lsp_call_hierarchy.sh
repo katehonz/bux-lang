@@ -57,8 +57,8 @@ if ! grep -q 'callHierarchyProvider' "$TMP/out.txt"; then
   cat "$TMP/out.txt"
   exit 1
 fi
-if ! grep -q '0.8.0' "$TMP/out.txt"; then
-  echo "WARN: version not 0.8.0"
+if ! grep -qE '0\.[89]\.0' "$TMP/out.txt"; then
+  echo "WARN: unexpected bux-lsp version"
 fi
 
 # prepare should mention Add

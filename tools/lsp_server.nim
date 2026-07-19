@@ -10,6 +10,7 @@
 # v0.6.0: workspace/symbol search.
 # v0.7.0: deeper rename — struct fields, enum variants, .member / ::Variant.
 # v0.8.0: call hierarchy (prepare / incoming / outgoing).
+# v0.9.0: method call hierarchy (extend Type / .Method() sites).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -313,6 +314,11 @@ proc analyzeFile(path: string, content: string): DocumentState =
   var inString = false
   var stringDelim = '\0'
   var escape = false
+  ## extend/impl Type { ... } tracking for method indexing
+  var braceDepth = 0
+  var activeExtend = ""       ## Type name of open extend/impl block
+  var extendBodyDepth = 0     ## braceDepth of the extend/impl opening `{`
+  var pendingExtend = ""      ## Type name after `extend Name` before `{`
 
   while i < content.len:
     let c = content[i]
@@ -358,11 +364,40 @@ proc analyzeFile(path: string, content: string): DocumentState =
         inc i
       continue
 
+    # Brace tracking for extend/impl bodies (outside strings/comments)
+    if c == '{':
+      inc braceDepth
+      if pendingExtend.len > 0 and extendBodyDepth == 0:
+        activeExtend = pendingExtend
+        extendBodyDepth = braceDepth
+        pendingExtend = ""
+      inc i
+      continue
+    if c == '}':
+      if extendBodyDepth > 0 and braceDepth == extendBodyDepth:
+        activeExtend = ""
+        extendBodyDepth = 0
+      if braceDepth > 0:
+        dec braceDepth
+      inc i
+      continue
+
     # Keyword must be at token boundary
     template atWord(kw: string): bool =
       (i + kw.len <= content.len and content[i ..< i + kw.len] == kw and
        (i == 0 or not isIdentChar(content[i - 1])) and
        (i + kw.len >= content.len or not isIdentChar(content[i + kw.len])))
+
+    # extend Type / impl Type — methods live in the following { block }
+    if atWord("extend") or atWord("impl"):
+      let kwLen = if content[i] == 'e': 6 else: 4
+      i += kwLen
+      skipWs(content, i)
+      # optional "Type for Trait" — take first type name
+      let tname = readIdent(content, i)
+      if tname.len > 0:
+        pendingExtend = tname
+      continue
 
     if atWord("func"):
       let kwPos = i
@@ -399,8 +434,13 @@ proc analyzeFile(path: string, content: string): DocumentState =
         var sig = content[kwPos ..< min(sigEnd, content.len)].strip()
         # collapse whitespace
         sig = sig.replace("\n", " ").multiReplace([("  ", " "), ("  ", " "), ("  ", " ")])
+        let isMethod = activeExtend.len > 0
+        let kind = if isMethod: "method" else: "function"
+        let container = if isMethod: activeExtend else: ""
+        if isMethod:
+          sig = activeExtend & "." & sig
         addSymbol(result, name, SymbolInfo(
-          line: line, col: col, kind: "function", detail: sig, container: ""))
+          line: line, col: col, kind: kind, detail: sig, container: container))
       continue
 
     if atWord("let") or atWord("var") or atWord("const"):
@@ -1091,6 +1131,7 @@ proc ensureAnalyzed(doc: DocumentState) =
 proc completionKind(kind: string): int =
   case kind
   of "function": 3
+  of "method": 2
   of "variable": 6
   of "constant": 14
   of "struct": 22
@@ -1822,6 +1863,7 @@ proc handleRename(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
 proc symbolKindLsp(kind: string): int =
   case kind
   of "function": 12
+  of "method": 6
   of "variable": 13
   of "constant": 14
   of "struct": 23
@@ -1909,7 +1951,7 @@ proc handleWorkspaceSymbol(stream: FileStream, id: JsonNode, paramsNode: JsonNod
   sendResponse(stream, id, arr)
 
 # ---------------------------------------------------------------------------
-# Call hierarchy (v0.8) — lightweight textual call graph
+# Call hierarchy (v0.8 + v0.9 methods) — textual call graph
 # ---------------------------------------------------------------------------
 
 type
@@ -1921,34 +1963,38 @@ type
     callee: string
     line: int
     col: int
-    ## Enclosing function name ("" if top-level / unknown)
+    ## Enclosing function/method name ("" if top-level / unknown)
     caller: string
     callerUri: string
+    isMethodCall: bool  ## true if site was `.Name(` (receiver call)
+
+proc isCallableKind(kind: string): bool =
+  kind == "function" or kind == "method"
 
 proc listFunctionSymbols(doc: DocumentState): seq[tuple[name: string, info: SymbolInfo]] =
   result = @[]
   ensureAnalyzed(doc)
   for name, info in doc.symbols.pairs:
-    if info.kind == "function":
+    if isCallableKind(info.kind):
       result.add((name, info))
 
 proc allKnownFuncs(): Table[string, FuncSym] =
-  ## name → first seen FuncSym (workspace + open docs)
+  ## name → first seen FuncSym (workspace + open docs); methods included
   result = initTable[string, FuncSym]()
   for uri, doc in documents.pairs:
     for (name, info) in listFunctionSymbols(doc):
       if not result.hasKey(name):
         result[name] = FuncSym(name: name, uri: uri, info: info)
   for name, ws in workspaceSymbols.pairs:
-    if ws.info.kind == "function" and not result.hasKey(name):
+    if isCallableKind(ws.info.kind) and not result.hasKey(name):
       result[name] = FuncSym(name: name, uri: ws.uri, info: ws.info)
 
 proc enclosingFuncName(doc: DocumentState, line: int): string =
-  ## Nearest function whose decl line ≤ line (same file).
+  ## Nearest function/method whose decl line ≤ line (same file).
   result = ""
   var best = -1
   for name, info in doc.symbols.pairs:
-    if info.kind != "function": continue
+    if not isCallableKind(info.kind): continue
     if info.line <= line and info.line >= best:
       best = info.line
       result = name
@@ -1975,16 +2021,16 @@ proc collectCallSitesInDoc(doc: DocumentState, known: HashSet[string]): seq[Call
       off += h.col
       if not isCallSiteAt(doc.content, off, h.len):
         continue
-      # Skip the function declaration itself (func Name() — also has () )
+      # Skip the function/method declaration itself (func Name() — also has () )
       if doc.symbols.hasKey(name):
         let info = doc.symbols[name]
         if info.line == h.line and info.col == h.col:
           continue
-      # Skip .method-style if access is dot (method calls still useful — keep)
       let caller = enclosingFuncName(doc, h.line)
       result.add(CallSite(
         callee: name, line: h.line, col: h.col,
-        caller: caller, callerUri: doc.uri))
+        caller: caller, callerUri: doc.uri,
+        isMethodCall: h.access == iaDot))
 
 proc collectAllCallSites(): seq[CallSite] =
   result = @[]
@@ -2031,9 +2077,14 @@ proc collectAllCallSites(): seq[CallSite] =
 
 proc callHierarchyItem(fs: FuncSym): JsonNode =
   let nameLen = fs.name.len
+  # SymbolKind: Method=6, Function=12
+  let sk = if fs.info.kind == "method": 6 else: 12
+  var name = fs.name
+  if fs.info.kind == "method" and fs.info.container.len > 0:
+    name = fs.info.container & "." & fs.name
   %*{
-    "name": fs.name,
-    "kind": 12,  # SymbolKind.Function
+    "name": name,
+    "kind": sk,
     "detail": fs.info.detail,
     "uri": fs.uri,
     "range": {
@@ -2043,25 +2094,30 @@ proc callHierarchyItem(fs: FuncSym): JsonNode =
     "selectionRange": {
       "start": {"line": fs.info.line, "character": fs.info.col},
       "end": {"line": fs.info.line, "character": fs.info.col + nameLen}
-    }
+    },
+    "data": fs.name  # bare name for graph matching
   }
 
 proc lookupFuncSym(name, uri: string): FuncSym =
-  result = FuncSym(name: name, uri: uri)
+  ## Resolve by bare name (Area) or qualified display (Rectangle.Area).
+  var bare = name
+  let dot = name.rfind('.')
+  if dot >= 0:
+    bare = name[dot + 1 .. ^1]
+  result = FuncSym(name: bare, uri: uri)
   if documents.hasKey(uri):
     let doc = documents[uri]
     ensureAnalyzed(doc)
-    if doc.symbols.hasKey(name) and doc.symbols[name].kind == "function":
-      result.info = doc.symbols[name]
+    if doc.symbols.hasKey(bare) and isCallableKind(doc.symbols[bare].kind):
+      result.info = doc.symbols[bare]
       return
-  if workspaceSymbols.hasKey(name) and workspaceSymbols[name].info.kind == "function":
-    result.uri = workspaceSymbols[name].uri
-    result.info = workspaceSymbols[name].info
+  if workspaceSymbols.hasKey(bare) and isCallableKind(workspaceSymbols[bare].info.kind):
+    result.uri = workspaceSymbols[bare].uri
+    result.info = workspaceSymbols[bare].info
     return
-  # Fallback from allKnownFuncs
   let all = allKnownFuncs()
-  if all.hasKey(name):
-    return all[name]
+  if all.hasKey(bare):
+    return all[bare]
 
 proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   let uri = paramsNode["textDocument"]["uri"].getStr()
@@ -2077,17 +2133,17 @@ proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: Js
   if word.len == 0:
     sendResponse(stream, id, %*[])
     return
-  # Prefer function symbol under cursor
-  if doc.symbols.hasKey(word) and doc.symbols[word].kind == "function":
+  # Prefer function/method symbol under cursor
+  if doc.symbols.hasKey(word) and isCallableKind(doc.symbols[word].kind):
     let fs = FuncSym(name: word, uri: uri, info: doc.symbols[word])
     sendResponse(stream, id, %*[callHierarchyItem(fs)])
     return
-  if workspaceSymbols.hasKey(word) and workspaceSymbols[word].info.kind == "function":
+  if workspaceSymbols.hasKey(word) and isCallableKind(workspaceSymbols[word].info.kind):
     let ws = workspaceSymbols[word]
     let fs = FuncSym(name: word, uri: ws.uri, info: ws.info)
     sendResponse(stream, id, %*[callHierarchyItem(fs)])
     return
-  # Allow prepare on a call site: Foo( → hierarchy for Foo
+  # Call site: Foo( or .Method(
   let lines = doc.content.split("\n")
   if lineNum < lines.len:
     let l = lines[lineNum]
@@ -2105,13 +2161,24 @@ proc handlePrepareCallHierarchy(stream: FileStream, id: JsonNode, paramsNode: Js
         return
   sendResponse(stream, id, %*[])
 
+proc bareCallName(itemName: string): string =
+  ## "Rectangle.Area" → "Area"; "Add" → "Add"
+  let dot = itemName.rfind('.')
+  if dot >= 0: return itemName[dot + 1 .. ^1]
+  # Prefer data field if present (from our CallHierarchyItem)
+  result = itemName
+
 proc handleIncomingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
-  ## Who calls this function?
+  ## Who calls this function/method?
   if not paramsNode.hasKey("item"):
     sendResponse(stream, id, %*[])
     return
   let item = paramsNode["item"]
-  let name = item["name"].getStr()
+  var name = item["name"].getStr()
+  if item.hasKey("data") and item["data"].kind == JString:
+    name = item["data"].getStr()
+  else:
+    name = bareCallName(name)
   let sites = collectAllCallSites()
   # Group by caller
   var groups = initTable[string, tuple[fs: FuncSym, ranges: seq[tuple[line, col, len: int]]]]()
@@ -2139,12 +2206,16 @@ proc handleIncomingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode)
   sendResponse(stream, id, arr)
 
 proc handleOutgoingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
-  ## What does this function call?
+  ## What does this function/method call?
   if not paramsNode.hasKey("item"):
     sendResponse(stream, id, %*[])
     return
   let item = paramsNode["item"]
-  let name = item["name"].getStr()
+  var name = item["name"].getStr()
+  if item.hasKey("data") and item["data"].kind == JString:
+    name = item["data"].getStr()
+  else:
+    name = bareCallName(name)
   let uri = if item.hasKey("uri"): item["uri"].getStr() else: ""
   let sites = collectAllCallSites()
   # Group by callee among sites whose caller is `name`
@@ -2154,10 +2225,8 @@ proc handleOutgoingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode)
     if uri.len > 0 and s.callerUri != uri: continue
     let key = s.callee
     if not groups.hasKey(key):
-      let fs = lookupFuncSym(s.callee, s.callerUri)
-      # Prefer known func uri
       let all = allKnownFuncs()
-      let fs2 = if all.hasKey(s.callee): all[s.callee] else: fs
+      let fs2 = if all.hasKey(s.callee): all[s.callee] else: lookupFuncSym(s.callee, s.callerUri)
       groups[key] = (fs2, @[])
     groups[key].ranges.add((s.line, s.col, s.callee.len))
 
@@ -2201,7 +2270,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "workspaceSymbolProvider": true,
         "callHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.8.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.9.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
