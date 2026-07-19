@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — Nexus keep-alive, **header Array ownership fix**, LSP 0.6 workspace/symbol, selfhost `-g`  
+> **Текущо:** v0.5.x — **field-move skip Drop**, Nexus keep-alive, LSP 0.6, selfhost `-g`  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---

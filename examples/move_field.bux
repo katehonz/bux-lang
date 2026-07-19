@@ -1,0 +1,29 @@
+// Field-move ownership: Array moved into a struct must not be auto-dropped.
+import Std::Io::{PrintLine};
+import Std::Array::{Array, Array_New, Array_Push, Array_Len, Array_Get};
+import Std::String::{String_FromInt, String_Concat};
+import Std::Test::{Test_AssertTrue, Test_Pass};
+
+struct Box {
+    items: Array<int>;
+}
+
+func MakeBox() -> Box {
+    var items: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&items, 10);
+    Array_Push<int>(&items, 20);
+    // Move `items` into the field — compiler skips Drop of `items`
+    let b: Box = Box { items: items };
+    return b;
+}
+
+func Main() -> int {
+    let b: Box = MakeBox();
+    Test_AssertTrue(Array_Len<int>(&b.items) == 2);
+    Test_AssertTrue(Array_Get<int>(&b.items, 0) == 10);
+    Test_AssertTrue(Array_Get<int>(&b.items, 1) == 20);
+    PrintLine(String_Concat("sum=", String_FromInt(
+    (Array_Get<int>(&b.items, 0) + Array_Get<int>(&b.items, 1)) as int64)));
+    Test_Pass("move_field");
+    return 0;
+}

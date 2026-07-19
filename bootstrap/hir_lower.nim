@@ -35,6 +35,9 @@ type
     patternBoundNames*: HashSet[string]
     ## Active renames: source pattern name → unique C local (for shadowing)
     patternRenames*: Table[string, string]
+    ## Locals whose value was moved into another owner (struct field, let, return).
+    ## Auto-Drop is skipped for these (session 37 — field-move ownership).
+    movedOutLocals*: HashSet[string]
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -57,15 +60,53 @@ proc ensureDropMono(ctx: var LowerCtx, dropBase: string, freeBase: string, typeA
     discard ctx.generateMethodInstance(freeBase, typeArgs)
   discard ctx.generateMethodInstance(dropBase, typeArgs)
 
-proc dropTargetsVar(n: HirNode, name: string): bool =
-  ## True if n is Type_Drop(&name) / collection Drop of that local.
-  if n == nil or name.len == 0: return false
+proc dropTargetName(n: HirNode): string =
+  ## Local name targeted by Type_Drop(&name), or "".
+  if n == nil: return ""
   if n.kind == hCall and n.callArgs.len >= 1:
     let a = n.callArgs[0]
     if a != nil and a.kind == hUnary and a.unaryOp == tkAmp and
        a.unaryOperand != nil and a.unaryOperand.kind == hVar:
-      return a.unaryOperand.varName == name
-  return false
+      return a.unaryOperand.varName
+  return ""
+
+proc dropTargetsVar(n: HirNode, name: string): bool =
+  ## True if n is Type_Drop(&name) / collection Drop of that local.
+  name.len > 0 and dropTargetName(n) == name
+
+proc hasPendingDrop(ctx: LowerCtx, name: string): bool =
+  if name.len == 0: return false
+  for d in ctx.deferStmts:
+    if dropTargetsVar(d, name): return true
+  false
+
+proc markMovedOutLocal(ctx: var LowerCtx, name: string) =
+  ## Record that `name` no longer owns its heap (moved into another value).
+  if name.len > 0 and ctx.hasPendingDrop(name):
+    ctx.movedOutLocals.incl(name)
+
+proc markMovedOutFromAst(ctx: var LowerCtx, expr: Expr) =
+  ## Mark droppable locals used by-value in ownership-taking contexts.
+  if expr == nil: return
+  case expr.kind
+  of ekIdent:
+    ctx.markMovedOutLocal(expr.exprIdent)
+  of ekStructInit:
+    for f in expr.exprStructInitFields:
+      ctx.markMovedOutFromAst(f.value)
+  of ekTuple:
+    for e in expr.exprTupleElements:
+      ctx.markMovedOutFromAst(e)
+  else:
+    discard
+
+proc shouldSkipDrop(ctx: LowerCtx, dropNode: HirNode, skipName: string): bool =
+  ## Skip Drop for explicit skipName or any moved-out local.
+  let target = dropTargetName(dropNode)
+  if target.len == 0: return false
+  if skipName.len > 0 and target == skipName: return true
+  if target in ctx.movedOutLocals: return true
+  false
 
 proc autoDropFuncName(ctx: var LowerCtx, ty: Type): string =
   ## Return `Type_Drop` if this type should be auto-dropped, else "".
@@ -474,6 +515,7 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.seenFatTypes = @[]
   result.patternBoundNames = initHashSet[string]()
   result.patternRenames = initTable[string, string]()
+  result.movedOutLocals = initHashSet[string]()
 
 proc sanitizeFatPart(s: string): string =
   result = s.replace("const char*", "cstr").replace("unsigned int", "uint")
@@ -1420,6 +1462,8 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                    typ: makeVoid(), loc: loc)
 
   of ekStructInit:
+    # Field values are taken by value → move ownership out of droppable locals
+    ctx.markMovedOutFromAst(expr)
     var structName = expr.exprStructInitName
     if expr.exprStructInitTypeArgs.len > 0:
       var suffix = ""
@@ -1787,6 +1831,9 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     if initHir != nil:
       let store = hirStore(varNode, initHir, loc)
       stmts.add(store)
+    # Move: `let a = b` takes ownership of droppable local `b`
+    if stmt.stmtLetInit != nil:
+      ctx.markMovedOutFromAst(stmt.stmtLetInit)
     # Auto-Drop: @[Drop] types and Array/Map/etc. with TypeName_Drop
     let dropName = ctx.autoDropFuncName(allocaType)
     if dropName.len > 0:
@@ -1798,6 +1845,9 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     return hirBlock(stmts, nil, makeVoid(), loc)
 
   of skReturn:
+    # Mark moves before lowering so struct-field moves are recorded
+    if stmt.stmtReturnValue != nil:
+      ctx.markMovedOutFromAst(stmt.stmtReturnValue)
     let value = if stmt.stmtReturnValue != nil: ctx.lowerExpr(stmt.stmtReturnValue) else: nil
     var stmts = ctx.pendingStmts
     ctx.pendingStmts = @[]
@@ -1805,6 +1855,7 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     var skipDrop = ""
     if value != nil and value.kind == hVar:
       skipDrop = value.varName
+      ctx.markMovedOutLocal(value.varName)
     # Materialize the return value BEFORE drops so `return a.id` is not
     # use-after-drop (drops are separate stmts; LIR evaluates return expr last).
     var retVal = value
@@ -1817,7 +1868,7 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
         retVal = hirVar(tmp, retTy, loc)
     # Add defers in reverse order (LIFO); snapshot full stack for every return path
     for i in countdown(ctx.deferStmts.len - 1, 0):
-      if not dropTargetsVar(ctx.deferStmts[i], skipDrop):
+      if not ctx.shouldSkipDrop(ctx.deferStmts[i], skipDrop):
         stmts.add(ctx.deferStmts[i])
     stmts.add(hirReturn(retVal, loc))
     return hirBlock(stmts, nil, makeVoid(), loc)
@@ -2116,13 +2167,14 @@ proc lowerBlock(ctx: var LowerCtx, blk: Block, asExpr = false): HirNode =
     stmts[^1] = hirBlock(last.blockStmts, nil, makeVoid(), last.loc)
     expr = last.blockExpr
   # Scope exit: Drop locals introduced in this block (not outer ones).
-  # Skip Drop for a local that is the block result (move into expr / caller).
+  # Skip Drop for block result and any moved-out locals (field / let / return move).
   var skipDrop = ""
   if expr != nil and expr.kind == hVar:
     skipDrop = expr.varName
+    ctx.markMovedOutLocal(expr.varName)
   if ctx.deferStmts.len > deferBase:
     for i in countdown(ctx.deferStmts.len - 1, deferBase):
-      if not dropTargetsVar(ctx.deferStmts[i], skipDrop):
+      if not ctx.shouldSkipDrop(ctx.deferStmts[i], skipDrop):
         stmts.add(ctx.deferStmts[i])
     ctx.deferStmts.setLen(deferBase)
   let typ = if expr != nil and expr.typ != nil: expr.typ else: makeVoid()
@@ -2174,7 +2226,9 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   ctx.patternBoundNames = initHashSet[string]()
   ctx.patternRenames = initTable[string, string]()
   let oldDefers = ctx.deferStmts
+  let oldMovedOut = ctx.movedOutLocals
   ctx.deferStmts = @[]
+  ctx.movedOutLocals = initHashSet[string]()
   # Add parameters to varTypeExprs after clearing so they are visible in the body.
   for p in funcParams:
     if p.ptype != nil:
@@ -2194,8 +2248,10 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
         hasReturn = true
     if not hasReturn:
       for i in countdown(ctx.deferStmts.len - 1, 0):
-        body.blockStmts.add(ctx.deferStmts[i])
+        if not ctx.shouldSkipDrop(ctx.deferStmts[i], ""):
+          body.blockStmts.add(ctx.deferStmts[i])
     ctx.deferStmts = oldDefers
+    ctx.movedOutLocals = oldMovedOut
   
   ctx.currentFuncDecl = oldFuncDecl
   ctx.currentFuncRetType = oldFuncRetType

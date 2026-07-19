@@ -4,8 +4,9 @@ module Server {
     import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
     import Std::String::{String_Len, String_StartsWith};
     import Std::Channel::{Channel, Channel_New, Channel_Send, Channel_Recv};
+    import Std::Array::{Array_Drop};
     import Config::{ServerConfig};
-    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse, Request_WantsKeepAlive};
+    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse, Request_WantsKeepAlive, HeaderEntry};
     import Errors::{ParseResult};
     import Parser::{ParseRequest};
     import Router::{Router, Router_Dispatch};
@@ -95,6 +96,8 @@ module Server {
                 }
                 let resp: HttpResponse = Router_Dispatch(router, req);
                 Net_Send(fd, BuildResponse(resp, keepAlive));
+                // Free header buffer (moved into req at parse; no Drop on nested fields)
+                Array_Drop<HeaderEntry>(&req.headers);
             } else {
                 let resp: HttpResponse = Http_NewResponse(400, "text/plain; charset=utf-8", "Bad Request");
                 Net_Send(fd, BuildResponse(resp, false));

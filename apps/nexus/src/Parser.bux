@@ -100,8 +100,8 @@ module Parser {
 
         // Find header/body boundary
         let boundary: String = bux_strstr(raw, "\r\n\r\n");
-        // Only one allocation path — avoid Array_New then overwrite (leak) and
-        // suppress auto-drop after moving into HttpRequest (use-after-free).
+        // Single assignment path (no Array_New then overwrite). Field-move of
+        // `headers` into HttpRequest skips auto-Drop (compiler movedOutLocals).
         var headers: Array<HeaderEntry>;
         var body: String = "";
         if String_Len(boundary) > 0 {
@@ -116,7 +116,7 @@ module Parser {
         }
 
         if String_Eq(path, "") {
-            // auto-drop of `headers` runs on return
+            // auto-drop of `headers` runs on error return
             return ParseResult_NewErr(HttpError { tag: HttpError_BadRequest });
         }
 
@@ -127,11 +127,6 @@ module Parser {
             body: body,
             headers: headers,
         };
-        // Ownership transferred into req — zero local shell so auto-drop is a no-op.
-        // (Compiler does not yet treat field-move as a move-out of the local.)
-        headers.data = null as *HeaderEntry;
-        headers.len = 0;
-        headers.cap = 0;
         return ParseResult_NewOk(req);
     }
 
