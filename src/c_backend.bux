@@ -2,6 +2,7 @@
 // Generates C code from the HIR.
 module CBackend {
 
+    extern func bux_getenv(name: String) -> String;
 
     // ---------------------------------------------------------------------------
     // Type → C type name
@@ -77,6 +78,79 @@ module CBackend {
         movedName7: String,
         tmpCounter: int,
         currentRetType: String,
+        // #line debug maps (E.4 selfhost parity)
+        lastDebugLine: int,
+        emitDebugLines: bool,
+        currentFile: String,
+    }
+
+    /// Normalize monomorphized type spellings for C (Array<int> → Array_int).
+    func CBE_NormalizeTypeName(name: String) -> String {
+        if String_Eq(name, "") { return name; }
+        if String_StartsWith(name, "Array<") && String_EndsWith(name, ">") {
+            let n: uint = String_Len(name);
+            // "Array<" + inner + ">"
+            let inner: String = String_Slice(name, 6, n - 7);
+            return String_Concat("Array_", inner);
+        }
+        if String_StartsWith(name, "Map<") && String_EndsWith(name, ">") {
+            // Map<int,String> → Map_int_String (best-effort)
+            let n: uint = String_Len(name);
+            let inner: String = String_Slice(name, 4, n - 5);
+            return String_Concat("Map_", String_ReplaceAll(inner, ",", "_"));
+        }
+        if String_StartsWith(name, "Set<") && String_EndsWith(name, ">") {
+            let n: uint = String_Len(name);
+            let inner: String = String_Slice(name, 4, n - 5);
+            return String_Concat("Set_", inner);
+        }
+        if String_StartsWith(name, "Channel<") && String_EndsWith(name, ">") {
+            let n: uint = String_Len(name);
+            let inner: String = String_Slice(name, 8, n - 9);
+            return String_Concat("Channel_", inner);
+        }
+        return name;
+    }
+
+    /// Mark droppable locals moved by-value (struct fields / nested).
+    func CBE_MarkMovedFromNode(cbe: *CEmitter, node: *HirNode) {
+        if node == null as *HirNode { return; }
+        if node.kind == hVar {
+            CBE_AddMoved(cbe, node.strValue);
+            return;
+        }
+        if node.kind == hStructInit {
+            var field: *HirNode = node.child1;
+            while field != null as *HirNode {
+                CBE_MarkMovedFromNode(cbe, field.child1);
+                field = field.child3;
+            }
+            return;
+        }
+        if node.kind == hTupleInit {
+            // child1/child2 + linked extras if any
+            CBE_MarkMovedFromNode(cbe, node.child1);
+            CBE_MarkMovedFromNode(cbe, node.child2);
+            return;
+        }
+    }
+
+    func CBE_EmitDebugLine(cbe: *CEmitter, node: *HirNode) {
+        if !cbe.emitDebugLines { return; }
+        if node == null as *HirNode { return; }
+        if node.line == 0 { return; }
+        let ln: int = node.line as int;
+        if ln == cbe.lastDebugLine { return; }
+        cbe.lastDebugLine = ln;
+        // #line must start at column 0
+        StringBuilder_Append(&cbe.sb, "#line ");
+        StringBuilder_AppendInt(&cbe.sb, ln as int64);
+        if !String_Eq(cbe.currentFile, "") {
+            StringBuilder_Append(&cbe.sb, " \"");
+            StringBuilder_Append(&cbe.sb, cbe.currentFile);
+            StringBuilder_Append(&cbe.sb, "\"");
+        }
+        StringBuilder_Append(&cbe.sb, "\n");
     }
 
     func CBE_PushDefer(cbe: *CEmitter, node: *HirNode) {
@@ -406,9 +480,10 @@ module CBackend {
         // Return — evaluate value first, then drop live locals, then return.
         // (Emitting Drop before the value used to use-after-drop on `return a.id`.)
         if kind == hReturn {
-            // Track moved variables via return (skip auto-drop of moved-out locals)
-            if node.child1 != null as *HirNode && node.child1.kind == hVar {
-                CBE_AddMoved(cbe, node.child1.strValue);
+            CBE_EmitDebugLine(cbe, node);
+            // Track moved variables via return / field-move into returned struct
+            if node.child1 != null as *HirNode {
+                CBE_MarkMovedFromNode(cbe, node.child1);
             }
             if node.child1 != null as *HirNode && cbe.deferCount > 0 {
                 // Materialize into a temp so Drop cannot clobber the returned value.
@@ -762,6 +837,8 @@ module CBackend {
 
         // Struct init: ((TypeName){.field = value, ...})
         if kind == hStructInit {
+            // Field values taken by value → skip auto-Drop of those locals
+            CBE_MarkMovedFromNode(cbe, node);
             StringBuilder_Append(&cbe.sb, "((");
             StringBuilder_Append(&cbe.sb, node.strValue);
             StringBuilder_Append(&cbe.sb, "){");
@@ -792,6 +869,7 @@ module CBackend {
                     child = child.child3;
                     continue;
                 }
+                CBE_EmitDebugLine(cbe, child);
                 // Indent
                 var sp: int = 0;
                 while sp < cbe.indent {
@@ -1158,21 +1236,22 @@ module CBackend {
     // ---------------------------------------------------------------------------
 
     func CBE_IsGenericTypeName(name: String) -> bool {
-        if String_Eq(name, "T") || String_Eq(name, "K") || String_Eq(name, "V") { return true; }
-        if String_Eq(name, "T*") || String_Eq(name, "K*") || String_Eq(name, "V*") { return true; }
-        // Any type name containing '<' is a generic instantiation or parameter
-        if String_Contains(name, "<") { return true; }
-        // Generic container structs and their pointer variants
-        if String_Eq(name, "Array") || String_Eq(name, "Array*") { return true; }
-        if String_Eq(name, "Channel") || String_Eq(name, "Channel*") { return true; }
-        if String_Eq(name, "Iter") || String_Eq(name, "Iter*") { return true; }
-        if String_Eq(name, "Set") || String_Eq(name, "Set*") { return true; }
-        if String_Eq(name, "SetEntry") || String_Eq(name, "SetEntry*") { return true; }
-        if String_Eq(name, "Map") || String_Eq(name, "Map*") { return true; }
-        if String_Eq(name, "MapEntry") || String_Eq(name, "MapEntry*") { return true; }
-        if String_Eq(name, "StringMap") || String_Eq(name, "StringMap*") { return true; }
-        if String_Eq(name, "StringMapEntry") || String_Eq(name, "StringMapEntry*") { return true; }
-        if String_Eq(name, "Slice") || String_Eq(name, "Slice*") { return true; }
+        let n: String = CBE_NormalizeTypeName(name);
+        if String_Eq(n, "T") || String_Eq(n, "K") || String_Eq(n, "V") { return true; }
+        if String_Eq(n, "T*") || String_Eq(n, "K*") || String_Eq(n, "V*") { return true; }
+        // Bare generic containers (not monomorphized Array_int etc.)
+        if String_Eq(n, "Array") || String_Eq(n, "Array*") { return true; }
+        if String_Eq(n, "Channel") || String_Eq(n, "Channel*") { return true; }
+        if String_Eq(n, "Iter") || String_Eq(n, "Iter*") { return true; }
+        if String_Eq(n, "Set") || String_Eq(n, "Set*") { return true; }
+        if String_Eq(n, "SetEntry") || String_Eq(n, "SetEntry*") { return true; }
+        if String_Eq(n, "Map") || String_Eq(n, "Map*") { return true; }
+        if String_Eq(n, "MapEntry") || String_Eq(n, "MapEntry*") { return true; }
+        if String_Eq(n, "StringMap") || String_Eq(n, "StringMap*") { return true; }
+        if String_Eq(n, "StringMapEntry") || String_Eq(n, "StringMapEntry*") { return true; }
+        if String_Eq(n, "Slice") || String_Eq(n, "Slice*") { return true; }
+        // Remaining angle-bracket forms (unresolved generics)
+        if String_Contains(n, "<") { return true; }
         return false;
     }
 
@@ -1234,7 +1313,7 @@ module CBackend {
     func CBE_StructHasValueStructField(st: *HirStruct) -> bool {
         var fi: int = 0;
         while fi < st.fieldCount {
-            let ft: String = st.fields[fi].typeName;
+            let ft: String = CBE_NormalizeTypeName(st.fields[fi].typeName);
             if !CBE_IsPrimitiveTypeName(ft) && !String_EndsWith(ft, "*") {
                 return true;
             }
@@ -1251,7 +1330,7 @@ module CBackend {
         var fi: int = 0;
         while fi < st.fieldCount {
             StringBuilder_Append(&cbe.sb, "    ");
-            var ft: String = st.fields[fi].typeName;
+            var ft: String = CBE_NormalizeTypeName(st.fields[fi].typeName);
             if String_Eq(ft, "int") || String_Eq(ft, "") {
                 StringBuilder_Append(&cbe.sb, "int");
             } else if String_Eq(ft, "String") {
@@ -1325,6 +1404,19 @@ module CBackend {
         cbe.deferCount = 0;
         cbe.movedCount = 0;
         cbe.tmpCounter = 0;
+        cbe.lastDebugLine = 0;
+        cbe.emitDebugLines = true;
+        cbe.currentFile = "";
+        // Optional: BUX_DEBUG_FILE sets the #line path for gdb (selfhost has no multi-file loc yet)
+        let dbgFile: String = bux_getenv("BUX_DEBUG_FILE");
+        if dbgFile != null as String && !String_Eq(dbgFile, "") {
+            cbe.currentFile = dbgFile;
+        }
+        // BUX_NO_LINE=1 disables #line maps
+        let noLine: String = bux_getenv("BUX_NO_LINE");
+        if noLine != null as String && !String_Eq(noLine, "") {
+            cbe.emitDebugLines = false;
+        }
 
         // Header
         StringBuilder_Append(&cbe.sb, "// Generated by Bux C Backend v2\n");

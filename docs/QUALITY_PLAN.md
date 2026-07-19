@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — **field-move skip Drop**, Nexus keep-alive, LSP 0.6, selfhost `-g`  
+> **Текущо:** v0.5.x — field-move Drop (bootstrap+**selfhost**), selfhost **#line**, Nexus KA, LSP 0.6  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -14,7 +14,7 @@
 | Sema / generics | Monomorphization, trait bounds basic | ★★★★☆ |
 | HIR → C | Tuples + fat `func` ABI в bootstrap **и** selfhost | ★★★★☆ |
 | Selfhost (`src/`) | ~12k LOC, binary-identical loop, closures+tuples | ★★★★★ |
-| Gradual ownership | `@[Checked]`, `&`/`&mut`, move, Drop, **lifetime elision** | ★★★★☆ |
+| Gradual ownership | `@[Checked]`, move, Drop, elision, **field-move skip Drop** | ★★★★★ |
 | Concurrency | M:N tasks + channels + async | ★★★★☆ |
 | Stdlib | Array/Map/Set/String/Iter HOF разширени | ★★★★☆ |
 | Tooling | LSP 0.5 hover/def/outline/**refs/rename** + fmt/test/doc | ★★★★★ |
@@ -594,9 +594,25 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 37 (compiler: field-move skip auto-Drop)
+
+1. **Root cause (formal):** auto-Drop of locals that were **moved by value** into
+   a struct field / let / return still ran → UAF (Nexus `headers` in `HttpRequest`).
+2. **`bootstrap/hir_lower.nim`:**
+   - `movedOutLocals: HashSet[string]`
+   - `markMovedOutFromAst` on `ekStructInit` fields, `let` init, `return` value
+   - `shouldSkipDrop` at return / block exit / function tail
+3. **Nexus:** removed zeroing workaround; error path still Drops; success path
+   transfers ownership; `HandleConnection` Drops `req.headers` after response
+4. **Example:** `examples/move_field.bux` (Array into `Box { items }`)
+5. Verified: move_field PASS; ParseRequest C has Drop only on error path;
+   `bench-nexus` ~88k RPS; drop_early_return still 5 drops
+
+---
+
 ## Следващи стъпки
 
-1. Compiler: skip Drop when local is moved into a struct field / return payload
-2. Selfhost `#line` maps (parity with bootstrap LIR backend)
+1. Selfhost `#line` maps (parity with bootstrap LIR backend)
+2. Selfhost parity for field-move skip Drop (if CBE path differs)
 3. Deeper rename (type members / qualified paths)
 4. LSP call hierarchy (optional)
