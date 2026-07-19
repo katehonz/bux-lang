@@ -191,6 +191,9 @@ test-lsp: lsp
 	@echo "==> LSP workspace import index smoke"
 	@chmod +x tools/smoke_lsp_workspace_imports.sh
 	@tools/smoke_lsp_workspace_imports.sh
+	@echo "==> LSP type hierarchy smoke"
+	@chmod +x tools/smoke_lsp_type_hierarchy.sh
+	@tools/smoke_lsp_type_hierarchy.sh
 
 .PHONY: test-registry
 test-registry: build

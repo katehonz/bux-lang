@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — **CI `make test`**, selfhost fixed-point, LSP 0.14  
+> **Текущо:** v0.5.x — **LSP 0.15 type hierarchy**, CI `make test`, fixed-point  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -838,9 +838,21 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 54 (LSP 0.15 type hierarchy)
+
+1. **`typeHierarchyProvider`** + prepare / supertypes / subtypes
+2. **prepare** on `struct` / `enum` / `interface` / `type` → TypeHierarchyItem
+3. **subtypes** of interface → types with `extend T for I` (Circle, Square)
+4. **supertypes** of type → interfaces it implements
+5. Uses open-doc `impls` + `workspaceImpls` + symbol resolve
+6. Smoke: `tools/smoke_lsp_type_hierarchy.sh`
+7. Version **bux-lsp 0.15.0**; `make test-lsp`
+
+---
+
 ## Следващи стъпки
 
-1. LSP type hierarchy / prepareTypeHierarchy (optional)
-2. Macro / quote hygiene using Expr.sourceFile grafts
-3. Parenthesize binary ops in CBE for full C precedence safety
-4. CI matrix (macOS) or split jobs for faster PR feedback
+1. Macro / quote hygiene using Expr.sourceFile grafts
+2. Parenthesize binary ops in CBE for full C precedence safety
+3. CI matrix (macOS) or split jobs for faster PR feedback
+4. Type hierarchy for multi-file closed docs without open (workspace type index)

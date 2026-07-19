@@ -16,6 +16,7 @@
 # v0.12.0: module-path segment rename (import Std::Io / Std::Io::{…}).
 # v0.13.0: textDocument/implementation (interface → types / methods).
 # v0.14.0: workspace-wide import path index (no open-doc required).
+# v0.15.0: type hierarchy (prepare / supertypes / subtypes via extend for).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -2912,6 +2913,203 @@ proc handleOutgoingCalls(stream: FileStream, id: JsonNode, paramsNode: JsonNode)
   sendResponse(stream, id, arr)
 
 # ---------------------------------------------------------------------------
+# Type hierarchy (v0.15) — interface ↔ implementors via `extend T for I`
+# ---------------------------------------------------------------------------
+
+proc isTypeHierarchyKind(kind: string): bool =
+  kind in ["struct", "enum", "union", "interface", "type"]
+
+proc typeHierarchySymbolKind(kind: string): int =
+  ## LSP SymbolKind
+  case kind
+  of "interface": 11
+  of "struct", "union": 23  # Struct
+  of "enum": 10
+  of "class": 5
+  else: 5  # Class / type alias
+
+proc resolveTypeSymbol(name: string, preferUri: string = ""): tuple[ok: bool, uri: string, info: SymbolInfo] =
+  result.ok = false
+  if preferUri.len > 0 and documents.hasKey(preferUri):
+    let doc = documents[preferUri]
+    ensureAnalyzed(doc)
+    if doc.symbols.hasKey(name) and isTypeHierarchyKind(doc.symbols[name].kind):
+      result.ok = true
+      result.uri = preferUri
+      result.info = doc.symbols[name]
+      return
+  if workspaceSymbols.hasKey(name) and isTypeHierarchyKind(workspaceSymbols[name].info.kind):
+    result.ok = true
+    result.uri = workspaceSymbols[name].uri
+    result.info = workspaceSymbols[name].info
+    return
+  for uri, doc in documents.pairs:
+    if uri == preferUri: continue
+    ensureAnalyzed(doc)
+    if doc.symbols.hasKey(name) and isTypeHierarchyKind(doc.symbols[name].kind):
+      result.ok = true
+      result.uri = uri
+      result.info = doc.symbols[name]
+      return
+
+proc typeHierarchyItem(uri: string, name: string, info: SymbolInfo): JsonNode =
+  let nlen = name.len
+  %*{
+    "name": name,
+    "kind": typeHierarchySymbolKind(info.kind),
+    "detail": info.detail,
+    "uri": uri,
+    "range": {
+      "start": {"line": info.line, "character": 0},
+      "end": {"line": info.line, "character": info.col + nlen}
+    },
+    "selectionRange": {
+      "start": {"line": info.line, "character": info.col},
+      "end": {"line": info.line, "character": info.col + nlen}
+    },
+    "data": name
+  }
+
+proc typeHierarchyItemSynthetic(uri: string, name: string, kind: string, line: int): JsonNode =
+  ## When we only know the type from `extend` relation, not a full SymbolInfo.
+  %*{
+    "name": name,
+    "kind": typeHierarchySymbolKind(kind),
+    "detail": kind & " " & name,
+    "uri": uri,
+    "range": {
+      "start": {"line": line, "character": 0},
+      "end": {"line": line, "character": max(1, name.len)}
+    },
+    "selectionRange": {
+      "start": {"line": line, "character": 0},
+      "end": {"line": line, "character": max(1, name.len)}
+    },
+    "data": name
+  }
+
+proc collectSubtypeItems(iface: string): seq[JsonNode] =
+  ## Types that `extend Type for iface`.
+  result = @[]
+  var seen = initHashSet[string]()
+  for uri, doc in documents.pairs:
+    ensureAnalyzed(doc)
+    for impl in doc.impls:
+      if impl.iface != iface: continue
+      let key = uri & "#" & impl.typeName
+      if seen.contains(key): continue
+      seen.incl(key)
+      let (ok, u, info) = resolveTypeSymbol(impl.typeName, uri)
+      if ok:
+        result.add(typeHierarchyItem(u, impl.typeName, info))
+      else:
+        result.add(typeHierarchyItemSynthetic(uri, impl.typeName, "struct", impl.line))
+  # workspaceImpls: "Iface.Method" → (uri, typeName, meth)
+  for wkey, impls in workspaceImpls.pairs:
+    if not wkey.startsWith(iface & "."): continue
+    for impl in impls:
+      let key = impl.uri & "#" & impl.typeName
+      if seen.contains(key): continue
+      seen.incl(key)
+      let (ok, u, info) = resolveTypeSymbol(impl.typeName, impl.uri)
+      if ok:
+        result.add(typeHierarchyItem(u, impl.typeName, info))
+      else:
+        result.add(typeHierarchyItemSynthetic(impl.uri, impl.typeName, "struct", 0))
+
+proc collectSupertypeItems(typeName: string): seq[JsonNode] =
+  ## Interfaces that `typeName` implements via `extend typeName for I`.
+  result = @[]
+  var seen = initHashSet[string]()
+  for uri, doc in documents.pairs:
+    ensureAnalyzed(doc)
+    for impl in doc.impls:
+      if impl.typeName != typeName: continue
+      if seen.contains(impl.iface): continue
+      seen.incl(impl.iface)
+      let (ok, u, info) = resolveTypeSymbol(impl.iface, uri)
+      if ok:
+        result.add(typeHierarchyItem(u, impl.iface, info))
+      else:
+        result.add(typeHierarchyItemSynthetic(uri, impl.iface, "interface", impl.line))
+  for wkey, impls in workspaceImpls.pairs:
+    for impl in impls:
+      if impl.typeName != typeName: continue
+      # keys are "Iface.Method"
+      let dot = wkey.find('.')
+      if dot < 0: continue
+      let iface = wkey[0 ..< dot]
+      if seen.contains(iface): continue
+      seen.incl(iface)
+      let (ok, u, info) = resolveTypeSymbol(iface, impl.uri)
+      if ok:
+        result.add(typeHierarchyItem(u, iface, info))
+      else:
+        result.add(typeHierarchyItemSynthetic(impl.uri, iface, "interface", 0))
+
+proc handlePrepareTypeHierarchy(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let position = paramsNode["position"]
+  let lineNum = position["line"].getInt()
+  let col = position["character"].getInt()
+  let doc = getDoc(uri)
+  if doc.content == "":
+    sendResponse(stream, id, %*[])
+    return
+  ensureAnalyzed(doc)
+  let word = findWordAt(doc.content, lineNum, col)
+  if word.len == 0:
+    sendResponse(stream, id, %*[])
+    return
+  # Prefer symbol under cursor that is a type / interface
+  if doc.symbols.hasKey(word) and isTypeHierarchyKind(doc.symbols[word].kind):
+    let info = doc.symbols[word]
+    # If cursor is on decl name, good; also allow any occurrence of type name
+    sendResponse(stream, id, %*[typeHierarchyItem(uri, word, info)])
+    return
+  let (ok, u, info) = resolveTypeSymbol(word, uri)
+  if ok:
+    sendResponse(stream, id, %*[typeHierarchyItem(u, word, info)])
+    return
+  sendResponse(stream, id, %*[])
+
+proc typeHierarchyItemName(item: JsonNode): string =
+  if item.hasKey("data") and item["data"].kind == JString:
+    let d = item["data"].getStr()
+    if d.len > 0: return d
+  if item.hasKey("name"):
+    return item["name"].getStr()
+  ""
+
+proc handleTypeHierarchySupertypes(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## Interfaces implemented by this type (`extend Type for Iface`).
+  if not paramsNode.hasKey("item"):
+    sendResponse(stream, id, %*[])
+    return
+  let name = typeHierarchyItemName(paramsNode["item"])
+  if name.len == 0:
+    sendResponse(stream, id, %*[])
+    return
+  var arr = newJArray()
+  for it in collectSupertypeItems(name):
+    arr.add(it)
+  sendResponse(stream, id, arr)
+
+proc handleTypeHierarchySubtypes(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## Implementors of an interface (`extend Type for Iface`).
+  if not paramsNode.hasKey("item"):
+    sendResponse(stream, id, %*[])
+    return
+  let name = typeHierarchyItemName(paramsNode["item"])
+  if name.len == 0:
+    sendResponse(stream, id, %*[])
+    return
+  var arr = newJArray()
+  for it in collectSubtypeItems(name):
+    arr.add(it)
+  sendResponse(stream, id, arr)
+
+# ---------------------------------------------------------------------------
 # Main message loop
 # ---------------------------------------------------------------------------
 
@@ -2936,9 +3134,10 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "renameProvider": {"prepareProvider": true},
         "workspaceSymbolProvider": true,
         "callHierarchyProvider": true,
-        "implementationProvider": true
+        "implementationProvider": true,
+        "typeHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.14.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.15.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -3040,6 +3239,15 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
 
   of "textDocument/implementation":
     handleImplementation(stream, id, paramsNode)
+
+  of "textDocument/prepareTypeHierarchy":
+    handlePrepareTypeHierarchy(stream, id, paramsNode)
+
+  of "typeHierarchy/supertypes":
+    handleTypeHierarchySupertypes(stream, id, paramsNode)
+
+  of "typeHierarchy/subtypes":
+    handleTypeHierarchySubtypes(stream, id, paramsNode)
 
   else:
     if id != nil:
