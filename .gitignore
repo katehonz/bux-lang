@@ -32,3 +32,4 @@ _test_*/
 
 # Log files
 *.log
+.nim_runtime/

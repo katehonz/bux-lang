@@ -1,0 +1,65 @@
+// Macro repetition $(…)* + fragment kinds expr/ident/tt (session 61)
+import Std::Io::{PrintLine};
+import Std::String::{String_FromInt};
+
+// Sum any number of int exprs
+// Template body is a single block (lets + $(…)* + result expr).
+macro! sum_n {
+    ( $($x:expr),* ) => {
+        var __sum_acc: int = 0;
+        $( __sum_acc = __sum_acc + $x; )*
+        __sum_acc
+    }
+}
+
+// Bind an identifier name and call it as a zero-arg func via expr wrap
+// (ident fragment must be a bare identifier at the call site)
+macro! call0 {
+    ( $f:ident ) => {
+        {
+            $f()
+        }
+    }
+}
+
+// tt is accepted like expr (token-tree MVP)
+macro! id_tt {
+    ( $t:tt ) => {
+        {
+            $t
+        }
+    }
+}
+
+func FortyTwo() -> int {
+    return 42;
+}
+
+func Main() -> int {
+    let a: int = sum_n!(1, 2, 3);
+    let b: int = sum_n!();
+    let c: int = call0!(FortyTwo);
+    let d: int = id_tt!(7);
+    PrintLine(String_FromInt(a));
+    PrintLine(String_FromInt(b));
+    PrintLine(String_FromInt(c));
+    PrintLine(String_FromInt(d));
+    if a != 6 {
+        PrintLine("FAIL sum_n 1+2+3");
+        return 1;
+    }
+    if b != 0 {
+        PrintLine("FAIL sum_n empty");
+        return 1;
+    }
+    if c != 42 {
+        PrintLine("FAIL call0 ident");
+        return 1;
+    }
+    if d != 7 {
+        PrintLine("FAIL id_tt");
+        return 1;
+    }
+    PrintLine("PASS macro_repeat");
+    return 0;
+}

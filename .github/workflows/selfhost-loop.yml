@@ -28,6 +28,10 @@ concurrency:
   group: selfhost-loop-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NIM_VERSION: "2.0.8"
+  NIM_INSTALL_DIR: ".nim_runtime"
+
 jobs:
   selfhost-loop:
     name: bootstrap determinism
@@ -37,11 +41,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache Nim toolchain
+        id: cache-nim
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NIM_INSTALL_DIR }}
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-v1
+
       - name: Install Nim
+        if: steps.cache-nim.outputs.cache-hit != 'true'
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: "2.0.x"
+          nim-version: ${{ env.NIM_VERSION }}
+          nim-install-directory: ${{ env.NIM_INSTALL_DIR }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PATH for cached Nim
+        if: steps.cache-nim.outputs.cache-hit == 'true'
+        run: |
+          echo "$PWD/${{ env.NIM_INSTALL_DIR }}/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Cache nimcache
+        uses: actions/cache@v4
+        with:
+          path: nimcache
+          key: ${{ runner.os }}-nimcache-loop-${{ hashFiles('bootstrap/**/*.nim', 'src/**/*.bux') }}-v1
+          restore-keys: |
+            ${{ runner.os }}-nimcache-loop-
+            ${{ runner.os }}-nimcache-build-
 
       - name: Install build deps
         run: |

@@ -4,6 +4,7 @@ import source_location
 import fmt
 import docgen
 import registry
+import macroexpand
 
 type
   ColorMode* = enum
@@ -653,6 +654,12 @@ proc cmdCheck*(args: seq[string], opts: GlobalOptions): int =
   if status != 0:
     return status
   let unifiedModule = mergeProject(pctx)
+  let macRes = expandMacros(unifiedModule)
+  if macRes.diagnostics.len > 0:
+    printError("macro expansion errors", useColor)
+    for d in macRes.diagnostics:
+      printDiagnostic("error", d.message, d.loc, useColor)
+    return 1
   let semaRes = analyze(unifiedModule)
   if semaRes.hasErrors:
     printError("type errors in project", useColor)
@@ -689,6 +696,7 @@ proc getDeclName(d: Decl): string =
   of dkInterface: d.declInterfaceName
   of dkConst: d.declConstName
   of dkTypeAlias: d.declAliasName
+  of dkMacro: d.declMacroName
   else: ""
 
 proc collectDepDecls(lock: Lockfile, root: string, opts: GlobalOptions): seq[Decl] =
@@ -763,6 +771,14 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
 
   let unifiedModule = mergeProject(pctx)
 
+  # Phase 2b: expand declarative macro! / quote! before type checking
+  let macRes = expandMacros(unifiedModule)
+  if macRes.diagnostics.len > 0:
+    printError("macro expansion errors", useColor)
+    for d in macRes.diagnostics:
+      printDiagnostic("error", d.message, d.loc, useColor)
+    return 1
+
   # Phase 3: Sema + HIR + C codegen on unified module
   let (semaRes, semaCtx) = analyzeFull(unifiedModule)
   if semaRes.hasErrors:
@@ -809,7 +825,9 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let optFlags = if opts.release: "-O2 -DNDEBUG" else: "-O0 -g"
   let extraCflags = getEnv("BUX_CFLAGS")
   let cflags = if extraCflags.len > 0: optFlags & " " & extraCflags else: optFlags
-  let ccCmd = &"cc {cflags} -pthread -Wl,--build-id=none -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm -lcrypto 2>&1"
+  # --build-id is GNU ld only (breaks Apple ld). Reproducible selfhost-loop uses Linux CI.
+  let ldStable = when defined(linux): " -Wl,--build-id=none" else: ""
+  let ccCmd = &"cc {cflags} -pthread{ldStable} -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm -lcrypto 2>&1"
   if opts.verbose:
     printInfo(&"running: {ccCmd}", useColor)
   let (output, exitCode) = execCmdEx(ccCmd)

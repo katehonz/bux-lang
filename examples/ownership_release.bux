@@ -1,0 +1,58 @@
+// C.4 — @[Release] zero-cost path vs @[Checked]
+// Default / Release: free; Checked: catches double-mut and dangling returns.
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+// Tier 1 — unchecked (default)
+func UncheckedInc(p: *int) {
+    *p = *p + 1;
+}
+
+// Tier 2 — borrow checked API surface
+@[Checked]
+func SafeInc(p: &mut int) {
+    *p = *p + 1;
+}
+
+@[Checked]
+func SafeGet(p: &int) -> int {
+    return *p;
+}
+
+// Tier 3 — explicit zero-cost hot path (Release wins over Checked)
+@[Checked]
+@[Release]
+func HotInc(p: &mut int) {
+    // Would be fine either way; attribute documents "no checker cost here"
+    *p = *p + 1;
+}
+
+@[Release]
+func HotDangle() -> &int {
+    // Allowed: Release disables dangling-return checks
+    var x: int = 99;
+    return &x;
+}
+
+func Main() -> int {
+    var n: int = 10;
+    UncheckedInc(&n);
+    Test_AssertEqInt(n, 11);
+
+    SafeInc(&n);
+    Test_AssertEqInt(n, 12);
+
+    HotInc(&n);
+    Test_AssertEqInt(n, 13);
+
+    let v: int = SafeGet(&n);
+    Test_AssertEqInt(v, 13);
+
+    // HotDangle is only used to prove Release compiles; do not dereference
+    discard HotDangle();
+
+    PrintInt(n);
+    PrintLine("");
+    Test_Pass("ownership_release");
+    return 0;
+}

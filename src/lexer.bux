@@ -282,6 +282,7 @@ module Lexer {
         if String_Eq(text, "async") { return tkAsync; }
         if String_Eq(text, "await") { return tkAwait; }
         if String_Eq(text, "spawn") { return tkSpawn; }
+        if String_Eq(text, "macro") { return tkMacro; }
         return tkIdent;
     }
 
@@ -664,6 +665,19 @@ module Lexer {
             if lexMatchStr(lex, "time") { lexEmitToken(lex, tkHashTime); return; }
             if lexMatchStr(lex, "module") { lexEmitToken(lex, tkHashModule); return; }
             lexEmitToken(lex, tkHash); return;
+        }
+
+        // Macro fragment $name, or bare $ for $(…)*
+        if c == 36 { // '$'
+            if Lex_IsIdentStart(lexPeek(lex, 0)) {
+                while !lexIsAtEnd(lex) && Lex_IsIdentChar(lexPeek(lex, 0)) {
+                    discard lexAdvance(lex);
+                }
+                lexEmitToken(lex, tkIdent);
+                return;
+            }
+            lexEmitToken(lex, tkDollar);
+            return;
         }
 
         lexEmitDiag(lex, "unexpected character");

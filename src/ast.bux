@@ -127,6 +127,7 @@ module Ast {
     const ekAwait: int = 25;
     const ekStringInterp: int = 26;
     const ekClosure: int = 27;
+    const ekMacroCall: int = 28;   // name!(args) — expanded before sema
 
     struct ExprList {
         expr: *Expr,
@@ -218,6 +219,7 @@ module Ast {
     const skDecl: int = 11;
     const skDefer: int = 12;
     const skSwitch: int = 13;
+    const skMacroRep: int = 14;   // $( stmts… )* in macro templates
 
     struct ElseIf {
         line: uint32;
@@ -265,6 +267,7 @@ module Ast {
     const dkTypeAlias: int = 9;
     const dkExternFunc: int = 10;
     const dkExternVar: int = 11;
+    const dkMacro: int = 12;       // macro! name { rules }; rules in childDecl1
 
     struct Param {
         line: uint32;

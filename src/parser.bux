@@ -27,6 +27,7 @@ module Parser {
         diagCount: int,
         diags: *ParserDiag,
         structInitAllowed: bool,
+        macroTemplateMode: bool,  // allows $(…)* in macro! bodies
     }
 
     struct ParserDiag {
@@ -1252,11 +1253,81 @@ module Parser {
                 continue;
             }
 
-            // ! (unwrap operator)
+            // ! — macro call name!(args) or unwrap
             if kind == tkBang {
                 discard parserAdvance(p);
                 let line: uint32 = parserCurToken(p).line;
                 let col: uint32 = parserCurToken(p).column;
+                if left.kind == ekIdent && parserCheck(p, tkLParen) {
+                    discard parserAdvance(p); // (
+                    let e: *Expr = parserMakeExpr(ekMacroCall, line, col);
+                    e.strValue = left.strValue;
+                    var argCount: int = 0;
+                    var firstArg: *ExprList = null as *ExprList;
+                    var lastArg: *ExprList = null as *ExprList;
+                    // Multi-rep groups: m!(a,b; c,d) — lengths encoded in genericCallee
+                    var groupLens: String = "";
+                    var curGroup: int = 0;
+                    var nGroups: int = 0;
+                    while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+                        while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                        if parserCheck(p, tkRParen) { break; }
+                        // `;` starts a new arg group
+                        if parserMatch(p, tkSemicolon) {
+                            if String_Eq(groupLens, "") {
+                                groupLens = String_FromInt(curGroup as int64);
+                            } else {
+                                groupLens = String_Concat(groupLens, String_Concat(";", String_FromInt(curGroup as int64)));
+                            }
+                            nGroups = nGroups + 1;
+                            curGroup = 0;
+                            while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                            continue;
+                        }
+                        let argExpr: *Expr = parserParseExpr(p);
+                        let argNode: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                        argNode.expr = argExpr;
+                        argNode.next = null as *ExprList;
+                        argNode.argName = "";
+                        if firstArg == null as *ExprList {
+                            firstArg = argNode;
+                            lastArg = argNode;
+                        } else {
+                            lastArg.next = argNode;
+                            lastArg = argNode;
+                        }
+                        argCount = argCount + 1;
+                        curGroup = curGroup + 1;
+                        while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                        if parserMatch(p, tkComma) {
+                            continue;
+                        }
+                        // allow `;` at loop top; otherwise end of args
+                        if !parserCheck(p, tkSemicolon) {
+                            break;
+                        }
+                    }
+                    // finalize last group
+                    if curGroup > 0 || nGroups == 0 {
+                        if String_Eq(groupLens, "") {
+                            groupLens = String_FromInt(curGroup as int64);
+                        } else {
+                            groupLens = String_Concat(groupLens, String_Concat(";", String_FromInt(curGroup as int64)));
+                        }
+                        nGroups = nGroups + 1;
+                    }
+                    // single group → empty genericCallee (flat match)
+                    if nGroups <= 1 {
+                        e.genericCallee = "";
+                    } else {
+                        e.genericCallee = groupLens;
+                    }
+                    e.callArgs = firstArg;
+                    e.callArgCount = argCount;
+                    discard parserExpect(p, tkRParen, "expected ')' to close macro arguments");
+                    left = e;
+                    continue;
+                }
                 let e: *Expr = parserMakeExpr(ekUnwrap, line, col);
                 e.child1 = left;
                 left = e;
@@ -1466,10 +1537,49 @@ module Parser {
     // ---------------------------------------------------------------------------
 
     func parserParseStmt(p: *Parser) -> *Stmt {
+        while parserCheck(p, tkNewLine) {
+            discard parserAdvance(p);
+        }
         let tok: LexToken = parserCurToken(p);
         let line: uint32 = tok.line;
         let col: uint32 = tok.column;
         let kind: int = tok.kind;
+
+        // Macro template: $( stmts… )*
+        if p.macroTemplateMode && kind == tkDollar && parserPeek(p, 1) == tkLParen {
+            discard parserAdvance(p); // $
+            discard parserAdvance(p); // (
+            let body: *Block = bux_alloc(sizeof(Block)) as *Block;
+            body.line = line;
+            body.column = col;
+            body.sourceFile = "";
+            body.stmtCount = 0;
+            body.firstStmt = null as *Stmt;
+            body.lastStmt = null as *Stmt;
+            while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+                while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                if parserCheck(p, tkRParen) { break; }
+                let inner: *Stmt = parserParseStmt(p);
+                if body.firstStmt == null as *Stmt {
+                    body.firstStmt = inner;
+                    body.lastStmt = inner;
+                } else {
+                    body.lastStmt.nextStmt = inner;
+                    body.lastStmt = inner;
+                }
+                body.stmtCount = body.stmtCount + 1;
+            }
+            discard parserExpect(p, tkRParen, "expected ')' to close macro repetition");
+            discard parserExpect(p, tkStar, "expected '*' after macro repetition");
+            parserMatch(p, tkSemicolon);
+            let s: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+            s.kind = skMacroRep;
+            s.line = line;
+            s.column = col;
+            s.refStmtBlock = body;
+            s.nextStmt = null as *Stmt;
+            return s;
+        }
 
         // let / var
         if kind == tkLet || kind == tkVar {
@@ -2197,6 +2307,178 @@ module Parser {
     }
 
     // ---------------------------------------------------------------------------
+    // macro! name { ($x:expr, …) => { template } … }
+    // ---------------------------------------------------------------------------
+
+    func parserSetMacroFragName(d: *Decl, idx: int, name: String) {
+        if idx == 0 { d.param0.name = name; }
+        else if idx == 1 { d.param1.name = name; }
+        else if idx == 2 { d.param2.name = name; }
+        else if idx == 3 { d.param3.name = name; }
+        else if idx == 4 { d.param4.name = name; }
+        else if idx == 5 { d.param5.name = name; }
+        else if idx == 6 { d.param6.name = name; }
+        else if idx == 7 { d.param7.name = name; }
+        else if idx == 8 { d.param8.name = name; }
+    }
+
+    func parserParseMacroDecl(p: *Parser, isPublic: bool) -> *Decl {
+        let line: uint32 = parserCurToken(p).line;
+        let col: uint32 = parserCurToken(p).column;
+        discard parserExpect(p, tkMacro, "expected 'macro'");
+        discard parserExpect(p, tkBang, "expected '!' after macro");
+        let nameTok: LexToken = parserExpect(p, tkIdent, "expected macro name");
+        while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+        discard parserExpect(p, tkLBrace, "expected '{' to start macro body");
+
+        let d: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+        d.kind = dkMacro;
+        d.line = line;
+        d.column = col;
+        d.isPublic = isPublic;
+        d.strValue = nameTok.text;
+        d.childDecl1 = null as *Decl;
+        d.childDecl2 = null as *Decl;
+
+        var firstRule: *Decl = null as *Decl;
+        var lastRule: *Decl = null as *Decl;
+        var ruleCount: int = 0;
+
+        while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
+            while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+                discard parserAdvance(p);
+            }
+            if parserCheck(p, tkRBrace) { break; }
+
+            let rline: uint32 = parserCurToken(p).line;
+            let rcol: uint32 = parserCurToken(p).column;
+            discard parserExpect(p, tkLParen, "expected '(' to start macro pattern");
+
+            let rule: *Decl = bux_alloc(sizeof(Decl)) as *Decl;
+            rule.kind = dkMacro;
+            rule.line = rline;
+            rule.column = rcol;
+            rule.strValue = "";
+            rule.paramCount = 0;
+            rule.childDecl2 = null as *Decl;
+
+            // useNames encodes: "expr" | "ident" | "tt" | "rep:expr," | "rep:expr+expr," (compound)
+            // Multiple pattern elements joined by `;`  → multi-rep groups at call site
+            var kindsEnc: String = "";
+            while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+                while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                if parserCheck(p, tkRParen) { break; }
+                if parserMatch(p, tkSemicolon) { continue; }
+                // $( $a:kind , $b:kind ),*
+                if parserCheck(p, tkDollar) && parserPeek(p, 1) == tkLParen {
+                    discard parserAdvance(p); // $
+                    discard parserAdvance(p); // (
+                    var repNames: String = "";
+                    var repKinds: String = "";
+                    var nIn: int = 0;
+                    while !parserCheck(p, tkRParen) && parserPeek(p, 0) != tkEndOfFile {
+                        while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                        if parserCheck(p, tkRParen) { break; }
+                        let fragTok: LexToken = parserExpect(p, tkIdent, "expected $name fragment");
+                        if !String_StartsWith(fragTok.text, "$") {
+                            parserEmitDiag(p, fragTok.line, fragTok.column, "macro fragment must start with '$'");
+                        }
+                        discard parserExpect(p, tkColon, "expected ':' after fragment name");
+                        let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
+                        var kname: String = kindTok.text;
+                        if String_Eq(kname, "lit") { kname = "literal"; }
+                        if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
+                            || String_Eq(kname, "literal") || String_Eq(kname, "block")) {
+                            kname = "expr";
+                        }
+                        if nIn == 0 {
+                            repNames = fragTok.text;
+                            repKinds = kname;
+                        } else {
+                            repNames = String_Concat(repNames, String_Concat("+", fragTok.text));
+                            repKinds = String_Concat(repKinds, String_Concat("+", kname));
+                        }
+                        if rule.paramCount < 9 {
+                            parserSetMacroFragName(rule, rule.paramCount, fragTok.text);
+                            rule.paramCount = rule.paramCount + 1;
+                        }
+                        nIn = nIn + 1;
+                        while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                        if !parserMatch(p, tkComma) { break; }
+                    }
+                    discard parserExpect(p, tkRParen, "expected ')' after repeated fragment");
+                    var sep: String = "";
+                    if parserMatch(p, tkComma) { sep = ","; }
+                    discard parserExpect(p, tkStar, "expected '*' after macro repetition");
+                    let enc: String = String_Concat("rep:", String_Concat(repKinds, sep));
+                    // mark compound count via leading digit in typeParam0 of rule (hack: use isDrop)
+                    if rule.paramCount > 0 {
+                        // store chunk size on last param via isVariadic false; use methodCount as chunk
+                        // Encode: kindsEnc entry includes chunk after @
+                        let enc2: String = String_Concat(enc, String_Concat("@", String_FromInt(nIn)));
+                        if String_Eq(kindsEnc, "") { kindsEnc = enc2; }
+                        else { kindsEnc = String_Concat(kindsEnc, String_Concat(";", enc2)); }
+                    }
+                    while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                    if parserMatch(p, tkSemicolon) { continue; }
+                    if parserMatch(p, tkComma) { continue; }
+                    break;
+                } else {
+                    let fragTok: LexToken = parserExpect(p, tkIdent, "expected $name fragment");
+                    if !String_StartsWith(fragTok.text, "$") {
+                        parserEmitDiag(p, fragTok.line, fragTok.column, "macro fragment must start with '$'");
+                    }
+                    discard parserExpect(p, tkColon, "expected ':' after fragment name");
+                    let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
+                    var kname: String = kindTok.text;
+                    if String_Eq(kname, "lit") { kname = "literal"; }
+                    if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
+                        || String_Eq(kname, "literal") || String_Eq(kname, "block")) {
+                        kname = "expr";
+                    }
+                    if rule.paramCount < 9 {
+                        parserSetMacroFragName(rule, rule.paramCount, fragTok.text);
+                        rule.paramCount = rule.paramCount + 1;
+                    }
+                    if String_Eq(kindsEnc, "") { kindsEnc = kname; }
+                    else { kindsEnc = String_Concat(kindsEnc, String_Concat(";", kname)); }
+                    while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+                    if parserMatch(p, tkComma) { continue; }
+                    if parserMatch(p, tkSemicolon) { continue; }
+                    break;
+                }
+            }
+            rule.useNames = kindsEnc;
+            discard parserExpect(p, tkRParen, "expected ')' to close macro pattern");
+            while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+            discard parserExpect(p, tkFatArrow, "expected '=>' after macro pattern");
+            while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
+            let savedTpl: bool = p.macroTemplateMode;
+            p.macroTemplateMode = true;
+            rule.refBody = parserParseBlock(p);
+            p.macroTemplateMode = savedTpl;
+
+            if firstRule == null as *Decl {
+                firstRule = rule;
+                lastRule = rule;
+            } else {
+                lastRule.childDecl2 = rule;
+                lastRule = rule;
+            }
+            ruleCount = ruleCount + 1;
+            while parserCheck(p, tkNewLine) || parserCheck(p, tkComma) || parserCheck(p, tkSemicolon) {
+                discard parserAdvance(p);
+            }
+        }
+        discard parserExpect(p, tkRBrace, "expected '}' to close macro");
+        d.childDecl1 = firstRule;
+        d.methodCount = ruleCount;
+        if ruleCount == 0 {
+            parserEmitDiag(p, line, col, "macro has no rules");
+        }
+        return d;
+    }
+
     // Top-level declaration
     // ---------------------------------------------------------------------------
 
@@ -2207,11 +2489,15 @@ module Parser {
         }
         let isPublic: bool = parserMatch(p, tkPub);
 
-        // Parse @[Checked] / @[Drop] / @[Release] attribute
+        // Parse stacked @[Checked] / @[Drop] / @[Release] attributes
         var isChecked: int = 0;
         var isDrop: int = 0;
         var isRelease: int = 0;
-        if parserCheck(p, tkAt) {
+        while true {
+            while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+                discard parserAdvance(p);
+            }
+            if !parserCheck(p, tkAt) { break; }
             discard parserAdvance(p); // @
             if parserCheck(p, tkLBracket) {
                 discard parserAdvance(p); // [
@@ -2232,10 +2518,9 @@ module Parser {
                     discard parserAdvance(p); // ]
                 }
             }
-            // Skip newlines after attribute before the declaration
-            while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
-                discard parserAdvance(p);
-            }
+        }
+        while parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) {
+            discard parserAdvance(p);
         }
 
         let kind: int = parserPeek(p, 0);
@@ -2270,6 +2555,7 @@ module Parser {
         if kind == tkImport { return parserParseImportDecl(p, isPublic); }
         if kind == tkExtern { return parserParseExternDecl(p, isPublic); }
         if kind == tkInterface { return parserParseInterfaceDecl(p, isPublic); }
+        if kind == tkMacro { return parserParseMacroDecl(p, isPublic); }
 
         if kind == tkExtend {
             discard parserAdvance(p);
@@ -2396,6 +2682,7 @@ module Parser {
         p.tokenCount = tokenCount;
         p.pos = 0;
         p.structInitAllowed = true;
+        p.macroTemplateMode = false;
         let diagBuf: *ParserDiag = bux_alloc(256 as uint * sizeof(ParserDiag)) as *ParserDiag;
         p.diags = diagBuf;
         p.diagCount = 0;

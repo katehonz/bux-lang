@@ -1,0 +1,40 @@
+// Declarative macro! + built-in quote! (session 59)
+// Expands before type-check; $frags splice with call-site hygiene.
+import Std::Io::{PrintLine};
+import Std::String::{String_FromInt};
+
+macro! twice {
+    ($x:expr) => {
+        ($x) + ($x)
+    }
+}
+
+macro! add2 {
+    ($a:expr, $b:expr) => {
+        ($a) + ($b)
+    }
+}
+
+func Main() -> int {
+    let a: int = twice!(21);
+    let b: int = add2!(10, 32);
+    // quote! is a built-in identity expand (call-site graft)
+    let c: int = quote!(a + 1);
+    PrintLine(String_FromInt(a));
+    PrintLine(String_FromInt(b));
+    PrintLine(String_FromInt(c));
+    if a != 42 {
+        PrintLine("FAIL twice");
+        return 1;
+    }
+    if b != 42 {
+        PrintLine("FAIL add2");
+        return 1;
+    }
+    if c != 43 {
+        PrintLine("FAIL quote");
+        return 1;
+    }
+    PrintLine("PASS macro_twice");
+    return 0;
+}

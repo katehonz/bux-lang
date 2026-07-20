@@ -1,0 +1,73 @@
+// Session 69 — unhygienic binders: `var $name` keeps the call-site identifier
+// (not gensym'd). Hygienic template locals (`acc`) still get unique names.
+import Std::Io::{PrintLine};
+import Std::String::{String_FromInt};
+
+// Introduce a binder named by the call-site ident; keep that name (unhygienic)
+macro! let_mut {
+    ( $name:ident, $init:literal ) => {
+        var $name: int = $init;
+        $name = $name + 1;
+        $name
+    }
+}
+
+// Hygienic local `acc` must not collide across two expansions
+macro! double_acc {
+    ( $start:literal ) => {
+        var acc: int = $start;
+        acc = acc + acc;
+        acc
+    }
+}
+
+// Mixed: unhygienic $name + hygienic scratch
+macro! bump_named {
+    ( $name:ident ) => {
+        var $name: int = 0;
+        var scratch: int = 1;
+        $name = $name + scratch;
+        $name
+    }
+}
+
+func Main() -> int {
+    // Unhygienic: binder becomes `counter` inside the expansion block
+    let a: int = let_mut!(counter, 10);
+    // 11
+    let b: int = let_mut!(other, 20);
+    // 21
+    // Hygienic: two expansions with local `acc`
+    let c: int = double_acc!(3);
+    let d: int = double_acc!(5);
+    // 6, 10
+    let e: int = bump_named!(n);
+    // 1
+    PrintLine(String_FromInt(a));
+    PrintLine(String_FromInt(b));
+    PrintLine(String_FromInt(c));
+    PrintLine(String_FromInt(d));
+    PrintLine(String_FromInt(e));
+    if a != 11 {
+        PrintLine("FAIL let_mut counter");
+        return 1;
+    }
+    if b != 21 {
+        PrintLine("FAIL let_mut other");
+        return 1;
+    }
+    if c != 6 {
+        PrintLine("FAIL double_acc 3");
+        return 1;
+    }
+    if d != 10 {
+        PrintLine("FAIL double_acc 5");
+        return 1;
+    }
+    if e != 1 {
+        PrintLine("FAIL bump_named");
+        return 1;
+    }
+    PrintLine("PASS macro_unhygienic");
+    return 0;
+}

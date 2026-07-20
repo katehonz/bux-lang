@@ -16,11 +16,13 @@ This document describes the Bux programming language as implemented by the boots
 8. [Pattern Matching](#pattern-matching)
 9. [Methods and Interfaces](#methods-and-interfaces)
 10. [Generics](#generics)
-11. [Error Handling](#error-handling)
-12. [Modules and Imports](#modules-and-imports)
-13. [Async/Await](#asyncawait)
-14. [Operator Overloading](#operator-overloading)
-15. [Operators](#operators)
+11. [Gradual Ownership](#gradual-ownership-phase-82--implemented) — Checked / Release / [Drop & RAII](#drop-and-raii)
+12. [Error Handling](#error-handling)
+13. [Modules and Imports](#modules-and-imports)
+14. [Async/Await](#asyncawait)
+15. [Operator Overloading](#operator-overloading)
+16. [Operators](#operators)
+17. [Macros](#macros)
 
 ---
 
@@ -522,32 +524,44 @@ func Main() -> int {
 
 ## Gradual Ownership (Phase 8.2) ✅ Implemented
 
-Bux introduces **gradual ownership** — opt-in borrow checking. By default, Bux is permissive like C. With `@[Checked]`, the borrow checker enforces memory safety rules.
+Bux has **gradual ownership** — opt-in borrow checking. Default is permissive
+(C-like). Turn safety on where it matters; turn it off on hot paths with zero cost.
 
-### Syntax
+### Three tiers
+
+| Mode | Attribute | Checks | Cost |
+|------|-----------|--------|------|
+| **Default** | (none) | None | Zero — raw `*T`, free aliasing |
+| **Checked** | `@[Checked]` | Moves, exclusive `&mut`, shared/`&mut` conflicts, dangling returns, elision | Compile-time only |
+| **Release** | `@[Release]` | **Forced off** (even if also `@[Checked]`) | Zero — same codegen as default |
+
+**Story:** write most code unchecked for speed of iteration; mark critical APIs
+`@[Checked]`; mark micro-hotspots `@[Release]` (or both) when you need C-level
+performance without false positives.
 
 ```bux
-// Default: permissive mode (like C/Nim) — raw pointers, no checks
+// Tier 1 — default: C-like, no borrow checker
 func QuickSort(arr: *int, len: int) {
-    for i in 0..len {
-        arr[i] = arr[i] * 2;
-    }
+    // free to alias, no move tracking
 }
 
-// Opt-in: @[Checked] enables borrow checking
+// Tier 2 — opt-in safety
 @[Checked]
 func Scale(val: &mut int) {
-    *val = *val * 2;  // OK: &mut T allows mutation
+    *val = *val * 2;
 }
 
-@[Checked]
-func Read(val: &int) -> int {
-    return *val;       // OK: &T allows reading
+// Tier 3 — zero-cost escape (e.g. hot loop helper)
+@[Release]
+func HotInc(p: *int) {
+    *p = *p + 1;   // no checks; same as default, documents intent
 }
 
+// Release wins over Checked when both are present
 @[Checked]
-func BadWrite(val: &int) {
-    *val = 42;         // ERROR: cannot write through shared reference '&T'
+@[Release]
+func HotButDocumented(p: &mut int) {
+    *p = *p + 1;   // no borrow checks
 }
 ```
 
@@ -586,37 +600,57 @@ Moves happen in three contexts:
 - **Assignment**: `b = a` moves `a` into `b`
 - **Return**: `return x` moves `x` out of the function
 
-### Rules in @[Checked] functions
+### Rules in `@[Checked]` functions (not `@[Release]`)
 
 - `&T` cannot be used to mutate data (compile-time error)
 - `&mut T` allows mutation
 - `*T` pointers are unrestricted (escape hatch)
 - `&mut T` coerces to `&T` and `*T`
-- **Double mutable borrow**: passing `&mut x` twice to the same call is an error
+- **Double mutable borrow**: two live `&mut` of the same var (call args or let-bound)
   ```bux
-  Swap(&mut x, &mut x);  // ERROR: double mutable borrow of x
+  Swap(&mut x, &mut x);  // ERROR
+  let a: &mut int = &mut x;
+  let b: &mut int = &mut x;  // ERROR: exclusive mut already live
   ```
-- **Use after move**: using a moved `own T` value is an error until reassigned
-  ```bux
-  let msg: own String = "hello";
-  Process(msg);          // move
-  PrintLine(msg);        // ERROR: use of moved value
-  msg = "reassigned";    // OK: reinitialization
-  PrintLine(msg);
-  ```
-- **No dangling returns**: cannot return a reference to a local (or by-value parameter)
+- **Use while mutably borrowed**: assign/use of `x` while a let-bound `&mut x` is live
+- **Shared while mut**: cannot form `&x` while `&mut x` is live
+- **Use after move**: using a moved `own T` until reassigned
+- **No dangling returns**: cannot return a reference to a local
   ```bux
   @[Checked]
   func Bad(p: &int) -> &int {
       var x: int = 1;
-      return &x;   // ERROR: cannot return reference to local variable
+      return &x;   // ERROR
   }
   ```
 
+### `@[Release]` (C.4 zero-cost path)
+
+Use when a function must stay check-free:
+
+1. **Documented hot path** — same IR as unchecked, but the attribute states intent.
+2. **Override Checked** — `@[Checked] @[Release]` on a method that would otherwise inherit team-wide Checked defaults.
+
+There is **no runtime cost**: the attribute only disables the checker for that function body. Prefer `@[Release]` on the smallest possible surface; keep call boundaries `@[Checked]` when you still want API-level safety.
+
+```bux
+@[Checked]
+func SafeApi(buf: &mut int) {
+    // checked here
+    HotPath(buf);
+}
+
+@[Release]
+func HotPath(p: &mut int) {
+    // no move / borrow tracking — write like C
+    *p = *p + 1;
+}
+```
+
 ### Lifetime elision (C.1)
 
-In `@[Checked]` functions, most reference signatures need **no** lifetime annotations.
-Elision applies the usual single-input rules:
+In `@[Checked]` functions (and not `@[Release]`), most reference signatures need
+**no** lifetime annotations. Elision applies the usual single-input rules:
 
 1. Each elided input `&T` / `&mut T` parameter gets a distinct lifetime.
 2. If there is **exactly one** input lifetime, it is assigned to all elided outputs.
@@ -640,8 +674,180 @@ func Pick<'a>(a: &'a int, b: &'a int) -> &'a int {
 // Type parameters: func F<'a, T>(...)
 ```
 
-Unchecked functions ignore lifetime rules (C-like). Explicit `'a` is optional
-documentation when a single input would already elide correctly.
+Default and `@[Release]` functions ignore lifetime rules (C-like). Explicit `'a`
+is optional documentation when a single input would already elide correctly.
+
+### Drop and RAII
+
+Bux uses **static destructors** (no GC): when a value goes out of scope, the
+compiler may emit `TypeName_Drop(&local)`. That is the RAII story — resources
+are released at every exit path without manual `defer` on every return.
+
+#### Declaring cleanup
+
+Two equivalent ways to opt a type into auto-drop:
+
+```bux
+// 1) Attribute — compiler looks up TypeName_Drop
+@[Drop]
+struct Token {
+    id: int,
+    counter: *int,
+}
+
+func Token_Drop(self: *Token) {
+    // free / close / decrement …
+}
+
+// 2) Interface (stdlib `lib/Drop.bux`) — same static call, no vtable
+import Drop;
+
+extend Buffer for Drop {
+    func Drop(self: *Buffer) {
+        Mem_Free(self.data);
+    }
+}
+```
+
+Stdlib collections implement Drop (`Array_Drop`, `Map_Drop`, …). Calling
+`Array_Drop` is the same cleanup as `Array_Free` for `Array<T>`.
+
+#### When auto-drop runs
+
+Auto-drop is **not** gated on `@[Checked]`. Any function can receive injected
+`Type_Drop` at:
+
+| Exit | Behavior |
+|------|----------|
+| End of block / function | Drop locals still owned |
+| Early `return` | Drop all live locals **after** materializing the return value |
+| Branch scope end | Only locals from the taken branch |
+| Nested scopes | Drop in reverse order of declaration |
+
+```bux
+@[Drop]
+struct Token { id: int, counter: *int }
+func Token_Drop(self: *Token) { /* … */ }
+
+func Early(flag: int, counter: *int) -> int {
+    let t: Token = Token { id: 1, counter: counter };
+    if flag == 0 {
+        return 0;   // still runs Token_Drop(&t)
+    }
+    return 1;       // Token_Drop(&t) here too
+}
+```
+
+See `examples/drop_early_return.bux` for branch-local vs fallthrough counts.
+
+#### Field-move: skip Drop of the source (critical)
+
+**Problem:** a local is moved **by value** into a struct field (or another local).
+If the compiler still auto-dropped the source, you get a **double free** — the
+field and the original local would both run `Array_Drop` on the same buffer.
+
+**Rule:** after a **value move** out of a local, that local is **not** dropped.
+
+```bux
+struct Box {
+    items: Array<int>;
+}
+
+func MakeBox() -> Box {
+    var items: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&items, 10);
+    Array_Push<int>(&items, 20);
+    // Move `items` into the field — compiler skips Drop of `items`
+    let b: Box = Box { items: items };
+    return b;   // also: return-by-value skips Drop of `b` (caller owns it)
+}
+```
+
+What the C backend does for `MakeBox` (simplified):
+
+```c
+Box MakeBox(void) {
+    Array_int items = Array_New_int(4);
+    Array_Push_int(&items, 10);
+    Array_Push_int(&items, 20);
+    Box b = (Box){ .items = items };
+    return b;
+    /* no Array_Drop_int(&items);  — moved into b.items */
+    /* no Array_Drop on b;         — moved to caller via return */
+}
+```
+
+Ownership after `MakeBox`:
+
+1. Heap buffer lives inside `b.items` (and later the caller's `Box`).
+2. `items` is **moved-out** → skip auto-Drop.
+3. `b` is **returned by value** → skip auto-Drop at the return site; the caller
+   (or the next owner) is responsible.
+
+The same skip applies to:
+
+- **Struct field init** — `S { field: local }` (field-move)
+- **Assignment** — `a = b` when `b` is moved (value types with Drop)
+- **Call argument** by value into a consuming parameter
+- **`return x`** — move-on-return
+
+Live, unmoved Drop locals still clean up on error paths (e.g. early `return`
+before the move). That is intentional: only the **successful transfer** path
+skips Drop.
+
+Runnable check: `examples/move_field.bux` (also covered by
+`make test-selfhost-smoke` on buxc2).
+
+#### Partial field moves
+
+Moving a **droppable field** out of a local (return or `let`) also skips Drop
+of the **parent** local:
+
+```bux
+@[Drop]
+struct Bag {
+    items: Array<int>,
+    tag: int,
+}
+func Bag_Drop(self: *Bag) {
+    Array_Drop<int>(&self.items);
+}
+
+func TakeItems() -> Array<int> {
+    var items: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&items, 42);
+    let bag: Bag = Bag { items: items, tag: 7 };
+    return bag.items;   // Bag_Drop skipped — items ownership transferred
+}
+```
+
+Rules:
+
+- Applies only when the **field type** is droppable (`Array_*`, `@[Drop]` types,
+  etc.). Reading `bag.tag` (`int`) does **not** mark `bag` moved.
+- After `let moved = bag.items`, `Bag_Drop(&bag)` is skipped; `moved` owns the
+  array and is auto-dropped at scope end.
+- Avoid using other droppable fields of the parent after a partial move (they
+  may be left in a moved-from state without per-field Drop).
+
+Golden smoke: `make test-drop-move` / `examples/move_field_partial.bux`.
+
+#### Manual Drop and non-Drop types
+
+- Types **without** `@[Drop]` / `Drop` impl are never auto-dropped (plain C layout).
+- You can still call `Type_Drop(&x)` or use `defer` for explicit cleanup.
+- `@[Release]` / default functions still get auto-drop for Drop types — Release
+  only turns off the **borrow checker**, not RAII.
+
+#### Limits (honest)
+
+- Partial field moves mark the **whole parent local** as moved for Drop purposes
+  (not per-field Drop of remaining fields).
+- Nested `a.b.c` path moves and moving through pointers are limited.
+- Interface Drop uses a static `TypeName_Drop` symbol (zero cost), not dynamic
+  dispatch through a vtable.
+- Double-free bugs in **unchecked** code that manually free *and* auto-drop are
+  still possible if you free without invalidating the value — prefer one owner.
 
 ---
 
@@ -893,3 +1099,198 @@ Overloadable operators use the naming convention `TypeName_operator_<op>`:
 - `..` — Range (exclusive): `0..10`
 - `..=` — Range (inclusive): `0..=10`
 - `sizeof` — Size of type: `sizeof(Type)`
+
+---
+
+## Macros
+
+Bux supports **declarative macros**. Expansion runs after parse and before
+type-checking. Expanded AST uses **call-site** source locations (quote hygiene).
+Both bootstrap and selfhost (`buxc2`) expand macros.
+
+### Definition
+
+```bux
+macro! twice {
+    ($x:expr) => {
+        ($x) + ($x)
+    }
+}
+
+// Trailing repetition
+macro! sum_n {
+    ( $($x:expr),* ) => {
+        var acc: int = 0;
+        $( acc = acc + $x; )*
+        acc
+    }
+}
+
+// Compound / zip: parallel lists from interleaved args
+macro! add_pairs {
+    ( $($a:expr, $b:expr),* ) => {
+        var acc: int = 0;
+        $( acc = acc + ($a + $b); )*
+        acc
+    }
+}
+
+// Multi-rep groups: `;` separates arg groups at the call site
+macro! sum_groups {
+    ( $($x:expr),* ; $($y:expr),* ) => {
+        var s: int = 0;
+        $( s = s + $x; )*
+        $( s = s + $y; )*
+        s
+    }
+}
+
+// Nested template repetition (outer list → inner expands once per item)
+macro! double_each_sum {
+    ( $($x:expr),* ) => {
+        var t: int = 0;
+        $(
+            $( t = t + $x; )*
+            $( t = t + $x; )*
+        )*
+        t
+    }
+}
+
+// ident fragment: bare identifier at the call site
+macro! call0 {
+    ( $f:ident ) => {
+        $f()
+    }
+}
+
+// literal (alias: lit) — only int/float/string/char/bool literals
+macro! only_lit {
+    ( $x:literal ) => { $x }
+}
+
+// block — only `{ … }` block expressions
+macro! wrap_block {
+    ( $b:block ) => { $b }
+}
+
+// gensym: template locals renamed per expansion
+macro! with_acc {
+    ( $start:literal ) => {
+        var n: int = $start;
+        n = n + 1;
+        n
+    }
+}
+```
+
+- Introduced with the `macro!` keyword.
+- Each **rule** is `( pattern ) => { template }`.
+- **Fragment kinds:**
+
+  | Kind | Matches |
+  |------|---------|
+  | `expr` | any expression |
+  | `ident` | bare identifier (`ekIdent`) |
+  | `tt` | token-tree (MVP: same as `expr`) |
+  | `literal` / `lit` | int/float/string/char/bool literal only |
+  | `block` | block expression `{ … }` |
+
+- Fragment names start with `$` (lexer `$ident`).
+- **Repetition:** `$( $x:expr ),*` / `$( $x:expr )*` — one or more rep fragments per pattern.
+- **Compound rep:** `$( $a:expr, $b:expr ),*` — interleaved args zip into parallel lists.
+- **Multi-rep:** two (or more) `$(…)*` in one pattern; call site uses `;` between groups:
+  `sum_groups!(1, 2; 10, 20, 30)`.
+- Template `$( stmt; … )*` expands once per list item (zip when multiple lists used).
+- Nested `$( $(…)* )*`: after outer binds list items as singles, inner expands once.
+
+### Invocation
+
+```bux
+let n = twice!(21);
+let s = sum_n!(1, 2, 3);          // 6
+let z = sum_n!();                 // 0
+let p = add_pairs!(1, 10, 2, 20); // (1+10)+(2+20) = 33
+let g = sum_groups!(1, 2; 10, 20, 30); // 63
+let d = double_each_sum!(3, 4);   // 14
+call0!(SomeFunc);
+let a = with_acc!(10);            // 11
+let b = with_acc!(20);            // 21 — different gensym'd `n`
+let c = only_lit!(7);
+// only_lit!(1 + 2);              // ERROR: no matching rule
+let w = wrap_block!({ 1 + 2 });   // 3
+```
+
+- Syntax: `name!( arg, … )` (not unwrap: unwrap is `expr!` without `(`).
+- Matching: fixed-arity by count; kind constraints; rep by groups / remaining args / chunk.
+
+### Built-in `quote!`
+
+```bux
+let x = quote!(1 + 2);   // identity expand; locations grafted to call site
+```
+
+### Hygiene
+
+Two layers (both bootstrap + selfhost):
+
+1. **Call-site graft** — expanded AST uses the call site’s line/col/`sourceFile`
+   (so diagnostics and `#line` point at the user call, not the macro definition).
+2. **Gensym of template binders** — each expansion renames:
+   - `let` / `var` locals introduced by the template
+   - `for` loop binders in the template
+   - Nested scopes (if/while/for bodies, MacroRep bodies)
+
+   so two expansions of the same macro in one function do not collide under the
+   C backend’s **function-scoped** locals (e.g. `__m1_n` and `__m2_n`).
+
+Spliced `$frags` in expression positions are **not** gensym’d — they keep
+call-site names/values.
+
+#### Unhygienic binders (`var $name`)
+
+To **introduce a binder whose name comes from the call site**, use a `$frag`
+as the binder itself. That name is **not** gensym’d:
+
+```bux
+macro! let_mut {
+    ( $name:ident, $init:literal ) => {
+        var $name: int = $init;   // unhygienic: becomes `counter`, not __m1_…
+        $name = $name + 1;
+        $name
+    }
+}
+
+// expands with local `counter` (and hygienic locals still unique)
+let a = let_mut!(counter, 10);   // 11
+let b = let_mut!(other, 20);     // 21
+
+macro! double_acc {
+    ( $start:literal ) => {
+        var acc: int = $start;   // hygienic → __m1_acc / __m2_acc
+        acc = acc + acc;
+        acc
+    }
+}
+```
+
+| Binder form | After expand | Gensym? |
+|-------------|--------------|---------|
+| `var acc = …` (plain name in template) | `__mN_acc` | yes |
+| `var $name = …` with `$name:ident` | call-site ident | **no** |
+| `for $i in …` with `$i:ident` | call-site ident | **no** |
+
+The binder must be a **`:ident` fragment** bound to a bare identifier. A plain
+template name is always hygienic.
+
+Examples: `examples/macro_hygiene.bux`, `examples/macro_unhygienic.bux`.
+
+### Limits
+
+- Up to two named rep lists per rule on selfhost (enough for zip + multi-rep).
+- Compound chunk size currently 1 or 2.
+- Nested macro *calls* expanded recursively (depth limit 32).
+- Unhygienic binders only rename `let`/`var`/`for` binders — not full
+  Scheme/Rust colored identifiers or `stmt`/`pat` token trees.
+- Macro expansion still yields a **block expression**; unhygienic names are
+  scoped to that block (not automatically injected into the caller scope).

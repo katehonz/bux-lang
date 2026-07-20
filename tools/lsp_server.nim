@@ -17,6 +17,8 @@
 # v0.13.0: textDocument/implementation (interface → types / methods).
 # v0.14.0: workspace-wide import path index (no open-doc required).
 # v0.15.0: type hierarchy (prepare / supertypes / subtypes via extend for).
+# v0.16.0: workspace type-impl index — hierarchy works for closed multi-file
+#          docs even when `extend T for I` has no methods (no open required).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -154,6 +156,10 @@ var
   ## Import paths by file URI (from scanWorkspace + open docs) — v0.14
   ## Each entry is a full path like @["Std", "Io"] (not open-doc dependent).
   workspaceImportPaths = initTable[string, seq[seq[string]]]()
+  ## Type ↔ interface relations from `extend Type for Iface` (v0.16).
+  ## Keyed by file URI so re-analyze replaces stale entries (open or closed).
+  ## Does not require methods in the extend body (unlike workspaceImpls).
+  workspaceTypeRels = initTable[string, seq[tuple[typeName, iface: string, line: int]]]()
   cachedStdlibDir = ""
   cachedStdlibDecls: seq[Decl] = @[]
   stdlibLoaded = false
@@ -169,6 +175,11 @@ proc registerWorkspaceImports(uri: string, segs: seq[PathSegInfo]) =
     seen.incl(key)
     paths.add(s.path)
   workspaceImportPaths[uri] = paths
+
+proc registerWorkspaceTypeRels(uri: string, impls: seq[tuple[typeName, iface: string, line: int]]) =
+  ## Replace type↔interface relations for this URI (from analyzeFile `impls`).
+  ## Empty impls clears prior entries so deleted extends disappear from hierarchy.
+  workspaceTypeRels[uri] = impls
 
 proc getDoc(uri: string): DocumentState =
   if not documents.hasKey(uri):
@@ -630,6 +641,8 @@ proc analyzeFile(path: string, content: string): DocumentState =
 
   # Always refresh workspace import index for this URI (empty clears stale paths)
   registerWorkspaceImports(result.uri, result.importPaths)
+  # Type hierarchy / implementation: keep extend-for relations for closed files
+  registerWorkspaceTypeRels(result.uri, result.impls)
 
 # ---------------------------------------------------------------------------
 # Real sema types for hover
@@ -2631,8 +2644,30 @@ proc collectImplementorFuncs(iface, meth: string): seq[FuncSym] =
 
 proc collectTypeImplementorLocs(iface: string): seq[JsonNode] =
   ## Locations of types that `extend Type for iface`.
+  ## Uses workspace type-rel index so closed multi-file works without methods.
   result = @[]
   var seen = initHashSet[string]()
+  # 1) Workspace type relations
+  for uri, rels in workspaceTypeRels.pairs:
+    for impl in rels:
+      if impl.iface != iface: continue
+      let key = uri & "#" & impl.typeName
+      if seen.contains(key): continue
+      seen.incl(key)
+      if workspaceSymbols.hasKey(impl.typeName):
+        let ws = workspaceSymbols[impl.typeName]
+        result.add(locationJson(ws.uri, ws.info.line, ws.info.col, impl.typeName.len))
+      elif documents.hasKey(uri):
+        let doc = documents[uri]
+        ensureAnalyzed(doc)
+        if doc.symbols.hasKey(impl.typeName):
+          let info = doc.symbols[impl.typeName]
+          result.add(locationJson(uri, info.line, info.col, impl.typeName.len))
+        else:
+          result.add(locationJson(uri, impl.line, 0, max(1, impl.typeName.len)))
+      else:
+        result.add(locationJson(uri, impl.line, 0, max(1, impl.typeName.len)))
+  # 2) Open docs
   for uri, doc in documents.pairs:
     ensureAnalyzed(doc)
     for impl in doc.impls:
@@ -2644,9 +2679,8 @@ proc collectTypeImplementorLocs(iface: string): seq[JsonNode] =
         let info = doc.symbols[impl.typeName]
         result.add(locationJson(uri, info.line, info.col, impl.typeName.len))
       else:
-        # Fall back to the `extend` line
         result.add(locationJson(uri, impl.line, 0, max(1, impl.typeName.len)))
-  # Derive types from workspaceImpls (Iface.Method → typeName)
+  # 3) Fallback: workspaceImpls (Iface.Method → typeName)
   for wkey, impls in workspaceImpls.pairs:
     if not wkey.startsWith(iface & "."): continue
     for impl in impls:
@@ -2990,8 +3024,22 @@ proc typeHierarchyItemSynthetic(uri: string, name: string, kind: string, line: i
 
 proc collectSubtypeItems(iface: string): seq[JsonNode] =
   ## Types that `extend Type for iface`.
+  ## Prefer workspace type-rel index (closed multi-file; empty extend bodies OK).
   result = @[]
   var seen = initHashSet[string]()
+  # 1) Workspace type relations (scan + every analyzeFile) — no open required
+  for uri, rels in workspaceTypeRels.pairs:
+    for impl in rels:
+      if impl.iface != iface: continue
+      let key = uri & "#" & impl.typeName
+      if seen.contains(key): continue
+      seen.incl(key)
+      let (ok, u, info) = resolveTypeSymbol(impl.typeName, uri)
+      if ok:
+        result.add(typeHierarchyItem(u, impl.typeName, info))
+      else:
+        result.add(typeHierarchyItemSynthetic(uri, impl.typeName, "struct", impl.line))
+  # 2) Open docs (live buffer may differ from last register)
   for uri, doc in documents.pairs:
     ensureAnalyzed(doc)
     for impl in doc.impls:
@@ -3004,7 +3052,7 @@ proc collectSubtypeItems(iface: string): seq[JsonNode] =
         result.add(typeHierarchyItem(u, impl.typeName, info))
       else:
         result.add(typeHierarchyItemSynthetic(uri, impl.typeName, "struct", impl.line))
-  # workspaceImpls: "Iface.Method" → (uri, typeName, meth)
+  # 3) Fallback: workspaceImpls "Iface.Method" (methods in extend body)
   for wkey, impls in workspaceImpls.pairs:
     if not wkey.startsWith(iface & "."): continue
     for impl in impls:
@@ -3021,6 +3069,18 @@ proc collectSupertypeItems(typeName: string): seq[JsonNode] =
   ## Interfaces that `typeName` implements via `extend typeName for I`.
   result = @[]
   var seen = initHashSet[string]()
+  # 1) Workspace type relations (closed multi-file)
+  for uri, rels in workspaceTypeRels.pairs:
+    for impl in rels:
+      if impl.typeName != typeName: continue
+      if seen.contains(impl.iface): continue
+      seen.incl(impl.iface)
+      let (ok, u, info) = resolveTypeSymbol(impl.iface, uri)
+      if ok:
+        result.add(typeHierarchyItem(u, impl.iface, info))
+      else:
+        result.add(typeHierarchyItemSynthetic(uri, impl.iface, "interface", impl.line))
+  # 2) Open docs
   for uri, doc in documents.pairs:
     ensureAnalyzed(doc)
     for impl in doc.impls:
@@ -3032,6 +3092,7 @@ proc collectSupertypeItems(typeName: string): seq[JsonNode] =
         result.add(typeHierarchyItem(u, impl.iface, info))
       else:
         result.add(typeHierarchyItemSynthetic(uri, impl.iface, "interface", impl.line))
+  # 3) Fallback: method-based workspaceImpls
   for wkey, impls in workspaceImpls.pairs:
     for impl in impls:
       if impl.typeName != typeName: continue
@@ -3137,7 +3198,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "implementationProvider": true,
         "typeHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.15.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.16.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()

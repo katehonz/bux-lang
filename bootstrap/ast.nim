@@ -133,6 +133,7 @@ type
     ekMatch
     ekStringInterp
     ekClosure
+    ekMacroCall       ## name!(args) — expanded before sema
 
   MatchArm* = object
     loc*: SourceLocation
@@ -236,6 +237,12 @@ type
       captureCount*: int
       captureNames*: seq[string]
       captureTypeKinds*: seq[int]
+    of ekMacroCall:
+      exprMacroName*: string
+      exprMacroArgs*: seq[Expr]
+      ## Group lengths for multi-rep: `m!(1,2; 3,4)` → @[2, 2].
+      ## Empty means a single group of all args.
+      exprMacroGroupLens*: seq[int]
 
   # ---------------------------------------------------------------------------
   # Statements
@@ -258,6 +265,7 @@ type
     skDefer
     skSwitch
     skDecl
+    skMacroRep          ## $( … )* template repetition (macro body only)
 
   ElseIf* = object
     loc*: SourceLocation
@@ -330,6 +338,8 @@ type
       stmtSwitchDefault*: Block
     of skDecl:
       stmtDecl*: Decl
+    of skMacroRep:            ## $( stmts… )* in macro templates
+      stmtMacroRepBody*: Block
 
   # ---------------------------------------------------------------------------
   # Type Parameters (for generics with trait bounds)
@@ -356,6 +366,28 @@ type
     dkExternFunc
     dkExternVar
     dkExternBlock
+    dkMacro           ## macro! name { ($x:expr) => { … } }
+
+  ## One declarative macro arm: ($a:expr, $($x:expr),*) => { template }
+  MacroFragKind* = enum
+    mfkExpr               ## any expression
+    mfkIdent              ## bare identifier (after expand must be ekIdent)
+    mfkTt                 ## token-tree (MVP: same as expr)
+    mfkLiteral            ## int/float/string/char/bool literal only
+    mfkBlock              ## block expression `{ … }`
+
+  MacroFragment* = object
+    name*: string              ## primary / first name (compat)
+    kind*: MacroFragKind       ## primary kind (compat)
+    names*: seq[string]        ## one or more $names (compound rep: $a,$b)
+    kinds*: seq[MacroFragKind] ## parallel to names
+    isRep*: bool               ## true for $( … ),*  or  $( … )*
+    repSep*: string            ## "," if separator was present before *, else ""
+
+  MacroRule* = object
+    loc*: SourceLocation
+    frags*: seq[MacroFragment]
+    body*: Block            ## template (substituted, then used as ekBlock)
 
   Param* = object
     loc*: SourceLocation
@@ -448,6 +480,9 @@ type
       declExtBlockDll*: string
       declExtBlockCallConv*: CallingConvention
       declExtBlockItems*: seq[Decl]
+    of dkMacro:
+      declMacroName*: string
+      declMacroRules*: seq[MacroRule]
 
   # ---------------------------------------------------------------------------
   # Module (AST root)

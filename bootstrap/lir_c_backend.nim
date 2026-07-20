@@ -120,14 +120,15 @@ proc emitInstr(be: var LirCBackend, instr: LirInstr) =
       of lirShl: "<<"
       of lirShr: ">>"
       else: "?"
-    be.emitLine(&"{v(instr.dst)} = {v(instr.src)} {op} {v(instr.src2)};")
+    # Parenthesize so future non-temp operands cannot be rewritten by C precedence
+    be.emitLine(&"{v(instr.dst)} = ({v(instr.src)} {op} {v(instr.src2)});")
 
   of lirNeg:
-    be.emitLine(&"{v(instr.dst)} = -{v(instr.src)};")
+    be.emitLine(&"{v(instr.dst)} = -({v(instr.src)});")
   of lirNot:
-    be.emitLine(&"{v(instr.dst)} = !{v(instr.src)};")
+    be.emitLine(&"{v(instr.dst)} = !({v(instr.src)});")
   of lirBNot:
-    be.emitLine(&"{v(instr.dst)} = ~{v(instr.src)};")
+    be.emitLine(&"{v(instr.dst)} = ~({v(instr.src)});")
 
   # ── Comparison ──
   of lirCmpEq, lirCmpNe, lirCmpLt, lirCmpLe, lirCmpGt, lirCmpGe:

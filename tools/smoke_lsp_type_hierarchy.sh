@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke: type hierarchy prepare / subtypes / supertypes (bux-lsp 0.15)
+# Smoke: type hierarchy prepare / subtypes / supertypes (single-file; bux-lsp 0.15+)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LSP="$ROOT/tools/bux-lsp"
@@ -62,8 +62,8 @@ URI="file://$TMP/Main.bux"
   rpc '{"jsonrpc":"2.0","method":"exit","params":null}'
 } | "$LSP" 2>/dev/null | tr '\r' '\n' > "$TMP/out.txt"
 
-if ! grep -q '0.15.0' "$TMP/out.txt"; then
-  echo "WARN: version not 0.15.0"
+if ! grep -qE '0\.(15|16)\.0' "$TMP/out.txt"; then
+  echo "WARN: unexpected LSP version (expected 0.15+)"
 fi
 
 if ! grep -q 'typeHierarchyProvider' "$TMP/out.txt"; then
@@ -120,5 +120,5 @@ if 'Drawable' not in snames:
     sys.exit(1)
 print(f'  supertypes Circle → {sorted(snames)}')
 
-print('PASS: LSP type hierarchy (0.15)')
+print('PASS: LSP type hierarchy (single-file)')
 PY

@@ -1202,16 +1202,34 @@ module Sema {
         }
 
         // Block expression (boolValue = true means unsafe block)
+        // Value is the last skExpr (macro! templates and `{ e }` as expr).
+        // Check stmts inside a child scope and return last expr type WITHOUT
+        // re-checking outside that scope (locals must stay visible).
         if kind == ekBlock {
             if expr.refBlock != null as *Block {
+                let prevChecked: bool = sema.checkedFunc;
                 if expr.boolValue {
-                    let prevChecked: bool = sema.checkedFunc;
                     sema.checkedFunc = false;
-                    Sema_CheckBlock(sema, expr.refBlock);
-                    sema.checkedFunc = prevChecked;
-                } else {
-                    Sema_CheckBlock(sema, expr.refBlock);
                 }
+                var blockScope: Scope = Scope_NewChild(sema.scope);
+                let prevScope: *Scope = sema.scope;
+                sema.scope = &blockScope;
+                var lastType: int = tyVoid;
+                var blkWalk: *Stmt = expr.refBlock.firstStmt;
+                while blkWalk != null as *Stmt {
+                    Sema_CheckStmt(sema, blkWalk);
+                    if blkWalk.kind == skExpr && blkWalk.child1 != null as *Expr {
+                        // CheckStmt already typed the expr; re-read via CheckExpr in-scope
+                        lastType = Sema_CheckExpr(sema, blkWalk.child1);
+                        if blkWalk.child1.refType != null as *TypeExpr {
+                            expr.refType = blkWalk.child1.refType;
+                        }
+                    }
+                    blkWalk = blkWalk.nextStmt;
+                }
+                sema.scope = prevScope;
+                sema.checkedFunc = prevChecked;
+                return lastType;
             }
             return tyVoid;
         }
@@ -1424,6 +1442,8 @@ module Sema {
             sym.refType = null as *TypeExpr;
             if stmt.refStmtType != null as *TypeExpr {
                 sym.refType = stmt.refStmtType;
+                // Prefer annotation typeKind (block inits previously left tyVoid)
+                sym.typeKind = Sema_ResolveType(sema, stmt.refStmtType);
                 if stmt.refStmtType.kind == tekPointer && stmt.refStmtType.pointerPointee != null as *TypeExpr {
                     sym.typeName = String_Concat(stmt.refStmtType.pointerPointee.typeName, "*");
                 } else {
@@ -2329,13 +2349,13 @@ module Sema {
                     s.currentRetType = tyVoid;
                 }
 
-                // Enable borrow checking for @[Checked] functions
+                // @[Checked] enables borrow checks; @[Release] forces zero-cost (C.4)
                 let wasChecked: bool = s.checkedFunc;
-                s.checkedFunc = decl.isChecked != 0;
                 let wasRelease: bool = s.releaseFunc;
                 s.releaseFunc = decl.isRelease != 0;
+                s.checkedFunc = (decl.isChecked != 0) && !s.releaseFunc;
                 s.movedCount = 0;
-                // C.1: lifetime elision before walking the body
+                // C.1: lifetime elision before walking the body (no-op if not checked)
                 Sema_ApplyLifetimeElision(s, decl);
 
                 // Check body statements

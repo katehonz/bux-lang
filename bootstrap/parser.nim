@@ -21,12 +21,14 @@ type
     pos: int
     diagnostics: seq[ParserDiagnostic]
     structInitAllowed: bool  ## disabled inside if/while/for/match conditions
+    macroTemplateMode: bool  ## true while parsing macro! rule body (allows $(…)*)
 
 proc initParser*(tokens: seq[Token], sourceName: string = "<input>"): Parser =
   result.tokens = tokens
   result.sourceName = sourceName
   result.pos = 0
   result.structInitAllowed = true
+  result.macroTemplateMode = false
 
 # ---------------------------------------------------------------------------
 # Token helpers
@@ -152,7 +154,7 @@ proc synchronize(p: var Parser) =
     if p.previous.kind == tkSemicolon: return
     case p.peek()
     of tkFunc, tkStruct, tkEnum, tkUnion, tkInterface, tkExtend,
-       tkModule, tkImport, tkConst, tkType, tkExtern, tkPub:
+       tkModule, tkImport, tkConst, tkType, tkExtern, tkPub, tkMacro:
       return
     else:
       discard p.advance()
@@ -183,7 +185,10 @@ type
     release*: bool             ## @[Release] — explicit zero-cost (no borrow checks)
 
 proc parseAttrs(p: var Parser): ParsedAttrs =
-  while p.check(tkAt):
+  while true:
+    p.skipNewlines()
+    if not p.check(tkAt):
+      break
     discard p.advance()  # @
     discard p.expect(tkLBracket, "expected '[' after '@'")
     let name = p.expect(tkIdent, "expected attribute name").text
@@ -728,7 +733,43 @@ proc parsePostfix(p: var Parser): Expr =
       left = Expr(kind: ekTry, loc: loc, exprTryOperand: left, exprTryType: nil)
     of tkBang:
       discard p.advance()
-      left = Expr(kind: ekUnwrap, loc: loc, exprUnwrapOperand: left)
+      # name!(args) → declarative macro call (not unwrap)
+      if left.kind == ekIdent and p.check(tkLParen):
+        discard p.advance()  # (
+        var margs: seq[Expr] = @[]
+        var groupLens: seq[int] = @[]
+        var curGroup = 0
+        while not p.check(tkRParen) and not p.isAtEnd:
+          p.skipNewlines()
+          if p.check(tkRParen): break
+          # `;` starts a new arg group for multi-rep patterns
+          if p.check(tkSemicolon):
+            discard p.advance()
+            groupLens.add(curGroup)
+            curGroup = 0
+            p.skipNewlines()
+            continue
+          margs.add(p.parseExpr())
+          inc curGroup
+          p.skipNewlines()
+          if p.check(tkComma):
+            discard p.advance()
+          elif p.check(tkSemicolon):
+            discard
+            # handled at loop top
+          else:
+            # allow end of args
+            discard
+        if curGroup > 0 or groupLens.len == 0:
+          groupLens.add(curGroup)
+        # single group of all args → empty groupLens means "one group" for expander
+        if groupLens.len == 1:
+          groupLens = @[]
+        discard p.expect(tkRParen, "expected ')' to close macro arguments")
+        left = Expr(kind: ekMacroCall, loc: loc, exprMacroName: left.exprIdent,
+                    exprMacroArgs: margs, exprMacroGroupLens: groupLens)
+      else:
+        left = Expr(kind: ekUnwrap, loc: loc, exprUnwrapOperand: left)
     of tkLBrace:
       if p.structInitAllowed and left.kind in {ekIdent, ekPath, ekGenericCall}:
         discard p.advance()
@@ -952,7 +993,26 @@ proc parseBlock(p: var Parser): Block =
 # ---------------------------------------------------------------------------
 
 proc parseStmt(p: var Parser): Stmt =
+  while p.check(tkNewLine):
+    discard p.advance()
   let loc = p.currentLoc
+  # Macro template repetition: $( stmts… )*
+  if p.macroTemplateMode and p.check(tkDollar) and p.peek(1) == tkLParen:
+    discard p.advance()  # $
+    discard p.advance()  # (
+    var stmts: seq[Stmt] = @[]
+    while not p.check(tkRParen) and not p.isAtEnd:
+      while p.check(tkNewLine):
+        discard p.advance()
+      if p.check(tkRParen) or p.isAtEnd:
+        break
+      stmts.add(p.parseStmt())
+    discard p.expect(tkRParen, "expected ')' to close macro repetition")
+    discard p.expect(tkStar, "expected '*' after macro repetition")
+    if p.check(tkSemicolon):
+      discard p.advance()
+    return Stmt(kind: skMacroRep, loc: loc,
+                stmtMacroRepBody: Block(loc: loc, stmts: stmts))
   case p.peek()
   of tkLet, tkVar:
     let isMut = p.peek() == tkVar
@@ -1561,6 +1621,145 @@ proc parseExternDecl(p: var Parser, isPublic: bool, attrs: ParsedAttrs): Decl =
     return Decl(kind: dkExternVar, loc: loc, isPublic: isPublic,
                 declExtVarName: vName, declExtVarType: vType)
 
+proc parseMacroFragKind(p: var Parser, kindTok: Token): MacroFragKind =
+  case kindTok.text
+  of "expr": mfkExpr
+  of "ident": mfkIdent
+  of "tt": mfkTt
+  of "literal", "lit": mfkLiteral
+  of "block": mfkBlock
+  else:
+    p.emitError(kindTok.loc,
+      "unsupported macro fragment kind '" & kindTok.text &
+      "' (expr|ident|tt|literal|block)")
+    mfkExpr
+
+proc parseMacroFragment(p: var Parser): MacroFragment =
+  ## $name:kind  (single non-rep fragment)
+  let fragTok = p.expect(tkIdent, "expected $name fragment in macro pattern")
+  if not fragTok.text.startsWith("$"):
+    p.emitError(fragTok.loc, "macro fragment must start with '$' (e.g. $x:expr)")
+  discard p.expect(tkColon, "expected ':' after macro fragment name")
+  let kindTok = p.expect(tkIdent, "expected fragment kind (expr|ident|tt|literal|block)")
+  let k = p.parseMacroFragKind(kindTok)
+  result = MacroFragment(
+    name: fragTok.text,
+    kind: k,
+    names: @[fragTok.text],
+    kinds: @[k],
+    isRep: false,
+    repSep: "")
+
+proc parseMacroRepGroup(p: var Parser): MacroFragment =
+  ## $( $a:kind , $b:kind , … ) ,*   or  … )*
+  ## Compound: multiple frags inside one rep → parallel lists (zipped).
+  discard p.expect(tkDollar, "expected '$'")
+  discard p.expect(tkLParen, "expected '(' after '$'")
+  p.skipNewlines()
+  var names: seq[string] = @[]
+  var kinds: seq[MacroFragKind] = @[]
+  while not p.check(tkRParen) and not p.isAtEnd:
+    let fragTok = p.expect(tkIdent, "expected $name inside repetition")
+    if not fragTok.text.startsWith("$"):
+      p.emitError(fragTok.loc, "macro fragment must start with '$'")
+    discard p.expect(tkColon, "expected ':' after fragment name")
+    let kindTok = p.expect(tkIdent, "expected fragment kind")
+    names.add(fragTok.text)
+    kinds.add(p.parseMacroFragKind(kindTok))
+    p.skipNewlines()
+    if p.check(tkComma):
+      discard p.advance()
+      p.skipNewlines()
+    else:
+      break
+  if names.len == 0:
+    p.emitError(p.currentLoc, "empty macro repetition group")
+    names.add("$x")
+    kinds.add(mfkExpr)
+  discard p.expect(tkRParen, "expected ')' after repeated fragment(s)")
+  var sep = ""
+  if p.check(tkComma):
+    discard p.advance()
+    sep = ","
+  discard p.expect(tkStar, "expected '*' after macro repetition")
+  result = MacroFragment(
+    name: names[0],
+    kind: kinds[0],
+    names: names,
+    kinds: kinds,
+    isRep: true,
+    repSep: sep)
+
+proc parseMacroDecl(p: var Parser, isPublic: bool): Decl =
+  ## macro! name {
+  ##   ( $a:ident, $($x:expr),* ) => { … }
+  ##   ( $($a:expr, $b:expr),* ) => { … }          # compound / zipped
+  ##   ( $($x:expr),* ; $($y:expr),* ) => { … }    # multi-rep groups
+  ## }
+  let loc = p.currentLoc
+  discard p.expect(tkMacro, "expected 'macro'")
+  discard p.expect(tkBang, "expected '!' after macro")
+  let name = p.expect(tkIdent, "expected macro name").text
+  p.skipNewlines()
+  discard p.expect(tkLBrace, "expected '{' to start macro body")
+  var rules: seq[MacroRule] = @[]
+  while not p.check(tkRBrace) and not p.isAtEnd:
+    p.skipNewlines()
+    if p.check(tkRBrace) or p.isAtEnd:
+      break
+    let rloc = p.currentLoc
+    discard p.expect(tkLParen, "expected '(' to start macro pattern")
+    var frags: seq[MacroFragment] = @[]
+    while not p.check(tkRParen) and not p.isAtEnd:
+      p.skipNewlines()
+      if p.check(tkRParen): break
+      # Group separator for multi-rep: `;` between pattern elements
+      if p.check(tkSemicolon):
+        discard p.advance()
+        p.skipNewlines()
+        continue
+      # $( … ),*  compound or single rep
+      if p.check(tkDollar) and p.peek(1) == tkLParen:
+        frags.add(p.parseMacroRepGroup())
+        p.skipNewlines()
+        # optional `;` after rep continues with more elements
+        if p.check(tkSemicolon):
+          discard p.advance()
+          p.skipNewlines()
+          continue
+        if p.check(tkComma):
+          discard p.advance()
+          p.skipNewlines()
+          continue
+        # no more separators → only rparen expected next
+        break
+      else:
+        frags.add(p.parseMacroFragment())
+        p.skipNewlines()
+        if p.check(tkComma):
+          discard p.advance()
+        elif p.check(tkSemicolon):
+          discard p.advance()
+        else:
+          break
+    discard p.expect(tkRParen, "expected ')' to close macro pattern")
+    p.skipNewlines()
+    discard p.expect(tkFatArrow, "expected '=>' after macro pattern")
+    p.skipNewlines()
+    let savedTpl = p.macroTemplateMode
+    p.macroTemplateMode = true
+    let body = p.parseBlock()
+    p.macroTemplateMode = savedTpl
+    rules.add(MacroRule(loc: rloc, frags: frags, body: body))
+    p.skipNewlines()
+    if p.check(tkComma) or p.check(tkSemicolon):
+      discard p.advance()
+  discard p.expect(tkRBrace, "expected '}' to close macro")
+  if rules.len == 0:
+    p.emitError(loc, "macro '" & name & "' has no rules")
+  return Decl(kind: dkMacro, loc: loc, isPublic: isPublic,
+              declMacroName: name, declMacroRules: rules)
+
 proc parseDecl(p: var Parser): Decl =
   let loc = p.currentLoc
   var isPublic = false
@@ -1606,6 +1805,8 @@ proc parseDecl(p: var Parser): Decl =
     return p.parseTypeAliasDecl(isPublic)
   of tkExtern:
     return p.parseExternDecl(isPublic, attrs)
+  of tkMacro:
+    return p.parseMacroDecl(isPublic)
   else:
     p.emitError(loc, "expected declaration")
     p.synchronize()

@@ -1,0 +1,78 @@
+// Session 63 — multi-rep patterns, compound/zipped rep, nested template $(…)*
+import Std::Io::{PrintLine};
+import Std::String::{String_FromInt};
+
+// Compound rep: $( $a:expr , $b:expr ),*  → parallel lists, zip in template
+macro! add_pairs {
+    ( $($a:expr, $b:expr),* ) => {
+        var __acc: int = 0;
+        $( __acc = __acc + ($a + $b); )*
+        __acc
+    }
+}
+
+// Multi-rep groups separated by `;` in the call
+// sum_n!(1,2; 10,20,30) → sum first group + sum second group
+macro! sum_groups {
+    ( $($x:expr),* ; $($y:expr),* ) => {
+        var __s: int = 0;
+        $( __s = __s + $x; )*
+        $( __s = __s + $y; )*
+        __s
+    }
+}
+
+// Nested template: outer over $x, inner body uses current $x once
+// (same-list nested MacroRep expands once when bound as single)
+macro! double_each_sum {
+    ( $($x:expr),* ) => {
+        var __t: int = 0;
+        $(
+            $( __t = __t + $x; )*
+            $( __t = __t + $x; )*
+        )*
+        __t
+    }
+}
+
+// Prefix fixed + trailing rep still works
+macro! named_sum {
+    ( $label:ident, $($n:expr),* ) => {
+        var __u: int = 0;
+        $( __u = __u + $n; )*
+        __u
+    }
+}
+
+func Main() -> int {
+    let p: int = add_pairs!(1, 10, 2, 20);
+    // (1+10)+(2+20) = 33
+    let g: int = sum_groups!(1, 2; 10, 20, 30);
+    // 1+2+10+20+30 = 63
+    let d: int = double_each_sum!(3, 4);
+    // (3+3)+(4+4) = 14
+    let n: int = named_sum!(ignored, 5, 6, 7);
+    // 18
+    PrintLine(String_FromInt(p));
+    PrintLine(String_FromInt(g));
+    PrintLine(String_FromInt(d));
+    PrintLine(String_FromInt(n));
+    if p != 33 {
+        PrintLine("FAIL add_pairs");
+        return 1;
+    }
+    if g != 63 {
+        PrintLine("FAIL sum_groups");
+        return 1;
+    }
+    if d != 14 {
+        PrintLine("FAIL double_each_sum");
+        return 1;
+    }
+    if n != 18 {
+        PrintLine("FAIL named_sum");
+        return 1;
+    }
+    PrintLine("PASS macro_nested");
+    return 0;
+}

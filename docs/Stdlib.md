@@ -95,6 +95,12 @@ struct Array<T> {
 | `Array_Clear<T>` | `func Array_Clear<T>(arr: *Array<T>)` | Set length to 0 (keeps capacity) |
 | `Array_Reserve<T>` | `func Array_Reserve<T>(arr: *Array<T>, minCap: uint)` | Grow capacity if needed |
 | `Array_Free<T>` | `func Array_Free<T>(arr: *Array<T>)` | Free memory |
+| `Array_Drop<T>` | `func Array_Drop<T>(self: *Array<T>)` | Drop trait entry (same as `Array_Free`) |
+
+**RAII:** `Array<T>` is auto-dropped at scope exit. Prefer letting the compiler call
+`Array_Drop` over manual `Array_Free` when ownership is clear. If you move an
+array into a struct field, the **source local is not dropped** (see LanguageRef
+[Drop and RAII](LanguageRef.md#drop-and-raii) / `examples/move_field.bux`).
 
 ### Example
 ```bux
@@ -105,10 +111,28 @@ func Main() -> int {
     Array_Push<int>(&arr, 10);
     Array_Push<int>(&arr, 20);
     PrintInt(Array_Get<int>(&arr, 0));  // 10
-    Array_Free<int>(&arr);
+    // Array_Drop runs at end of Main (or call Array_Free manually)
     return 0;
 }
 ```
+
+---
+
+## Std::Drop
+
+Trait for automatic cleanup (RAII). Defined in `lib/Drop.bux`:
+
+```bux
+interface Drop {
+    func Drop(self: *Self);
+}
+```
+
+Implement with `extend Type for Drop { func Drop(self: *Type) { … } }` or mark
+the type `@[Drop]` and provide `Type_Drop`. Full rules (early return, field-move
+skip Drop, move-on-return): **LanguageRef → Drop and RAII**.
+
+Examples: `examples/drop_early_return.bux`, `examples/move_field.bux`.
 
 ---
 

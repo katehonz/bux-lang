@@ -464,6 +464,17 @@ proc scanSymbol(lex: var Lexer, startLoc: SourceLocation): Token =
       return lex.makeToken(tkCaretAssign, startLoc, startPos)
     else:
       return lex.makeToken(tkCaret, startLoc, startPos)
+  of '$':
+    # $name fragment, or bare $ for macro repetition $( ... )*
+    if isIdentStart(lex.peek()):
+      discard lex.advance()  # first ident char ( $ already consumed as c1)
+      while not lex.isAtEnd() and isIdentChar(lex.peek()):
+        discard lex.advance()
+      # text includes leading '$'
+      return lex.makeToken(tkIdent, startLoc, startPos)
+    else:
+      # bare $ (c1 already consumed)
+      return lex.makeToken(tkDollar, startLoc, startPos)
   of '#':
     # Check for intrinsics: #line, #column, #file, #function, #date, #time, #module
     let afterHash = lex.peek()

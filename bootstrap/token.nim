@@ -64,6 +64,8 @@ type
     tkDyn             # dyn
     tkDefer           # defer
     tkLifetime        # 'a (lifetime parameter)
+    tkMacro           # macro (declarative macro! definitions)
+    tkDollar          # bare $ for macro rep $( ... )*
 
     ##Punctuation
     tkLParen          # (
@@ -224,6 +226,7 @@ proc keywordKind*(text: string): TokenKind =
   of "comptime": tkComptime
   of "dyn": tkDyn
   of "defer": tkDefer
+  of "macro": tkMacro
   of "true", "false": tkBoolLiteral
   else: tkIdent
 
@@ -281,6 +284,8 @@ proc tokenKindName*(kind: TokenKind): string =
   of tkComptime: "'comptime'"
   of tkDyn: "'dyn'"
   of tkDefer: "'defer'"
+  of tkMacro: "'macro'"
+  of tkDollar: "'$'"
   of tkLifetime: "lifetime"
   of tkLParen: "'('"
   of tkRParen: "')'"

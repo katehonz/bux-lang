@@ -1,0 +1,1105 @@
+// macroexpand.bux — declarative macro! expansion (selfhost parity, session 60)
+// Expands name!(args) using macro! rules; grafts call-site locations (quote hygiene).
+module MacroExpand {
+
+    extern func bux_alloc(size: uint) -> *void;
+    extern func bux_strlen(s: String) -> uint;
+    extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
+    extern func bux_str_contains(haystack: String, needle: String) -> int;
+    extern func PrintLine(s: String);
+    extern func Print(s: String);
+    extern func PrintInt(n: int);
+
+    // ---------------------------------------------------------------------------
+    // Fragment environment (up to 9 $frags singles + 2 rep lists)
+    // ---------------------------------------------------------------------------
+
+    struct MacroEnv {
+        count: int;
+        n0: String; n1: String; n2: String; n3: String; n4: String;
+        n5: String; n6: String; n7: String; n8: String;
+        a0: *Expr; a1: *Expr; a2: *Expr; a3: *Expr; a4: *Expr;
+        a5: *Expr; a6: *Expr; a7: *Expr; a8: *Expr;
+        // Up to 2 named rep lists (multi-rep + compound zip)
+        listName0: String;
+        listCount0: int;
+        l0: *Expr; l1: *Expr; l2: *Expr; l3: *Expr; l4: *Expr;
+        l5: *Expr; l6: *Expr; l7: *Expr; l8: *Expr; l9: *Expr;
+        l10: *Expr; l11: *Expr; l12: *Expr; l13: *Expr; l14: *Expr; l15: *Expr;
+        listName1: String;
+        listCount1: int;
+        m0: *Expr; m1: *Expr; m2: *Expr; m3: *Expr; m4: *Expr;
+        m5: *Expr; m6: *Expr; m7: *Expr; m8: *Expr; m9: *Expr;
+        m10: *Expr; m11: *Expr; m12: *Expr; m13: *Expr; m14: *Expr; m15: *Expr;
+        // Unhygienic call-site binders from `var $name` / `for $i` (skip gensym)
+        unhyCount: int;
+        u0: String; u1: String; u2: String; u3: String;
+        u4: String; u5: String; u6: String; u7: String;
+    }
+
+    func Env_New() -> MacroEnv {
+        return MacroEnv {
+            count: 0,
+            n0: "", n1: "", n2: "", n3: "", n4: "", n5: "", n6: "", n7: "", n8: "",
+            a0: null as *Expr, a1: null as *Expr, a2: null as *Expr,
+            a3: null as *Expr, a4: null as *Expr, a5: null as *Expr,
+            a6: null as *Expr, a7: null as *Expr, a8: null as *Expr,
+            listName0: "", listCount0: 0,
+            l0: null as *Expr, l1: null as *Expr, l2: null as *Expr, l3: null as *Expr,
+            l4: null as *Expr, l5: null as *Expr, l6: null as *Expr, l7: null as *Expr,
+            l8: null as *Expr, l9: null as *Expr, l10: null as *Expr, l11: null as *Expr,
+            l12: null as *Expr, l13: null as *Expr, l14: null as *Expr, l15: null as *Expr,
+            listName1: "", listCount1: 0,
+            m0: null as *Expr, m1: null as *Expr, m2: null as *Expr, m3: null as *Expr,
+            m4: null as *Expr, m5: null as *Expr, m6: null as *Expr, m7: null as *Expr,
+            m8: null as *Expr, m9: null as *Expr, m10: null as *Expr, m11: null as *Expr,
+            m12: null as *Expr, m13: null as *Expr, m14: null as *Expr, m15: null as *Expr,
+            unhyCount: 0,
+            u0: "", u1: "", u2: "", u3: "", u4: "", u5: "", u6: "", u7: ""
+        };
+    }
+
+    func Env_IsUnhy(env: *MacroEnv, name: String) -> bool {
+        if String_Eq(name, "") { return false; }
+        if env.unhyCount > 0 && String_Eq(env.u0, name) { return true; }
+        if env.unhyCount > 1 && String_Eq(env.u1, name) { return true; }
+        if env.unhyCount > 2 && String_Eq(env.u2, name) { return true; }
+        if env.unhyCount > 3 && String_Eq(env.u3, name) { return true; }
+        if env.unhyCount > 4 && String_Eq(env.u4, name) { return true; }
+        if env.unhyCount > 5 && String_Eq(env.u5, name) { return true; }
+        if env.unhyCount > 6 && String_Eq(env.u6, name) { return true; }
+        if env.unhyCount > 7 && String_Eq(env.u7, name) { return true; }
+        return false;
+    }
+
+    func Env_AddUnhy(env: *MacroEnv, name: String) {
+        if String_Eq(name, "") { return; }
+        if Env_IsUnhy(env, name) { return; }
+        if env.unhyCount >= 8 { return; }
+        if env.unhyCount == 0 { env.u0 = name; }
+        else if env.unhyCount == 1 { env.u1 = name; }
+        else if env.unhyCount == 2 { env.u2 = name; }
+        else if env.unhyCount == 3 { env.u3 = name; }
+        else if env.unhyCount == 4 { env.u4 = name; }
+        else if env.unhyCount == 5 { env.u5 = name; }
+        else if env.unhyCount == 6 { env.u6 = name; }
+        else { env.u7 = name; }
+        env.unhyCount = env.unhyCount + 1;
+    }
+
+    func Env_ListSet(env: *MacroEnv, which: int, idx: int, e: *Expr) {
+        if which == 0 {
+            if idx == 0 { env.l0 = e; }
+            else if idx == 1 { env.l1 = e; }
+            else if idx == 2 { env.l2 = e; }
+            else if idx == 3 { env.l3 = e; }
+            else if idx == 4 { env.l4 = e; }
+            else if idx == 5 { env.l5 = e; }
+            else if idx == 6 { env.l6 = e; }
+            else if idx == 7 { env.l7 = e; }
+            else if idx == 8 { env.l8 = e; }
+            else if idx == 9 { env.l9 = e; }
+            else if idx == 10 { env.l10 = e; }
+            else if idx == 11 { env.l11 = e; }
+            else if idx == 12 { env.l12 = e; }
+            else if idx == 13 { env.l13 = e; }
+            else if idx == 14 { env.l14 = e; }
+            else if idx == 15 { env.l15 = e; }
+        } else {
+            if idx == 0 { env.m0 = e; }
+            else if idx == 1 { env.m1 = e; }
+            else if idx == 2 { env.m2 = e; }
+            else if idx == 3 { env.m3 = e; }
+            else if idx == 4 { env.m4 = e; }
+            else if idx == 5 { env.m5 = e; }
+            else if idx == 6 { env.m6 = e; }
+            else if idx == 7 { env.m7 = e; }
+            else if idx == 8 { env.m8 = e; }
+            else if idx == 9 { env.m9 = e; }
+            else if idx == 10 { env.m10 = e; }
+            else if idx == 11 { env.m11 = e; }
+            else if idx == 12 { env.m12 = e; }
+            else if idx == 13 { env.m13 = e; }
+            else if idx == 14 { env.m14 = e; }
+            else if idx == 15 { env.m15 = e; }
+        }
+    }
+
+    func Env_ListGet(env: *MacroEnv, which: int, idx: int) -> *Expr {
+        if which == 0 {
+            if idx == 0 { return env.l0; }
+            if idx == 1 { return env.l1; }
+            if idx == 2 { return env.l2; }
+            if idx == 3 { return env.l3; }
+            if idx == 4 { return env.l4; }
+            if idx == 5 { return env.l5; }
+            if idx == 6 { return env.l6; }
+            if idx == 7 { return env.l7; }
+            if idx == 8 { return env.l8; }
+            if idx == 9 { return env.l9; }
+            if idx == 10 { return env.l10; }
+            if idx == 11 { return env.l11; }
+            if idx == 12 { return env.l12; }
+            if idx == 13 { return env.l13; }
+            if idx == 14 { return env.l14; }
+            if idx == 15 { return env.l15; }
+        } else {
+            if idx == 0 { return env.m0; }
+            if idx == 1 { return env.m1; }
+            if idx == 2 { return env.m2; }
+            if idx == 3 { return env.m3; }
+            if idx == 4 { return env.m4; }
+            if idx == 5 { return env.m5; }
+            if idx == 6 { return env.m6; }
+            if idx == 7 { return env.m7; }
+            if idx == 8 { return env.m8; }
+            if idx == 9 { return env.m9; }
+            if idx == 10 { return env.m10; }
+            if idx == 11 { return env.m11; }
+            if idx == 12 { return env.m12; }
+            if idx == 13 { return env.m13; }
+            if idx == 14 { return env.m14; }
+            if idx == 15 { return env.m15; }
+        }
+        return null as *Expr;
+    }
+
+    func Env_ListWhich(env: *MacroEnv, name: String) -> int {
+        if !String_Eq(env.listName0, "") && String_Eq(env.listName0, name) { return 0; }
+        if !String_Eq(env.listName1, "") && String_Eq(env.listName1, name) { return 1; }
+        return -1;
+    }
+
+    func Env_ListCountOf(env: *MacroEnv, which: int) -> int {
+        if which == 0 { return env.listCount0; }
+        if which == 1 { return env.listCount1; }
+        return 0;
+    }
+
+    func Env_CopySingles(dst: *MacroEnv, src: *MacroEnv) {
+        dst.n0 = src.n0; dst.a0 = src.a0;
+        dst.n1 = src.n1; dst.a1 = src.a1;
+        dst.n2 = src.n2; dst.a2 = src.a2;
+        dst.n3 = src.n3; dst.a3 = src.a3;
+        dst.n4 = src.n4; dst.a4 = src.a4;
+        dst.n5 = src.n5; dst.a5 = src.a5;
+        dst.n6 = src.n6; dst.a6 = src.a6;
+        dst.n7 = src.n7; dst.a7 = src.a7;
+        dst.n8 = src.n8; dst.a8 = src.a8;
+        dst.count = src.count;
+    }
+
+    func Env_Set(env: *MacroEnv, idx: int, name: String, arg: *Expr) {
+        if idx == 0 { env.n0 = name; env.a0 = arg; }
+        else if idx == 1 { env.n1 = name; env.a1 = arg; }
+        else if idx == 2 { env.n2 = name; env.a2 = arg; }
+        else if idx == 3 { env.n3 = name; env.a3 = arg; }
+        else if idx == 4 { env.n4 = name; env.a4 = arg; }
+        else if idx == 5 { env.n5 = name; env.a5 = arg; }
+        else if idx == 6 { env.n6 = name; env.a6 = arg; }
+        else if idx == 7 { env.n7 = name; env.a7 = arg; }
+        else if idx == 8 { env.n8 = name; env.a8 = arg; }
+        if idx + 1 > env.count { env.count = idx + 1; }
+    }
+
+    func Env_Lookup(env: *MacroEnv, name: String) -> *Expr {
+        if String_Eq(env.n0, name) { return env.a0; }
+        if String_Eq(env.n1, name) { return env.a1; }
+        if String_Eq(env.n2, name) { return env.a2; }
+        if String_Eq(env.n3, name) { return env.a3; }
+        if String_Eq(env.n4, name) { return env.a4; }
+        if String_Eq(env.n5, name) { return env.a5; }
+        if String_Eq(env.n6, name) { return env.a6; }
+        if String_Eq(env.n7, name) { return env.a7; }
+        if String_Eq(env.n8, name) { return env.a8; }
+        return null as *Expr;
+    }
+
+    // If binder name is a $frag bound to ekIdent, return that ident text
+    func Env_BinderFromFrag(env: *MacroEnv, name: String) -> String {
+        let bound: *Expr = Env_Lookup(env, name);
+        if bound == null as *Expr { return ""; }
+        if bound.kind != ekIdent { return ""; }
+        return bound.strValue;
+    }
+
+    // Find free single slot (prefer 0..7, then 8)
+    func Env_SetNamed(env: *MacroEnv, name: String, arg: *Expr) {
+        var i: int = 0;
+        while i < 9 {
+            var existing: String = "";
+            if i == 0 { existing = env.n0; }
+            else if i == 1 { existing = env.n1; }
+            else if i == 2 { existing = env.n2; }
+            else if i == 3 { existing = env.n3; }
+            else if i == 4 { existing = env.n4; }
+            else if i == 5 { existing = env.n5; }
+            else if i == 6 { existing = env.n6; }
+            else if i == 7 { existing = env.n7; }
+            else { existing = env.n8; }
+            if String_Eq(existing, "") || String_Eq(existing, name) {
+                Env_Set(env, i, name, arg);
+                return;
+            }
+            i = i + 1;
+        }
+        Env_Set(env, 8, name, arg);
+    }
+
+    func Rule_FragName(rule: *Decl, idx: int) -> String {
+        if idx == 0 { return rule.param0.name; }
+        if idx == 1 { return rule.param1.name; }
+        if idx == 2 { return rule.param2.name; }
+        if idx == 3 { return rule.param3.name; }
+        if idx == 4 { return rule.param4.name; }
+        if idx == 5 { return rule.param5.name; }
+        if idx == 6 { return rule.param6.name; }
+        if idx == 7 { return rule.param7.name; }
+        if idx == 8 { return rule.param8.name; }
+        return "";
+    }
+
+    func Macro_RenameIdentsInExpr(e: *Expr, oldN: String, newN: String) {
+        if e == null as *Expr { return; }
+        if e.kind == ekIdent && String_Eq(e.strValue, oldN) {
+            e.strValue = newN;
+        }
+        Macro_RenameIdentsInExpr(e.child1, oldN, newN);
+        Macro_RenameIdentsInExpr(e.child2, oldN, newN);
+        Macro_RenameIdentsInExpr(e.child3, oldN, newN);
+        if e.refBlock != null as *Block {
+            Macro_GensymBlockApply(e.refBlock, oldN, newN);
+        }
+        var args: *ExprList = e.callArgs;
+        while args != null as *ExprList {
+            Macro_RenameIdentsInExpr(args.expr, oldN, newN);
+            args = args.next;
+        }
+    }
+
+    func Macro_GensymBlockApply(b: *Block, oldN: String, newN: String) {
+        if b == null as *Block { return; }
+        var s: *Stmt = b.firstStmt;
+        while s != null as *Stmt {
+            // let/var and for-loop binder
+            if (s.kind == skLet || s.kind == skFor) && String_Eq(s.strValue, oldN) {
+                s.strValue = newN;
+            }
+            Macro_RenameIdentsInExpr(s.child1, oldN, newN);
+            Macro_RenameIdentsInExpr(s.child2, oldN, newN);
+            Macro_RenameIdentsInExpr(s.child3, oldN, newN);
+            if s.refStmtBlock != null as *Block {
+                Macro_GensymBlockApply(s.refStmtBlock, oldN, newN);
+            }
+            if s.refStmtElse != null as *Block {
+                Macro_GensymBlockApply(s.refStmtElse, oldN, newN);
+            }
+            s = s.nextStmt;
+        }
+    }
+
+    // Collect template-introduced binders (let/var + for) then rename whole body.
+    // Skip unhygienic call-site binders from `var $name` (tracked on env).
+    func Macro_GensymBlock(ex: *MacroExpander, b: *Block, env: *MacroEnv) {
+        if b == null as *Block || ex == null as *MacroExpander { return; }
+        var s: *Stmt = b.firstStmt;
+        while s != null as *Stmt {
+            if (s.kind == skLet || s.kind == skFor) && !String_Eq(s.strValue, "") {
+                var skip: bool = false;
+                if env != null as *MacroEnv && Env_IsUnhy(env, s.strValue) {
+                    skip = true;
+                }
+                if !skip {
+                    ex.gensymCounter = ex.gensymCounter + 1;
+                    let neu: String = String_Concat(String_Concat("__m", String_FromInt(ex.gensymCounter)), String_Concat("_", s.strValue));
+                    let oldN: String = s.strValue;
+                    Macro_GensymBlockApply(b, oldN, neu);
+                }
+            }
+            if s.refStmtBlock != null as *Block {
+                Macro_GensymBlock(ex, s.refStmtBlock, env);
+            }
+            if s.refStmtElse != null as *Block {
+                Macro_GensymBlock(ex, s.refStmtElse, env);
+            }
+            if s.child1 != null as *Expr && s.child1.kind == ekBlock {
+                Macro_GensymBlock(ex, s.child1.refBlock, env);
+            }
+            s = s.nextStmt;
+        }
+    }
+
+    // Fragment kind check: "ident" | "literal" | "block" | expr|tt (any)
+    func Macro_FragMatches(kindStr: String, aexp: *Expr) -> bool {
+        if aexp == null as *Expr { return false; }
+        if String_Eq(kindStr, "ident") {
+            return aexp.kind == ekIdent;
+        }
+        if String_Eq(kindStr, "literal") {
+            return aexp.kind == ekLiteral;
+        }
+        if String_Eq(kindStr, "block") {
+            return aexp.kind == ekBlock;
+        }
+        // expr / tt / unknown → accept
+        return true;
+    }
+
+    // kinds encoded as "expr;ident;rep:expr," — return fi-th segment
+    func Macro_KindAt(kinds: String, fi: int) -> String {
+        if kinds == null as String || String_Eq(kinds, "") { return "expr"; }
+        var start: int = 0;
+        var idx: int = 0;
+        let n: int = bux_strlen(kinds) as int;
+        var i: int = 0;
+        while i <= n {
+            if i == n || kinds[i] == 59 as char8 { // ';'
+                if idx == fi {
+                    let len: int = i - start;
+                    if len <= 0 { return "expr"; }
+                    return bux_str_slice(kinds, start as uint, len as uint);
+                }
+                idx = idx + 1;
+                start = i + 1;
+            }
+            i = i + 1;
+        }
+        return "expr";
+    }
+
+    // Does body (or nested MacroRep) reference list name as an ident?
+    func Macro_BodyUsesListName(b: *Block, name: String) -> bool {
+        if b == null as *Block || String_Eq(name, "") { return false; }
+        var s: *Stmt = b.firstStmt;
+        while s != null as *Stmt {
+            if Macro_ExprUsesListName(s.child1, name) { return true; }
+            if Macro_ExprUsesListName(s.child2, name) { return true; }
+            if Macro_ExprUsesListName(s.child3, name) { return true; }
+            if s.refStmtBlock != null as *Block {
+                if Macro_BodyUsesListName(s.refStmtBlock, name) { return true; }
+            }
+            if s.refStmtElse != null as *Block {
+                if Macro_BodyUsesListName(s.refStmtElse, name) { return true; }
+            }
+            s = s.nextStmt;
+        }
+        return false;
+    }
+
+    func Macro_ExprUsesListName(e: *Expr, name: String) -> bool {
+        if e == null as *Expr { return false; }
+        if e.kind == ekIdent && String_Eq(e.strValue, name) { return true; }
+        if Macro_ExprUsesListName(e.child1, name) { return true; }
+        if Macro_ExprUsesListName(e.child2, name) { return true; }
+        if Macro_ExprUsesListName(e.child3, name) { return true; }
+        if e.refBlock != null as *Block {
+            if Macro_BodyUsesListName(e.refBlock, name) { return true; }
+        }
+        var args: *ExprList = e.callArgs;
+        while args != null as *ExprList {
+            if Macro_ExprUsesListName(args.expr, name) { return true; }
+            args = args.next;
+        }
+        return false;
+    }
+
+    func Macro_AppendBlockStmts(n: *Block, part: *Block) {
+        if part == null as *Block { return; }
+        var ps: *Stmt = part.firstStmt;
+        while ps != null as *Stmt {
+            let nxt: *Stmt = ps.nextStmt;
+            ps.nextStmt = null as *Stmt;
+            if n.firstStmt == null as *Stmt {
+                n.firstStmt = ps;
+                n.lastStmt = ps;
+            } else {
+                n.lastStmt.nextStmt = ps;
+                n.lastStmt = ps;
+            }
+            n.stmtCount = n.stmtCount + 1;
+            ps = nxt;
+        }
+    }
+
+    // Flatten $(…)* while substituting — zip multi-lists; expand once when no lists left
+    func Subst_Block_Flat(b: *Block, env: *MacroEnv, file: String, line: uint32, col: uint32) -> *Block {
+        if b == null as *Block { return null as *Block; }
+        let n: *Block = bux_alloc(sizeof(Block)) as *Block;
+        n.line = line;
+        n.column = col;
+        n.sourceFile = file;
+        n.stmtCount = 0;
+        n.firstStmt = null as *Stmt;
+        n.lastStmt = null as *Stmt;
+
+        var s: *Stmt = b.firstStmt;
+        while s != null as *Stmt {
+            if s.kind == skMacroRep && s.refStmtBlock != null as *Block {
+                let use0: bool = Macro_BodyUsesListName(s.refStmtBlock, env.listName0);
+                let use1: bool = Macro_BodyUsesListName(s.refStmtBlock, env.listName1);
+                // Nested same-list after outer bound items as singles: expand once
+                if !use0 && !use1 {
+                    let partOnce: *Block = Subst_Block(s.refStmtBlock, env, file, line, col);
+                    Macro_AppendBlockStmts(n, partOnce);
+                } else {
+                    var nRep: int = 0;
+                    if use0 && env.listCount0 > nRep { nRep = env.listCount0; }
+                    if use1 && env.listCount1 > nRep { nRep = env.listCount1; }
+                    var li: int = 0;
+                    while li < nRep {
+                        var inner: MacroEnv = Env_New();
+                        Env_CopySingles(&inner, env);
+                        // Keep unreferenced lists for nested MacroRep siblings
+                        if !use0 && !String_Eq(env.listName0, "") {
+                            inner.listName0 = env.listName0;
+                            inner.listCount0 = env.listCount0;
+                            var ci: int = 0;
+                            while ci < env.listCount0 {
+                                Env_ListSet(&inner, 0, ci, Env_ListGet(env, 0, ci));
+                                ci = ci + 1;
+                            }
+                        }
+                        if !use1 && !String_Eq(env.listName1, "") {
+                            inner.listName1 = env.listName1;
+                            inner.listCount1 = env.listCount1;
+                            var cj: int = 0;
+                            while cj < env.listCount1 {
+                                Env_ListSet(&inner, 1, cj, Env_ListGet(env, 1, cj));
+                                cj = cj + 1;
+                            }
+                        }
+                        if use0 && li < env.listCount0 {
+                            Env_SetNamed(&inner, env.listName0, Env_ListGet(env, 0, li));
+                        }
+                        if use1 && li < env.listCount1 {
+                            Env_SetNamed(&inner, env.listName1, Env_ListGet(env, 1, li));
+                        }
+                        let part: *Block = Subst_Block(s.refStmtBlock, &inner, file, line, col);
+                        Macro_AppendBlockStmts(n, part);
+                        li = li + 1;
+                    }
+                }
+            } else {
+                let one: *Stmt = Subst_Stmt(s, env, file, line, col);
+                if one != null as *Stmt {
+                    one.nextStmt = null as *Stmt;
+                    if n.firstStmt == null as *Stmt {
+                        n.firstStmt = one;
+                        n.lastStmt = one;
+                    } else {
+                        n.lastStmt.nextStmt = one;
+                        n.lastStmt = one;
+                    }
+                    n.stmtCount = n.stmtCount + 1;
+                }
+            }
+            s = s.nextStmt;
+        }
+        return n;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Diagnostics
+    // ---------------------------------------------------------------------------
+
+    const maxMacroDiags: int = 64;
+
+    struct MacroDiag {
+        line: uint32;
+        column: uint32;
+        message: String;
+    }
+
+    struct MacroEntry {
+        name: String;
+        decl: *Decl;
+    }
+
+    struct MacroExpander {
+        diagCount: int;
+        diags: *MacroDiag;
+        // Flat macro table — max 64 macros
+        macroCount: int;
+        entries: *MacroEntry;
+        gensymCounter: int;
+    }
+
+    func MacroExpand_New() -> *MacroExpander {
+        let ex: *MacroExpander = bux_alloc(sizeof(MacroExpander)) as *MacroExpander;
+        ex.diagCount = 0;
+        ex.diags = bux_alloc((maxMacroDiags * sizeof(MacroDiag)) as uint) as *MacroDiag;
+        ex.macroCount = 0;
+        ex.entries = bux_alloc((64 * sizeof(MacroEntry)) as uint) as *MacroEntry;
+        ex.gensymCounter = 0;
+        return ex;
+    }
+
+    func MacroExpand_Err(ex: *MacroExpander, line: uint32, col: uint32, msg: String) {
+        if ex.diagCount < maxMacroDiags {
+            ex.diags[ex.diagCount] = MacroDiag { line: line, column: col, message: msg };
+            ex.diagCount = ex.diagCount + 1;
+        }
+    }
+
+    func MacroExpand_Register(ex: *MacroExpander, name: String, d: *Decl) {
+        if ex.macroCount >= 64 { return; }
+        ex.entries[ex.macroCount] = MacroEntry { name: name, decl: d };
+        ex.macroCount = ex.macroCount + 1;
+    }
+
+    func MacroExpand_Lookup(ex: *MacroExpander, name: String) -> *Decl {
+        var i: int = 0;
+        while i < ex.macroCount {
+            if String_Eq(ex.entries[i].name, name) {
+                return ex.entries[i].decl;
+            }
+            i = i + 1;
+        }
+        return null as *Decl;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Call-site graft: force line/col + sourceFile on tree
+    // ---------------------------------------------------------------------------
+
+    func Graft_Expr(e: *Expr, file: String, line: uint32, col: uint32) {
+        if e == null as *Expr { return; }
+        e.line = line;
+        e.column = col;
+        if file != null as String && !String_Eq(file, "") {
+            e.sourceFile = file;
+        }
+        Graft_Expr(e.child1, file, line, col);
+        Graft_Expr(e.child2, file, line, col);
+        Graft_Expr(e.child3, file, line, col);
+        if e.refBlock != null as *Block {
+            Graft_Block(e.refBlock, file, line, col);
+        }
+        var args: *ExprList = e.callArgs;
+        while args != null as *ExprList {
+            Graft_Expr(args.expr, file, line, col);
+            args = args.next;
+        }
+        var arm: *MatchArm = e.matchArms;
+        while arm != null as *MatchArm {
+            Graft_Expr(arm.body, file, line, col);
+            arm = arm.next;
+        }
+    }
+
+    func Graft_Stmt(s: *Stmt, file: String, line: uint32, col: uint32) {
+        if s == null as *Stmt { return; }
+        s.line = line;
+        s.column = col;
+        if file != null as String && !String_Eq(file, "") {
+            s.sourceFile = file;
+        }
+        Graft_Expr(s.child1, file, line, col);
+        Graft_Expr(s.child2, file, line, col);
+        Graft_Expr(s.child3, file, line, col);
+        if s.refStmtBlock != null as *Block {
+            Graft_Block(s.refStmtBlock, file, line, col);
+        }
+        if s.refStmtElse != null as *Block {
+            Graft_Block(s.refStmtElse, file, line, col);
+        }
+        Graft_Stmt(s.nextStmt, file, line, col);
+    }
+
+    func Graft_Block(b: *Block, file: String, line: uint32, col: uint32) {
+        if b == null as *Block { return; }
+        b.line = line;
+        b.column = col;
+        if file != null as String && !String_Eq(file, "") {
+            b.sourceFile = file;
+        }
+        Graft_Stmt(b.firstStmt, file, line, col);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Substitute $frags in a cloned tree
+    // ---------------------------------------------------------------------------
+
+    func Subst_Expr(e: *Expr, env: *MacroEnv, file: String, line: uint32, col: uint32) -> *Expr {
+        if e == null as *Expr { return null as *Expr; }
+        if e.kind == ekIdent {
+            let bound: *Expr = Env_Lookup(env, e.strValue);
+            if bound != null as *Expr {
+                let n: *Expr = Ast_CloneExpr(bound);
+                Graft_Expr(n, file, line, col);
+                return n;
+            }
+        }
+        // In-place subst on clone of e
+        let c: *Expr = Ast_CloneExpr(e);
+        if c == null as *Expr { return null as *Expr; }
+        c.child1 = Subst_Expr(c.child1, env, file, line, col);
+        c.child2 = Subst_Expr(c.child2, env, file, line, col);
+        c.child3 = Subst_Expr(c.child3, env, file, line, col);
+        if c.refBlock != null as *Block {
+            c.refBlock = Subst_Block_Flat(c.refBlock, env, file, line, col);
+        }
+        // callArgs list
+        var args: *ExprList = c.callArgs;
+        while args != null as *ExprList {
+            args.expr = Subst_Expr(args.expr, env, file, line, col);
+            args = args.next;
+        }
+        var arm: *MatchArm = c.matchArms;
+        while arm != null as *MatchArm {
+            arm.body = Subst_Expr(arm.body, env, file, line, col);
+            arm = arm.next;
+        }
+        c.line = line;
+        c.column = col;
+        if file != null as String && !String_Eq(file, "") {
+            c.sourceFile = file;
+        }
+        return c;
+    }
+
+    func Subst_Stmt(s: *Stmt, env: *MacroEnv, file: String, line: uint32, col: uint32) -> *Stmt {
+        if s == null as *Stmt { return null as *Stmt; }
+        let c: *Stmt = Ast_CloneStmt(s);
+        // Ast_CloneStmt clones nextStmt chain — break to single and rebuild
+        c.nextStmt = null as *Stmt;
+        // Unhygienic binder: `var $name` / `for $i` with $frag:ident → call-site name
+        if (c.kind == skLet || c.kind == skFor) && !String_Eq(c.strValue, "") {
+            let bn: String = Env_BinderFromFrag(env, c.strValue);
+            if !String_Eq(bn, "") {
+                c.strValue = bn;
+                Env_AddUnhy(env, bn);
+            }
+        }
+        c.child1 = Subst_Expr(c.child1, env, file, line, col);
+        c.child2 = Subst_Expr(c.child2, env, file, line, col);
+        c.child3 = Subst_Expr(c.child3, env, file, line, col);
+        if c.refStmtBlock != null as *Block {
+            c.refStmtBlock = Subst_Block(c.refStmtBlock, env, file, line, col);
+        }
+        if c.refStmtElse != null as *Block {
+            c.refStmtElse = Subst_Block(c.refStmtElse, env, file, line, col);
+        }
+        c.line = line;
+        c.column = col;
+        if file != null as String && !String_Eq(file, "") {
+            c.sourceFile = file;
+        }
+        // Do NOT walk nextStmt — Subst_Block_Flat iterates the chain itself
+        c.nextStmt = null as *Stmt;
+        return c;
+    }
+
+    func Subst_Block(b: *Block, env: *MacroEnv, file: String, line: uint32, col: uint32) -> *Block {
+        // Always flatten $(…)* so nested expression-blocks expand correctly
+        return Subst_Block_Flat(b, env, file, line, col);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Expand trees
+    // ---------------------------------------------------------------------------
+
+    func Expand_Expr(ex: *MacroExpander, e: *Expr, depth: int) -> *Expr {
+        if e == null as *Expr { return null as *Expr; }
+        if depth > 32 {
+            MacroExpand_Err(ex, e.line, e.column, "macro expansion depth exceeded");
+            return e;
+        }
+        if e.kind == ekMacroCall {
+            return Expand_OneCall(ex, e, depth);
+        }
+        e.child1 = Expand_Expr(ex, e.child1, depth);
+        e.child2 = Expand_Expr(ex, e.child2, depth);
+        e.child3 = Expand_Expr(ex, e.child3, depth);
+        if e.refBlock != null as *Block {
+            e.refBlock = Expand_Block(ex, e.refBlock, depth);
+        }
+        var args: *ExprList = e.callArgs;
+        while args != null as *ExprList {
+            args.expr = Expand_Expr(ex, args.expr, depth);
+            args = args.next;
+        }
+        var arm: *MatchArm = e.matchArms;
+        while arm != null as *MatchArm {
+            arm.body = Expand_Expr(ex, arm.body, depth);
+            arm = arm.next;
+        }
+        return e;
+    }
+
+    func Expand_OneCall(ex: *MacroExpander, call: *Expr, depth: int) -> *Expr {
+        let name: String = call.strValue;
+        let siteLine: uint32 = call.line;
+        let siteCol: uint32 = call.column;
+        let siteFile: String = call.sourceFile;
+
+        // Built-in quote!(e)
+        if String_Eq(name, "quote") {
+            if call.callArgCount != 1 || call.callArgs == null as *ExprList {
+                MacroExpand_Err(ex, siteLine, siteCol, "quote! expects exactly 1 argument");
+                return call;
+            }
+            let arg: *Expr = Expand_Expr(ex, call.callArgs.expr, depth + 1);
+            let n: *Expr = Ast_CloneExpr(arg);
+            Graft_Expr(n, siteFile, siteLine, siteCol);
+            return n;
+        }
+
+        let mdecl: *Decl = MacroExpand_Lookup(ex, name);
+        if mdecl == null as *Decl {
+            MacroExpand_Err(ex, siteLine, siteCol, String_Concat("unknown macro '", String_Concat(name, "'")));
+            return call;
+        }
+
+        // Match rule: fixed, trailing rep, multi-rep groups (;), compound zip (chunk>1).
+        // Group lengths encoded on call.genericCallee as "n0;n1;…" (empty = one flat group).
+        var rule: *Decl = mdecl.childDecl1;
+        var matched: *Decl = null as *Decl;
+        var env: MacroEnv = Env_New();
+
+        // Pre-expand all args once
+        var expArgs: *ExprList = null as *ExprList;
+        var expTail: *ExprList = null as *ExprList;
+        var nargs: int = 0;
+        var rawArg: *ExprList = call.callArgs;
+        while rawArg != null as *ExprList {
+            let aexp: *Expr = Expand_Expr(ex, rawArg.expr, depth + 1);
+            let node: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+            node.expr = aexp;
+            node.next = null as *ExprList;
+            node.argName = "";
+            if expArgs == null as *ExprList {
+                expArgs = node;
+                expTail = node;
+            } else {
+                expTail.next = node;
+                expTail = node;
+            }
+            nargs = nargs + 1;
+            rawArg = rawArg.next;
+        }
+
+        // Parse group lengths from genericCallee ("2;3") — empty means one group of all args
+        var g0: int = nargs;
+        var g1: int = 0;
+        var nGroups: int = 1;
+        let glens: String = call.genericCallee;
+        if glens != null as String && !String_Eq(glens, "") {
+            var gstart: int = 0;
+            var gidx: int = 0;
+            let glen: int = bux_strlen(glens) as int;
+            var gi: int = 0;
+            while gi <= glen {
+                if gi == glen || glens[gi] == 59 as char8 {
+                    let gpart: String = bux_str_slice(glens, gstart as uint, (gi - gstart) as uint);
+                    let gv: int = String_ToInt(gpart) as int;
+                    if gidx == 0 { g0 = gv; }
+                    else if gidx == 1 { g1 = gv; nGroups = 2; }
+                    gidx = gidx + 1;
+                    gstart = gi + 1;
+                }
+                gi = gi + 1;
+            }
+            if gidx > 0 { nGroups = gidx; }
+        }
+
+        while rule != null as *Decl {
+            let kinds: String = rule.useNames;
+            var nSeg: int = 0;
+            let klen: int = bux_strlen(kinds) as int;
+            if klen == 0 {
+                nSeg = 0;
+            } else {
+                nSeg = 1;
+                var ci: int = 0;
+                while ci < klen {
+                    if kinds[ci] == 59 as char8 { nSeg = nSeg + 1; }
+                    ci = ci + 1;
+                }
+            }
+            var nReps: int = 0;
+            var sgi: int = 0;
+            while sgi < nSeg {
+                let ks0: String = Macro_KindAt(kinds, sgi);
+                if String_StartsWith(ks0, "rep:") { nReps = nReps + 1; }
+                sgi = sgi + 1;
+            }
+            let useGroups: bool = nReps > 1 && nGroups > 1;
+
+            env = Env_New();
+            var ok: bool = true;
+            var argList: *ExprList = expArgs;
+            var flatLeft: int = nargs;
+            var gIdx: int = 0;
+            var gOff: int = 0; // offset within current group when useGroups
+            var paramIdx: int = 0;
+            var listSlot: int = 0; // next free list slot (0 or 1)
+            var seg: int = 0;
+
+            while seg < nSeg && ok {
+                var kindStr: String = Macro_KindAt(kinds, seg);
+                if String_StartsWith(kindStr, "rep:") {
+                    var rest: String = bux_str_slice(kindStr, 4, bux_strlen(kindStr) - 4);
+                    var chunk: int = 1;
+                    var atPos: int = -1;
+                    var ri: int = 0;
+                    let rlen: int = bux_strlen(rest) as int;
+                    while ri < rlen {
+                        if rest[ri] == 64 as char8 { atPos = ri; break; }
+                        ri = ri + 1;
+                    }
+                    if atPos >= 0 {
+                        let numStr: String = bux_str_slice(rest, (atPos + 1) as uint, (rlen - atPos - 1) as uint);
+                        chunk = String_ToInt(numStr) as int;
+                        if chunk < 1 { chunk = 1; }
+                    }
+
+                    // Determine how many args this rep consumes
+                    var take: int = 0;
+                    if useGroups {
+                        if gIdx >= nGroups {
+                            take = 0; // empty trailing rep
+                        } else {
+                            if gIdx == 0 { take = g0; }
+                            else { take = g1; }
+                            gIdx = gIdx + 1;
+                            gOff = 0;
+                        }
+                    } else {
+                        take = flatLeft;
+                    }
+                    if take % chunk != 0 { ok = false; break; }
+
+                    // Compound zip: de-interleave into parallel lists
+                    if chunk == 1 {
+                        if listSlot > 1 { ok = false; break; }
+                        let nm: String = Rule_FragName(rule, paramIdx);
+                        if listSlot == 0 {
+                            env.listName0 = nm;
+                            env.listCount0 = 0;
+                        } else {
+                            env.listName1 = nm;
+                            env.listCount1 = 0;
+                        }
+                        var ti: int = 0;
+                        while ti < take && argList != null as *ExprList {
+                            Env_ListSet(&env, listSlot, Env_ListCountOf(&env, listSlot), argList.expr);
+                            if listSlot == 0 { env.listCount0 = env.listCount0 + 1; }
+                            else { env.listCount1 = env.listCount1 + 1; }
+                            argList = argList.next;
+                            flatLeft = flatLeft - 1;
+                            ti = ti + 1;
+                        }
+                        if ti != take { ok = false; break; }
+                        listSlot = listSlot + 1;
+                        paramIdx = paramIdx + 1;
+                    } else if chunk == 2 {
+                        // Parallel lists for $a and $b
+                        if listSlot > 0 { ok = false; break; } // need both free slots
+                        let nm0: String = Rule_FragName(rule, paramIdx);
+                        let nm1: String = Rule_FragName(rule, paramIdx + 1);
+                        env.listName0 = nm0;
+                        env.listName1 = nm1;
+                        env.listCount0 = 0;
+                        env.listCount1 = 0;
+                        var ti2: int = 0;
+                        while ti2 < take && argList != null as *ExprList {
+                            // even → list0, odd → list1
+                            if ti2 % 2 == 0 {
+                                Env_ListSet(&env, 0, env.listCount0, argList.expr);
+                                env.listCount0 = env.listCount0 + 1;
+                            } else {
+                                Env_ListSet(&env, 1, env.listCount1, argList.expr);
+                                env.listCount1 = env.listCount1 + 1;
+                            }
+                            argList = argList.next;
+                            flatLeft = flatLeft - 1;
+                            ti2 = ti2 + 1;
+                        }
+                        if ti2 != take { ok = false; break; }
+                        listSlot = 2;
+                        paramIdx = paramIdx + 2;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                } else {
+                    // Fixed fragment
+                    if useGroups {
+                        // advance group if exhausted
+                        var gAvail: int = 0;
+                        if gIdx == 0 { gAvail = g0 - gOff; }
+                        else if gIdx == 1 { gAvail = g1 - gOff; }
+                        else { gAvail = 0; }
+                        if gAvail <= 0 {
+                            gIdx = gIdx + 1;
+                            gOff = 0;
+                            if gIdx == 0 { gAvail = g0; }
+                            else if gIdx == 1 { gAvail = g1; }
+                            else { gAvail = 0; }
+                        }
+                        if gAvail <= 0 || argList == null as *ExprList { ok = false; break; }
+                        gOff = gOff + 1;
+                    } else {
+                        if argList == null as *ExprList { ok = false; break; }
+                    }
+                    let aexp: *Expr = argList.expr;
+                    if !Macro_FragMatches(kindStr, aexp) { ok = false; break; }
+                    Env_Set(&env, paramIdx, Rule_FragName(rule, paramIdx), aexp);
+                    argList = argList.next;
+                    flatLeft = flatLeft - 1;
+                    paramIdx = paramIdx + 1;
+                }
+                seg = seg + 1;
+            }
+            if ok {
+                if useGroups {
+                    if gIdx < nGroups { ok = false; }
+                    // remaining empty groups ok only if trailing empty reps handled
+                } else {
+                    if argList != null as *ExprList || flatLeft != 0 { ok = false; }
+                }
+            }
+            if ok {
+                matched = rule;
+                break;
+            }
+            rule = rule.childDecl2;
+        }
+        if matched == null as *Decl {
+            MacroExpand_Err(ex, siteLine, siteCol, String_Concat("macro has no matching rule for '", String_Concat(name, "'")));
+            return call;
+        }
+
+        if matched.refBody == null as *Block {
+            MacroExpand_Err(ex, siteLine, siteCol, "macro rule has empty body");
+            return call;
+        }
+
+        let body: *Block = Subst_Block_Flat(matched.refBody, &env, siteFile, siteLine, siteCol);
+        // Hygiene: unique let names per expansion (CBE is function-scoped)
+        Macro_GensymBlock(ex, body, &env);
+        let blk: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+        // zero via MakeExpr-like
+        let made: Expr = Ast_MakeExpr(ekBlock, siteLine, siteCol);
+        blk.kind = made.kind;
+        blk.line = siteLine;
+        blk.column = siteCol;
+        blk.sourceFile = siteFile;
+        blk.strValue = "";
+        blk.intValue = 0;
+        blk.boolValue = false;
+        blk.tokKind = 0;
+        blk.tokText = "";
+        blk.child1 = null as *Expr;
+        blk.child2 = null as *Expr;
+        blk.child3 = null as *Expr;
+        blk.refType = null as *TypeExpr;
+        blk.refBlock = body;
+        blk.callArgs = null as *ExprList;
+        blk.callArgCount = 0;
+        blk.matchArms = null as *MatchArm;
+        blk.matchArmCount = 0;
+        blk.genericCallee = "";
+        blk.genericTypeArgCount = 0;
+        blk.structName = "";
+        blk.structFieldCount = 0;
+        blk.closureParams = null as *Decl;
+        blk.captureCount = 0;
+
+        // Nested macros inside expansion
+        return Expand_Expr(ex, blk, depth + 1);
+    }
+
+    func Expand_Block(ex: *MacroExpander, b: *Block, depth: int) -> *Block {
+        if b == null as *Block { return null as *Block; }
+        var s: *Stmt = b.firstStmt;
+        while s != null as *Stmt {
+            Expand_Stmt(ex, s, depth);
+            s = s.nextStmt;
+        }
+        return b;
+    }
+
+    func Expand_Stmt(ex: *MacroExpander, s: *Stmt, depth: int) {
+        if s == null as *Stmt { return; }
+        s.child1 = Expand_Expr(ex, s.child1, depth);
+        s.child2 = Expand_Expr(ex, s.child2, depth);
+        s.child3 = Expand_Expr(ex, s.child3, depth);
+        if s.refStmtBlock != null as *Block {
+            Expand_Block(ex, s.refStmtBlock, depth);
+        }
+        if s.refStmtElse != null as *Block {
+            Expand_Block(ex, s.refStmtElse, depth);
+        }
+        if s.refStmtDecl != null as *Decl {
+            Expand_Decl(ex, s.refStmtDecl, depth);
+        }
+    }
+
+    func Expand_Decl(ex: *MacroExpander, d: *Decl, depth: int) {
+        if d == null as *Decl { return; }
+        if d.kind == dkFunc {
+            if d.refBody != null as *Block {
+                Expand_Block(ex, d.refBody, depth);
+            }
+        } else if d.kind == dkImpl {
+            var m: *Decl = d.childDecl1;
+            while m != null as *Decl {
+                Expand_Decl(ex, m, depth);
+                m = m.childDecl2;
+            }
+        } else if d.kind == dkModule {
+            var it: *Decl = d.childDecl1;
+            while it != null as *Decl {
+                Expand_Decl(ex, it, depth);
+                it = it.childDecl2;
+            }
+        } else if d.kind == dkConst {
+            d.constValue = Expand_Expr(ex, d.constValue, depth);
+        }
+        // do not expand into nested macros' templates (rules stay as templates)
+    }
+
+    func Collect_Macros(ex: *MacroExpander, d: *Decl) {
+        if d == null as *Decl { return; }
+        if d.kind == dkMacro {
+            // Only top-level macros have non-empty name; rules have empty strValue
+            if !String_Eq(d.strValue, "") {
+                MacroExpand_Register(ex, d.strValue, d);
+            }
+        } else if d.kind == dkModule {
+            var it: *Decl = d.childDecl1;
+            while it != null as *Decl {
+                Collect_Macros(ex, it);
+                it = it.childDecl2;
+            }
+        }
+    }
+
+    /// Expand all macro! calls in module. Returns number of errors.
+    func MacroExpand_ExpandModule(mod: *Module) -> *MacroExpander {
+        let ex: *MacroExpander = MacroExpand_New();
+        if mod == null as *Module { return ex; }
+        var d: *Decl = mod.firstItem;
+        while d != null as *Decl {
+            Collect_Macros(ex, d);
+            d = d.childDecl2;
+        }
+        d = mod.firstItem;
+        while d != null as *Decl {
+            Expand_Decl(ex, d, 0);
+            d = d.childDecl2;
+        }
+        return ex;
+    }
+
+    func MacroExpand_DiagCount(ex: *MacroExpander) -> int {
+        if ex == null as *MacroExpander { return 0; }
+        return ex.diagCount;
+    }
+
+    func MacroExpand_GetDiag(ex: *MacroExpander, i: int) -> MacroDiag {
+        return ex.diags[i];
+    }
+}

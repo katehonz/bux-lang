@@ -191,14 +191,40 @@ Use `Std::Test` module for assertions inside test code.
 
 ### Continuous integration
 ```bash
-make test                          # what PR CI runs
+make test                          # full sequential suite (local)
 ```
-| Workflow | When | Command |
-|----------|------|---------|
-| **`.github/workflows/ci.yml`** | every PR + push to `main` | `make test` |
+| Workflow | When | What runs |
+|----------|------|-----------|
+| **`.github/workflows/ci.yml`** | every PR + push to `main` | **split jobs** (see below) + macOS smoke |
 | **`.github/workflows/selfhost-loop.yml`** | weekly / manual / path-filtered main | `make selfhost-loop` |
 
-`make test` includes examples, goldens, registry, apps, DWARF, and selfhost smoke
+**`ci.yml` layout (faster PR feedback):**
+
+| Job | OS | Targets |
+|-----|-----|---------|
+| `build` | ubuntu | `make build` → upload `buxc` artifact |
+| `unit` | ubuntu | `fmt-check` + `test-unit` (reuse artifact) |
+| `examples` | ubuntu | `test-examples` (full list) |
+| `goldens` | ubuntu | `test-errors` + `test-stdlib` + `test-registry` + `test-dwarf` + `test-drop-move` |
+| `apps` | ubuntu | `test-apps` |
+| `selfhost` | ubuntu | `test-selfhost-smoke` |
+| `macos` | macos-14 | rebuild + `test-unit` + `test-examples-smoke` (subset) |
+| `windows` | windows-latest | rebuild `buxc.exe` + pure Nim unit tests + CLI smoke |
+| `ci-gate` | ubuntu | fails if any required job failed (branch protection) |
+
+**CI speed helpers:**
+- Pin Nim **2.0.8**; cache `.nim_runtime` (big win on macOS — Nim is built from source there;
+  Windows uses a prebuilt Nim zip)
+- Project-local `nimcache/` via `NIMFLAGS=--nimcache:nimcache`, cached per job by source hash
+- macOS skips full EXAMPLES (Linux already runs them) and skips `fmt-check` (Linux unit job)
+- **Windows** does **not** run `bux run` examples yet: `rt/runtime.c` needs POSIX
+  (`ucontext`, `pthread`, BSD sockets). Smoke still validates bootstrap + unit tests on Win.
+
+Parallel Linux jobs set `BUX_SKIP_BUILD=1` after downloading the `buxc` artifact.
+Locally, `make test` still runs the full suite sequentially and builds once.
+`make test-examples-smoke` runs the macOS-sized subset locally.
+
+`make test` includes examples, goldens, registry, apps, DWARF, unit tests, and selfhost smoke
 (not the slow gen2↔gen3 fixed-point).
 
 ### Selfhost loop (optional CI)

@@ -1478,6 +1478,15 @@ const char* bux_getenv(const char* name) {
     return val ? val : "";
 }
 
+/* Extra cc/ld flags for host. --build-id is GNU ld only (Apple ld rejects it). */
+const char* bux_cc_ld_stable(void) {
+#if defined(__linux__)
+    return " -Wl,--build-id=none";
+#else
+    return "";
+#endif
+}
+
 int bux_setenv(const char* name, const char* value) {
     if (!name || !value) return -1;
     return setenv(name, value, 1);

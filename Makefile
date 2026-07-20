@@ -2,41 +2,63 @@ NIM := nim
 SRC := bootstrap/main.nim
 OUT := buxc
 BUILD_DIR := build
+# Project-local nimcache so CI can cache compiles (default is ~/.cache/nim).
+NIMFLAGS ?= --nimcache:nimcache
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked drop_early_return lifetime_elision ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked ownership_release drop_early_return lifetime_elision ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field move_field_partial c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic
 
-.PHONY: all build dev debug test clean clean-all test-examples selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs bench test-apps test-dwarf test-selfhost-smoke
+# Platform smoke (macOS CI): full EXAMPLES still runs on Linux.
+EXAMPLES_SMOKE := hello ownership ownership_release strings map move_field move_field_partial c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic
+
+.PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit ensure-buxc
 
 all: build
 
-build:
-	$(NIM) c -o:$(OUT) -d:release --opt:size $(SRC)
+# Rebuild only when bootstrap sources change (CI can set BUX_SKIP_BUILD=1
+# after downloading a prebuilt buxc artifact).
+$(OUT): $(wildcard bootstrap/*.nim)
+	$(NIM) c $(NIMFLAGS) -o:$(OUT) -d:release --opt:size $(SRC)
 	# strip $(OUT)
 
+build: $(OUT)
+
+# CI parallel jobs download buxc and set BUX_SKIP_BUILD=1 to avoid rebuild.
+ensure-buxc:
+ifeq ($(BUX_SKIP_BUILD),1)
+	@test -x ./$(OUT) || (echo "error: ./$(OUT) missing (BUX_SKIP_BUILD=1)"; exit 1)
+else
+	@$(MAKE) $(OUT)
+endif
+
 dev:
-	$(NIM) c -o:buxc_debug -d:debug --stackTrace:on --lineTrace:on $(SRC)
+	$(NIM) c $(NIMFLAGS) -o:buxc_debug -d:debug --stackTrace:on --lineTrace:on $(SRC)
 
 debug: dev
 	@echo "Debug binary: buxc_debug"
 
-test: build fmt-check test-examples test-errors test-stdlib test-registry test-dwarf test-apps test-selfhost-smoke
+# Full local / sequential suite (same coverage as split CI jobs combined).
+test: build fmt-check test-examples test-errors test-stdlib test-registry test-dwarf test-drop-move test-apps test-selfhost-smoke test-unit
+
+# Nim unit tests + tiny CLI smoke (needs Nim + buxc).
+test-unit: ensure-buxc
 	@echo "Running lexer tests..."
-	$(NIM) c -r tests/lexer_test.nim
+	$(NIM) c $(NIMFLAGS) -r tests/lexer_test.nim
 	@echo "Running parser tests..."
-	$(NIM) c -r tests/parser_test.nim
+	$(NIM) c $(NIMFLAGS) -r tests/parser_test.nim
 	@echo "Running sema tests..."
-	$(NIM) c -r tests/sema_test.nim
+	$(NIM) c $(NIMFLAGS) -r tests/sema_test.nim
 	@echo "Running HIR tests..."
-	$(NIM) c -r tests/hir_test.nim
+	$(NIM) c $(NIMFLAGS) -r tests/hir_test.nim
 	@echo "Running borrow checker tests..."
-	$(NIM) c -r tests/borrow_test.nim
+	$(NIM) c $(NIMFLAGS) -r tests/borrow_test.nim
 	@echo "Running integration tests..."
 	rm -rf _test_tmp_pkg
 	./$(OUT) new _test_tmp_pkg
 	./$(OUT) --version
 
-test-examples: build
-	@for ex in $(EXAMPLES); do \
+# Shared loop body for full + smoke example runners.
+define run-examples
+	@for ex in $(1); do \
 		echo "=== Testing example: $$ex ==="; \
 		mkdir -p examples_pkg/$$ex/src; \
 		cp examples/$$ex.bux examples_pkg/$$ex/src/Main.bux; \
@@ -49,9 +71,22 @@ test-examples: build
 			echo '[Build]' >> examples_pkg/$$ex/bux.toml; \
 			echo 'Output = "Bin"' >> examples_pkg/$$ex/bux.toml; \
 		fi; \
-		(cd examples_pkg/$$ex && timeout 10 ../../$(OUT) run) || exit 1; \
+		if command -v timeout >/dev/null 2>&1; then \
+			(cd examples_pkg/$$ex && timeout 30 ../../$(OUT) run) || exit 1; \
+		else \
+			(cd examples_pkg/$$ex && ../../$(OUT) run) || exit 1; \
+		fi; \
 	done
+endef
+
+test-examples: ensure-buxc
+	$(call run-examples,$(EXAMPLES))
 	@echo "All examples passed!"
+
+# Subset for macOS / quick platform smoke (Linux CI runs full EXAMPLES).
+test-examples-smoke: ensure-buxc
+	$(call run-examples,$(EXAMPLES_SMOKE))
+	@echo "Smoke examples passed!"
 
 clean:
 	rm -f $(OUT) buxc_debug
@@ -65,7 +100,7 @@ clean-all: clean
 	rm -rf build/selfhost build/selfhost-loop-a build/selfhost-loop-b build/selfhost-loop-c
 	rm -rf tests/golden/*/build
 
-selfhost: build
+selfhost: ensure-buxc
 	@echo "=== Building self-hosted compiler ==="
 	@rm -rf build/selfhost
 	@mkdir -p build/selfhost/src
@@ -80,7 +115,7 @@ selfhost: build
 
 GOLDEN_TESTS := hello fibonacci structs generics algebraic_enums enums methods strings modern_features
 
-test-golden: build
+test-golden: ensure-buxc
 	@echo "=== Golden tests ==="
 	@passed=0; failed=0; \
 	for test in $(GOLDEN_TESTS); do \
@@ -100,24 +135,24 @@ test-golden: build
 	echo "Golden tests: $$passed passed, $$failed failed"; \
 	if [ $$failed -gt 0 ]; then exit 1; fi
 
-test-errors: build
+test-errors: ensure-buxc
 	@echo "=== Error diagnostic golden tests ==="
 	@chmod +x tests/error_golden/run.sh
 	@tests/error_golden/run.sh ./$(OUT)
 
-test-stdlib: build
+test-stdlib: ensure-buxc
 	@echo "=== Stdlib golden tests ==="
 	@chmod +x tests/stdlib_golden/run.sh
 	@tests/stdlib_golden/run.sh ./$(OUT)
 
 # Generate stdlib API docs from /// comments → docs/api/stdlib.md
-docs: build
+docs: ensure-buxc
 	@mkdir -p docs/api
 	@./$(OUT) doc --out docs/api/stdlib.md lib/
 	@echo "docs/api/stdlib.md updated"
 
 # CI: full-tree format check (lib / examples / src / tests / apps) + dirty-path smoke.
-fmt-check: build
+fmt-check: ensure-buxc
 	@echo "=== fmt --check (full tree) ==="
 	@./$(OUT) fmt --check lib/
 	@./$(OUT) fmt --check examples/
@@ -134,7 +169,7 @@ fmt-check: build
 
 # One-shot reformat of the same trees (run before committing style-only fixes)
 .PHONY: fmt
-fmt: build
+fmt: ensure-buxc
 	@./$(OUT) fmt lib/
 	@./$(OUT) fmt examples/
 	@./$(OUT) fmt src/
@@ -144,7 +179,7 @@ fmt: build
 
 # Fixed-point: bootstrap buxc → buxc2 → buxc3 (path-normalized C + stripped ELF).
 # Slow; not part of default `make test`. Optional CI: .github/workflows/selfhost-loop.yml
-selfhost-loop: build
+selfhost-loop: ensure-buxc
 	@chmod +x tools/selfhost_loop.sh
 	@tools/selfhost_loop.sh
 
@@ -194,42 +229,53 @@ test-lsp: lsp
 	@echo "==> LSP type hierarchy smoke"
 	@chmod +x tools/smoke_lsp_type_hierarchy.sh
 	@tools/smoke_lsp_type_hierarchy.sh
+	@echo "==> LSP type hierarchy workspace (closed multi-file)"
+	@chmod +x tools/smoke_lsp_type_hierarchy_ws.sh
+	@tools/smoke_lsp_type_hierarchy_ws.sh
 
 .PHONY: test-registry
-test-registry: build
+test-registry: ensure-buxc
 	@echo "=== Registry smoke (E.1 + HTTP) ==="
 	@chmod +x tools/smoke_registry.sh
 	@tools/smoke_registry.sh
 
 # E.2 — build showcase apps + simpledb/jwt CLI smoke
 .PHONY: test-apps
-test-apps: build
+test-apps: ensure-buxc
 	@echo "=== Apps smoke (E.2) ==="
 	@chmod +x tools/smoke_apps.sh
 	@tools/smoke_apps.sh
 
 # E.5 — micro-benchmarks (Bux + C/Nim/Zig twins)
 .PHONY: bench
-bench: build
+bench: ensure-buxc
 	@chmod +x tools/bench.sh
 	@tools/bench.sh
 
 # E.5 — Nexus HTTP throughput (wrk); optional via BENCH_NEXUS=1 make bench
 .PHONY: bench-nexus
-bench-nexus: build
+bench-nexus: ensure-buxc
 	@chmod +x tools/bench_nexus.sh
 	@tools/bench_nexus.sh
 
 # E.4 — DWARF / #line debugger smoke
 .PHONY: test-dwarf
-test-dwarf: build
+test-dwarf: ensure-buxc
 	@echo "=== DWARF / #line smoke (E.4) ==="
 	@chmod +x tools/smoke_dwarf.sh
 	@tools/smoke_dwarf.sh
 
+# Drop / field-move goldens (whole + partial field move; early-return counts)
+.PHONY: test-drop-move
+test-drop-move: ensure-buxc
+	@echo "=== Drop / field-move smoke ==="
+	@chmod +x tools/smoke_drop_move.sh
+	@tools/smoke_drop_move.sh
+
 # Selfhost (buxc2): move_field ownership + multi-file #line (session 41/42)
+# When BUX_SKIP_BUILD=1, reuse prebuilt buxc; still builds buxc2 via selfhost.
 .PHONY: test-selfhost-smoke
-test-selfhost-smoke: selfhost
+test-selfhost-smoke: ensure-buxc selfhost
 	@echo "=== Selfhost smoke (move_field + multi-file #line) ==="
 	@chmod +x tools/smoke_selfhost.sh
 	@tools/smoke_selfhost.sh

@@ -17,6 +17,7 @@ module Cli {
     extern func bux_system(cmd: String) -> int;
     extern func bux_getenv(name: String) -> String;
     extern func bux_setenv(name: String, value: String) -> int;
+    extern func bux_cc_ld_stable() -> String;
     extern func bux_strlen(s: String) -> uint;
     extern func bux_str_slice(s: String, start: uint, len: uint) -> String;
 
@@ -226,6 +227,25 @@ func Cli_Compile(source: String, sourceName: String, targetTriple: String) -> St
         decl = decl.childDecl2;
     }
 
+    // Phase 2b: declarative macro! / quote! expansion
+    PrintLine("  Macro expand...");
+    let macEx: *MacroExpander = MacroExpand_ExpandModule(mod);
+    if MacroExpand_DiagCount(macEx) > 0 {
+        var mi: int = 0;
+        while mi < MacroExpand_DiagCount(macEx) {
+            let md: MacroDiag = MacroExpand_GetDiag(macEx, mi);
+            let diag: Diagnostic = Diagnostic {
+                message: md.message,
+                line: md.line,
+                column: md.column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, sourceName);
+            mi = mi + 1;
+        }
+        return "";
+    }
+
     // Phase 3: Semantic analysis
     PrintLine("  Sema...");
     let sema: *Sema = Sema_Analyze(mod);
@@ -340,13 +360,17 @@ func Cli_Build(srcPath: String, outPath: String, targetTriple: String, isRelease
     if !String_Eq(targetTriple, "") {
         StringBuilder_Append(&cmdBuf, "clang ");
         StringBuilder_Append(&cmdBuf, optFlags);
-        StringBuilder_Append(&cmdBuf, " -pthread -Wl,--build-id=none -target ");
+        StringBuilder_Append(&cmdBuf, " -pthread");
+        StringBuilder_Append(&cmdBuf, bux_cc_ld_stable());
+        StringBuilder_Append(&cmdBuf, " -target ");
         StringBuilder_Append(&cmdBuf, targetTriple);
         StringBuilder_Append(&cmdBuf, " ");
     } else {
         StringBuilder_Append(&cmdBuf, "cc ");
         StringBuilder_Append(&cmdBuf, optFlags);
-        StringBuilder_Append(&cmdBuf, " -pthread -Wl,--build-id=none ");
+        StringBuilder_Append(&cmdBuf, " -pthread");
+        StringBuilder_Append(&cmdBuf, bux_cc_ld_stable());
+        StringBuilder_Append(&cmdBuf, " ");
     }
     StringBuilder_Append(&cmdBuf, "-o ");
     StringBuilder_Append(&cmdBuf, outPath);
@@ -424,6 +448,24 @@ func Cli_Check(srcPath: String) -> int {
         decl2 = decl2.childDecl2;
     }
 
+    // Phase 2b: macro expand
+    let macEx2: *MacroExpander = MacroExpand_ExpandModule(mod);
+    if MacroExpand_DiagCount(macEx2) > 0 {
+        var mi2: int = 0;
+        while mi2 < MacroExpand_DiagCount(macEx2) {
+            let md2: MacroDiag = MacroExpand_GetDiag(macEx2, mi2);
+            let diag: Diagnostic = Diagnostic {
+                message: md2.message,
+                line: md2.line,
+                column: md2.column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, srcPath);
+            mi2 = mi2 + 1;
+        }
+        return 1;
+    }
+
     // Phase 3: Sema
     let sema: *Sema = Sema_Analyze(mod);
     if Sema_HasError(sema) {
@@ -475,6 +517,14 @@ func Cli_CompileSource(source: String, sourceName: String) -> *HirModule {
     let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
     if mod == null as *Module {
         Print("Parse failed for ");
+        PrintLine(sourceName);
+        return null as *HirModule;
+    }
+
+    // Phase 2b: macro expand
+    let macEx3: *MacroExpander = MacroExpand_ExpandModule(mod);
+    if MacroExpand_DiagCount(macEx3) > 0 {
+        Print("Macro errors in ");
         PrintLine(sourceName);
         return null as *HirModule;
     }
@@ -1623,6 +1673,25 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
     PrintInt(merged.itemCount);
     PrintLine(" declarations");
 
+    // Declarative macro! / quote! expansion (before type-check)
+    PrintLine("Expanding macros...");
+    let macEx: *MacroExpander = MacroExpand_ExpandModule(merged);
+    if MacroExpand_DiagCount(macEx) > 0 {
+        var mi: int = 0;
+        while mi < MacroExpand_DiagCount(macEx) {
+            let md: MacroDiag = MacroExpand_GetDiag(macEx, mi);
+            let diag: Diagnostic = Diagnostic {
+                message: md.message,
+                line: md.line,
+                column: md.column,
+                severity: 0,
+            };
+            Diagnostic_Print(&diag, "<macro>");
+            mi = mi + 1;
+        }
+        return 1;
+    }
+
     // Semantic analysis
     PrintLine("Running sema...");
     let sema: *Sema = Sema_Analyze(merged);
@@ -1705,13 +1774,17 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
     if !String_Eq(targetTriple, "") {
         StringBuilder_Append(&ccBuf, "clang ");
         StringBuilder_Append(&ccBuf, optFlags2);
-        StringBuilder_Append(&ccBuf, " -pthread -Wl,--build-id=none -target ");
+        StringBuilder_Append(&ccBuf, " -pthread");
+        StringBuilder_Append(&ccBuf, bux_cc_ld_stable());
+        StringBuilder_Append(&ccBuf, " -target ");
         StringBuilder_Append(&ccBuf, targetTriple);
         StringBuilder_Append(&ccBuf, " ");
     } else {
         StringBuilder_Append(&ccBuf, "cc ");
         StringBuilder_Append(&ccBuf, optFlags2);
-        StringBuilder_Append(&ccBuf, " -pthread -Wl,--build-id=none ");
+        StringBuilder_Append(&ccBuf, " -pthread");
+        StringBuilder_Append(&ccBuf, bux_cc_ld_stable());
+        StringBuilder_Append(&ccBuf, " ");
     }
     StringBuilder_Append(&ccBuf, "-o ");
     StringBuilder_Append(&ccBuf, outBin);

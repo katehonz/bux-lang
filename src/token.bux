@@ -147,6 +147,10 @@ module Token {
     // Lifetime parameter token: 'a, 'b, ... (not a char literal)
     const tkLifetime: int = 111;
 
+    // Declarative macros (session 60 — selfhost parity)
+    const tkMacro: int = 112;
+    const tkDollar: int = 113;  // bare $ for $(…)*
+
     // ---------------------------------------------------------------------------
     // Token struct
     // ---------------------------------------------------------------------------
@@ -229,6 +233,7 @@ module Token {
         if String_Eq(text, "async") { return tkAsync; }
         if String_Eq(text, "await") { return tkAwait; }
         if String_Eq(text, "spawn") { return tkSpawn; }
+        if String_Eq(text, "macro") { return tkMacro; }
         if String_Eq(text, "true") { return tkBoolLiteral; }
         if String_Eq(text, "false") { return tkBoolLiteral; }
         return tkIdent;
@@ -318,6 +323,8 @@ module Token {
         if kind == tkAmpAmp { return "&&"; }
         if kind == tkPipePipe { return "||"; }
         if kind == tkBang { return "!"; }
+        if kind == tkMacro { return "macro"; }
+        if kind == tkDollar { return "$"; }
         if kind == tkEq { return "=="; }
         if kind == tkNe { return "!="; }
         if kind == tkLt { return "<"; }

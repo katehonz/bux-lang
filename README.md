@@ -237,7 +237,7 @@ func Main() -> int {
 | **Backend** | LIR → C transpiler (clean 3-address code, then gcc/clang) |
 | **Strings** | Raw multi-line backticks, `f"..."` interp (bootstrap), `ReplaceAll` / `IsBlank` / `Repeat` |
 | **Gradual Ownership** | `@[Checked]` + `@[Release]` + `@[Shared]` + `borrow &mut` / `borrow &` |
-| **Drop Trait** | Auto-drop for `@[Drop]` types (Array, Map, user-defined structs) |
+| **Drop / RAII** | Auto-drop (`@[Drop]` / `extend … for Drop`); **field-move skips Drop** (no double-free) |
 | **Green Threads** | M:N scheduler (ucontext + SIGVTALRM), work-stealing queues |
 | **Async/Await** | `async func`, `spawn`, `.await` with stackful coroutines |
 | **Concurrency** | `Task`/`Channel`/`Sync` (pthread-based), `bux_async_yield`/`spawn` |
@@ -318,8 +318,11 @@ make test-examples
 # Golden diagnostic tests (Rust-style error format)
 make test-errors
 
-# Full unit + example suite (also run on every PR via GitHub Actions `ci.yml`)
+# Full unit + example suite (local; CI splits the same coverage across jobs)
 make test
+# Individual suites (also used by .github/workflows/ci.yml in parallel):
+#   make test-unit / test-examples / test-errors / test-stdlib /
+#   test-registry / test-dwarf / test-apps / test-selfhost-smoke
 
 # Full-tree format check (lib/ examples/ src/ tests/ apps/)
 make fmt-check

@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
-> **Дата:** 2026-07-19  
-> **Текущо:** v0.5.x — quote/graft hygiene, LSP 0.15, CI, fixed-point  
+> **Дата:** 2026-07-20  
+> **Текущо:** v0.5.x — macros (unhygienic binders + multi-rep), partial field-move, lean CI  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -72,7 +72,7 @@
 | C.1 | Lifetime elision за common cases | Без `'a` в 90% от API-тата | ✅ bootstrap + selfhost |
 | C.2 | Exclusive `&mut` vs shared `&` data-flow | По-малко false negatives | ✅ let-bound + use-while + call conflict |
 | C.3 | Auto-drop edge cases (early return, branches) | RAII да е надежден | ✅ bootstrap + selfhost |
-| C.4 | `@[Release]` zero-cost path документация + golden tests | Killer story: safe default, free hot path | ✅ partial (unchecked path + goldens) |
+| C.4 | `@[Release]` zero-cost path документация + golden tests | Killer story: safe default, free hot path | ✅ full (docs + Release wins + tests + example) |
 
 ### D — Tooling (P1)
 
@@ -864,9 +864,261 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 56 (CBE binary parentheses — C precedence safety)
+
+1. **Bug (selfhost):** tree HIR→C emitted nested binaries **without** parens.
+   - `return (a + b) * c` → C `return a + b * c;` → **7** instead of **9**
+   - `return (a - b) / c` → `a - b / c` → **8** instead of **3**
+2. **Fix selfhost** (`src/c_backend.bux`):
+   - `hBinary` always emits `(left op right)` (same policy as bootstrap HIR CBE)
+   - Unary operand parens (session 52) kept: `!(a && b)`
+3. **Bootstrap LIR** (`bootstrap/lir_c_backend.nim`): defensive parens on
+   arith/bitwise and unary `!`/`-`/`~` (operands are temps today; future-proof)
+4. **Example:** `examples/c_precedence.bux` — MulSum/SubDiv/ShiftSum/Mix
+5. **Smoke:** `tools/smoke_selfhost.sh` checks run values **and** generated C
+   contains `(a + b) * c` / `(a - b) / c`
+6. Wired into `EXAMPLES` + `make test-selfhost-smoke`
+7. Verified: bootstrap + **buxc2** → `9/3/6/7` + `PASS c_precedence`;
+   smoke PASS
+
+---
+
+## Сесия 57 (CI split jobs + macOS smoke)
+
+1. **`.github/workflows/ci.yml`** — no longer one 90m monolithic `make test`:
+   - **`build`** (ubuntu): `make build` → artifact `buxc-linux`
+   - **Parallel** (reuse artifact, `BUX_SKIP_BUILD=1`):
+     - `unit` — `fmt-check` + `test-unit`
+     - `examples` — `test-examples`
+     - `goldens` — errors + stdlib + registry + dwarf
+     - `apps` — `test-apps`
+     - `selfhost` — `test-selfhost-smoke`
+   - **`macos`**: Homebrew OpenSSL + rebuild + fmt/unit/examples
+   - **`ci-gate`**: single required status (all of the above must succeed)
+2. **Makefile:**
+   - `test-unit` extracted from `test`
+   - `ensure-buxc` + `BUX_SKIP_BUILD=1` for CI artifact reuse
+   - `$(OUT)` rebuild only when `bootstrap/*.nim` changes
+   - portable examples runner (optional `timeout`; macOS without coreutils OK)
+3. **macOS / non-GNU ld:**
+   - bootstrap: `-Wl,--build-id=none` only `when defined(linux)`
+   - selfhost: `bux_cc_ld_stable()` in `rt/runtime.c` (Linux-only build-id)
+   - CI sets `BUX_CFLAGS=-I… -L…` for Homebrew `libcrypto`
+4. Docs: BuildAndTest + README CI table; local `make test` still full sequential
+5. Verified locally: `BUX_SKIP_BUILD=1 make fmt-check test-unit test-errors`
+
+---
+
+## Сесия 58 (LSP 0.16 workspace type hierarchy index)
+
+1. **Gap:** type hierarchy subtypes/supertypes only saw open-doc `impls` or
+   method-keyed `workspaceImpls`. Closed files with **empty**
+   `extend T for I {}` (no methods) returned **[]**.
+2. **`workspaceTypeRels`** (`tools/lsp_server.nim`):
+   - URI → `seq[(typeName, iface, line)]` from every `analyzeFile`
+   - `registerWorkspaceTypeRels` replaces per-URI (re-open / re-scan safe)
+   - filled on `scanWorkspace` + open/edit — **no open doc required**
+3. **Consumers:**
+   - `collectSubtypeItems` / `collectSupertypeItems` prefer type-rel index
+   - `collectTypeImplementorLocs` (textDocument/implementation) same
+4. **Smoke:** `tools/smoke_lsp_type_hierarchy_ws.sh`
+   - open only Main; Drawable.bux + Shapes.bux closed
+   - empty extends → Drawable subtypes Circle+Square; Circle supers Drawable+Named
+5. Version **bux-lsp 0.16.0**; wired into `make test-lsp`
+6. Verified: single-file hierarchy + workspace smoke PASS
+
+---
+
+## Сесия 59 (user-facing `macro!` / `quote!` — declarative MVP)
+
+1. **Syntax (bootstrap):**
+   - `macro! name { ($x:expr, …) => { template } }`
+   - Invoke: `name!(args…)` — distinct from unwrap `expr!` via following `(`
+   - Built-in **`quote!(e)`** — identity expand + call-site graft
+2. **Lexer:** keyword `macro`; `$ident` fragment tokens (`$x`)
+3. **AST:** `dkMacro` + `MacroRule`/`MacroFragment`; `ekMacroCall`
+4. **Expansion** (`bootstrap/macroexpand.nim`) before sema:
+   - Collect macro decls; match rule by arity
+   - Deep clone + substitute `$frags` + graft call-site `SourceLocation`
+   - Nested expand (depth ≤ 32)
+5. **CLI:** `build` / `check` / `run` call `expandMacros` after merge
+6. **Example:** `examples/macro_twice.bux` → 42 / 42 / 43 + PASS
+7. **LanguageRef:** Macros section (limits documented)
+8. Verified: `./buxc run macro_twice`; hello + lexer/parser tests green
+9. **Not yet:** selfhost expand parity; `$(…)*` repetition; more frag kinds
+
+---
+
+## Сесия 60 (selfhost `macro!` / `quote!` expand parity)
+
+1. **Lexer/token:** `tkMacro`, keyword `macro`, `$ident` fragments
+2. **AST:** `dkMacro` (rules in `childDecl1` chain), `ekMacroCall`
+3. **Parser:** `macro! name { ($x:expr) => {…} }`, invoke `name!(…)`
+4. **`src/macroexpand.bux`:**
+   - collect macros → match rule by arity → clone+subst `$frags`
+   - call-site graft (line/col/`sourceFile`)
+   - built-in `quote!(e)`
+5. **CLI:** expand before sema (project / check / compile paths)
+6. **Sema fixes** (needed for block templates):
+   - `ekBlock` value = last `skExpr` type (was always `tyVoid`)
+   - `let x: T = …` sets `sym.typeKind` from annotation (not only init)
+7. **Smoke:** `tools/smoke_selfhost.sh` runs `examples/macro_twice.bux` via buxc2
+8. Verified: **buxc2** + bootstrap → `42/42/43` + `PASS macro_twice`
+
+---
+
+## Сесия 61 (macro `$(…)*` + `ident`/`tt` fragments)
+
+1. **Fragment kinds:** `expr` | `ident` | `tt` (tt ≡ expr for now)
+2. **Pattern rep (trailing):** `$( $x:expr ),*` / `$( $x:expr )*`
+3. **Template rep:** `$( stmts… )*` → `skMacroRep`, expanded per list item
+4. **Lexer:** bare `tkDollar` for `$(…)` (vs `$ident`)
+5. **Bootstrap** `macroexpand.nim`: list bindings, match rules, gensym locals
+6. **Selfhost** parity: `useNames` encodes kinds/`rep:`, `Subst_Block_Flat`, gensym
+7. **Sema:** block-as-expr checks last value **inside** child scope (no UAF of locals)
+8. **Example:** `examples/macro_repeat.bux` — sum_n / empty / call0 / id_tt
+9. Verified: bootstrap + **buxc2** → `6/0/42/7` + `PASS macro_repeat`
+
+---
+
+## Сесия 62 (C.4 `@[Release]` polish + Checked docs)
+
+1. **Three-tier model** documented in LanguageRef:
+   - default (no checks) → `@[Checked]` → `@[Release]` (force off)
+2. **Bootstrap:** `releaseFunc`; `checkedFunc = Checked ∧ ¬Release`
+3. **Selfhost:** same rule; **stacked attrs** loop (`@[Checked]` + `@[Release]`)
+4. **Parser:** multi-line stacked `@[…]` (skip newlines between attrs)
+5. **Tests** (`borrow_test`): Release alone; Checked+Release wins; Checked still errors
+6. **Example:** `examples/ownership_release.bux` — Unchecked / Safe / Hot / HotDangle
+7. Verified: 27/27 borrow tests; example PASS
+
+---
+
+## Сесия 63 (nested `$(…)*` / multi-rep / compound zip)
+
+1. **Bootstrap** (`macroexpand.nim` + parser):
+   - Compound rep: `$( $a:expr, $b:expr ),*` → parallel lists, zip in template
+   - Multi-rep: `$(…)* ; $(…)*` with call-site `;` groups (`exprMacroGroupLens`)
+   - Nested template: outer binds list → inner `$(…)*` expands once (no list names left)
+   - `MacroFragment.names` / `.kinds` for multi-name frags
+2. **Selfhost** parity (`src/macroexpand.bux`, `parser.bux`):
+   - Two named rep lists + zip in `Subst_Block_Flat`
+   - Kinds encoding `rep:expr+expr,@2` / multi-seg `rep:…;rep:…`
+   - Macro call `;` groups → `genericCallee` group-length string
+3. **Example:** `examples/macro_nested.bux`
+   - `add_pairs` → 33, `sum_groups` → 63, `double_each_sum` → 14, `named_sum` → 18
+4. **LanguageRef:** multi-rep / compound / nested docs; limits updated
+5. Verified: bootstrap + **buxc2** → PASS macro_nested / macro_repeat / macro_twice
+
+---
+
+## Сесия 64 (CI Nim cache + faster macOS)
+
+1. **Nim pin + toolchain cache:**
+   - `NIM_VERSION: 2.0.8` (stable cache keys; was `2.0.x`)
+   - Cache `.nim_runtime` on `build` / `unit` / `macos` / `selfhost-loop`
+   - Skip `setup-nim-action` on cache hit; restore `PATH` only
+2. **`nimcache` project-local:**
+   - `Makefile` `NIMFLAGS ?= --nimcache:nimcache` for bootstrap + unit tests
+   - `actions/cache` keyed on `bootstrap/**/*.nim` (+ tests for unit)
+3. **Leaner macOS job:**
+   - Runner `macos-14`; timeout 35m
+   - `make test-unit` + `make test-examples-smoke` (not full EXAMPLES / not fmt)
+   - `EXAMPLES_SMOKE`: hello, ownership*, strings, map, c_precedence, macro_*
+   - OpenSSL: install only if missing (`brew list`)
+4. **Docs:** BuildAndTest CI table; `.gitignore` `.nim_runtime/`
+5. Verified locally: `make build` uses `nimcache/`; `test-examples-smoke` PASS
+
+---
+
+## Сесия 65 (Drop / RAII docs — field-move story)
+
+1. **LanguageRef — Drop and RAII** (under Gradual Ownership):
+   - `@[Drop]` vs `extend T for Drop` (static `Type_Drop`, no vtable)
+   - When auto-drop runs (block end, early return, branches) — not gated on Checked
+   - **Field-move skip Drop** with `MakeBox` + simplified C (no `Array_Drop(&items)`)
+   - Move-on-return, assignment, call-arg transfers; error-path still Drops
+   - Limits: whole-local moves, static dispatch, manual free pitfalls
+2. **TOC** links Ownership + Drop; **Stdlib** `Array_Drop` + `Std::Drop` section
+3. **README** Drop line mentions field-move
+4. Cross-refs: `examples/move_field.bux`, `examples/drop_early_return.bux`,
+   selfhost smoke
+5. Verified: `move_field` C has no `Array_Drop` on moved `items`; example PASS
+
+---
+
+## Сесия 66 (macro hygiene + frag kinds `literal` / `block`)
+
+1. **Fragment kinds** (bootstrap + selfhost):
+   - `literal` / `lit` — only `ekLiteral` (rejects `1 + 2`)
+   - `block` — only `ekBlock` `{ … }`
+   - Shared `fragMatches` / `Macro_FragMatches` at match time
+2. **Hygiene gensym:**
+   - Bootstrap: also rename **`for` binders**; walk for bodies in collect
+   - Selfhost: gensym `skFor` + recurse if/while/for/MacroRep bodies
+   - CBE: two `with_acc!` → `__m1_n` / `__m2_n` (no collision)
+3. **Example:** `examples/macro_hygiene.bux` → 11/21/7/3/42 + PASS
+4. **LanguageRef:** kind table + hygiene layers (graft + gensym)
+5. **Makefile:** `macro_hygiene` in EXAMPLES + EXAMPLES_SMOKE
+6. Verified: bootstrap + **buxc2**; negative `only_lit!(1+2)` → no matching rule
+
+---
+
+## Сесия 67 (CI Windows smoke)
+
+1. **`.github/workflows/ci.yml` — `windows` job** (`windows-latest`, bash shell):
+   - Cache Nim **2.0.8** (prebuilt zip — fast) + `nimcache`
+   - `nim c -o:buxc.exe` bootstrap
+   - Pure Nim unit tests: lexer / parser / sema / hir / borrow
+   - CLI smoke: `buxc.exe new` + `--version`
+2. **Scope (honest):** no `bux run` examples on Windows yet —
+   `rt/runtime.c` is POSIX (`ucontext`, `pthread`, sockets, OpenSSL link).
+   Job still gates bootstrap regressions on Win.
+3. **`ci-gate`:** `windows` is a required job
+4. **Docs:** BuildAndTest CI table + Windows note
+5. Locally: YAML validated; full Win run is on GHA only
+
+---
+
+## Сесия 68 (partial field moves + Drop goldens)
+
+1. **Bug:** `return bag.items` still ran `Bag_Drop(&bag)` → double-free /
+   corrupt Array (ASSERT fail). Also dead double-Drop after terminal `return`.
+2. **Bootstrap** (`hir_lower.nim`):
+   - `markMovedOutFromAst` handles `ekField` when **field type is droppable**
+     (`autoDropFuncName`) — not for `return a.id` (int)
+   - Scope exit: skip re-emitting drops when last stmt always-returns; pop defers
+3. **Selfhost** (`c_backend.bux`):
+   - `CBE_MarkMovedFromNodeHint` + droppable type check; return uses `currentRetType`
+   - Store/let rhs walks field access for partial moves
+4. **Example + golden smoke:**
+   - `examples/move_field_partial.bux`
+   - `tools/smoke_drop_move.sh` + `make test-drop-move` (CI goldens job)
+5. Verified: partial PASS; `TakeItems` has **no** `Bag_Drop`; drop_early_return 5;
+   move_field PASS
+
+---
+
+## Сесия 69 (macro unhygienic binders)
+
+1. **Problem:** gensym renamed *all* template `let`/`var` binders, so
+   `var $name: int = …` with `$name:ident` could not introduce a call-site name.
+2. **Bootstrap** (`macroexpand.nim`):
+   - `binderIdentFromFrag` + `expandUnhygienic` set
+   - `substStmt`: rewrite `skLet`/`skFor` binder when name is `$frag` → ekIdent
+   - `collectLetNames` skips unhygienic names
+3. **Selfhost** (`macroexpand.bux`):
+   - `Env_AddUnhy` / `Env_IsUnhy` / `Env_BinderFromFrag`
+   - `Subst_Stmt` rewrites binders; `Macro_GensymBlock(ex, body, env)` skips them
+4. **Example:** `examples/macro_unhygienic.bux` → 11/21/6/10/1 + PASS
+   - C: `counter` / `other` / `n` kept; `acc` / `scratch` → `__mN_*`
+5. **LanguageRef:** unhygienic binder table; EXAMPLES + EXAMPLES_SMOKE
+6. Verified: bootstrap + **buxc2**; macro_hygiene still PASS
+
+---
+
 ## Следващи стъпки
 
-1. Parenthesize binary ops in CBE for full C precedence safety
-2. CI matrix (macOS) or split jobs for faster PR feedback
-3. Type hierarchy for multi-file closed docs without open (workspace type index)
-4. User-facing `macro!` / `quote` syntax on top of graft/clone
+1. Windows: MinGW + runtime stubs for `hello` smoke (stretch)
+2. Per-field Drop after partial move (stretch)
+3. Macro: true `stmt`/`pat` token-tree frags (stretch)

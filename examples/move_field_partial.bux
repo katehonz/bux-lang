@@ -1,0 +1,63 @@
+// Session 68 — partial field moves out of @[Drop] parents
+// `return bag.items` / `let x = bag.items` must skip Bag_Drop (no double-free).
+// Non-droppable fields (`bag.tag`) do not mark the parent moved.
+import Std::Io::{PrintLine};
+import Std::Array::{Array, Array_New, Array_Push, Array_Len, Array_Get};
+import Std::String::{String_FromInt, String_Concat};
+import Std::Test::{Test_AssertTrue, Test_Pass};
+
+@[Drop]
+struct Bag {
+    items: Array<int>,
+    tag: int
+}
+
+func Bag_Drop(self: *Bag) {
+    Array_Drop<int>(&self.items);
+}
+
+// Move droppable field out via return
+func TakeItems() -> Array<int> {
+    var items: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&items, 42);
+    let bag: Bag = Bag { items: items, tag: 7 };
+    return bag.items;
+}
+
+// Move droppable field via let; read non-droppable tag after
+func PeekTagAndTake() -> int {
+    var items: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&items, 1);
+    let bag: Bag = Bag { items: items, tag: 99 };
+    let moved: Array<int> = bag.items;
+    let t: int = bag.tag;
+    discard Array_Len<int>(&moved);
+    return t;
+}
+
+// Whole-struct return still moves bag (existing path)
+func MakeBag() -> Bag {
+    var items: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&items, 10);
+    Array_Push<int>(&items, 20);
+    let bag: Bag = Bag { items: items, tag: 3 };
+    return bag;
+}
+
+func Main() -> int {
+    let taken: Array<int> = TakeItems();
+    Test_AssertTrue(Array_Len<int>(&taken) == 1);
+    Test_AssertTrue(Array_Get<int>(&taken, 0) == 42);
+
+    let tag: int = PeekTagAndTake();
+    Test_AssertTrue(tag == 99);
+
+    let b: Bag = MakeBag();
+    Test_AssertTrue(Array_Len<int>(&b.items) == 2);
+    Test_AssertTrue(Array_Get<int>(&b.items, 0) == 10);
+    Test_AssertTrue(b.tag == 3);
+
+    PrintLine(String_Concat("ok=", String_FromInt(tag as int64)));
+    Test_Pass("move_field_partial");
+    return 0;
+}

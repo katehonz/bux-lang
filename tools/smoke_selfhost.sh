@@ -166,4 +166,89 @@ if ! echo "$main_body" | grep -vE '#line 1 "' | grep -qE '#line [0-9]+ ".*Main\.
 fi
 echo "  Expr/Stmt sourceFile: PASS (Main stmts → Main.bux only)"
 
-echo "PASS: selfhost smoke (move_field + multi-file #line + HirNode/Expr sourceFile)"
+# ---------------------------------------------------------------------------
+# 5) Binary op parentheses — C precedence must not rewrite Mul(Add,c)
+#    Without parens selfhost emitted `a + b * c` → 7 instead of (a+b)*c → 9
+# ---------------------------------------------------------------------------
+echo "=== selfhost: binary op parentheses (C precedence) ==="
+PREC="$TMP/c_precedence"
+mkdir -p "$PREC/src"
+cp -a "$ROOT/rt" "$PREC/"
+cat > "$PREC/bux.toml" <<'EOF'
+[Package]
+Name    = "c_precedence"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
+EOF
+cp "$ROOT/examples/c_precedence.bux" "$PREC/src/Main.bux"
+
+(cd "$PREC" && "$BUXC2" project .)
+prec_out=$("$PREC/build/c_precedence")
+echo "$prec_out" | tee "$TMP/prec.out"
+grep -q 'PASS c_precedence' "$TMP/prec.out"
+# Generated C must parenthesize the sum before multiply
+if ! grep -A3 '^int MulSum' "$PREC/build/main.c" | grep -qE '\(a \+ b\) \* c|\(\(a \+ b\) \* c\)'; then
+  echo "error: MulSum C lacks parentheses around a+b before *c" >&2
+  grep -n -A5 '^int MulSum' "$PREC/build/main.c" | head -20
+  exit 1
+fi
+if ! grep -A3 '^int SubDiv' "$PREC/build/main.c" | grep -qE '\(a - b\) / c|\(\(a - b\) / c\)'; then
+  echo "error: SubDiv C lacks parentheses around a-b before /c" >&2
+  grep -n -A5 '^int SubDiv' "$PREC/build/main.c" | head -20
+  exit 1
+fi
+echo "  binary parens: PASS (run 9/3/6/7 + C has (a + b) * c)"
+
+# ---------------------------------------------------------------------------
+# 6) declarative macro! / quote! expand (session 60 selfhost parity)
+# ---------------------------------------------------------------------------
+echo "=== selfhost: macro! expand ==="
+MAC="$TMP/macro_twice"
+mkdir -p "$MAC/src"
+cp -a "$ROOT/rt" "$MAC/"
+cat > "$MAC/bux.toml" <<'EOF'
+[Package]
+Name    = "macro_twice"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
+EOF
+cp "$ROOT/examples/macro_twice.bux" "$MAC/src/Main.bux"
+(cd "$MAC" && "$BUXC2" project .)
+mac_out=$("$MAC/build/macro_twice")
+echo "$mac_out" | tee "$TMP/mac.out"
+grep -q 'PASS macro_twice' "$TMP/mac.out"
+grep -q '42' "$TMP/mac.out"
+echo "  macro!: PASS (twice/add2/quote → 42/42/43)"
+
+# ---------------------------------------------------------------------------
+# 7) multi-rep / compound zip / nested template $(…)* (session 63)
+# ---------------------------------------------------------------------------
+echo "=== selfhost: macro_nested multi-rep ==="
+MACN="$TMP/macro_nested"
+mkdir -p "$MACN/src"
+cp -a "$ROOT/rt" "$MACN/"
+cat > "$MACN/bux.toml" <<'EOF'
+[Package]
+Name    = "macro_nested"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
+EOF
+cp "$ROOT/examples/macro_nested.bux" "$MACN/src/Main.bux"
+(cd "$MACN" && "$BUXC2" project .)
+macn_out=$("$MACN/build/macro_nested")
+echo "$macn_out" | tee "$TMP/macn.out"
+grep -q 'PASS macro_nested' "$TMP/macn.out"
+grep -q '33' "$TMP/macn.out"
+grep -q '63' "$TMP/macn.out"
+echo "  macro_nested: PASS (add_pairs/sum_groups/double_each/named_sum)"
+
+echo "PASS: selfhost smoke (move_field + multi-file #line + HirNode/Expr sourceFile + binop parens + macro! + multi-rep)"

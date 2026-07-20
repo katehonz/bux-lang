@@ -41,7 +41,8 @@ type
     # Interface name -> interface decl
     interfaceTable*: Table[string, Decl]
     # Borrow checker state
-    checkedFunc*: bool  ## true inside @[Checked] function
+    checkedFunc*: bool  ## true inside @[Checked] and not @[Release]
+    releaseFunc*: bool  ## true inside @[Release] (zero-cost: no borrow checks)
     currentFuncIsAsync*: bool  ## true inside async func
     movedVars*: seq[string]  ## variables moved in current checked function
     ## Active exclusive borrows: source var → borrow site (let-bound &mut lasts for rest of fn)
@@ -1897,6 +1898,10 @@ proc checkExpr*(sema: var Sema, expr: Expr, scope: Scope): Type =
     for e in expr.exprInterpExprs:
       discard sema.checkExpr(e, scope)
     return makeStr()
+  of ekMacroCall:
+    # Should have been expanded before analyze; leftover is a compiler bug
+    sema.emitError(expr.loc, "unexpanded macro call '" & expr.exprMacroName & "!'")
+    return makeUnknown()
   of ekClosure:
     let savedRetType = sema.currentRetType
     let savedClosureDepth = sema.closureDepth
@@ -2088,6 +2093,10 @@ proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type =
     else:
       discard
     return makeVoid()
+  of skMacroRep:
+    # Templates with $(…)* must be expanded before type-check
+    sema.emitError(stmt.loc, "unexpanded macro repetition '$(…)*'")
+    return makeVoid()
 # ---------------------------------------------------------------------------
 # Function body checking
 # ---------------------------------------------------------------------------
@@ -2106,8 +2115,11 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   if hasTypeGeneric:
     return
   let wasChecked = sema.checkedFunc
+  let wasRelease = sema.releaseFunc
   let wasAsync = sema.currentFuncIsAsync
-  sema.checkedFunc = "Checked" in decl.declAttrs
+  # C.4: @[Release] is the zero-cost escape — disables borrow checks even with @[Checked]
+  sema.releaseFunc = "Release" in decl.declAttrs
+  sema.checkedFunc = "Checked" in decl.declAttrs and not sema.releaseFunc
   sema.currentFuncIsAsync = decl.declFuncIsAsync
   if sema.checkedFunc:
     sema.movedVars = @[]
@@ -2139,6 +2151,7 @@ proc checkFunc(sema: var Sema, decl: Decl) =
   for tp in addedTypeParams:
     sema.typeTable.del(tp)
   sema.checkedFunc = wasChecked
+  sema.releaseFunc = wasRelease
   sema.currentFuncIsAsync = wasAsync
   sema.varRefLifetime = initTable[string, string]()
   sema.returnLifetime = ""

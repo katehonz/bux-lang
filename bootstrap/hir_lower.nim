@@ -85,12 +85,23 @@ proc markMovedOutLocal(ctx: var LowerCtx, name: string) =
   if name.len > 0 and ctx.hasPendingDrop(name):
     ctx.movedOutLocals.incl(name)
 
+# Forward decls (used by markMovedOutFromAst before their full definitions)
+proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type
+proc autoDropFuncName(ctx: var LowerCtx, ty: Type): string
+
 proc markMovedOutFromAst(ctx: var LowerCtx, expr: Expr) =
   ## Mark droppable locals used by-value in ownership-taking contexts.
+  ## Partial field moves: `return bag.items` / `let x = bag.items` mark `bag`
+  ## so auto-Drop of the parent is skipped — **only when the field type itself
+  ## is droppable** (not `return bag.tag` for an int field).
   if expr == nil: return
   case expr.kind
   of ekIdent:
     ctx.markMovedOutLocal(expr.exprIdent)
+  of ekField:
+    let fieldTy = ctx.resolveExprType(expr)
+    if ctx.autoDropFuncName(fieldTy).len > 0:
+      ctx.markMovedOutFromAst(expr.exprFieldObj)
   of ekStructInit:
     for f in expr.exprStructInitFields:
       ctx.markMovedOutFromAst(f.value)
@@ -2131,6 +2142,11 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
                    typ: makeVoid(), loc: loc)
 
+  of skMacroRep:
+    # Expanded before lowering
+    return HirNode(kind: hLit, litToken: Token(kind: tkIntLiteral, text: "0", loc: loc),
+                   typ: makeVoid(), loc: loc)
+
 proc lowerBlock(ctx: var LowerCtx, blk: Block, asExpr = false): HirNode =
   ## asExpr=true: block is used as a value (`let x = { ... }`, match arm body).
   ## Last skExpr becomes the block result. Statement blocks (func body, if/while)
@@ -2168,14 +2184,29 @@ proc lowerBlock(ctx: var LowerCtx, blk: Block, asExpr = false): HirNode =
     expr = last.blockExpr
   # Scope exit: Drop locals introduced in this block (not outer ones).
   # Skip Drop for block result and any moved-out locals (field / let / return move).
+  # If the last statement always returns, drops were already injected on that
+  # path — re-emitting them here produces dead double-Drop after `return`.
+  proc blockAlwaysReturns(n: HirNode): bool =
+    if n == nil: return false
+    if n.kind == hReturn: return true
+    if n.kind == hBlock:
+      if n.blockStmts.len == 0: return false
+      return blockAlwaysReturns(n.blockStmts[^1])
+    false
+
   var skipDrop = ""
   if expr != nil and expr.kind == hVar:
     skipDrop = expr.varName
     ctx.markMovedOutLocal(expr.varName)
-  if ctx.deferStmts.len > deferBase:
+  let lastAlwaysReturns = stmts.len > 0 and blockAlwaysReturns(stmts[^1])
+  if ctx.deferStmts.len > deferBase and not lastAlwaysReturns:
     for i in countdown(ctx.deferStmts.len - 1, deferBase):
       if not ctx.shouldSkipDrop(ctx.deferStmts[i], skipDrop):
         stmts.add(ctx.deferStmts[i])
+    ctx.deferStmts.setLen(deferBase)
+  elif ctx.deferStmts.len > deferBase and lastAlwaysReturns:
+    # Return path already owns these drops; pop so outer scopes don't re-run them
+    # for the same locals when this block is nested. Outer live locals remain.
     ctx.deferStmts.setLen(deferBase)
   let typ = if expr != nil and expr.typ != nil: expr.typ else: makeVoid()
   return hirBlock(stmts, expr, typ, blk.loc, isScope = true)

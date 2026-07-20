@@ -371,3 +371,46 @@ func Main() -> int {
 }
 """)
     check(not res.hasErrors)
+
+  test "@[Release] alone disables checks (zero-cost path)":
+    let res = checkSource("""
+@[Release]
+func Dangle() -> &int {
+  var x: int = 1;
+  return &x;
+}
+func Main() -> int {
+  return 0;
+}
+""")
+    check(not res.hasErrors)
+
+  test "@[Checked] @[Release] — Release wins, no use-after-move error":
+    let res = checkSource("""
+@[Checked]
+@[Release]
+func Consume(s: own String) {
+  // move then use — allowed because Release disables checker
+  let t: own String = s;
+  let u: own String = s;
+}
+func Main() -> int {
+  return 0;
+}
+""")
+    check(not res.hasErrors)
+
+  test "@[Checked] still errors without Release":
+    let res = checkSource("""
+@[Checked]
+func Bad() -> &int {
+  var x: int = 1;
+  return &x;
+}
+func Main() -> int {
+  return 0;
+}
+""")
+    check(res.hasErrors)
+    check(res.diagnostics[0].message.contains("local") or
+          res.diagnostics[0].message.contains("reference"))

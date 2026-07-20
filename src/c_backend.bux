@@ -113,25 +113,64 @@ module CBackend {
         return name;
     }
 
-    /// Mark droppable locals moved by-value (struct fields / nested).
+    /// True when a C type name owns heap / has auto-Drop (not primitives).
+    func CBE_IsDroppableTypeName(tn: String) -> bool {
+        if tn == null as String || String_Eq(tn, "") { return false; }
+        if String_Eq(tn, "void") || String_Eq(tn, "int") || String_Eq(tn, "bool") {
+            return false;
+        }
+        if String_Eq(tn, "int64") || String_Eq(tn, "uint") || String_Eq(tn, "uint64") {
+            return false;
+        }
+        if String_Eq(tn, "float") || String_Eq(tn, "float64") || String_Eq(tn, "char8") {
+            return false;
+        }
+        if String_Eq(tn, "String") || String_Eq(tn, "cstr") { return false; }
+        // Array_int, Map_*, user @[Drop] structs (Bag, Token, …)
+        return true;
+    }
+
+    /// Mark droppable locals moved by-value (struct fields / nested / partial field).
+    /// `valueTypeHint`: when non-empty (e.g. function return type), used to decide
+    /// whether a field access is an ownership move (`return bag.items` vs `return bag.tag`).
     func CBE_MarkMovedFromNode(cbe: *CEmitter, node: *HirNode) {
+        CBE_MarkMovedFromNodeHint(cbe, node, "");
+    }
+
+    func CBE_MarkMovedFromNodeHint(cbe: *CEmitter, node: *HirNode, valueTypeHint: String) {
         if node == null as *HirNode { return; }
         if node.kind == hVar {
             CBE_AddMoved(cbe, node.strValue);
             return;
         }
+        // Partial field move: only when the *value* type is droppable
+        if node.kind == hFieldPtr || node.kind == hFieldAccess {
+            var vty: String = valueTypeHint;
+            if String_Eq(vty, "") {
+                vty = node.typeName;
+            }
+            // Field HIR often stores the *base* struct typeName — prefer hint
+            if CBE_IsDroppableTypeName(vty) {
+                // Walk to base local (hVar / load / nested)
+                CBE_MarkMovedFromNodeHint(cbe, node.child1, "");
+            }
+            return;
+        }
+        if node.kind == hLoad {
+            CBE_MarkMovedFromNodeHint(cbe, node.child1, valueTypeHint);
+            return;
+        }
         if node.kind == hStructInit {
             var field: *HirNode = node.child1;
             while field != null as *HirNode {
-                CBE_MarkMovedFromNode(cbe, field.child1);
+                CBE_MarkMovedFromNodeHint(cbe, field.child1, "");
                 field = field.child3;
             }
             return;
         }
         if node.kind == hTupleInit {
-            // child1/child2 + linked extras if any
-            CBE_MarkMovedFromNode(cbe, node.child1);
-            CBE_MarkMovedFromNode(cbe, node.child2);
+            CBE_MarkMovedFromNodeHint(cbe, node.child1, "");
+            CBE_MarkMovedFromNodeHint(cbe, node.child2, "");
             return;
         }
     }
@@ -375,13 +414,16 @@ module CBackend {
             return;
         }
 
-        // Binary
+        // Binary — always parenthesize so C precedence cannot rewrite the AST.
+        // Without parens, Mul(Add(a,b), c) emits `a + b * c` (= a+(b*c)) instead of (a+b)*c.
         if kind == hBinary {
+            StringBuilder_Append(&cbe.sb, "(");
             CBE_EmitExpr(cbe, node.child1);
             StringBuilder_Append(&cbe.sb, " ");
             StringBuilder_Append(&cbe.sb, CBackend_OpToC(node.intValue));
             StringBuilder_Append(&cbe.sb, " ");
             CBE_EmitExpr(cbe, node.child2);
+            StringBuilder_Append(&cbe.sb, ")");
             return;
         }
 
@@ -494,9 +536,15 @@ module CBackend {
         // (Emitting Drop before the value used to use-after-drop on `return a.id`.)
         if kind == hReturn {
             CBE_EmitDebugLine(cbe, node);
-            // Track moved variables via return / field-move into returned struct
+            // Track moved variables via return / field-move into returned struct.
+            // Pass currentRetType so `return bag.items` (Array) marks bag, but
+            // `return bag.tag` (int) does not.
             if node.child1 != null as *HirNode {
-                CBE_MarkMovedFromNode(cbe, node.child1);
+                var retHint: String = "";
+                if cbe.currentRetType != null as String {
+                    retHint = cbe.currentRetType;
+                }
+                CBE_MarkMovedFromNodeHint(cbe, node.child1, retHint);
             }
             if node.child1 != null as *HirNode && cbe.deferCount > 0 {
                 // Materialize into a temp so Drop cannot clobber the returned value.
@@ -554,9 +602,13 @@ module CBackend {
 
         // Store: combine alloca + value into single declaration
         if kind == hStore {
-            // Track moved variables via assignment/let
-            if node.child2 != null as *HirNode && node.child2.kind == hVar {
-                CBE_AddMoved(cbe, node.child2.strValue);
+            // Track moved variables via assignment/let (incl. partial field rhs)
+            if node.child2 != null as *HirNode {
+                if node.child2.kind == hVar {
+                    CBE_AddMoved(cbe, node.child2.strValue);
+                } else {
+                    CBE_MarkMovedFromNode(cbe, node.child2);
+                }
             }
             // Reinitialization removes moved status
             if node.child1 != null as *HirNode && node.child1.kind == hVar {

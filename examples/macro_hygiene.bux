@@ -1,0 +1,73 @@
+// Session 66 — gensym hygiene + fragment kinds literal / block
+import Std::Io::{PrintLine};
+import Std::String::{String_FromInt};
+
+// Template locals are gensym'd per expansion — two uses of `n` in one Main
+// must not collide under the C backend's function-scoped locals.
+macro! with_acc {
+    ( $start:literal ) => {
+        var n: int = $start;
+        n = n + 1;
+        n
+    }
+}
+
+// literal: only int/float/string/char/bool literals (not 1+2)
+macro! only_lit {
+    ( $x:literal ) => {
+        {
+            $x
+        }
+    }
+}
+
+// block: only `{ … }` block expressions
+macro! wrap_block {
+    ( $b:block ) => {
+        $b
+    }
+}
+
+// lit alias for literal
+macro! double_lit {
+    ( $n:lit ) => {
+        ($n) + ($n)
+    }
+}
+
+func Main() -> int {
+    // gensym: two expansions both introduce `n`
+    let a: int = with_acc!(10);
+    let b: int = with_acc!(20);
+    // 11, 21
+    let c: int = only_lit!(7);
+    let d: int = wrap_block!({ 1 + 2 });
+    let e: int = double_lit!(21);
+    PrintLine(String_FromInt(a));
+    PrintLine(String_FromInt(b));
+    PrintLine(String_FromInt(c));
+    PrintLine(String_FromInt(d));
+    PrintLine(String_FromInt(e));
+    if a != 11 {
+        PrintLine("FAIL with_acc gensym a");
+        return 1;
+    }
+    if b != 21 {
+        PrintLine("FAIL with_acc gensym b");
+        return 1;
+    }
+    if c != 7 {
+        PrintLine("FAIL only_lit");
+        return 1;
+    }
+    if d != 3 {
+        PrintLine("FAIL wrap_block");
+        return 1;
+    }
+    if e != 42 {
+        PrintLine("FAIL double_lit");
+        return 1;
+    }
+    PrintLine("PASS macro_hygiene");
+    return 0;
+}

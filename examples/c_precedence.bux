@@ -1,0 +1,53 @@
+// C precedence safety: Bux AST must survive C codegen without rewrite.
+// Mul(Add(a,b), c) must stay (a+b)*c, not a+b*c.
+import Std::Io::{PrintLine};
+import Std::String::{String_FromInt};
+
+func MulSum(a: int, b: int, c: int) -> int {
+    // AST: (a+b)*c → 9 for (1,2,3); wrong C emit gives 1+2*3=7
+    return (a + b) * c;
+}
+
+func SubDiv(a: int, b: int, c: int) -> int {
+    // AST: (a-b)/c → 3 for (10,4,2); wrong C emit gives 10-4/2=8
+    return (a - b) / c;
+}
+
+func ShiftSum(a: int, b: int) -> int {
+    // (a+b)<<1 → 6 for (1,2)
+    return (a + b) << 1;
+}
+
+func Mix(a: int, b: int, c: int, d: int) -> int {
+    // ((a+b)*c)-d → 7 for (1,2,3,2)
+    return (a + b) * c - d;
+}
+
+func Main() -> int {
+    let m: int = MulSum(1, 2, 3);
+    let s: int = SubDiv(10, 4, 2);
+    let sh: int = ShiftSum(1, 2);
+    let x: int = Mix(1, 2, 3, 2);
+    PrintLine(String_FromInt(m));
+    PrintLine(String_FromInt(s));
+    PrintLine(String_FromInt(sh));
+    PrintLine(String_FromInt(x));
+    if m != 9 {
+        PrintLine("FAIL MulSum");
+        return 1;
+    }
+    if s != 3 {
+        PrintLine("FAIL SubDiv");
+        return 1;
+    }
+    if sh != 6 {
+        PrintLine("FAIL ShiftSum");
+        return 1;
+    }
+    if x != 7 {
+        PrintLine("FAIL Mix");
+        return 1;
+    }
+    PrintLine("PASS c_precedence");
+    return 0;
+}

@@ -1,4 +1,6 @@
-# Default PR / main CI: full `make test` (not selfhost fixed-point — see selfhost-loop.yml).
+# Default PR / main CI: split Linux jobs + lean macOS + Windows bootstrap smoke.
+# Full sequential suite locally: `make test`.
+# Selfhost fixed-point: see selfhost-loop.yml (not on every PR).
 name: ci
 
 on:
@@ -11,20 +13,50 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Pin patch for stable toolchain cache keys (was 2.0.x).
+  NIM_VERSION: "2.0.8"
+  # setup-nim-action install dir (relative to workspace)
+  NIM_INSTALL_DIR: ".nim_runtime"
+
 jobs:
-  test:
-    name: make test
+  # ── Shared bootstrap build (Linux) ──────────────────────────────────────
+  build:
+    name: build (ubuntu)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache Nim toolchain
+        id: cache-nim
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NIM_INSTALL_DIR }}
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-v1
+
       - name: Install Nim
+        if: steps.cache-nim.outputs.cache-hit != 'true'
         uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: "2.0.x"
+          nim-version: ${{ env.NIM_VERSION }}
+          nim-install-directory: ${{ env.NIM_INSTALL_DIR }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PATH for cached Nim
+        if: steps.cache-nim.outputs.cache-hit == 'true'
+        run: |
+          echo "$PWD/${{ env.NIM_INSTALL_DIR }}/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Cache nimcache (bootstrap)
+        uses: actions/cache@v4
+        with:
+          path: nimcache
+          key: ${{ runner.os }}-nimcache-build-${{ hashFiles('bootstrap/**/*.nim') }}-v1
+          restore-keys: |
+            ${{ runner.os }}-nimcache-build-
 
       - name: Install build deps
         run: |
@@ -32,21 +64,352 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             gcc make binutils libssl-dev python3
 
-      - name: Bootstrap + full test suite
+      - name: Build buxc
+        run: |
+          nim -v
+          make build
+
+      - name: Upload buxc
+        uses: actions/upload-artifact@v4
+        with:
+          name: buxc-linux
+          path: buxc
+          retention-days: 3
+
+  # ── Parallel Linux suites (reuse prebuilt buxc) ─────────────────────────
+  unit:
+    name: unit + fmt
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Nim toolchain
+        id: cache-nim
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NIM_INSTALL_DIR }}
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-v1
+
+      - name: Install Nim
+        if: steps.cache-nim.outputs.cache-hit != 'true'
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
+          nim-install-directory: ${{ env.NIM_INSTALL_DIR }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PATH for cached Nim
+        if: steps.cache-nim.outputs.cache-hit == 'true'
+        run: |
+          echo "$PWD/${{ env.NIM_INSTALL_DIR }}/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Cache nimcache (unit tests)
+        uses: actions/cache@v4
+        with:
+          path: nimcache
+          key: ${{ runner.os }}-nimcache-unit-${{ hashFiles('bootstrap/**/*.nim', 'tests/**/*.nim') }}-v1
+          restore-keys: |
+            ${{ runner.os }}-nimcache-unit-
+            ${{ runner.os }}-nimcache-build-
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make libssl-dev
+
+      - name: Download buxc
+        uses: actions/download-artifact@v4
+        with:
+          name: buxc-linux
+
+      - name: Prepare buxc
+        run: chmod +x buxc && ./buxc --version
+
+      - name: fmt-check + unit tests
         env:
-          # Ensure registry / selfhost smokes see a clean env
-          BUX_NO_LINE: ""
+          BUX_SKIP_BUILD: "1"
+        run: |
+          unset BUX_DEBUG_FILE || true
+          make fmt-check BUX_SKIP_BUILD=1
+          make test-unit BUX_SKIP_BUILD=1
+
+  examples:
+    name: examples
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make libssl-dev
+      - name: Download buxc
+        uses: actions/download-artifact@v4
+        with:
+          name: buxc-linux
+      - name: Prepare buxc
+        run: chmod +x buxc && ./buxc --version
+      - name: test-examples
+        env:
+          BUX_SKIP_BUILD: "1"
+        run: |
+          unset BUX_DEBUG_FILE || true
+          make test-examples BUX_SKIP_BUILD=1
+
+  goldens:
+    name: goldens + tools
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc make binutils libssl-dev python3 gdb
+      - name: Download buxc
+        uses: actions/download-artifact@v4
+        with:
+          name: buxc-linux
+      - name: Prepare buxc
+        run: chmod +x buxc && ./buxc --version
+      - name: errors + stdlib + registry + dwarf
+        env:
+          BUX_SKIP_BUILD: "1"
+        run: |
+          unset BUX_DEBUG_FILE || true
+          make test-errors BUX_SKIP_BUILD=1
+          make test-stdlib BUX_SKIP_BUILD=1
+          make test-registry BUX_SKIP_BUILD=1
+          make test-dwarf BUX_SKIP_BUILD=1
+          make test-drop-move BUX_SKIP_BUILD=1
+
+  apps:
+    name: apps
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make libssl-dev
+      - name: Download buxc
+        uses: actions/download-artifact@v4
+        with:
+          name: buxc-linux
+      - name: Prepare buxc
+        run: chmod +x buxc && ./buxc --version
+      - name: test-apps
+        env:
+          BUX_SKIP_BUILD: "1"
+        run: |
+          unset BUX_DEBUG_FILE || true
+          make test-apps BUX_SKIP_BUILD=1
+
+  selfhost:
+    name: selfhost smoke
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make libssl-dev
+      - name: Download buxc
+        uses: actions/download-artifact@v4
+        with:
+          name: buxc-linux
+      - name: Prepare buxc
+        run: chmod +x buxc && ./buxc --version
+      - name: test-selfhost-smoke
+        env:
+          BUX_SKIP_BUILD: "1"
         run: |
           unset BUX_DEBUG_FILE || true
           unset BUX_SELFHOST_FIXED_POINT || true
-          make test
-
+          make test-selfhost-smoke BUX_SKIP_BUILD=1
       - name: Upload selfhost artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-failure-logs
+          name: ci-failure-selfhost
           path: |
             build/selfhost/build/main.c
             _test_tmp_pkg/**
           if-no-files-found: ignore
+
+  # ── macOS smoke (platform matrix) — lean: cache Nim + smoke examples ───
+  # Full EXAMPLES / goldens / selfhost stay on Linux. macOS still builds
+  # bootstrap + runs unit tests + a representative example subset.
+  macos:
+    name: macos smoke
+    runs-on: macos-14
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Nim toolchain
+        id: cache-nim
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NIM_INSTALL_DIR }}
+          # macOS builds Nim from source — cache is the main time win
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-v1
+
+      - name: Install Nim
+        if: steps.cache-nim.outputs.cache-hit != 'true'
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
+          nim-install-directory: ${{ env.NIM_INSTALL_DIR }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PATH for cached Nim
+        if: steps.cache-nim.outputs.cache-hit == 'true'
+        run: |
+          echo "$PWD/${{ env.NIM_INSTALL_DIR }}/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Cache nimcache (bootstrap + unit)
+        uses: actions/cache@v4
+        with:
+          path: nimcache
+          key: ${{ runner.os }}-nimcache-macos-${{ hashFiles('bootstrap/**/*.nim', 'tests/**/*.nim') }}-v1
+          restore-keys: |
+            ${{ runner.os }}-nimcache-macos-
+
+      - name: OpenSSL (Homebrew)
+        run: |
+          # Prefer already-installed openssl@3 (common on GHA images)
+          if ! brew list openssl@3 &>/dev/null; then
+            brew install openssl@3
+          fi
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "OPENSSL_PREFIX=$OPENSSL_PREFIX" >> "$GITHUB_ENV"
+          # buxc passes BUX_CFLAGS through to cc (needed for Homebrew libcrypto)
+          echo "BUX_CFLAGS=-I${OPENSSL_PREFIX}/include -L${OPENSSL_PREFIX}/lib" >> "$GITHUB_ENV"
+
+      - name: Build buxc
+        run: |
+          nim -v
+          make build
+
+      - name: unit + smoke examples
+        run: |
+          unset BUX_DEBUG_FILE || true
+          # fmt-check is Linux-only in split CI (unit job); skip here to save time
+          make test-unit
+          make test-examples-smoke
+
+  # ── Windows smoke (bootstrap + pure Nim unit tests) ─────────────────────
+  # Full bux→C examples need POSIX runtime (ucontext / pthread sockets in
+  # rt/runtime.c) — not ported yet. This job still catches Nim/bootstrap
+  # regressions on Windows (prebuilt Nim zip = fast install).
+  windows:
+    name: windows smoke
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Nim toolchain
+        id: cache-nim
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NIM_INSTALL_DIR }}
+          key: ${{ runner.os }}-nim-${{ env.NIM_VERSION }}-v1
+
+      - name: Install Nim
+        if: steps.cache-nim.outputs.cache-hit != 'true'
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
+          nim-install-directory: ${{ env.NIM_INSTALL_DIR }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PATH for cached Nim
+        if: steps.cache-nim.outputs.cache-hit == 'true'
+        run: |
+          echo "$PWD/${{ env.NIM_INSTALL_DIR }}/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+
+      - name: Cache nimcache (bootstrap + unit)
+        uses: actions/cache@v4
+        with:
+          path: nimcache
+          key: ${{ runner.os }}-nimcache-win-${{ hashFiles('bootstrap/**/*.nim', 'tests/**/*.nim') }}-v1
+          restore-keys: |
+            ${{ runner.os }}-nimcache-win-
+
+      - name: Build buxc
+        run: |
+          set -e
+          nim -v
+          # Windows produces buxc.exe; keep name predictable for the smoke steps
+          nim c --nimcache:nimcache -o:buxc.exe -d:release --opt:size bootstrap/main.nim
+          ./buxc.exe --version
+
+      - name: Pure Nim unit tests + CLI smoke
+        run: |
+          set -e
+          unset BUX_DEBUG_FILE || true
+          export NIMFLAGS=--nimcache:nimcache
+          echo "Running lexer tests..."
+          nim c $NIMFLAGS -r tests/lexer_test.nim
+          echo "Running parser tests..."
+          nim c $NIMFLAGS -r tests/parser_test.nim
+          echo "Running sema tests..."
+          nim c $NIMFLAGS -r tests/sema_test.nim
+          echo "Running HIR tests..."
+          nim c $NIMFLAGS -r tests/hir_test.nim
+          echo "Running borrow checker tests..."
+          nim c $NIMFLAGS -r tests/borrow_test.nim
+          echo "CLI smoke..."
+          rm -rf _test_tmp_pkg
+          ./buxc.exe new _test_tmp_pkg
+          ./buxc.exe --version
+          echo "windows smoke: PASS (bootstrap + unit + CLI)"
+
+  # ── Single required status for branch protection ────────────────────────
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs: [unit, examples, goldens, apps, selfhost, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs green?
+        run: |
+          set -e
+          echo "unit=${{ needs.unit.result }}"
+          echo "examples=${{ needs.examples.result }}"
+          echo "goldens=${{ needs.goldens.result }}"
+          echo "apps=${{ needs.apps.result }}"
+          echo "selfhost=${{ needs.selfhost.result }}"
+          echo "macos=${{ needs.macos.result }}"
+          echo "windows=${{ needs.windows.result }}"
+          for r in \
+            "${{ needs.unit.result }}" \
+            "${{ needs.examples.result }}" \
+            "${{ needs.goldens.result }}" \
+            "${{ needs.apps.result }}" \
+            "${{ needs.selfhost.result }}" \
+            "${{ needs.macos.result }}" \
+            "${{ needs.windows.result }}"; do
+            if [ "$r" != "success" ]; then
+              echo "CI gate failed: a required job is $r"
+              exit 1
+            fi
+          done
+          echo "CI gate: all required jobs passed"
