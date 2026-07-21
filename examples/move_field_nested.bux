@@ -1,0 +1,91 @@
+// Session 73 — nested field path moves (`outer.inner.items`)
+// Moving a deep droppable field skips root Drop and still drops remaining
+// fields at every level of the path.
+import Std::Io::{PrintLine};
+import Std::Array::{Array, Array_New, Array_Push, Array_Len, Array_Get};
+import Std::String::{String_FromInt, String_Concat};
+import Std::Test::{Test_AssertTrue, Test_Pass};
+
+@[Drop]
+struct Tracked {
+    id: int,
+    counter: *int
+}
+
+func Tracked_Drop(self: *Tracked) {
+    if self.counter != null as *int {
+        *self.counter = *self.counter + 1;
+    }
+}
+
+@[Drop]
+struct Inner {
+    items: Array<int>,
+    note: Tracked
+}
+
+func Inner_Drop(self: *Inner) {
+    Array_Drop<int>(&self.items);
+    Tracked_Drop(&self.note);
+}
+
+@[Drop]
+struct Outer {
+    inner: Inner,
+    tag: Tracked
+}
+
+func Outer_Drop(self: *Outer) {
+    Inner_Drop(&self.inner);
+    Tracked_Drop(&self.tag);
+}
+
+// Move outer.inner.items — must Drop: outer.inner.note + outer.tag
+// (not Outer_Drop whole, not Array double-free)
+func TakeNestedItems(counter: *int) -> Array<int> {
+    var items: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&items, 10);
+    Array_Push<int>(&items, 20);
+    let outer: Outer = Outer {
+        inner: Inner {
+            items: items,
+            note: Tracked { id: 1, counter: counter }
+        },
+        tag: Tracked { id: 2, counter: counter }
+    };
+    return outer.inner.items;
+}
+
+// let-move nested path
+func PeekAfterNestedTake(counter: *int) -> int {
+    var items: Array<int> = Array_New<int>(1);
+    Array_Push<int>(&items, 7);
+    let outer: Outer = Outer {
+        inner: Inner {
+            items: items,
+            note: Tracked { id: 3, counter: counter }
+        },
+        tag: Tracked { id: 4, counter: counter }
+    };
+    let moved: Array<int> = outer.inner.items;
+    return Array_Len<int>(&moved) as int;
+}
+
+func Main() -> int {
+    var drops: int = 0;
+
+    let taken: Array<int> = TakeNestedItems(&drops);
+    Test_AssertTrue(Array_Len<int>(&taken) == 2);
+    Test_AssertTrue(Array_Get<int>(&taken, 0) == 10);
+    // TakeNestedItems: note(id1) + tag(id2) → 2 Tracked drops
+    Test_AssertTrue(drops == 2);
+
+    let n: int = PeekAfterNestedTake(&drops);
+    Test_AssertTrue(n == 1);
+    // +2 more Tracked drops
+    Test_AssertTrue(drops == 4);
+
+    PrintLine(String_Concat("nested_drops=", String_FromInt(drops as int64)));
+    Test_Pass("move_field_nested");
+    return 0;
+}

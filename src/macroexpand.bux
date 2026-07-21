@@ -329,20 +329,134 @@ module MacroExpand {
         }
     }
 
-    // Fragment kind check: "ident" | "literal" | "block" | expr|tt (any)
-    func Macro_FragMatches(kindStr: String, aexp: *Expr) -> bool {
-        if aexp == null as *Expr { return false; }
+    // Flatten ekIdent / ekField(::) chain to "A::B::C" (selfhost path style)
+    func Macro_PathFromExpr(e: *Expr) -> String {
+        if e == null as *Expr { return ""; }
+        if e.kind == ekIdent { return e.strValue; }
+        if e.kind == ekPath { return e.strValue; }
+        if e.kind == ekField {
+            let base: String = Macro_PathFromExpr(e.child1);
+            if String_Eq(base, "") { return e.strValue; }
+            return String_Concat(base, String_Concat("::", e.strValue));
+        }
+        return "";
+    }
+
+    // Convert call-site expr → pattern for `$p:pat` (ident/lit/path/call/field)
+    func Macro_ExprToPattern(aexp: *Expr) -> *Pattern {
+        if aexp == null as *Expr { return null as *Pattern; }
+        if aexp.kind == ekMacroPat { return Ast_ClonePattern(aexp.macroPat); }
+        if aexp.kind == ekIdent {
+            if String_Eq(aexp.strValue, "_") {
+                let p: *Pattern = bux_alloc(sizeof(Pattern)) as *Pattern;
+                p.kind = pkWildcard;
+                p.line = aexp.line;
+                p.column = aexp.column;
+                return p;
+            }
+            let p: *Pattern = bux_alloc(sizeof(Pattern)) as *Pattern;
+            p.kind = pkIdent;
+            p.line = aexp.line;
+            p.column = aexp.column;
+            p.patIdent = aexp.strValue;
+            return p;
+        }
+        if aexp.kind == ekLiteral {
+            let p: *Pattern = bux_alloc(sizeof(Pattern)) as *Pattern;
+            p.kind = pkLiteral;
+            p.line = aexp.line;
+            p.column = aexp.column;
+            p.patLitKind = aexp.tokKind;
+            p.patLitText = aexp.tokText;
+            return p;
+        }
+        if aexp.kind == ekPath || aexp.kind == ekField {
+            let path: String = Macro_PathFromExpr(aexp);
+            if String_Eq(path, "") { return null as *Pattern; }
+            let p: *Pattern = bux_alloc(sizeof(Pattern)) as *Pattern;
+            p.kind = pkEnum;
+            p.line = aexp.line;
+            p.column = aexp.column;
+            p.patEnumPath = path;
+            return p;
+        }
+        if aexp.kind == ekCall {
+            // Opt::Some(v) — callee is ekField chain
+            var path: String = Macro_PathFromExpr(aexp.child1);
+            if String_Eq(path, "") { return null as *Pattern; }
+            let p: *Pattern = bux_alloc(sizeof(Pattern)) as *Pattern;
+            p.kind = pkEnum;
+            p.line = aexp.line;
+            p.column = aexp.column;
+            p.patEnumPath = path;
+            var last: *Pattern = null as *Pattern;
+            var arg: *ExprList = aexp.callArgs;
+            while arg != null as *ExprList {
+                let ap: *Pattern = Macro_ExprToPattern(arg.expr);
+                if ap == null as *Pattern { return null as *Pattern; }
+                if last == null as *Pattern {
+                    p.patArgs = ap;
+                    last = ap;
+                } else {
+                    last.patNext = ap;
+                    last = ap;
+                }
+                arg = arg.next;
+            }
+            return p;
+        }
+        return null as *Pattern;
+    }
+
+    // Coerce arg for kind; returns normalized expr or null on mismatch
+    func Macro_CoerceArg(kindStr: String, aexp: *Expr) -> *Expr {
+        if aexp == null as *Expr { return null as *Expr; }
         if String_Eq(kindStr, "ident") {
-            return aexp.kind == ekIdent;
+            if aexp.kind != ekIdent { return null as *Expr; }
+            return aexp;
         }
         if String_Eq(kindStr, "literal") {
-            return aexp.kind == ekLiteral;
+            if aexp.kind != ekLiteral { return null as *Expr; }
+            return aexp;
         }
         if String_Eq(kindStr, "block") {
-            return aexp.kind == ekBlock;
+            if aexp.kind != ekBlock { return null as *Expr; }
+            return aexp;
         }
-        // expr / tt / unknown → accept
-        return true;
+        if String_Eq(kindStr, "stmt") {
+            if aexp.kind == ekMacroStmt { return aexp; }
+            if aexp.kind == ekMacroPat { return null as *Expr; }
+            // Wrap expression as expression-statement
+            let st: *Stmt = bux_alloc(sizeof(Stmt)) as *Stmt;
+            st.kind = skExpr;
+            st.line = aexp.line;
+            st.column = aexp.column;
+            st.child1 = aexp;
+            let e: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+            e.kind = ekMacroStmt;
+            e.line = aexp.line;
+            e.column = aexp.column;
+            e.macroStmt = st;
+            return e;
+        }
+        if String_Eq(kindStr, "pat") {
+            let pat: *Pattern = Macro_ExprToPattern(aexp);
+            if pat == null as *Pattern { return null as *Expr; }
+            let e: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+            e.kind = ekMacroPat;
+            e.line = aexp.line;
+            e.column = aexp.column;
+            e.macroPat = pat;
+            return e;
+        }
+        // expr / tt
+        if aexp.kind == ekMacroStmt || aexp.kind == ekMacroPat { return null as *Expr; }
+        return aexp;
+    }
+
+    // Fragment kind check: "ident" | "literal" | "block" | "stmt" | "pat" | expr|tt
+    func Macro_FragMatches(kindStr: String, aexp: *Expr) -> bool {
+        return Macro_CoerceArg(kindStr, aexp) != null as *Expr;
     }
 
     // kinds encoded as "expr;ident;rep:expr," — return fi-th segment
@@ -477,6 +591,36 @@ module MacroExpand {
                         let part: *Block = Subst_Block(s.refStmtBlock, &inner, file, line, col);
                         Macro_AppendBlockStmts(n, part);
                         li = li + 1;
+                    }
+                }
+            } else if s.kind == skExpr && s.child1 != null as *Expr && s.child1.kind == ekIdent {
+                // Splice `$s:stmt` bound to ekMacroStmt as a real statement
+                let bound: *Expr = Env_Lookup(env, s.child1.strValue);
+                if bound != null as *Expr && bound.kind == ekMacroStmt && bound.macroStmt != null as *Stmt {
+                    let one: *Stmt = Subst_Stmt(bound.macroStmt, env, file, line, col);
+                    if one != null as *Stmt {
+                        one.nextStmt = null as *Stmt;
+                        if n.firstStmt == null as *Stmt {
+                            n.firstStmt = one;
+                            n.lastStmt = one;
+                        } else {
+                            n.lastStmt.nextStmt = one;
+                            n.lastStmt = one;
+                        }
+                        n.stmtCount = n.stmtCount + 1;
+                    }
+                } else {
+                    let one2: *Stmt = Subst_Stmt(s, env, file, line, col);
+                    if one2 != null as *Stmt {
+                        one2.nextStmt = null as *Stmt;
+                        if n.firstStmt == null as *Stmt {
+                            n.firstStmt = one2;
+                            n.lastStmt = one2;
+                        } else {
+                            n.lastStmt.nextStmt = one2;
+                            n.lastStmt = one2;
+                        }
+                        n.stmtCount = n.stmtCount + 1;
                     }
                 }
             } else {
@@ -647,6 +791,7 @@ module MacroExpand {
         }
         var arm: *MatchArm = c.matchArms;
         while arm != null as *MatchArm {
+            arm.pattern = Subst_Pattern(arm.pattern, env, file, line, col);
             arm.body = Subst_Expr(arm.body, env, file, line, col);
             arm = arm.next;
         }
@@ -654,6 +799,29 @@ module MacroExpand {
         c.column = col;
         if file != null as String && !String_Eq(file, "") {
             c.sourceFile = file;
+        }
+        return c;
+    }
+
+    func Subst_Pattern(p: *Pattern, env: *MacroEnv, file: String, line: uint32, col: uint32) -> *Pattern {
+        if p == null as *Pattern { return null as *Pattern; }
+        // `$p:pat` as whole pattern (pkIdent name `$p`)
+        if p.kind == pkIdent && !String_Eq(p.patIdent, "") {
+            let bound: *Expr = Env_Lookup(env, p.patIdent);
+            if bound != null as *Expr && bound.kind == ekMacroPat && bound.macroPat != null as *Pattern {
+                let np: *Pattern = Ast_ClonePattern(bound.macroPat);
+                if np != null as *Pattern {
+                    np.line = line;
+                    np.column = col;
+                }
+                return np;
+            }
+        }
+        // MVP: other patterns kept as cloned (no nested `$p` rewrite)
+        let c: *Pattern = Ast_ClonePattern(p);
+        if c != null as *Pattern {
+            c.line = line;
+            c.column = col;
         }
         return c;
     }
@@ -944,8 +1112,9 @@ module MacroExpand {
                         if argList == null as *ExprList { ok = false; break; }
                     }
                     let aexp: *Expr = argList.expr;
-                    if !Macro_FragMatches(kindStr, aexp) { ok = false; break; }
-                    Env_Set(&env, paramIdx, Rule_FragName(rule, paramIdx), aexp);
+                    let coerced: *Expr = Macro_CoerceArg(kindStr, aexp);
+                    if coerced == null as *Expr { ok = false; break; }
+                    Env_Set(&env, paramIdx, Rule_FragName(rule, paramIdx), coerced);
                     argList = argList.next;
                     flatLeft = flatLeft - 1;
                     paramIdx = paramIdx + 1;

@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
-> **Дата:** 2026-07-20  
-> **Текущо:** v0.5.x — macros (unhygienic binders + multi-rep), partial field-move, lean CI  
+> **Дата:** 2026-07-21  
+> **Текущо:** v0.5.x — macros, field-move via pointers, Windows hello  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
 
 ---
@@ -14,7 +14,7 @@
 | Sema / generics | Monomorphization, trait bounds basic | ★★★★☆ |
 | HIR → C | Tuples + fat `func` ABI в bootstrap **и** selfhost | ★★★★☆ |
 | Selfhost (`src/`) | ~12k LOC, binary-identical loop, closures+tuples | ★★★★★ |
-| Gradual ownership | `@[Checked]`, move, Drop, elision, **field-move skip Drop** | ★★★★★ |
+| Gradual ownership | `@[Checked]`, move, Drop, elision, **field-move + remaining-field Drop** | ★★★★★ |
 | Concurrency | M:N tasks + channels + async | ★★★★☆ |
 | Stdlib | Array/Map/Set/String/Iter HOF разширени | ★★★★☆ |
 | Tooling | LSP 0.5 hover/def/outline/**refs/rename** + fmt/test/doc | ★★★★★ |
@@ -1117,8 +1117,98 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 70 (per-field Drop + mono defer restore)
+
+1. **Bug (critical):** `lowerFunc` restored `deferStmts` / `movedOutLocals` only
+   when the *inner* mono function still had pending defers. Nested
+   `generateMethodInstance` → `lowerFunc` (e.g. `Array_Len` inside
+   `PeekTagAndTake`) wiped the caller's Drop stack → leaked moved Arrays.
+2. **Fix bootstrap:** always restore `deferStmts` / `movedOutLocals` /
+   `partialMovedFields` after lowering a function body.
+3. **Per-field Drop after partial move:**
+   - Track `partialMovedFields: local → {field names}`
+   - Skip parent `Type_Drop`; emit Drop for **remaining** droppable fields
+   - `emitDropOrPartial` at return / block exit / function tail
+4. **Selfhost CBE** (`c_backend.bux`):
+   - partial (var, field) slots + local type registry on `hAlloca`
+   - `CBE_EmitRemainingFieldDrops` when skipping moved parent Drop
+5. **Example + smoke:**
+   - `examples/move_field_remaining.bux` (PairBag left move → Tracked_Drop right)
+   - `tools/smoke_drop_move.sh` checks PeekTag Array_Drop + remaining Tracked_Drop
+6. **LanguageRef:** remaining-field rule; limits updated
+7. Verified: bootstrap + **buxc2** remaining/partial/move_field; smoke; EXAMPLES
+
+---
+
+## Сесия 71 (Windows MinGW + `hello` smoke)
+
+1. **`rt/runtime_win.c`** — minimal runtime without pthread / ucontext / sockets /
+   OpenSSL. Real alloc, strings, files, time, env; stubs for tasks/crypto/net.
+2. **Bootstrap CLI** (`bootstrap/cli.nim`):
+   - Windows (or `BUX_RUNTIME=win`) copies `runtime_win.c` instead of `runtime.c`
+   - Link: `-ffunction-sections -Wl,--gc-sections -lm` (no `-pthread` / `-lcrypto`)
+   - Host `gcc` on Windows; `.exe` suffix on build/run
+   - Fixed: `-l` libs **after** `.c` inputs (GNU ld order)
+3. **CI** (`.github/workflows/ci.yml` windows job):
+   - MinGW via `msys2/setup-msys2` (`mingw-w64-x86_64-gcc`)
+   - `tools/smoke_windows_hello.sh` after unit/CLI smoke
+4. **Docs:** BuildAndTest CI table + `rt/` tree
+5. Verified locally: normal `hello` + `BUX_RUNTIME=win` smoke PASS
+
+---
+
+## Сесия 72 (macro `stmt` / `pat` fragments)
+
+1. **Kinds:** `mfkStmt` / `mfkPat` (+ aliases `pattern`, `lit` already)
+2. **AST wrappers:** `ekMacroStmt` / `ekMacroPat` (expand-only)
+3. **Call-site parse:**
+   - stmt keywords → `parseStmt` → MacroStmt
+   - `_` → `parsePattern` → MacroPat
+   - else expr; `pat` coerces via `exprToPattern` (ident/lit/path/call/tuple/struct/range)
+4. **Expand:**
+   - `coerceArg` at match; store normalized MacroStmt/MacroPat
+   - `$s` as skExpr splices MacroStmt into the statement list
+   - `$p` as pkIdent pattern substitutes bound MacroPat
+5. **Selfhost:** same kinds, coerce, splice, pattern subst
+6. **Example:** `examples/macro_stmt_pat.bux` — setup/do_twice/matches/if_let_like
+7. LanguageRef kind table + docs
+8. Verified: bootstrap + **buxc2** `macro_stmt_pat` PASS
+
+---
+
+## Сесия 73 (nested `a.b.c` field-move Drop)
+
+1. **Bootstrap** (`hir_lower.nim`):
+   - `fieldPathFromAst` → base local + path `@["inner","items"]`
+   - `partialMovedFields` stores **dotted paths** (`"inner.items"`)
+   - `remainingDropsAt` recursive: exact path = skip; prefix = recurse;
+     other droppable fields → `Type_Drop(&(base.a.b))`
+   - Typed intermediate `hFieldAccess` so LIR/C keep `Inner` not `int`
+2. **Selfhost CBE:** full dotted path on mark; recursive `CBE_EmitRemainingAt`
+3. **Example:** `examples/move_field_nested.bux` — `outer.inner.items` → 2 Tracked drops
+4. Smoke + EXAMPLES; LanguageRef nested path section
+5. Selfhost: recursive remaining drops + skip Drop when `HasPartialMoved`
+   (struct emit multi-pass topo for Outer{Inner})
+6. Verified: bootstrap + **buxc2** `nested_drops=4` PASS; full `test-drop-move`
+
+---
+
+## Сесия 74 (field moves through pointers)
+
+1. **Pointer aliases:** `let p = &bag` / `p = &bag` → `ptrAliases[p] = bag`
+2. **fieldPathFromAst:** peel `(*p)` (ekUnary tkStar); resolve alias to owner
+3. **`p.field`** (auto-deref) and **`(*p).field`** mark owner + path
+4. Nested via ptr: `p.inner.items` → owner + `"inner.items"`
+5. Selfhost CBE: alias slots + resolve in `CBE_BaseVarName`; record on store/assign
+6. **Example:** `examples/move_field_ptr.bux` → `ptr_drops=5`
+7. Smoke + LanguageRef; limits: local aliases only (not cross-function params)
+8. Selfhost: unary C parens fix `(*p).field`; alias slots + BaseVar resolve
+9. Verified: bootstrap + **buxc2** `ptr_drops=5` PASS; full `test-drop-move`
+
+---
+
 ## Следващи стъпки
 
-1. Windows: MinGW + runtime stubs for `hello` smoke (stretch)
-2. Per-field Drop after partial move (stretch)
-3. Macro: true `stmt`/`pat` token-tree frags (stretch)
+1. Windows: more examples (strings/ownership) on MinGW; optional Win OpenSSL
+2. Macro: true token-tree `tt` / nested pattern rewrite depth
+3. Cross-function pointer ownership transfer (callee `*Bag` param)

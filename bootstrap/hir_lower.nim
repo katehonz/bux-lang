@@ -38,6 +38,14 @@ type
     ## Locals whose value was moved into another owner (struct field, let, return).
     ## Auto-Drop is skipped for these (session 37 — field-move ownership).
     movedOutLocals*: HashSet[string]
+    ## Partial field moves: local → dotted paths moved out by value
+    ## (e.g. "items", "inner.items" for nested `a.b.c` — session 70/73).
+    ## When parent Type_Drop is skipped, remaining droppable fields still Drop.
+    ## Whole-local moves leave this empty → full skip, no field drops.
+    partialMovedFields*: Table[string, HashSet[string]]
+    ## Pointer aliases: local pointer name → pointee local (`p = &bag` → p→bag).
+    ## Used so `p.items` / `(*p).items` mark the owner local (session 74).
+    ptrAliases*: Table[string, string]
 
 proc freshName(ctx: var LowerCtx): string =
   inc ctx.varCounter
@@ -85,23 +93,80 @@ proc markMovedOutLocal(ctx: var LowerCtx, name: string) =
   if name.len > 0 and ctx.hasPendingDrop(name):
     ctx.movedOutLocals.incl(name)
 
-# Forward decls (used by markMovedOutFromAst before their full definitions)
+# Forward decls (used by markMovedOutFromAst / remainingFieldDrops before defs)
 proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type
 proc autoDropFuncName(ctx: var LowerCtx, ty: Type): string
+proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
+proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type]): Type
+
+proc resolvePtrAlias(ctx: LowerCtx, name: string): string =
+  ## Follow `p → bag` aliases (depth-limited).
+  result = name
+  var guard = 0
+  while result.len > 0 and ctx.ptrAliases.hasKey(result) and guard < 8:
+    result = ctx.ptrAliases[result]
+    inc guard
+
+proc fieldPathFromAst(ctx: LowerCtx, expr: Expr): tuple[base: string, path: seq[string]] =
+  ## Walk `a.b.c` / `(*p).b.c` / `p.b` (auto-deref) → owner local + path.
+  ## Resolves pointer aliases (`p = &bag` → owner is `bag`).
+  result = ("", @[])
+  if expr == nil: return
+  var path: seq[string] = @[]
+  var e = expr
+  while e != nil and e.kind == ekField:
+    path.insert(e.exprFieldName, 0)
+    e = e.exprFieldObj
+  # Peel explicit derefs: (*p).x or (**pp).x
+  while e != nil and e.kind == ekUnary and e.exprUnaryOp == tkStar:
+    e = e.exprUnaryOperand
+  if e != nil and e.kind == ekIdent and e.exprIdent.len > 0 and path.len > 0:
+    let owner = ctx.resolvePtrAlias(e.exprIdent)
+    result = (owner, path)
+
+proc pathKey(path: seq[string]): string =
+  path.join(".")
+
+proc recordPtrAliasFromAst(ctx: var LowerCtx, ptrName: string, init: Expr) =
+  ## If `init` is `&local` (possibly with paren/cast noise), record ptr→local.
+  if ptrName.len == 0 or init == nil: return
+  var e = init
+  # Skip simple casts
+  while e != nil and e.kind == ekCast:
+    e = e.exprCastOperand
+  if e != nil and e.kind == ekUnary and e.exprUnaryOp == tkAmp:
+    var op = e.exprUnaryOperand
+    while op != nil and op.kind == ekCast:
+      op = op.exprCastOperand
+    if op != nil and op.kind == ekIdent and op.exprIdent.len > 0:
+      ctx.ptrAliases[ptrName] = op.exprIdent
 
 proc markMovedOutFromAst(ctx: var LowerCtx, expr: Expr) =
   ## Mark droppable locals used by-value in ownership-taking contexts.
-  ## Partial field moves: `return bag.items` / `let x = bag.items` mark `bag`
-  ## so auto-Drop of the parent is skipped — **only when the field type itself
-  ## is droppable** (not `return bag.tag` for an int field).
+  ## Partial field moves: `return bag.items` / `return outer.inner.items` /
+  ## `return p.items` (p = &bag) mark the **owner** local so auto-Drop of the
+  ## parent is skipped. Records dotted path so remaining fields still Drop
+  ## (sessions 70/73/74).
   if expr == nil: return
   case expr.kind
   of ekIdent:
-    ctx.markMovedOutLocal(expr.exprIdent)
+    ctx.markMovedOutLocal(ctx.resolvePtrAlias(expr.exprIdent))
   of ekField:
     let fieldTy = ctx.resolveExprType(expr)
     if ctx.autoDropFuncName(fieldTy).len > 0:
-      ctx.markMovedOutFromAst(expr.exprFieldObj)
+      let (base, path) = ctx.fieldPathFromAst(expr)
+      if base.len > 0 and path.len > 0:
+        if not ctx.partialMovedFields.hasKey(base):
+          ctx.partialMovedFields[base] = initHashSet[string]()
+        ctx.partialMovedFields[base].incl(pathKey(path))
+        ctx.markMovedOutLocal(base)
+      # Nested path recorded as a whole — do not recurse (would mis-mark intermediates)
+  of ekUnary:
+    # Moving `*p` by value (whole pointee) — mark owner local if known
+    if expr.exprUnaryOp == tkStar and expr.exprUnaryOperand != nil and
+       expr.exprUnaryOperand.kind == ekIdent:
+      let owner = ctx.resolvePtrAlias(expr.exprUnaryOperand.exprIdent)
+      ctx.markMovedOutLocal(owner)
   of ekStructInit:
     for f in expr.exprStructInitFields:
       ctx.markMovedOutFromAst(f.value)
@@ -118,6 +183,136 @@ proc shouldSkipDrop(ctx: LowerCtx, dropNode: HirNode, skipName: string): bool =
   if skipName.len > 0 and target == skipName: return true
   if target in ctx.movedOutLocals: return true
   false
+
+proc structFieldsOf(ctx: var LowerCtx, te: TypeExpr, typeName: string): seq[tuple[name: string, typ: Type]] =
+  ## Resolve struct fields for a named / monomorphized type.
+  result = @[]
+  var declName = if te != nil: te.typeName else: ""
+  if declName.len == 0: declName = typeName
+  let sym = ctx.globalScope.lookup(declName)
+  if sym != nil and sym.decl != nil and sym.decl.kind == dkStruct:
+    for f in sym.decl.declStructFields:
+      if f.ftype == nil: continue
+      var fieldTy: Type
+      if te != nil and te.typeArgs.len > 0 and ctx.genericStructs.hasKey(declName):
+        var subst = initTable[string, Type]()
+        let gdecl = ctx.genericStructs[declName]
+        for j, tp in gdecl.declStructTypeParams:
+          if j < te.typeArgs.len:
+            subst[tp.name] = ctx.resolveTypeExpr(te.typeArgs[j])
+        fieldTy = substituteType(ctx, f.ftype, subst)
+      else:
+        fieldTy = ctx.resolveTypeExpr(f.ftype)
+      result.add((f.name, fieldTy))
+    return
+  if ctx.structInstMap.hasKey(typeName):
+    for es in ctx.extraStructs:
+      if es.name == typeName:
+        for f in es.fields:
+          result.add((f.name, f.typ))
+        return
+  # Also try mangled typeName as decl name
+  let sym2 = ctx.globalScope.lookup(typeName)
+  if sym2 != nil and sym2.decl != nil and sym2.decl.kind == dkStruct:
+    for f in sym2.decl.declStructFields:
+      if f.ftype == nil: continue
+      result.add((f.name, ctx.resolveTypeExpr(f.ftype)))
+
+proc makeFieldPtrAt(ctx: var LowerCtx, base: HirNode, rootTe: TypeExpr,
+                    rootTypeName: string, path: seq[string], fieldTy: Type,
+                    loc: SourceLocation): HirNode =
+  ## `&(base.a.b)` with typed intermediate field accesses (needed by LIR/C).
+  if path.len == 0:
+    return hirUnary(tkAmp, base, makePointer(fieldTy), loc)
+  if path.len == 1:
+    return HirNode(kind: hFieldPtr, fieldPtrBase: base, fieldName: path[0],
+      typ: makePointer(fieldTy), loc: loc)
+  # Build typed prefix: base.a.b for path [a,b,c] → access a, then b; ptr on c
+  var cur = base
+  var curTe = rootTe
+  var curTypeName = rootTypeName
+  for i in 0 ..< path.len - 1:
+    let fields = ctx.structFieldsOf(curTe, curTypeName)
+    var nextTy: Type = makeUnknown()
+    for f in fields:
+      if f.name == path[i]:
+        nextTy = f.typ
+        break
+    cur = HirNode(kind: hFieldAccess, fieldAccessBase: cur,
+      fieldAccessName: path[i], typ: nextTy, loc: loc)
+    if nextTy != nil and nextTy.kind == tkNamed:
+      curTypeName = nextTy.name
+      curTe = TypeExpr(kind: tekNamed, typeName: nextTy.name)
+    else:
+      curTe = nil
+      curTypeName = ""
+  return HirNode(kind: hFieldPtr, fieldPtrBase: cur, fieldName: path[^1],
+    typ: makePointer(fieldTy), loc: loc)
+
+proc remainingDropsAt(ctx: var LowerCtx, baseHir: HirNode, typeName: string,
+                      te: TypeExpr, prefix: seq[string],
+                      moved: HashSet[string], loc: SourceLocation,
+                      rootTe: TypeExpr, rootTypeName: string): seq[HirNode] =
+  ## Emit Drops for fields of `typeName` under `baseHir`+`prefix`, respecting
+  ## dotted moved paths (exact = fully moved; prefix = recurse nested).
+  ## `rootTe`/`rootTypeName` are the original local's type (for path typing).
+  result = @[]
+  let fields = ctx.structFieldsOf(te, typeName)
+  for f in fields:
+    var fpath = prefix
+    fpath.add(f.name)
+    let key = pathKey(fpath)
+    # Fully moved this field
+    if key in moved:
+      continue
+    # Nested partial: some path starts with key + "."
+    var nestedMoved = false
+    for m in moved:
+      if m.startsWith(key & "."):
+        nestedMoved = true
+        break
+    if nestedMoved:
+      let fty = f.typ
+      if fty == nil or fty.kind != tkNamed: continue
+      var fte = TypeExpr(kind: tekNamed, typeName: fty.name)
+      result.add(ctx.remainingDropsAt(baseHir, fty.name, fte, fpath, moved, loc,
+        rootTe, rootTypeName))
+      continue
+    # Unrelated field — full Drop if droppable
+    let dropFn = ctx.autoDropFuncName(f.typ)
+    if dropFn.len == 0: continue
+    let fieldPtr = ctx.makeFieldPtrAt(baseHir, rootTe, rootTypeName, fpath, f.typ, loc)
+    result.add(hirCall(dropFn, @[fieldPtr], makeVoid(), loc))
+
+proc remainingFieldDrops(ctx: var LowerCtx, localName: string, loc: SourceLocation): seq[HirNode] =
+  ## After a partial field move out of `localName`, Drop every *other* droppable
+  ## field (including nested remaining after `a.b.c` moves).
+  result = @[]
+  if localName.len == 0 or not ctx.partialMovedFields.hasKey(localName):
+    return
+  let moved = ctx.partialMovedFields[localName]
+  if not ctx.varTypeExprs.hasKey(localName):
+    return
+  let te = ctx.varTypeExprs[localName]
+  if te == nil or te.kind != tekNamed:
+    return
+  let localTy = ctx.resolveTypeExpr(te)
+  if localTy == nil or localTy.kind != tkNamed:
+    return
+  let base = hirVar(localName, localTy, loc)
+  result = ctx.remainingDropsAt(base, localTy.name, te, @[], moved, loc, te, localTy.name)
+
+proc emitDropOrPartial(ctx: var LowerCtx, stmts: var seq[HirNode], dropNode: HirNode,
+                       skipName: string) =
+  ## Emit Type_Drop, or remaining field Drops after a partial move.
+  if not ctx.shouldSkipDrop(dropNode, skipName):
+    stmts.add(dropNode)
+    return
+  let target = dropTargetName(dropNode)
+  if target.len > 0 and target in ctx.partialMovedFields:
+    let loc = if dropNode != nil: dropNode.loc else: SourceLocation()
+    for d in ctx.remainingFieldDrops(target, loc):
+      stmts.add(d)
 
 proc autoDropFuncName(ctx: var LowerCtx, ty: Type): string =
   ## Return `Type_Drop` if this type should be auto-dropped, else "".
@@ -194,8 +389,6 @@ proc patternLiteralNode(pat: Pattern, loc: SourceLocation): HirNode =
   if pat == nil or pat.kind != pkLiteral:
     return nil
   return hirLit(pat.patLit, litTokenType(pat.patLit), loc)
-
-proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
 
 proc matchPatternCond(ctx: var LowerCtx, subject: HirNode, pattern: Pattern,
                       subjectEnumName: string, subjectHasData: bool,
@@ -527,6 +720,8 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.patternBoundNames = initHashSet[string]()
   result.patternRenames = initTable[string, string]()
   result.movedOutLocals = initHashSet[string]()
+  result.partialMovedFields = initTable[string, HashSet[string]]()
+  result.ptrAliases = initTable[string, string]()
 
 proc sanitizeFatPart(s: string): string =
   result = s.replace("const char*", "cstr").replace("unsigned int", "uint")
@@ -1466,6 +1661,9 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       return HirNode(kind: hAssign, assignOp: tkAssign,
                      assignTarget: loadTarget, assignValue: value,
                      typ: makeVoid(), loc: loc)
+    # Pointer alias update: `p = &bag`
+    if expr.exprAssignTarget.kind == ekIdent and expr.exprAssignValue != nil:
+      ctx.recordPtrAliasFromAst(expr.exprAssignTarget.exprIdent, expr.exprAssignValue)
     let target = ctx.lowerExpr(expr.exprAssignTarget)
     let value = ctx.lowerExpr(expr.exprAssignValue)
     return HirNode(kind: hAssign, assignOp: expr.exprAssignOp,
@@ -1842,6 +2040,9 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
     if initHir != nil:
       let store = hirStore(varNode, initHir, loc)
       stmts.add(store)
+    # Pointer alias: `let p = &bag` so later `p.items` marks bag (session 74)
+    if stmt.stmtLetInit != nil:
+      ctx.recordPtrAliasFromAst(stmt.stmtLetName, stmt.stmtLetInit)
     # Move: `let a = b` takes ownership of droppable local `b`
     if stmt.stmtLetInit != nil:
       ctx.markMovedOutFromAst(stmt.stmtLetInit)
@@ -1879,8 +2080,7 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
         retVal = hirVar(tmp, retTy, loc)
     # Add defers in reverse order (LIFO); snapshot full stack for every return path
     for i in countdown(ctx.deferStmts.len - 1, 0):
-      if not ctx.shouldSkipDrop(ctx.deferStmts[i], skipDrop):
-        stmts.add(ctx.deferStmts[i])
+      ctx.emitDropOrPartial(stmts, ctx.deferStmts[i], skipDrop)
     stmts.add(hirReturn(retVal, loc))
     return hirBlock(stmts, nil, makeVoid(), loc)
 
@@ -2201,8 +2401,7 @@ proc lowerBlock(ctx: var LowerCtx, blk: Block, asExpr = false): HirNode =
   let lastAlwaysReturns = stmts.len > 0 and blockAlwaysReturns(stmts[^1])
   if ctx.deferStmts.len > deferBase and not lastAlwaysReturns:
     for i in countdown(ctx.deferStmts.len - 1, deferBase):
-      if not ctx.shouldSkipDrop(ctx.deferStmts[i], skipDrop):
-        stmts.add(ctx.deferStmts[i])
+      ctx.emitDropOrPartial(stmts, ctx.deferStmts[i], skipDrop)
     ctx.deferStmts.setLen(deferBase)
   elif ctx.deferStmts.len > deferBase and lastAlwaysReturns:
     # Return path already owns these drops; pop so outer scopes don't re-run them
@@ -2258,8 +2457,12 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
   ctx.patternRenames = initTable[string, string]()
   let oldDefers = ctx.deferStmts
   let oldMovedOut = ctx.movedOutLocals
+  let oldPartialMoved = ctx.partialMovedFields
+  let oldPtrAliases = ctx.ptrAliases
   ctx.deferStmts = @[]
   ctx.movedOutLocals = initHashSet[string]()
+  ctx.partialMovedFields = initTable[string, HashSet[string]]()
+  ctx.ptrAliases = initTable[string, string]()
   # Add parameters to varTypeExprs after clearing so they are visible in the body.
   for p in funcParams:
     if p.ptype != nil:
@@ -2279,10 +2482,14 @@ proc lowerFunc*(ctx: var LowerCtx, decl: Decl): HirFunc =
         hasReturn = true
     if not hasReturn:
       for i in countdown(ctx.deferStmts.len - 1, 0):
-        if not ctx.shouldSkipDrop(ctx.deferStmts[i], ""):
-          body.blockStmts.add(ctx.deferStmts[i])
-    ctx.deferStmts = oldDefers
-    ctx.movedOutLocals = oldMovedOut
+        ctx.emitDropOrPartial(body.blockStmts, ctx.deferStmts[i], "")
+  # Always restore — mono of generics (generateMethodInstance → lowerFunc) nests
+  # inside an outer function. Restoring only when deferStmts.len > 0 wiped the
+  # caller's Drop stack (PeekTagAndTake lost Array_Drop after Array_Len mono).
+  ctx.deferStmts = oldDefers
+  ctx.movedOutLocals = oldMovedOut
+  ctx.partialMovedFields = oldPartialMoved
+  ctx.ptrAliases = oldPtrAliases
   
   ctx.currentFuncDecl = oldFuncDecl
   ctx.currentFuncRetType = oldFuncRetType

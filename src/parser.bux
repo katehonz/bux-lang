@@ -395,7 +395,36 @@ module Parser {
         e.callArgCount = 0;
         e.matchArms = null as *MatchArm;
         e.matchArmCount = 0;
+        e.macroStmt = null as *Stmt;
+        e.macroPat = null as *Pattern;
         return e;
+    }
+
+    func parserIsMacroStmtStart(p: *Parser) -> bool {
+        let k: int = parserPeek(p, 0);
+        if k == tkLet || k == tkVar { return true; }
+        if k == tkIf || k == tkWhile || k == tkFor || k == tkLoop { return true; }
+        if k == tkMatch || k == tkReturn || k == tkBreak || k == tkContinue { return true; }
+        if k == tkDefer || k == tkSwitch || k == tkDo { return true; }
+        return false;
+    }
+
+    func parserParseMacroArg(p: *Parser) -> *Expr {
+        let line: uint32 = parserCurToken(p).line;
+        let col: uint32 = parserCurToken(p).column;
+        if parserIsMacroStmtStart(p) {
+            let st: *Stmt = parserParseStmt(p);
+            let e: *Expr = parserMakeExpr(ekMacroStmt, line, col);
+            e.macroStmt = st;
+            return e;
+        }
+        if parserCheck(p, tkUnderscore) {
+            let pat: *Pattern = parserParsePattern(p);
+            let e: *Expr = parserMakeExpr(ekMacroPat, line, col);
+            e.macroPat = pat;
+            return e;
+        }
+        return parserParseExpr(p);
     }
 
 
@@ -1284,7 +1313,7 @@ module Parser {
                             while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
                             continue;
                         }
-                        let argExpr: *Expr = parserParseExpr(p);
+                        let argExpr: *Expr = parserParseMacroArg(p);
                         let argNode: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
                         argNode.expr = argExpr;
                         argNode.next = null as *ExprList;
@@ -2387,8 +2416,10 @@ module Parser {
                         let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
                         var kname: String = kindTok.text;
                         if String_Eq(kname, "lit") { kname = "literal"; }
+                        if String_Eq(kname, "pattern") { kname = "pat"; }
                         if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
-                            || String_Eq(kname, "literal") || String_Eq(kname, "block")) {
+                            || String_Eq(kname, "literal") || String_Eq(kname, "block")
+                            || String_Eq(kname, "stmt") || String_Eq(kname, "pat")) {
                             kname = "expr";
                         }
                         if nIn == 0 {
@@ -2432,8 +2463,10 @@ module Parser {
                     let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
                     var kname: String = kindTok.text;
                     if String_Eq(kname, "lit") { kname = "literal"; }
+                    if String_Eq(kname, "pattern") { kname = "pat"; }
                     if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
-                        || String_Eq(kname, "literal") || String_Eq(kname, "block")) {
+                        || String_Eq(kname, "literal") || String_Eq(kname, "block")
+                        || String_Eq(kname, "stmt") || String_Eq(kname, "pat")) {
                         kname = "expr";
                     }
                     if rule.paramCount < 9 {

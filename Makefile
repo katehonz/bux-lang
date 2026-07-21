@@ -5,10 +5,10 @@ BUILD_DIR := build
 # Project-local nimcache so CI can cache compiles (default is ~/.cache/nim).
 NIMFLAGS ?= --nimcache:nimcache
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked ownership_release drop_early_return lifetime_elision ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field move_field_partial c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked ownership_release drop_early_return lifetime_elision ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field move_field_partial move_field_remaining move_field_nested move_field_ptr c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat
 
 # Platform smoke (macOS CI): full EXAMPLES still runs on Linux.
-EXAMPLES_SMOKE := hello ownership ownership_release strings map move_field move_field_partial c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic
+EXAMPLES_SMOKE := hello ownership ownership_release strings map move_field move_field_partial move_field_remaining move_field_nested move_field_ptr c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat
 
 .PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit ensure-buxc
 

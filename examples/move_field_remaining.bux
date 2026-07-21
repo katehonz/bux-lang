@@ -1,0 +1,87 @@
+// Session 70 — per-field Drop after partial move
+// Moving one droppable field out of a @[Drop] parent skips Type_Drop of the
+// parent but still drops the *remaining* droppable fields.
+import Std::Io::{PrintLine};
+import Std::Array::{Array, Array_New, Array_Push, Array_Len, Array_Get};
+import Std::String::{String_FromInt, String_Concat};
+import Std::Test::{Test_AssertTrue, Test_Pass};
+
+@[Drop]
+struct Tracked {
+    n: int,
+    counter: *int
+}
+
+func Tracked_Drop(self: *Tracked) {
+    if self.counter != null as *int {
+        *self.counter = *self.counter + 1;
+    }
+}
+
+@[Drop]
+struct PairBag {
+    left: Array<int>,
+    right: Tracked
+}
+
+func PairBag_Drop(self: *PairBag) {
+    Array_Drop<int>(&self.left);
+    Tracked_Drop(&self.right);
+}
+
+// Move left out via return — right must still Drop (Tracked_Drop)
+func TakeLeft(counter: *int) -> Array<int> {
+    var left: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&left, 10);
+    Array_Push<int>(&left, 20);
+    let pair: PairBag = PairBag {
+        left: left,
+        right: Tracked { n: 2, counter: counter }
+    };
+    return pair.left;
+}
+
+// Move left via let; right still drops at scope end
+func PeekAfterTake(counter: *int) -> int {
+    var left: Array<int> = Array_New<int>(1);
+    Array_Push<int>(&left, 7);
+    let pair: PairBag = PairBag {
+        left: left,
+        right: Tracked { n: 2, counter: counter }
+    };
+    let moved: Array<int> = pair.left;
+    return Array_Len<int>(&moved) as int;
+}
+
+// Whole-struct return: no PairBag_Drop here (caller owns it)
+func MakePair() -> PairBag {
+    var left: Array<int> = Array_New<int>(1);
+    Array_Push<int>(&left, 1);
+    let pair: PairBag = PairBag {
+        left: left,
+        right: Tracked { n: 9, counter: null as *int }
+    };
+    return pair;
+}
+
+func Main() -> int {
+    var drops: int = 0;
+
+    let taken: Array<int> = TakeLeft(&drops);
+    Test_AssertTrue(Array_Len<int>(&taken) == 2);
+    Test_AssertTrue(Array_Get<int>(&taken, 0) == 10);
+    // TakeLeft must have Dropped remaining right field once
+    Test_AssertTrue(drops == 1);
+
+    let n: int = PeekAfterTake(&drops);
+    Test_AssertTrue(n == 1);
+    Test_AssertTrue(drops == 2);
+
+    let p: PairBag = MakePair();
+    Test_AssertTrue(Array_Len<int>(&p.left) == 1);
+    Test_AssertTrue(p.right.n == 9);
+
+    PrintLine(String_Concat("right_drops=", String_FromInt(drops as int64)));
+    Test_Pass("move_field_remaining");
+    return 0;
+}

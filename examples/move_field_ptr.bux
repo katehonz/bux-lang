@@ -1,0 +1,131 @@
+// Session 74 — field moves through pointers (`p.field` / `(*p).field`)
+// When `p = &bag`, moving `p.items` marks the owner `bag` (not the pointer).
+import Std::Io::{PrintLine};
+import Std::Array::{Array, Array_New, Array_Push, Array_Len, Array_Get};
+import Std::String::{String_FromInt, String_Concat};
+import Std::Test::{Test_AssertTrue, Test_Pass};
+
+@[Drop]
+struct Tracked {
+    id: int,
+    counter: *int
+}
+
+func Tracked_Drop(self: *Tracked) {
+    if self.counter != null as *int {
+        *self.counter = *self.counter + 1;
+    }
+}
+
+@[Drop]
+struct Bag {
+    items: Array<int>,
+    tag: Tracked
+}
+
+func Bag_Drop(self: *Bag) {
+    Array_Drop<int>(&self.items);
+    Tracked_Drop(&self.tag);
+}
+
+// p.items via auto-deref of *Bag
+func TakeViaPtr(counter: *int) -> Array<int> {
+    var items: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&items, 10);
+    Array_Push<int>(&items, 20);
+    let bag: Bag = Bag {
+        items: items,
+        tag: Tracked { id: 1, counter: counter }
+    };
+    let p: *Bag = &bag;
+    return p.items;
+}
+
+// Explicit (*p).items
+func TakeViaDeref(counter: *int) -> Array<int> {
+    var items: Array<int> = Array_New<int>(1);
+    Array_Push<int>(&items, 7);
+    let bag: Bag = Bag {
+        items: items,
+        tag: Tracked { id: 2, counter: counter }
+    };
+    let p: *Bag = &bag;
+    return (*p).items;
+}
+
+// let-move through pointer; remaining tag still Drops
+func PeekAfterPtrTake(counter: *int) -> int {
+    var items: Array<int> = Array_New<int>(1);
+    Array_Push<int>(&items, 3);
+    let bag: Bag = Bag {
+        items: items,
+        tag: Tracked { id: 3, counter: counter }
+    };
+    var p: *Bag = &bag;
+    let moved: Array<int> = p.items;
+    return Array_Len<int>(&moved) as int;
+}
+
+// Nested path through pointer: p.inner.items
+@[Drop]
+struct Inner {
+    items: Array<int>,
+    note: Tracked
+}
+
+func Inner_Drop(self: *Inner) {
+    Array_Drop<int>(&self.items);
+    Tracked_Drop(&self.note);
+}
+
+@[Drop]
+struct Outer {
+    inner: Inner,
+    tag: Tracked
+}
+
+func Outer_Drop(self: *Outer) {
+    Inner_Drop(&self.inner);
+    Tracked_Drop(&self.tag);
+}
+
+func TakeNestedViaPtr(counter: *int) -> Array<int> {
+    var items: Array<int> = Array_New<int>(1);
+    Array_Push<int>(&items, 99);
+    let outer: Outer = Outer {
+        inner: Inner {
+            items: items,
+            note: Tracked { id: 4, counter: counter }
+        },
+        tag: Tracked { id: 5, counter: counter }
+    };
+    let p: *Outer = &outer;
+    return p.inner.items;
+}
+
+func Main() -> int {
+    var drops: int = 0;
+
+    let a: Array<int> = TakeViaPtr(&drops);
+    Test_AssertTrue(Array_Len<int>(&a) == 2);
+    Test_AssertTrue(Array_Get<int>(&a, 0) == 10);
+    // tag Drop once
+    Test_AssertTrue(drops == 1);
+
+    let b: Array<int> = TakeViaDeref(&drops);
+    Test_AssertTrue(Array_Len<int>(&b) == 1);
+    Test_AssertTrue(drops == 2);
+
+    let n: int = PeekAfterPtrTake(&drops);
+    Test_AssertTrue(n == 1);
+    Test_AssertTrue(drops == 3);
+
+    let c: Array<int> = TakeNestedViaPtr(&drops);
+    Test_AssertTrue(Array_Get<int>(&c, 0) == 99);
+    // note + tag → +2
+    Test_AssertTrue(drops == 5);
+
+    PrintLine(String_Concat("ptr_drops=", String_FromInt(drops as int64)));
+    Test_Pass("move_field_ptr");
+    return 0;
+}

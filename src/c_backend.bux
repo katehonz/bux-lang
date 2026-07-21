@@ -76,6 +76,60 @@ module CBackend {
         movedName5: String,
         movedName6: String,
         movedName7: String,
+        // Partial field moves: (var, field) pairs (session 70)
+        partialCount: int,
+        partialVar0: String,
+        partialField0: String,
+        partialVar1: String,
+        partialField1: String,
+        partialVar2: String,
+        partialField2: String,
+        partialVar3: String,
+        partialField3: String,
+        partialVar4: String,
+        partialField4: String,
+        partialVar5: String,
+        partialField5: String,
+        partialVar6: String,
+        partialField6: String,
+        partialVar7: String,
+        partialField7: String,
+        // Local name → typeName for remaining-field Drop lookup
+        localCount: int,
+        localName0: String,
+        localType0: String,
+        localName1: String,
+        localType1: String,
+        localName2: String,
+        localType2: String,
+        localName3: String,
+        localType3: String,
+        localName4: String,
+        localType4: String,
+        localName5: String,
+        localType5: String,
+        localName6: String,
+        localType6: String,
+        localName7: String,
+        localType7: String,
+        // Pointer aliases: p → bag when `p = &bag` (session 74)
+        aliasCount: int,
+        aliasPtr0: String,
+        aliasOwner0: String,
+        aliasPtr1: String,
+        aliasOwner1: String,
+        aliasPtr2: String,
+        aliasOwner2: String,
+        aliasPtr3: String,
+        aliasOwner3: String,
+        aliasPtr4: String,
+        aliasOwner4: String,
+        aliasPtr5: String,
+        aliasOwner5: String,
+        aliasPtr6: String,
+        aliasOwner6: String,
+        aliasPtr7: String,
+        aliasOwner7: String,
         tmpCounter: int,
         currentRetType: String,
         // #line debug maps (E.4 selfhost parity)
@@ -130,6 +184,329 @@ module CBackend {
         return true;
     }
 
+    func CBE_AddPtrAlias(cbe: *CEmitter, ptrName: String, ownerName: String) {
+        if ptrName == null as String || String_Eq(ptrName, "") { return; }
+        if ownerName == null as String || String_Eq(ownerName, "") { return; }
+        // Update existing alias for same pointer
+        var i: int = 0;
+        while i < cbe.aliasCount {
+            var pn: String = "";
+            if i == 0 { pn = cbe.aliasPtr0; }
+            else if i == 1 { pn = cbe.aliasPtr1; }
+            else if i == 2 { pn = cbe.aliasPtr2; }
+            else if i == 3 { pn = cbe.aliasPtr3; }
+            else if i == 4 { pn = cbe.aliasPtr4; }
+            else if i == 5 { pn = cbe.aliasPtr5; }
+            else if i == 6 { pn = cbe.aliasPtr6; }
+            else if i == 7 { pn = cbe.aliasPtr7; }
+            if String_Eq(pn, ptrName) {
+                if i == 0 { cbe.aliasOwner0 = ownerName; }
+                else if i == 1 { cbe.aliasOwner1 = ownerName; }
+                else if i == 2 { cbe.aliasOwner2 = ownerName; }
+                else if i == 3 { cbe.aliasOwner3 = ownerName; }
+                else if i == 4 { cbe.aliasOwner4 = ownerName; }
+                else if i == 5 { cbe.aliasOwner5 = ownerName; }
+                else if i == 6 { cbe.aliasOwner6 = ownerName; }
+                else if i == 7 { cbe.aliasOwner7 = ownerName; }
+                return;
+            }
+            i = i + 1;
+        }
+        if cbe.aliasCount >= 8 { return; }
+        if cbe.aliasCount == 0 { cbe.aliasPtr0 = ptrName; cbe.aliasOwner0 = ownerName; }
+        else if cbe.aliasCount == 1 { cbe.aliasPtr1 = ptrName; cbe.aliasOwner1 = ownerName; }
+        else if cbe.aliasCount == 2 { cbe.aliasPtr2 = ptrName; cbe.aliasOwner2 = ownerName; }
+        else if cbe.aliasCount == 3 { cbe.aliasPtr3 = ptrName; cbe.aliasOwner3 = ownerName; }
+        else if cbe.aliasCount == 4 { cbe.aliasPtr4 = ptrName; cbe.aliasOwner4 = ownerName; }
+        else if cbe.aliasCount == 5 { cbe.aliasPtr5 = ptrName; cbe.aliasOwner5 = ownerName; }
+        else if cbe.aliasCount == 6 { cbe.aliasPtr6 = ptrName; cbe.aliasOwner6 = ownerName; }
+        else if cbe.aliasCount == 7 { cbe.aliasPtr7 = ptrName; cbe.aliasOwner7 = ownerName; }
+        cbe.aliasCount = cbe.aliasCount + 1;
+    }
+
+    func CBE_ResolvePtrAlias(cbe: *CEmitter, name: String) -> String {
+        var cur: String = name;
+        var guard: int = 0;
+        while guard < 8 {
+            var found: bool = false;
+            var owner: String = "";
+            var i: int = 0;
+            while i < cbe.aliasCount {
+                var pn: String = "";
+                var on: String = "";
+                if i == 0 { pn = cbe.aliasPtr0; on = cbe.aliasOwner0; }
+                else if i == 1 { pn = cbe.aliasPtr1; on = cbe.aliasOwner1; }
+                else if i == 2 { pn = cbe.aliasPtr2; on = cbe.aliasOwner2; }
+                else if i == 3 { pn = cbe.aliasPtr3; on = cbe.aliasOwner3; }
+                else if i == 4 { pn = cbe.aliasPtr4; on = cbe.aliasOwner4; }
+                else if i == 5 { pn = cbe.aliasPtr5; on = cbe.aliasOwner5; }
+                else if i == 6 { pn = cbe.aliasPtr6; on = cbe.aliasOwner6; }
+                else if i == 7 { pn = cbe.aliasPtr7; on = cbe.aliasOwner7; }
+                if String_Eq(pn, cur) {
+                    owner = on;
+                    found = true;
+                    break;
+                }
+                i = i + 1;
+            }
+            if !found { break; }
+            cur = owner;
+            guard = guard + 1;
+        }
+        return cur;
+    }
+
+    /// Record alias if init is `&local` (hUnary Amp of hVar).
+    func CBE_TryRecordPtrAlias(cbe: *CEmitter, ptrName: String, init: *HirNode) {
+        if init == null as *HirNode { return; }
+        var n: *HirNode = init;
+        if n.kind == hLoad { n = n.child1; }
+        if n == null as *HirNode { return; }
+        if n.kind == hUnary && n.intValue == tkAmp {
+            let op: *HirNode = n.child1;
+            if op != null as *HirNode && op.kind == hVar {
+                CBE_AddPtrAlias(cbe, ptrName, op.strValue);
+            }
+        }
+    }
+
+    /// Base local name under load/field/deref chains (for partial field moves).
+    /// Resolves pointer aliases: p → bag when `p = &bag`.
+    func CBE_BaseVarName(cbe: *CEmitter, node: *HirNode) -> String {
+        if node == null as *HirNode { return ""; }
+        if node.kind == hVar {
+            return CBE_ResolvePtrAlias(cbe, node.strValue);
+        }
+        // Deref: *p → follow p's alias
+        if node.kind == hUnary && node.intValue == tkStar {
+            return CBE_BaseVarName(cbe, node.child1);
+        }
+        if node.kind == hLoad || node.kind == hFieldAccess || node.kind == hFieldPtr {
+            return CBE_BaseVarName(cbe, node.child1);
+        }
+        return "";
+    }
+
+    /// Back-compat: BaseVarName without emitter (no alias resolve).
+    func CBE_BaseVarNameRaw(node: *HirNode) -> String {
+        if node == null as *HirNode { return ""; }
+        if node.kind == hVar { return node.strValue; }
+        if node.kind == hUnary && node.intValue == tkStar {
+            return CBE_BaseVarNameRaw(node.child1);
+        }
+        if node.kind == hLoad || node.kind == hFieldAccess || node.kind == hFieldPtr {
+            return CBE_BaseVarNameRaw(node.child1);
+        }
+        return "";
+    }
+
+    /// Dotted field path from nested hFieldAccess/hFieldPtr chain: "inner.items".
+    /// Peels explicit derefs (`*p`) so path is field-only.
+    func CBE_FieldPathFromNode(node: *HirNode) -> String {
+        if node == null as *HirNode { return ""; }
+        if node.kind == hLoad {
+            return CBE_FieldPathFromNode(node.child1);
+        }
+        if node.kind == hUnary && node.intValue == tkStar {
+            return CBE_FieldPathFromNode(node.child1);
+        }
+        if node.kind == hFieldAccess || node.kind == hFieldPtr {
+            let rest: String = CBE_FieldPathFromNode(node.child1);
+            let seg: String = node.strValue;
+            if String_Eq(seg, "") { return rest; }
+            if String_Eq(rest, "") { return seg; }
+            return String_Concat(rest, String_Concat(".", seg));
+        }
+        return "";
+    }
+
+    /// True if dotted path `key` is exactly moved, or is a prefix of a moved path.
+    func CBE_PathIsFullyMoved(cbe: *CEmitter, varName: String, key: String) -> bool {
+        return CBE_IsPartialMovedField(cbe, varName, key);
+    }
+
+    func CBE_PathHasNestedMove(cbe: *CEmitter, varName: String, key: String) -> bool {
+        let prefix: String = String_Concat(key, ".");
+        var i: int = 0;
+        while i < cbe.partialCount {
+            var pvar: String = "";
+            var pfield: String = "";
+            if i == 0 { pvar = cbe.partialVar0; pfield = cbe.partialField0; }
+            else if i == 1 { pvar = cbe.partialVar1; pfield = cbe.partialField1; }
+            else if i == 2 { pvar = cbe.partialVar2; pfield = cbe.partialField2; }
+            else if i == 3 { pvar = cbe.partialVar3; pfield = cbe.partialField3; }
+            else if i == 4 { pvar = cbe.partialVar4; pfield = cbe.partialField4; }
+            else if i == 5 { pvar = cbe.partialVar5; pfield = cbe.partialField5; }
+            else if i == 6 { pvar = cbe.partialVar6; pfield = cbe.partialField6; }
+            else if i == 7 { pvar = cbe.partialVar7; pfield = cbe.partialField7; }
+            if String_Eq(pvar, varName) && String_StartsWith(pfield, prefix) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    func CBE_RegisterLocalType(cbe: *CEmitter, name: String, typeName: String) {
+        if name == null as String || String_Eq(name, "") { return; }
+        if typeName == null as String || String_Eq(typeName, "") { return; }
+        if cbe.localCount >= 8 { return; }
+        let tn: String = CBE_NormalizeTypeName(typeName);
+        if cbe.localCount == 0 { cbe.localName0 = name; cbe.localType0 = tn; }
+        else if cbe.localCount == 1 { cbe.localName1 = name; cbe.localType1 = tn; }
+        else if cbe.localCount == 2 { cbe.localName2 = name; cbe.localType2 = tn; }
+        else if cbe.localCount == 3 { cbe.localName3 = name; cbe.localType3 = tn; }
+        else if cbe.localCount == 4 { cbe.localName4 = name; cbe.localType4 = tn; }
+        else if cbe.localCount == 5 { cbe.localName5 = name; cbe.localType5 = tn; }
+        else if cbe.localCount == 6 { cbe.localName6 = name; cbe.localType6 = tn; }
+        else if cbe.localCount == 7 { cbe.localName7 = name; cbe.localType7 = tn; }
+        cbe.localCount = cbe.localCount + 1;
+    }
+
+    func CBE_LookupLocalType(cbe: *CEmitter, name: String) -> String {
+        if cbe.localCount > 0 && String_Eq(cbe.localName0, name) { return cbe.localType0; }
+        if cbe.localCount > 1 && String_Eq(cbe.localName1, name) { return cbe.localType1; }
+        if cbe.localCount > 2 && String_Eq(cbe.localName2, name) { return cbe.localType2; }
+        if cbe.localCount > 3 && String_Eq(cbe.localName3, name) { return cbe.localType3; }
+        if cbe.localCount > 4 && String_Eq(cbe.localName4, name) { return cbe.localType4; }
+        if cbe.localCount > 5 && String_Eq(cbe.localName5, name) { return cbe.localType5; }
+        if cbe.localCount > 6 && String_Eq(cbe.localName6, name) { return cbe.localType6; }
+        if cbe.localCount > 7 && String_Eq(cbe.localName7, name) { return cbe.localType7; }
+        return "";
+    }
+
+    func CBE_AddPartialMoved(cbe: *CEmitter, varName: String, fieldName: String) {
+        if varName == null as String || String_Eq(varName, "") { return; }
+        if fieldName == null as String || String_Eq(fieldName, "") { return; }
+        if cbe.partialCount >= 8 { return; }
+        if cbe.partialCount == 0 { cbe.partialVar0 = varName; cbe.partialField0 = fieldName; }
+        else if cbe.partialCount == 1 { cbe.partialVar1 = varName; cbe.partialField1 = fieldName; }
+        else if cbe.partialCount == 2 { cbe.partialVar2 = varName; cbe.partialField2 = fieldName; }
+        else if cbe.partialCount == 3 { cbe.partialVar3 = varName; cbe.partialField3 = fieldName; }
+        else if cbe.partialCount == 4 { cbe.partialVar4 = varName; cbe.partialField4 = fieldName; }
+        else if cbe.partialCount == 5 { cbe.partialVar5 = varName; cbe.partialField5 = fieldName; }
+        else if cbe.partialCount == 6 { cbe.partialVar6 = varName; cbe.partialField6 = fieldName; }
+        else if cbe.partialCount == 7 { cbe.partialVar7 = varName; cbe.partialField7 = fieldName; }
+        cbe.partialCount = cbe.partialCount + 1;
+    }
+
+    func CBE_IsPartialMovedField(cbe: *CEmitter, varName: String, fieldName: String) -> bool {
+        if cbe.partialCount > 0 && String_Eq(cbe.partialVar0, varName) && String_Eq(cbe.partialField0, fieldName) { return true; }
+        if cbe.partialCount > 1 && String_Eq(cbe.partialVar1, varName) && String_Eq(cbe.partialField1, fieldName) { return true; }
+        if cbe.partialCount > 2 && String_Eq(cbe.partialVar2, varName) && String_Eq(cbe.partialField2, fieldName) { return true; }
+        if cbe.partialCount > 3 && String_Eq(cbe.partialVar3, varName) && String_Eq(cbe.partialField3, fieldName) { return true; }
+        if cbe.partialCount > 4 && String_Eq(cbe.partialVar4, varName) && String_Eq(cbe.partialField4, fieldName) { return true; }
+        if cbe.partialCount > 5 && String_Eq(cbe.partialVar5, varName) && String_Eq(cbe.partialField5, fieldName) { return true; }
+        if cbe.partialCount > 6 && String_Eq(cbe.partialVar6, varName) && String_Eq(cbe.partialField6, fieldName) { return true; }
+        if cbe.partialCount > 7 && String_Eq(cbe.partialVar7, varName) && String_Eq(cbe.partialField7, fieldName) { return true; }
+        return false;
+    }
+
+    func CBE_HasPartialMoved(cbe: *CEmitter, varName: String) -> bool {
+        if cbe.partialCount > 0 && String_Eq(cbe.partialVar0, varName) { return true; }
+        if cbe.partialCount > 1 && String_Eq(cbe.partialVar1, varName) { return true; }
+        if cbe.partialCount > 2 && String_Eq(cbe.partialVar2, varName) { return true; }
+        if cbe.partialCount > 3 && String_Eq(cbe.partialVar3, varName) { return true; }
+        if cbe.partialCount > 4 && String_Eq(cbe.partialVar4, varName) { return true; }
+        if cbe.partialCount > 5 && String_Eq(cbe.partialVar5, varName) { return true; }
+        if cbe.partialCount > 6 && String_Eq(cbe.partialVar6, varName) { return true; }
+        if cbe.partialCount > 7 && String_Eq(cbe.partialVar7, varName) { return true; }
+        return false;
+    }
+
+    /// Drop function name for a C type (`Array_int` → `Array_Drop_int`, `Bag` → `Bag_Drop`).
+    func CBE_DropFuncName(tn: String) -> String {
+        if tn == null as String || String_Eq(tn, "") { return ""; }
+        if !CBE_IsDroppableTypeName(tn) { return ""; }
+        if String_StartsWith(tn, "Array_") {
+            let n: uint = String_Len(tn);
+            let elem: String = String_Slice(tn, 6, n - 6);
+            return String_Concat("Array_Drop_", elem);
+        }
+        if String_StartsWith(tn, "Map_") {
+            let n: uint = String_Len(tn);
+            let rest: String = String_Slice(tn, 4, n - 4);
+            return String_Concat("Map_Drop_", rest);
+        }
+        if String_StartsWith(tn, "Set_") {
+            let n: uint = String_Len(tn);
+            let elem: String = String_Slice(tn, 4, n - 4);
+            return String_Concat("Set_Drop_", elem);
+        }
+        if String_StartsWith(tn, "Channel_") {
+            let n: uint = String_Len(tn);
+            let elem: String = String_Slice(tn, 8, n - 8);
+            return String_Concat("Channel_Drop_", elem);
+        }
+        return String_Concat(tn, "_Drop");
+    }
+
+    /// Lookup struct index by name; -1 if missing.
+    func CBE_FindStruct(cbe: *CEmitter, typeName: String) -> int {
+        if cbe.mod == null as *HirModule { return -1; }
+        var si: int = 0;
+        while si < cbe.mod.structCount {
+            if String_Eq(cbe.mod.structs[si].name, typeName) { return si; }
+            si = si + 1;
+        }
+        return -1;
+    }
+
+    /// Emit one Drop call: `Type_Drop(&(accessPath));`
+    func CBE_EmitOneFieldDrop(cbe: *CEmitter, dropFn: String, accessPath: String) {
+        if String_Eq(dropFn, "") { return; }
+        StringBuilder_Append(&cbe.sb, "\n");
+        var sp: int = 0;
+        while sp < cbe.indent {
+            StringBuilder_Append(&cbe.sb, "    ");
+            sp = sp + 1;
+        }
+        StringBuilder_Append(&cbe.sb, dropFn);
+        StringBuilder_Append(&cbe.sb, "(&(");
+        StringBuilder_Append(&cbe.sb, accessPath);
+        StringBuilder_Append(&cbe.sb, "));");
+    }
+
+    /// Recursive remaining-field drops for nested paths (session 73).
+    /// `prefix` is dotted path under varName ("" at root); `typeName` is type at that prefix.
+    func CBE_EmitRemainingAt(cbe: *CEmitter, varName: String, typeName: String, prefix: String) {
+        let si: int = CBE_FindStruct(cbe, typeName);
+        if si < 0 { return; }
+        var fi: int = 0;
+        while fi < cbe.mod.structs[si].fieldCount {
+            let fname: String = cbe.mod.structs[si].fields[fi].name;
+            let fty: String = CBE_NormalizeTypeName(cbe.mod.structs[si].fields[fi].typeName);
+            var key: String = fname;
+            if !String_Eq(prefix, "") {
+                key = String_Concat(prefix, String_Concat(".", fname));
+            }
+            var access: String = String_Concat(varName, String_Concat(".", key));
+            // path may use dots in key already: var.inner.note
+            if String_Eq(prefix, "") {
+                access = String_Concat(varName, String_Concat(".", fname));
+            } else {
+                access = String_Concat(varName, String_Concat(".", String_Concat(prefix, String_Concat(".", fname))));
+            }
+            if CBE_PathIsFullyMoved(cbe, varName, key) {
+                // fully moved — skip
+            } else if CBE_PathHasNestedMove(cbe, varName, key) {
+                // recurse into nested type
+                CBE_EmitRemainingAt(cbe, varName, fty, key);
+            } else {
+                let dropFn: String = CBE_DropFuncName(fty);
+                CBE_EmitOneFieldDrop(cbe, dropFn, access);
+            }
+            fi = fi + 1;
+        }
+    }
+
+    /// After partial field move, Drop remaining droppable fields (incl. nested).
+    func CBE_EmitRemainingFieldDrops(cbe: *CEmitter, varName: String) {
+        let typeName: String = CBE_LookupLocalType(cbe, varName);
+        if String_Eq(typeName, "") { return; }
+        CBE_EmitRemainingAt(cbe, varName, typeName, "");
+    }
+
     /// Mark droppable locals moved by-value (struct fields / nested / partial field).
     /// `valueTypeHint`: when non-empty (e.g. function return type), used to decide
     /// whether a field access is an ownership move (`return bag.items` vs `return bag.tag`).
@@ -145,14 +522,43 @@ module CBackend {
         }
         // Partial field move: only when the *value* type is droppable
         if node.kind == hFieldPtr || node.kind == hFieldAccess {
+            // Prefer return-type hint, then resolved field type, then node.typeName
+            // (selfhost stores *base* struct on field HIR, not the field type).
             var vty: String = valueTypeHint;
+            if String_Eq(vty, "") && cbe.mod != null as *HirModule {
+                vty = CBE_GetExprTypeName(cbe.mod, node);
+            }
             if String_Eq(vty, "") {
                 vty = node.typeName;
             }
-            // Field HIR often stores the *base* struct typeName — prefer hint
-            if CBE_IsDroppableTypeName(vty) {
-                // Walk to base local (hVar / load / nested)
-                CBE_MarkMovedFromNodeHint(cbe, node.child1, "");
+            vty = CBE_NormalizeTypeName(vty);
+            let baseName: String = CBE_BaseVarName(cbe, node);
+            var path: String = CBE_FieldPathFromNode(node);
+            // Fallback path: just the leaf field name if chain walk failed
+            if String_Eq(path, "") && !String_Eq(node.strValue, "") {
+                path = node.strValue;
+            }
+            // Single-level: mark when value type is droppable.
+            // Nested path (`a.b.c`): always mark — leaf is ownership transfer.
+            if !String_Eq(baseName, "") && !String_Eq(path, "") {
+                var shouldMark: bool = CBE_IsDroppableTypeName(vty);
+                if !shouldMark && cbe.mod != null as *HirModule {
+                    let ft: String = CBE_NormalizeTypeName(CBE_GetExprTypeName(cbe.mod, node));
+                    shouldMark = CBE_IsDroppableTypeName(ft);
+                }
+                var pi: int = 0;
+                let plen: int = bux_strlen(path) as int;
+                while pi < plen {
+                    if path[pi] == 46 as char8 { // '.'
+                        shouldMark = true;
+                        break;
+                    }
+                    pi = pi + 1;
+                }
+                if shouldMark {
+                    CBE_AddPartialMoved(cbe, baseName, path);
+                    CBE_AddMoved(cbe, baseName);
+                }
             }
             return;
         }
@@ -292,10 +698,16 @@ module CBackend {
         if i == 5 { dn = cbe.defer5; }
         if i == 6 { dn = cbe.defer6; }
         if i == 7 { dn = cbe.defer7; }
-        // Skip auto-drop for moved variables
+        // Skip auto-drop for moved variables; after partial field move still
+        // Drop remaining droppable fields (session 70/73).
         let deferVarName: String = CBE_GetAutoDropVarName(dn);
-        if !String_Eq(deferVarName, "") && CBE_IsMoved(cbe, deferVarName) {
-            return;
+        if !String_Eq(deferVarName, "") {
+            if CBE_IsMoved(cbe, deferVarName) || CBE_HasPartialMoved(cbe, deferVarName) {
+                if CBE_HasPartialMoved(cbe, deferVarName) {
+                    CBE_EmitRemainingFieldDrops(cbe, deferVarName);
+                }
+                return;
+            }
         }
         StringBuilder_Append(&cbe.sb, "\n");
         var sp: int = 0;
@@ -427,12 +839,14 @@ module CBackend {
             return;
         }
 
-        // Unary — always parenthesize operand so `!(a && b)` is not `!a && b`
+        // Unary — wrap whole op so `(*p).field` is not parsed as `*(p.field)`
+        // and `!(a && b)` is not `!a && b`.
         if kind == hUnary {
+            StringBuilder_Append(&cbe.sb, "(");
             StringBuilder_Append(&cbe.sb, CBackend_OpToC(node.intValue));
             StringBuilder_Append(&cbe.sb, "(");
             CBE_EmitExpr(cbe, node.child1);
-            StringBuilder_Append(&cbe.sb, ")");
+            StringBuilder_Append(&cbe.sb, "))");
             return;
         }
 
@@ -596,6 +1010,7 @@ module CBackend {
             if !String_Eq(node.typeName, "") {
                 ct = node.typeName;
             }
+            CBE_RegisterLocalType(cbe, node.strValue, ct);
             StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.strValue));
             return;
         }
@@ -610,6 +1025,15 @@ module CBackend {
                     CBE_MarkMovedFromNode(cbe, node.child2);
                 }
             }
+            // Pointer alias: `p = &bag` / `let p = &bag`
+            if node.child1 != null as *HirNode && node.child2 != null as *HirNode {
+                var ptrN: String = "";
+                if node.child1.kind == hAlloca { ptrN = node.child1.strValue; }
+                if node.child1.kind == hVar { ptrN = node.child1.strValue; }
+                if !String_Eq(ptrN, "") {
+                    CBE_TryRecordPtrAlias(cbe, ptrN, node.child2);
+                }
+            }
             // Reinitialization removes moved status
             if node.child1 != null as *HirNode && node.child1.kind == hVar {
                 CBE_RemoveMoved(cbe, node.child1.strValue);
@@ -620,6 +1044,8 @@ module CBackend {
                 if !String_Eq(node.child1.typeName, "") {
                     ct = node.child1.typeName;
                 }
+                // Register for remaining-field Drop after partial move (session 70)
+                CBE_RegisterLocalType(cbe, node.child1.strValue, ct);
                 StringBuilder_Append(&cbe.sb, CBE_CParamDecl(ct, node.child1.strValue));
                 if node.child2 != null as *HirNode {
                     StringBuilder_Append(&cbe.sb, " = ");
@@ -880,6 +1306,10 @@ module CBackend {
 
         // Assign: target = value
         if kind == hAssign {
+            // Pointer alias: `p = &bag`
+            if node.child1 != null as *HirNode && node.child1.kind == hVar && node.child2 != null as *HirNode {
+                CBE_TryRecordPtrAlias(cbe, node.child1.strValue, node.child2);
+            }
             CBE_EmitExpr(cbe, node.child1);
             StringBuilder_Append(&cbe.sb, " = ");
             CBE_EmitExpr(cbe, node.child2);
@@ -1478,6 +1908,9 @@ module CBackend {
         cbe.mod = mod;
         cbe.deferCount = 0;
         cbe.movedCount = 0;
+        cbe.partialCount = 0;
+        cbe.aliasCount = 0;
+        cbe.localCount = 0;
         cbe.tmpCounter = 0;
         cbe.lastDebugLine = 0;
         cbe.lastDebugFile = "";
@@ -1542,34 +1975,59 @@ module CBackend {
         StringBuilder_Append(&cbe.sb, "typedef struct Tuple_int_int_int {\n    int _0;\n    int _1;\n    int _2;\n} Tuple_int_int_int;\n");
         StringBuilder_Append(&cbe.sb, "typedef struct Tuple_Empty {\n    char _pad;\n} Tuple_Empty;\n\n");
 
-        // Struct definitions before enums (enums may embed structs by value, e.g. Shape::Dot(Point))
-        // Pass 1: emit structs with no value-typed struct fields (leaf structs)
-        si = 0;
-        while si < mod.structCount {
-            if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
+        // Struct definitions before enums (enums may embed structs by value).
+        // Multi-pass topo: emit only when every value-typed field type is already
+        // emitted (handles Outer { inner: Inner } nesting — session 73).
+        var emittedNames: String = ";";
+        var progress: bool = true;
+        var pass: int = 0;
+        while progress && pass < 64 {
+            progress = false;
+            pass = pass + 1;
+            si = 0;
+            while si < mod.structCount {
+                let sn: String = mod.structs[si].name;
+                if String_Eq(sn, "") || CBE_StructHasGeneric(&mod.structs[si]) {
+                    si = si + 1;
+                    continue;
+                }
+                let mark: String = String_Concat(";", String_Concat(sn, ";"));
+                if String_Contains(emittedNames, mark) {
+                    si = si + 1;
+                    continue;
+                }
+                var ready: bool = true;
+                var fi2: int = 0;
+                while fi2 < mod.structs[si].fieldCount {
+                    let ft: String = CBE_NormalizeTypeName(mod.structs[si].fields[fi2].typeName);
+                    if !CBE_IsPrimitiveTypeName(ft) && !String_EndsWith(ft, "*") {
+                        let fmark: String = String_Concat(";", String_Concat(ft, ";"));
+                        if !String_Contains(emittedNames, fmark) {
+                            // Only block if ft is a pending user struct we define
+                            var isOur: bool = false;
+                            var oj: int = 0;
+                            while oj < mod.structCount {
+                                if String_Eq(mod.structs[oj].name, ft) {
+                                    isOur = true;
+                                    break;
+                                }
+                                oj = oj + 1;
+                            }
+                            if isOur {
+                                ready = false;
+                                break;
+                            }
+                        }
+                    }
+                    fi2 = fi2 + 1;
+                }
+                if ready {
+                    CBE_EmitStructDef(cbe, &mod.structs[si]);
+                    emittedNames = String_Concat(emittedNames, String_Concat(sn, ";"));
+                    progress = true;
+                }
                 si = si + 1;
-                continue;
             }
-            if CBE_StructHasValueStructField(&mod.structs[si]) {
-                si = si + 1;
-                continue;
-            }
-            CBE_EmitStructDef(cbe, &mod.structs[si]);
-            si = si + 1;
-        }
-        // Pass 2: emit structs that contain value-typed struct fields
-        si = 0;
-        while si < mod.structCount {
-            if String_Eq(mod.structs[si].name, "") || CBE_StructHasGeneric(&mod.structs[si]) {
-                si = si + 1;
-                continue;
-            }
-            if !CBE_StructHasValueStructField(&mod.structs[si]) {
-                si = si + 1;
-                continue;
-            }
-            CBE_EmitStructDef(cbe, &mod.structs[si]);
-            si = si + 1;
         }
 
         // Enum definitions
@@ -1810,6 +2268,8 @@ module CBackend {
             cbe.checkedFunc = mod.funcs[i].checkedFunc;
             cbe.deferCount = 0;
             cbe.movedCount = 0;
+            cbe.partialCount = 0;
+            cbe.localCount = 0;
             cbe.tmpCounter = 0;
             cbe.currentRetType = mod.funcs[i].retTypeName;
             var hasReturn: bool = false;

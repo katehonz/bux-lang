@@ -805,11 +805,16 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     return 1
 
   let baseDir = stdlibDir.parentDir()
-  let runtimeSrc = baseDir / "rt" / "runtime.c"
+  # Windows / BUX_RUNTIME=win → minimal runtime (no pthread/OpenSSL).
+  # Full POSIX runtime is rt/runtime.c.
+  let forceWinRt = getEnv("BUX_RUNTIME") == "win" or getEnv("BUX_RUNTIME") == "windows"
+  let useWinRt = forceWinRt or (when defined(windows): true else: false)
+  let runtimeName = if useWinRt: "runtime_win.c" else: "runtime.c"
+  let runtimeSrc = baseDir / "rt" / runtimeName
   if fileExists(runtimeSrc):
     copyFile(runtimeSrc, runtimeDst)
   else:
-    printError("runtime.c not found in rt/", useColor)
+    printError(&"{runtimeName} not found in rt/", useColor)
     return 1
 
   let ioSrc = baseDir / "rt" / "io.c"
@@ -821,13 +826,31 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
 
   # Compile with cc — debug default (-O0 -g) or --release (-O2)
   let outputName = if pctx.man.name != "": pctx.man.name else: "bux_out"
-  let outputFile = buildDir / outputName
+  let exeSuffix = when defined(windows): ".exe" else: ""
+  let outputFile = buildDir / (outputName & exeSuffix)
   let optFlags = if opts.release: "-O2 -DNDEBUG" else: "-O0 -g"
   let extraCflags = getEnv("BUX_CFLAGS")
   let cflags = if extraCflags.len > 0: optFlags & " " & extraCflags else: optFlags
-  # --build-id is GNU ld only (breaks Apple ld). Reproducible selfhost-loop uses Linux CI.
-  let ldStable = when defined(linux): " -Wl,--build-id=none" else: ""
-  let ccCmd = &"cc {cflags} -pthread{ldStable} -o {outputFile} {cFile} {runtimeDst} {ioDst} -lm -lcrypto 2>&1"
+  # Host C toolchain + link flags
+  let envCc = getEnv("BUX_CC")
+  let ccBin =
+    if envCc.len > 0: envCc
+    else:
+      when defined(windows): "gcc"
+      else: "cc"
+  let ldStable =
+    when defined(linux):
+      if useWinRt: "" else: " -Wl,--build-id=none"
+    else:
+      ""
+  # Note: -l libs must come *after* .c/.o inputs (GNU ld left-to-right).
+  let (hostCflags, hostLibs) =
+    if useWinRt:
+      # gc-sections drops mono stdlib that is never called (crypto/tasks, …)
+      (" -ffunction-sections -fdata-sections", " -Wl,--gc-sections -lm")
+    else:
+      (" -pthread" & ldStable, " -lm -lcrypto")
+  let ccCmd = &"{ccBin} {cflags}{hostCflags} -o {outputFile} {cFile} {runtimeDst} {ioDst}{hostLibs} 2>&1"
   if opts.verbose:
     printInfo(&"running: {ccCmd}", useColor)
   let (output, exitCode) = execCmdEx(ccCmd)
@@ -848,7 +871,11 @@ proc cmdRun*(args: seq[string], opts: GlobalOptions): int =
     return buildRes
   let man = loadManifest(root / "bux.toml")
   let outputName = if man.name != "": man.name else: "bux_out"
-  let outputFile = root / "build" / outputName
+  let exeSuffix = when defined(windows): ".exe" else: ""
+  var outputFile = root / "build" / (outputName & exeSuffix)
+  if not fileExists(outputFile):
+    # Fallback without suffix (cross-env / older builds)
+    outputFile = root / "build" / outputName
   if not fileExists(outputFile):
     printError("executable not found after build", useColor)
     return 1

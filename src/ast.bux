@@ -128,6 +128,8 @@ module Ast {
     const ekStringInterp: int = 26;
     const ekClosure: int = 27;
     const ekMacroCall: int = 28;   // name!(args) — expanded before sema
+    const ekMacroStmt: int = 29;   // `$s:stmt` arg wrapper (expand only)
+    const ekMacroPat: int = 30;    // `$p:pat` arg wrapper (expand only)
 
     struct ExprList {
         expr: *Expr,
@@ -188,6 +190,9 @@ module Ast {
         // Match arms (for ekMatch)
         matchArms: *MatchArm,
         matchArmCount: int,
+        // Macro fragment wrappers (session 72)
+        macroStmt: *Stmt,        // ekMacroStmt
+        macroPat: *Pattern,      // ekMacroPat
     }
 
     // ---------------------------------------------------------------------------
@@ -387,7 +392,8 @@ module Ast {
             refType: null as *TypeExpr, refBlock: null as *Block,
             genericCallee: "", genericTypeArg0: "", genericTypeArg1: "", genericTypeArgCount: 0,
             structName: "", structFieldCount: 0,
-            callArgs: null as *ExprList, callArgCount: 0 };
+            callArgs: null as *ExprList, callArgCount: 0,
+            macroStmt: null as *Stmt, macroPat: null as *Pattern };
     }
 
     func Ast_MakeIdent(name: String, line: uint32, col: uint32) -> Expr {
@@ -706,6 +712,8 @@ module Ast {
         n.callArgCount = e.callArgCount;
         n.matchArms = Ast_CloneMatchArm(e.matchArms);
         n.matchArmCount = e.matchArmCount;
+        n.macroStmt = Ast_CloneStmt(e.macroStmt);
+        n.macroPat = Ast_ClonePattern(e.macroPat);
         return n;
     }
 

@@ -1,0 +1,84 @@
+// Session 72 — macro fragment kinds `stmt` and `pat`
+import Std::Io::{PrintLine};
+import Std::String::{String_FromInt};
+import Std::Test::{Test_AssertTrue, Test_Pass};
+
+// stmt: splice a full statement (let / assign) into the template
+macro! with_setup {
+    ( $s:stmt, $body:expr ) => {
+        {
+            $s
+            $body
+        }
+    }
+}
+
+// stmt from an expression-statement (assign)
+macro! do_twice {
+    ( $s:stmt ) => {
+        {
+            $s
+            $s
+            0
+        }
+    }
+}
+
+// pat: match arm pattern from call-site
+macro! matches {
+    ( $p:pat, $e:expr ) => {
+        match $e {
+            $p => 1,
+            _ => 0
+        }
+    }
+}
+
+// Combined: extract payload when pattern matches
+macro! if_let_like {
+    ( $p:pat, $e:expr, $then:expr ) => {
+        match $e {
+            $p => $then,
+            _ => -1
+        }
+    }
+}
+
+enum Opt {
+    Some(int),
+    None
+}
+
+func Main() -> int {
+    // with_setup: inject `let x = 10` then use x
+    let a: int = with_setup!(let x: int = 10, x + 1);
+    Test_AssertTrue(a == 11);
+
+    // do_twice: run assign twice
+    var n: int = 0;
+    discard do_twice!(n = n + 1);
+    Test_AssertTrue(n == 2);
+
+    // matches: literal / wildcard / enum (bind results — match-as-arg is fragile on buxc2)
+    let m1: int = matches!(1, 1);
+    let m2: int = matches!(2, 1);
+    let m3: int = matches!(_, 99);
+    Test_AssertTrue(m1 == 1);
+    Test_AssertTrue(m2 == 0);
+    Test_AssertTrue(m3 == 1);
+
+    var o1: Opt = Opt { tag: Opt_Some };
+    o1.data.Some_0 = 7;
+    let o2: Opt = Opt { tag: Opt_None };
+    let e1: int = if_let_like!(Opt::Some(v), o1, v);
+    let e2: int = if_let_like!(Opt::Some(v), o2, v);
+    let e3: int = matches!(Opt::None, o2);
+    Test_AssertTrue(e1 == 7);
+    Test_AssertTrue(e2 == -1);
+    Test_AssertTrue(e3 == 1);
+
+    PrintLine(String_FromInt(a));
+    PrintLine(String_FromInt(n));
+    Test_Pass("macro_stmt_pat");
+    return 0;
+}

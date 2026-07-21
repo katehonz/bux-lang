@@ -310,14 +310,12 @@ jobs:
           make test-unit
           make test-examples-smoke
 
-  # ── Windows smoke (bootstrap + pure Nim unit tests) ─────────────────────
-  # Full bux→C examples need POSIX runtime (ucontext / pthread sockets in
-  # rt/runtime.c) — not ported yet. This job still catches Nim/bootstrap
-  # regressions on Windows (prebuilt Nim zip = fast install).
+  # ── Windows smoke (bootstrap + unit + MinGW hello) ──────────────────────
+  # Uses rt/runtime_win.c (no pthread/OpenSSL). Full POSIX runtime is Unix-only.
   windows:
     name: windows smoke
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     defaults:
       run:
         shell: bash
@@ -345,6 +343,26 @@ jobs:
           echo "$PWD/${{ env.NIM_INSTALL_DIR }}/bin" >> "$GITHUB_PATH"
           echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
 
+      - name: Install MinGW (gcc)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Add MinGW64 to PATH
+        run: |
+          # setup-msys2 installs under C:/msys64 by default
+          for d in /c/msys64/mingw64/bin /mingw64/bin "$HOME/msys64/mingw64/bin"; do
+            if [[ -x "$d/gcc.exe" || -x "$d/gcc" ]]; then
+              echo "$d" >> "$GITHUB_PATH"
+              export PATH="$d:$PATH"
+              break
+            fi
+          done
+          gcc --version | head -1
+
       - name: Cache nimcache (bootstrap + unit)
         uses: actions/cache@v4
         with:
@@ -357,6 +375,8 @@ jobs:
         run: |
           set -e
           nim -v
+          # MinGW gcc on PATH (from setup-msys2)
+          gcc --version | head -1
           # Windows produces buxc.exe; keep name predictable for the smoke steps
           nim c --nimcache:nimcache -o:buxc.exe -d:release --opt:size bootstrap/main.nim
           ./buxc.exe --version
@@ -380,7 +400,17 @@ jobs:
           rm -rf _test_tmp_pkg
           ./buxc.exe new _test_tmp_pkg
           ./buxc.exe --version
-          echo "windows smoke: PASS (bootstrap + unit + CLI)"
+          echo "unit+CLI: PASS"
+
+      - name: hello smoke (MinGW + runtime_win)
+        run: |
+          set -e
+          unset BUX_DEBUG_FILE || true
+          export BUX_STDLIB="$PWD/lib"
+          # bootstrap on Windows always picks runtime_win.c
+          chmod +x tools/smoke_windows_hello.sh
+          tools/smoke_windows_hello.sh
+          echo "windows smoke: PASS (bootstrap + unit + CLI + hello)"
 
   # ── Single required status for branch protection ────────────────────────
   ci-gate:

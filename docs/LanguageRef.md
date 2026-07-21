@@ -827,10 +827,59 @@ Rules:
   etc.). Reading `bag.tag` (`int`) does **not** mark `bag` moved.
 - After `let moved = bag.items`, `Bag_Drop(&bag)` is skipped; `moved` owns the
   array and is auto-dropped at scope end.
-- Avoid using other droppable fields of the parent after a partial move (they
-  may be left in a moved-from state without per-field Drop).
+- **Remaining fields:** if the parent has other droppable fields that were *not*
+  moved out, those still run their `Type_Drop` / collection Drop (session 70).
+  Example: move `pair.left` → skip `PairBag_Drop`, still `Tracked_Drop(&pair.right)`.
 
-Golden smoke: `make test-drop-move` / `examples/move_field_partial.bux`.
+```bux
+@[Drop]
+struct PairBag {
+    left: Array<int>,
+    right: Tracked,   // also @[Drop]
+}
+func TakeLeft() -> Array<int> {
+    let pair: PairBag = …;
+    return pair.left;   // Tracked_Drop(&pair.right) still runs
+}
+```
+
+#### Nested path moves (`a.b.c`)
+
+Moving a **deep** droppable field also works. The full dotted path is recorded
+so remaining fields at every level still Drop:
+
+```bux
+@[Drop]
+struct Outer {
+    inner: Inner,   // Inner has items: Array + note: Tracked
+    tag: Tracked,
+}
+func TakeNested() -> Array<int> {
+    let outer: Outer = …;
+    return outer.inner.items;
+    // skips Outer_Drop
+    // still: Tracked_Drop(&outer.inner.note) + Tracked_Drop(&outer.tag)
+}
+```
+
+#### Field moves through pointers
+
+When a local pointer aliases a local owner (`let p = &bag`), moving a field
+through the pointer marks the **owner**, not the pointer:
+
+```bux
+let bag: Bag = …;
+let p: *Bag = &bag;
+return p.items;      // same as (*p).items
+// skips Bag_Drop; still Tracked_Drop(&bag.tag)
+```
+
+Nested paths work the same: `p.inner.items` resolves `p → outer` then path
+`inner.items`.
+
+Golden smoke: `make test-drop-move` / `examples/move_field_partial.bux` /
+`examples/move_field_remaining.bux` / `examples/move_field_nested.bux` /
+`examples/move_field_ptr.bux`.
 
 #### Manual Drop and non-Drop types
 
@@ -841,9 +890,11 @@ Golden smoke: `make test-drop-move` / `examples/move_field_partial.bux`.
 
 #### Limits (honest)
 
-- Partial field moves mark the **whole parent local** as moved for Drop purposes
-  (not per-field Drop of remaining fields).
-- Nested `a.b.c` path moves and moving through pointers are limited.
+- Partial field moves skip the **parent** `Type_Drop` and drop **remaining**
+  droppable fields individually, including nested paths `a.b.c` and pointer
+  aliases `p = &owner` (sessions 70/73/74).
+- Pointer aliases are tracked for **local** `p = &local` only (not parameters
+  that point at caller-owned data across function boundaries).
 - Interface Drop uses a static `TypeName_Drop` symbol (zero cost), not dynamic
   dispatch through a vtable.
 - Double-free bugs in **unchecked** code that manually free *and* auto-drop are
@@ -1174,6 +1225,25 @@ macro! wrap_block {
     ( $b:block ) => { $b }
 }
 
+// stmt — one statement (let/if/… or expression-statement)
+macro! with_setup {
+    ( $s:stmt, $body:expr ) => {
+        {
+            $s
+            $body
+        }
+    }
+}
+// call: with_setup!(let x: int = 10, x + 1)
+
+// pat — match/let pattern (literals, `_`, enum variants, …)
+macro! matches {
+    ( $p:pat, $e:expr ) => {
+        match $e { $p => 1, _ => 0 }
+    }
+}
+// call: matches!(1, 1) · matches!(_, 99) · matches!(Opt::Some(v), opt)
+
 // gensym: template locals renamed per expansion
 macro! with_acc {
     ( $start:literal ) => {
@@ -1195,6 +1265,8 @@ macro! with_acc {
   | `tt` | token-tree (MVP: same as `expr`) |
   | `literal` / `lit` | int/float/string/char/bool literal only |
   | `block` | block expression `{ … }` |
+  | `stmt` | one statement (`let`/`if`/… or expression-stmt) |
+  | `pat` / `pattern` | match pattern (`_`, literals, `Enum::Var(…)`, …) |
 
 - Fragment names start with `$` (lexer `$ident`).
 - **Repetition:** `$( $x:expr ),*` / `$( $x:expr )*` — one or more rep fragments per pattern.

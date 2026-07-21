@@ -134,6 +134,8 @@ type
     ekStringInterp
     ekClosure
     ekMacroCall       ## name!(args) — expanded before sema
+    ekMacroStmt       ## `$s:stmt` arg wrapper (expand only)
+    ekMacroPat        ## `$p:pat` arg wrapper (expand only)
 
   MatchArm* = object
     loc*: SourceLocation
@@ -243,6 +245,12 @@ type
       ## Group lengths for multi-rep: `m!(1,2; 3,4)` → @[2, 2].
       ## Empty means a single group of all args.
       exprMacroGroupLens*: seq[int]
+    of ekMacroStmt:
+      ## Statement fragment argument (`$s:stmt`) — only during expand
+      exprMacroStmt*: Stmt
+    of ekMacroPat:
+      ## Pattern fragment argument (`$p:pat`) — only during expand
+      exprMacroPat*: Pattern
 
   # ---------------------------------------------------------------------------
   # Statements
@@ -375,6 +383,8 @@ type
     mfkTt                 ## token-tree (MVP: same as expr)
     mfkLiteral            ## int/float/string/char/bool literal only
     mfkBlock              ## block expression `{ … }`
+    mfkStmt               ## one statement (let/if/… or expression-stmt)
+    mfkPat                ## match/let pattern
 
   MacroFragment* = object
     name*: string              ## primary / first name (compat)

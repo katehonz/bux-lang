@@ -3,7 +3,7 @@
 ## Hygiene: substitute clones args at call-site, graft call-site SourceLocation
 ## onto expanded template nodes (Ast_QuoteCallSite policy from QUALITY_PLAN).
 
-import std/[tables, sequtils, sets]
+import std/[tables, sequtils, sets, strutils]
 import ast, token, source_location
 
 type
@@ -193,9 +193,16 @@ proc cloneExpr*(e: Expr): Expr =
       captureCount: 0, captureNames: @[], captureTypeKinds: @[])
   of ekMacroCall:
     result = Expr(kind: ekMacroCall, loc: e.loc,
-      exprMacroName: e.exprMacroName, exprMacroArgs: @[])
+      exprMacroName: e.exprMacroName, exprMacroArgs: @[],
+      exprMacroGroupLens: e.exprMacroGroupLens)
     for a in e.exprMacroArgs:
       result.exprMacroArgs.add(cloneExpr(a))
+  of ekMacroStmt:
+    result = Expr(kind: ekMacroStmt, loc: e.loc,
+      exprMacroStmt: cloneStmt(e.exprMacroStmt))
+  of ekMacroPat:
+    result = Expr(kind: ekMacroPat, loc: e.loc,
+      exprMacroPat: clonePattern(e.exprMacroPat))
 
 proc cloneStmt*(s: Stmt): Stmt =
   if s == nil: return nil
@@ -329,6 +336,10 @@ proc graftExprLoc(e: Expr, loc: SourceLocation) =
   of ekClosure: graftBlockLoc(e.exprClosureBody, loc)
   of ekMacroCall:
     for a in e.exprMacroArgs: graftExprLoc(a, loc)
+  of ekMacroStmt:
+    graftStmtLoc(e.exprMacroStmt, loc)
+  of ekMacroPat:
+    discard
   else: discard
 
 proc graftStmtLoc(s: Stmt, loc: SourceLocation) =
@@ -530,6 +541,46 @@ proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr
 proc substStmt(s: Stmt, env: MacroEnv, callLoc: SourceLocation): Stmt
 proc substBlock(b: Block, env: MacroEnv, callLoc: SourceLocation): Block
 proc substStmtsFlat(stmts: seq[Stmt], env: MacroEnv, callLoc: SourceLocation): seq[Stmt]
+proc substPattern(p: Pattern, env: MacroEnv, callLoc: SourceLocation): Pattern
+
+proc substPattern(p: Pattern, env: MacroEnv, callLoc: SourceLocation): Pattern =
+  ## Substitute `$p:pat` (pkIdent `$name`) with the bound pattern.
+  if p == nil: return nil
+  if p.kind == pkIdent and env.singles.hasKey(p.patIdent):
+    let bound = env.singles[p.patIdent]
+    if bound != nil and bound.kind == ekMacroPat:
+      result = clonePattern(bound.exprMacroPat)
+      if result != nil: result.loc = callLoc
+      return
+  case p.kind
+  of pkRange:
+    result = Pattern(kind: pkRange, loc: callLoc,
+      patRangeLo: substPattern(p.patRangeLo, env, callLoc),
+      patRangeHi: substPattern(p.patRangeHi, env, callLoc),
+      patRangeInclusive: p.patRangeInclusive)
+  of pkEnum:
+    result = Pattern(kind: pkEnum, loc: callLoc, patEnumPath: p.patEnumPath,
+      patEnumArgs: @[], patEnumNamed: @[])
+    for a in p.patEnumArgs:
+      result.patEnumArgs.add(substPattern(a, env, callLoc))
+    for nf in p.patEnumNamed:
+      result.patEnumNamed.add((nf.name, substPattern(nf.pattern, env, callLoc)))
+  of pkStruct:
+    result = Pattern(kind: pkStruct, loc: callLoc, patStructName: p.patStructName,
+      patStructFields: @[])
+    for f in p.patStructFields:
+      result.patStructFields.add((f.name, substPattern(f.pattern, env, callLoc)))
+  of pkTuple:
+    result = Pattern(kind: pkTuple, loc: callLoc, patTupleElements: @[])
+    for el in p.patTupleElements:
+      result.patTupleElements.add(substPattern(el, env, callLoc))
+  of pkGuarded:
+    result = Pattern(kind: pkGuarded, loc: callLoc,
+      patGuardedInner: substPattern(p.patGuardedInner, env, callLoc),
+      patGuardedExpr: substExpr(p.patGuardedExpr, env, callLoc))
+  else:
+    result = clonePattern(p)
+    if result != nil: result.loc = callLoc
 
 proc substBlock(b: Block, env: MacroEnv, callLoc: SourceLocation): Block =
   if b == nil: return nil
@@ -611,6 +662,14 @@ proc substStmtsFlat(stmts: seq[Stmt], env: MacroEnv, callLoc: SourceLocation): s
         if body != nil:
           for st in body.stmts:
             result.add(st)
+    elif s.kind == skExpr and s.stmtExpr != nil and s.stmtExpr.kind == ekIdent and
+         env.singles.hasKey(s.stmtExpr.exprIdent):
+      let bound = env.singles[s.stmtExpr.exprIdent]
+      if bound != nil and bound.kind == ekMacroStmt:
+        # Splice `$s:stmt` as a real statement (not an expression)
+        result.add(substStmt(bound.exprMacroStmt, env, callLoc))
+      else:
+        result.add(substStmt(s, env, callLoc))
     else:
       result.add(substStmt(s, env, callLoc))
 
@@ -659,7 +718,7 @@ proc substStmt(s: Stmt, env: MacroEnv, callLoc: SourceLocation): Stmt =
     c.stmtMatchSubject = substExpr(c.stmtMatchSubject, env, callLoc)
     var arms: seq[MatchArm] = @[]
     for arm in c.stmtMatchArms:
-      arms.add(MatchArm(loc: callLoc, pattern: arm.pattern,
+      arms.add(MatchArm(loc: callLoc, pattern: substPattern(arm.pattern, env, callLoc),
         body: substExpr(arm.body, env, callLoc)))
     c.stmtMatchArms = arms
   of skReturn:
@@ -775,7 +834,7 @@ proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr =
     c.exprMatchSubject = substExpr(c.exprMatchSubject, env, callLoc)
     var arms: seq[MatchArm] = @[]
     for arm in c.exprMatchArms:
-      arms.add(MatchArm(loc: callLoc, pattern: arm.pattern,
+      arms.add(MatchArm(loc: callLoc, pattern: substPattern(arm.pattern, env, callLoc),
         body: substExpr(arm.body, env, callLoc)))
     c.exprMatchArms = arms
   of ekStringInterp:
@@ -871,14 +930,89 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
     if f.kinds.len > 0: return f.kinds
     @[f.kind]
 
+  proc exprToPattern(arg: Expr): Pattern =
+    ## Convert a call-site expression into a pattern for `$p:pat`.
+    if arg == nil: return nil
+    if arg.kind == ekMacroPat: return clonePattern(arg.exprMacroPat)
+    case arg.kind
+    of ekIdent:
+      if arg.exprIdent == "_":
+        return Pattern(kind: pkWildcard, loc: arg.loc)
+      return Pattern(kind: pkIdent, loc: arg.loc, patIdent: arg.exprIdent)
+    of ekLiteral:
+      return Pattern(kind: pkLiteral, loc: arg.loc, patLit: arg.exprLit)
+    of ekPath:
+      return Pattern(kind: pkEnum, loc: arg.loc, patEnumPath: arg.exprPath,
+        patEnumArgs: @[], patEnumNamed: @[])
+    of ekCall:
+      # Enum::Variant(args) or Variant(args)
+      var path: seq[string] = @[]
+      if arg.exprCallCallee == nil: return nil
+      case arg.exprCallCallee.kind
+      of ekIdent: path = @[arg.exprCallCallee.exprIdent]
+      of ekPath: path = arg.exprCallCallee.exprPath
+      else: return nil
+      var pargs: seq[Pattern] = @[]
+      for a in arg.exprCallArgs:
+        let ap = exprToPattern(a)
+        if ap == nil: return nil
+        pargs.add(ap)
+      return Pattern(kind: pkEnum, loc: arg.loc, patEnumPath: path,
+        patEnumArgs: pargs, patEnumNamed: @[])
+    of ekTuple:
+      var elems: seq[Pattern] = @[]
+      for el in arg.exprTupleElements:
+        let ep = exprToPattern(el)
+        if ep == nil: return nil
+        elems.add(ep)
+      return Pattern(kind: pkTuple, loc: arg.loc, patTupleElements: elems)
+    of ekStructInit:
+      var fields: seq[tuple[name: string, pattern: Pattern]] = @[]
+      for f in arg.exprStructInitFields:
+        let fp = exprToPattern(f.value)
+        if fp == nil: return nil
+        fields.add((f.name, fp))
+      return Pattern(kind: pkStruct, loc: arg.loc,
+        patStructName: arg.exprStructInitName, patStructFields: fields)
+    of ekRange:
+      let lo = exprToPattern(arg.exprRangeLo)
+      let hi = exprToPattern(arg.exprRangeHi)
+      if lo == nil or hi == nil: return nil
+      return Pattern(kind: pkRange, loc: arg.loc, patRangeLo: lo, patRangeHi: hi,
+        patRangeInclusive: arg.exprRangeInclusive)
+    else:
+      return nil
+
+  proc coerceArg(k: MacroFragKind, arg: Expr): Expr =
+    ## Normalize arg for storage (pat → ekMacroPat). Returns nil if kind fails.
+    if arg == nil: return nil
+    case k
+    of mfkIdent:
+      if arg.kind != ekIdent: return nil
+      return arg
+    of mfkLiteral:
+      if arg.kind != ekLiteral: return nil
+      return arg
+    of mfkBlock:
+      if arg.kind != ekBlock: return nil
+      return arg
+    of mfkStmt:
+      if arg.kind == ekMacroStmt: return arg
+      # Expression as expression-statement
+      if arg.kind in {ekMacroPat}: return nil
+      return Expr(kind: ekMacroStmt, loc: arg.loc,
+        exprMacroStmt: Stmt(kind: skExpr, loc: arg.loc, stmtExpr: arg))
+    of mfkPat:
+      let pat = exprToPattern(arg)
+      if pat == nil: return nil
+      return Expr(kind: ekMacroPat, loc: arg.loc, exprMacroPat: pat)
+    of mfkExpr, mfkTt:
+      if arg.kind in {ekMacroStmt, ekMacroPat}: return nil
+      return arg
+
   proc fragMatches(k: MacroFragKind, arg: Expr): bool =
     ## Kind constraint at match time (after arg expand).
-    if arg == nil: return false
-    case k
-    of mfkIdent: arg.kind == ekIdent
-    of mfkLiteral: arg.kind == ekLiteral
-    of mfkBlock: arg.kind == ekBlock
-    of mfkExpr, mfkTt: true
+    coerceArg(k, arg) != nil
 
   var matched: MacroRule
   var env: MacroEnv
@@ -916,10 +1050,11 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
             for c in 0 ..< chunk:
               let arg = g[i + c]
               let k = if c < ks.len: ks[c] else: mfkExpr
-              if not fragMatches(k, arg):
+              let coerced = coerceArg(k, arg)
+              if coerced == nil:
                 failed = true
                 break
-              e.lists[ns[c]].add(arg)
+              e.lists[ns[c]].add(coerced)
             if failed: break
             i += chunk
         else:
@@ -930,10 +1065,11 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
             for c in 0 ..< chunk:
               let arg = flat[ai]
               let k = if c < ks.len: ks[c] else: mfkExpr
-              if not fragMatches(k, arg):
+              let coerced = coerceArg(k, arg)
+              if coerced == nil:
                 failed = true
                 break
-              e.lists[ns[c]].add(arg)
+              e.lists[ns[c]].add(coerced)
               inc ai
             if failed: break
       else:
@@ -954,11 +1090,12 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
           arg = flat[ai]
           inc ai
         let k = if ks.len > 0: ks[0] else: frag.kind
-        if not fragMatches(k, arg):
+        let coerced = coerceArg(k, arg)
+        if coerced == nil:
           failed = true
           break
         let n = if ns.len > 0: ns[0] else: frag.name
-        e.singles[n] = arg
+        e.singles[n] = coerced
 
     if not failed:
       if useGroups:

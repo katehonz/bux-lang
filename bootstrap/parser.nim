@@ -429,6 +429,26 @@ proc parseAssign(p: var Parser): Expr
 proc parseExpr(p: var Parser): Expr =
   p.parseAssign()
 
+proc isMacroStmtStart(p: Parser): bool =
+  ## Keywords that begin a statement (for `$s:stmt` call-site args).
+  p.peek() in {tkLet, tkVar, tkIf, tkWhile, tkFor, tkLoop, tkMatch, tkReturn,
+               tkBreak, tkContinue, tkDefer, tkSwitch, tkDo}
+
+proc parseMacroArg(p: var Parser): Expr =
+  ## Macro call argument:
+  ## - statement keywords → ekMacroStmt
+  ## - `_` / pattern-only starts → ekMacroPat (also `$p:pat` from expr via coerce)
+  ## - else expression
+  let loc = p.currentLoc
+  if p.isMacroStmtStart():
+    let st = p.parseStmt()
+    return Expr(kind: ekMacroStmt, loc: loc, exprMacroStmt: st)
+  # Wildcard is not a valid expression; parse as pattern for `$p:pat`
+  if p.check(tkUnderscore):
+    let pat = p.parsePattern()
+    return Expr(kind: ekMacroPat, loc: loc, exprMacroPat: pat)
+  p.parseExpr()
+
 proc parseStringInterpolation(p: var Parser, tok: Token): Expr =
   ## Parse a string literal that contains {expr} interpolations.
   let text = tok.text
@@ -749,7 +769,7 @@ proc parsePostfix(p: var Parser): Expr =
             curGroup = 0
             p.skipNewlines()
             continue
-          margs.add(p.parseExpr())
+          margs.add(p.parseMacroArg())
           inc curGroup
           p.skipNewlines()
           if p.check(tkComma):
@@ -1628,10 +1648,12 @@ proc parseMacroFragKind(p: var Parser, kindTok: Token): MacroFragKind =
   of "tt": mfkTt
   of "literal", "lit": mfkLiteral
   of "block": mfkBlock
+  of "stmt": mfkStmt
+  of "pat", "pattern": mfkPat
   else:
     p.emitError(kindTok.loc,
       "unsupported macro fragment kind '" & kindTok.text &
-      "' (expr|ident|tt|literal|block)")
+      "' (expr|ident|tt|literal|block|stmt|pat)")
     mfkExpr
 
 proc parseMacroFragment(p: var Parser): MacroFragment =
@@ -1640,7 +1662,7 @@ proc parseMacroFragment(p: var Parser): MacroFragment =
   if not fragTok.text.startsWith("$"):
     p.emitError(fragTok.loc, "macro fragment must start with '$' (e.g. $x:expr)")
   discard p.expect(tkColon, "expected ':' after macro fragment name")
-  let kindTok = p.expect(tkIdent, "expected fragment kind (expr|ident|tt|literal|block)")
+  let kindTok = p.expect(tkIdent, "expected fragment kind (expr|ident|tt|literal|block|stmt|pat)")
   let k = p.parseMacroFragKind(kindTok)
   result = MacroFragment(
     name: fragTok.text,

@@ -209,7 +209,7 @@ make test                          # full sequential suite (local)
 | `apps` | ubuntu | `test-apps` |
 | `selfhost` | ubuntu | `test-selfhost-smoke` |
 | `macos` | macos-14 | rebuild + `test-unit` + `test-examples-smoke` (subset) |
-| `windows` | windows-latest | rebuild `buxc.exe` + pure Nim unit tests + CLI smoke |
+| `windows` | windows-latest | `buxc.exe` + Nim unit tests + CLI + **MinGW `hello`** |
 | `ci-gate` | ubuntu | fails if any required job failed (branch protection) |
 
 **CI speed helpers:**
@@ -217,8 +217,9 @@ make test                          # full sequential suite (local)
   Windows uses a prebuilt Nim zip)
 - Project-local `nimcache/` via `NIMFLAGS=--nimcache:nimcache`, cached per job by source hash
 - macOS skips full EXAMPLES (Linux already runs them) and skips `fmt-check` (Linux unit job)
-- **Windows** does **not** run `bux run` examples yet: `rt/runtime.c` needs POSIX
-  (`ucontext`, `pthread`, BSD sockets). Smoke still validates bootstrap + unit tests on Win.
+- **Windows** runs `tools/smoke_windows_hello.sh` with **MinGW gcc** + `rt/runtime_win.c`
+  (no pthread/OpenSSL/ucontext). Full POSIX runtime (`rt/runtime.c`) remains Unix-only.
+  Locally on Linux/macOS: `BUX_RUNTIME=win ./tools/smoke_windows_hello.sh`.
 
 Parallel Linux jobs set `BUX_SKIP_BUILD=1` after downloading the `buxc` artifact.
 Locally, `make test` still runs the full suite sequentially and builds once.
@@ -330,7 +331,8 @@ bux/
 │   ├── Task.bux
 │   └── Channel.bux
 ├── rt/               # C runtime
-│   ├── runtime.c
+│   ├── runtime.c       # full POSIX + OpenSSL (Unix)
+│   ├── runtime_win.c   # MinGW minimal (Windows / BUX_RUNTIME=win)
 │   └── io.c
 ├── examples/         # Example programs
 ├── tests/            # Unit tests (Nim)
