@@ -6,6 +6,16 @@ module Config {
         workerCount: int;
         publicDir: String;
         backlog: int;
+        /// Max raw request bytes (recv buffer / body safety). Default 1 MiB.
+        maxBodyBytes: int;
+        /// Access log to stdout (method path status ms). Default true.
+        accessLog: bool;
+        /// Enable HTTPS (OpenSSL). Requires tlsCertPath + tlsKeyPath.
+        tlsEnabled: bool;
+        tlsCertPath: String;
+        tlsKeyPath: String;
+        /// Optional client CA PEM → mTLS (require client certificate).
+        tlsClientCaPath: String;
     }
 
     pub const func DefaultConfig() -> ServerConfig {
@@ -15,6 +25,12 @@ module Config {
             workerCount: 4,
             publicDir: "public",
             backlog: 128,
+            maxBodyBytes: 1048576,
+            accessLog: true,
+            tlsEnabled: false,
+            tlsCertPath: "",
+            tlsKeyPath: "",
+            tlsClientCaPath: "",
         };
     }
 

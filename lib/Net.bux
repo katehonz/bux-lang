@@ -10,6 +10,16 @@ module Std::Net {
     extern func bux_socket_close(fd: int) -> int;
     extern func bux_socket_error() -> String;
 
+    // TLS server (OpenSSL) — opaque SSL_CTX* / SSL* as *void
+    extern func bux_tls_server_ctx(certPath: String, keyPath: String) -> *void;
+    extern func bux_tls_server_ctx_ex(certPath: String, keyPath: String, clientCaPath: String) -> *void;
+    extern func bux_tls_ctx_free(ctx: *void);
+    extern func bux_tls_accept(ctx: *void, fd: int) -> *void;
+    extern func bux_tls_send(ssl: *void, data: String, len: int) -> int;
+    extern func bux_tls_recv(ssl: *void, maxLen: int) -> String;
+    extern func bux_tls_close(ssl: *void);
+    extern func bux_tls_error() -> String;
+
     /* Create a TCP socket. Returns -1 on error. */
     func Net_Create() -> int {
         return bux_socket_create();
@@ -58,5 +68,43 @@ module Std::Net {
     /* Get last socket error as a string. */
     func Net_LastError() -> String {
         return bux_socket_error();
+    }
+
+    // ── TLS server (session 78) ──────────────────────────────────────────
+
+    /// Load PEM cert+key into a server SSL context. null on failure.
+    func Tls_ServerCtx(certPath: String, keyPath: String) -> *void {
+        return bux_tls_server_ctx(certPath, keyPath);
+    }
+
+    /// Server TLS + mTLS: require client certs signed by `clientCaPath` PEM.
+    func Tls_ServerCtxMtls(certPath: String, keyPath: String, clientCaPath: String) -> *void {
+        return bux_tls_server_ctx_ex(certPath, keyPath, clientCaPath);
+    }
+
+    func Tls_CtxFree(ctx: *void) {
+        bux_tls_ctx_free(ctx);
+    }
+
+    /// Handshake on an accepted TCP fd. Returns SSL handle or null.
+    func Tls_Accept(ctx: *void, fd: int) -> *void {
+        return bux_tls_accept(ctx, fd);
+    }
+
+    func Tls_Send(ssl: *void, data: String) -> int {
+        return bux_tls_send(ssl, data, bux_strlen(data) as int);
+    }
+
+    func Tls_Recv(ssl: *void, maxLen: int) -> String {
+        return bux_tls_recv(ssl, maxLen);
+    }
+
+    /// Free SSL handle only (caller still closes the TCP fd).
+    func Tls_Close(ssl: *void) {
+        bux_tls_close(ssl);
+    }
+
+    func Tls_LastError() -> String {
+        return bux_tls_error();
     }
 }

@@ -6,7 +6,7 @@ module Main {
     import Server::{RunServer};
     import Std::Array::{Array, Array_New, Array_Push};
     import Std::Os::{Os_GetEnv};
-    import Std::String::{String_Len, String_ToInt};
+    import Std::String::{String_Len, String_ToInt, String_Eq};
 
     func BuildRouter() -> Router {
         var routes: Array<Route> = Array_New<Route>(8);
@@ -42,7 +42,10 @@ module Main {
     }
 
     /// Apply optional env overrides for benches / ops:
-    ///   NEXUS_PORT, NEXUS_WORKERS, NEXUS_BIND, NEXUS_PUBLIC
+    ///   NEXUS_PORT, NEXUS_WORKERS, NEXUS_BIND, NEXUS_PUBLIC,
+    ///   NEXUS_MAX_BODY (bytes), NEXUS_ACCESS_LOG (0/1/false/true),
+    ///   NEXUS_TLS=1 + NEXUS_TLS_CERT + NEXUS_TLS_KEY (PEM paths)
+    ///   NEXUS_TLS_CLIENT_CA (optional PEM → mTLS)
     func ApplyEnvConfig(config: *ServerConfig) {
         let portEnv: String = Os_GetEnv("NEXUS_PORT");
         if String_Len(portEnv) > 0 {
@@ -65,6 +68,43 @@ module Main {
         let pubEnv: String = Os_GetEnv("NEXUS_PUBLIC");
         if String_Len(pubEnv) > 0 {
             config.publicDir = pubEnv;
+        }
+        let bodyEnv: String = Os_GetEnv("NEXUS_MAX_BODY");
+        if String_Len(bodyEnv) > 0 {
+            let b: int64 = String_ToInt(bodyEnv);
+            if b >= 1024 && b <= 67108864 {
+                config.maxBodyBytes = b as int;
+            }
+        }
+        let logEnv: String = Os_GetEnv("NEXUS_ACCESS_LOG");
+        if String_Len(logEnv) > 0 {
+            if String_Eq(logEnv, "0") || String_Eq(logEnv, "false") || String_Eq(logEnv, "off") {
+                config.accessLog = false;
+            } else {
+                config.accessLog = true;
+            }
+        }
+        let tlsEnv: String = Os_GetEnv("NEXUS_TLS");
+        if String_Len(tlsEnv) > 0 {
+            if String_Eq(tlsEnv, "1") || String_Eq(tlsEnv, "true") || String_Eq(tlsEnv, "on") ||
+               String_Eq(tlsEnv, "https") {
+                config.tlsEnabled = true;
+            }
+        }
+        let certEnv: String = Os_GetEnv("NEXUS_TLS_CERT");
+        if String_Len(certEnv) > 0 {
+            config.tlsCertPath = certEnv;
+            config.tlsEnabled = true;
+        }
+        let keyEnv: String = Os_GetEnv("NEXUS_TLS_KEY");
+        if String_Len(keyEnv) > 0 {
+            config.tlsKeyPath = keyEnv;
+            config.tlsEnabled = true;
+        }
+        let caEnv: String = Os_GetEnv("NEXUS_TLS_CLIENT_CA");
+        if String_Len(caEnv) > 0 {
+            config.tlsClientCaPath = caEnv;
+            config.tlsEnabled = true;
         }
     }
 

@@ -514,8 +514,174 @@ module CBackend {
         CBE_MarkMovedFromNodeHint(cbe, node, "");
     }
 
+    /// Find a same-module function by name (for cross-fn ownership, session 77).
+    func CBE_FindFuncByName(cbe: *CEmitter, name: String) -> *HirFunc {
+        if cbe == null as *CEmitter || cbe.mod == null as *HirModule { return null as *HirFunc; }
+        if name == null as String || String_Eq(name, "") { return null as *HirFunc; }
+        var i: int = 0;
+        while i < cbe.mod.funcCount {
+            if String_Eq(cbe.mod.funcs[i].name, name) {
+                return &cbe.mod.funcs[i];
+            }
+            i = i + 1;
+        }
+        return null as *HirFunc;
+    }
+
+    /// If `node` is `&local` (or load of that), return owner local (alias-resolved).
+    func CBE_ArgAmpOwner(cbe: *CEmitter, node: *HirNode) -> String {
+        if node == null as *HirNode { return ""; }
+        var n: *HirNode = node;
+        if n.kind == hLoad { n = n.child1; }
+        if n == null as *HirNode { return ""; }
+        if n.kind == hUnary && n.intValue == tkAmp {
+            let op: *HirNode = n.child1;
+            if op != null as *HirNode && op.kind == hVar {
+                return CBE_ResolvePtrAlias(cbe, op.strValue);
+            }
+        }
+        // bare pointer local that aliases an owner
+        if n.kind == hVar {
+            let owner: String = CBE_ResolvePtrAlias(cbe, n.strValue);
+            if !String_Eq(owner, n.strValue) {
+                return owner;
+            }
+        }
+        return "";
+    }
+
+    /// True if C type name looks like a pointer (`Bag*` / `*Bag`).
+    func CBE_TypeNameIsPointer(tn: String) -> bool {
+        if tn == null as String || String_Eq(tn, "") { return false; }
+        if String_Contains(tn, "*") { return true; }
+        return false;
+    }
+
+    /// If HIR expr is a field path rooted at `param`, mark `owner` partial-moved.
+    func CBE_ApplyIfParamFieldMove(cbe: *CEmitter, expr: *HirNode, param: String, owner: String) {
+        if expr == null as *HirNode { return; }
+        if String_Eq(param, "") || String_Eq(owner, "") { return; }
+        // Whole pointee: *param
+        if expr.kind == hUnary && expr.intValue == tkStar {
+            let op: *HirNode = expr.child1;
+            if op != null as *HirNode && op.kind == hVar && String_Eq(op.strValue, param) {
+                CBE_AddMoved(cbe, owner);
+                return;
+            }
+        }
+        if expr.kind == hFieldAccess || expr.kind == hFieldPtr || expr.kind == hArrowField {
+            let base: String = CBE_BaseVarNameRaw(expr);
+            if String_Eq(base, param) {
+                let path: String = CBE_FieldPathFromNode(expr);
+                if !String_Eq(path, "") {
+                    CBE_AddPartialMoved(cbe, owner, path);
+                    CBE_AddMoved(cbe, owner);
+                }
+            }
+            return;
+        }
+        if expr.kind == hLoad {
+            CBE_ApplyIfParamFieldMove(cbe, expr.child1, param, owner);
+        }
+    }
+
+    /// Walk callee HIR body; when param fields are moved, mark call-site `owner`.
+    func CBE_ScanBodyParamMoves(cbe: *CEmitter, node: *HirNode, param: String, owner: String) {
+        if node == null as *HirNode { return; }
+        let kind: int = node.kind;
+        if kind == hReturn {
+            CBE_ApplyIfParamFieldMove(cbe, node.child1, param, owner);
+            return;
+        }
+        if kind == hStore {
+            CBE_ApplyIfParamFieldMove(cbe, node.child2, param, owner);
+            // still walk both sides for nested
+            CBE_ScanBodyParamMoves(cbe, node.child1, param, owner);
+            CBE_ScanBodyParamMoves(cbe, node.child2, param, owner);
+            return;
+        }
+        if kind == hBlock {
+            // Stmts linked via child3 starting at child1 (selfhost HIR convention).
+            var s: *HirNode = node.child1;
+            while s != null as *HirNode {
+                CBE_ScanBodyParamMoves(cbe, s, param, owner);
+                s = s.child3;
+            }
+            return;
+        }
+        if kind == hIf {
+            // cond, then, else
+            CBE_ScanBodyParamMoves(cbe, node.child1, param, owner);
+            CBE_ScanBodyParamMoves(cbe, node.child2, param, owner);
+            CBE_ScanBodyParamMoves(cbe, node.child3, param, owner);
+            return;
+        }
+        if kind == hWhile || kind == hLoop {
+            CBE_ScanBodyParamMoves(cbe, node.child1, param, owner);
+            CBE_ScanBodyParamMoves(cbe, node.child2, param, owner);
+            return;
+        }
+        // Do not walk child3 generically — it is often the *next sibling* in a
+        // statement list (handled by hBlock). Only walk expression children.
+        CBE_ScanBodyParamMoves(cbe, node.child1, param, owner);
+        CBE_ScanBodyParamMoves(cbe, node.child2, param, owner);
+    }
+
+    /// Session 77: `TakeItems(&bag)` — scan callee body for moves of `p.field`.
+    func CBE_MarkCrossFuncFromCall(cbe: *CEmitter, call: *HirNode) {
+        if call == null as *HirNode || call.kind != hCall { return; }
+        let fname: String = call.strValue;
+        if String_Eq(fname, "") { return; }
+        let f: *HirFunc = CBE_FindFuncByName(cbe, fname);
+        if f == null as *HirFunc || f.body == null as *HirNode { return; }
+        // Collect args: child1, child2, then extraData list
+        var argIdx: int = 0;
+        var arg: *HirNode = call.child1;
+        while argIdx < f.paramCount {
+            if arg == null as *HirNode {
+                // try child2 for arg1
+                if argIdx == 1 { arg = call.child2; }
+            }
+            if arg == null as *HirNode && argIdx >= 2 {
+                break;
+            }
+            // For args beyond 2, walk extraData
+            if argIdx >= 2 {
+                var ai: int = 0;
+                var cur: *HirArgList = call.extraData as *HirArgList;
+                while ai < call.extraCount && cur != null as *HirArgList {
+                    if ai == argIdx - 2 {
+                        arg = cur.node;
+                        break;
+                    }
+                    cur = cur.next;
+                    ai = ai + 1;
+                }
+            }
+            if arg == null as *HirNode { break; }
+            let hp: *HirParam = CBE_FuncParam(f, argIdx);
+            if hp != null as *HirParam && CBE_TypeNameIsPointer(hp.typeName) {
+                let owner: String = CBE_ArgAmpOwner(cbe, arg);
+                if !String_Eq(owner, "") {
+                    CBE_ScanBodyParamMoves(cbe, f.body, hp.name, owner);
+                }
+            }
+            // advance arg for next
+            if argIdx == 0 {
+                arg = call.child2;
+            } else {
+                arg = null as *HirNode;
+            }
+            argIdx = argIdx + 1;
+        }
+    }
+
     func CBE_MarkMovedFromNodeHint(cbe: *CEmitter, node: *HirNode, valueTypeHint: String) {
         if node == null as *HirNode { return; }
+        if node.kind == hCall {
+            CBE_MarkCrossFuncFromCall(cbe, node);
+            return;
+        }
         if node.kind == hVar {
             CBE_AddMoved(cbe, node.strValue);
             return;

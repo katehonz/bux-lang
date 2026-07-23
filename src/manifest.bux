@@ -61,7 +61,7 @@ module Manifest {
                     currentSection = "Package";
                 } else if String_StartsWith(line, "[Build]") {
                     currentSection = "Build";
-                } else if String_StartsWith(line, "[dependencies]") {
+                } else if String_StartsWith(line, "[dependencies]") || String_StartsWith(line, "[Dependencies]") {
                     currentSection = "dependencies";
                 } else {
                     currentSection = "";
@@ -81,6 +81,37 @@ module Manifest {
                     let vlen: uint = bux_strlen(val);
                     if vlen >= 2 {
                         val = String_Slice(val, 1, vlen - 2);
+                    }
+                }
+
+                // Inline table: { Path = "/abs/..." } — extract quoted Path value
+                if String_StartsWith(val, "{") {
+                    var foundPath: String = "";
+                    let pl: uint = bux_strlen(line);
+                    var pi: uint = 0;
+                    while pi + 4 < pl {
+                        // match ASCII 'P','a','t','h'
+                        if line[pi] == 80 as char8 && line[pi + 1] == 97 as char8 &&
+                           line[pi + 2] == 116 as char8 && line[pi + 3] == 104 as char8 {
+                            var q1: int = -1;
+                            var qj: uint = pi;
+                            while qj < pl {
+                                if line[qj] == 34 as char8 {
+                                    if q1 < 0 {
+                                        q1 = qj as int;
+                                    } else {
+                                        foundPath = String_Slice(line, (q1 + 1) as uint, (qj as int - q1 - 1) as uint);
+                                        break;
+                                    }
+                                }
+                                qj = qj + 1;
+                            }
+                            break;
+                        }
+                        pi = pi + 1;
+                    }
+                    if !String_Eq(foundPath, "") {
+                        val = foundPath;
                     }
                 }
 

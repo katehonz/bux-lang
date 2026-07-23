@@ -1,4 +1,4 @@
-import std/[os, strutils, terminal, strformat, osproc, sets, algorithm, tables]
+import std/[os, strutils, terminal, strformat, osproc, sets, algorithm, tables, sha1]
 import lexer, parser, ast, sema, manifest, hir_lower, lir_lower, lir_c_backend
 import source_location
 import fmt
@@ -12,11 +12,19 @@ type
     cmOn
     cmOff
 
+  ## Which C runtime shim to link (session 75 — Linux / cloud / embedded).
+  RuntimeFlavor* = enum
+    rfFull       ## rt/runtime.c — POSIX + OpenSSL
+    rfMinimal    ## rt/runtime_minimal.c — thin, static/container/embed friendly
+    rfWin        ## rt/runtime_win.c — Windows/MinGW (historical)
+
   GlobalOptions* = object
     color*: ColorMode
     quiet*: bool
     verbose*: bool
-    release*: bool   ## --release: -O2, no -g / no #line (E.4 dual)
+    release*: bool    ## --release: -O2, no -g / no #line (E.4 dual)
+    staticLink*: bool ## --static: fully-static binary (implies thin runtime unless full)
+    target*: string   ## --target <triple>: cross-compile (e.g. aarch64-linux-gnu)
 
 proc printUsage*() =
   echo """Bux Programming Language (bootstrap compiler)
@@ -44,22 +52,32 @@ Command options:
   fmt  --check        Exit 1 if any file would be reformatted (CI)
   doc  --out <file>   Write docs to file (default: stdout)
   add  --path / --git Explicit source; else resolve via registry
+  install --locked    Verify bux.lock only (CI; no re-resolve)
   build --release     Optimized build (-O2, no debug / #line)
+  build --static      Fully-static link (uses minimal runtime; no OpenSSL)
+  build --target T    Cross-compile triple (prefers T-gcc, else clang -target)
 
-Registry:
+Registry / toolchain env:
   BUX_REGISTRY            Local path or http(s):// URL to registry.toml
   BUX_REGISTRY_REFRESH=1  Force re-download of HTTP index cache
+  BUX_REGISTRY_INSECURE=1 Allow self-signed HTTPS registry (dev/smoke)
   BUX_CFLAGS              Extra flags appended to the C compiler line
+  BUX_CC                  C compiler binary (overrides --target pick)
+  BUX_RUNTIME             full|minimal|thin|embed|win  (default: full on Unix)
+  BUX_STATIC=1            Same as --static
 
 Global options:
   --color <auto|on|off>   Control colored output (default: auto)
   -q, --quiet             Suppress non-error output
   -v, --verbose           Verbose output
   --release               Optimize (-O2), omit -g and #line maps
+  --static                Fully-static link + thin runtime (containers / distroless)
+  --target <triple>       Cross-compile (e.g. aarch64-linux-gnu)
 """
 
 proc parseGlobalOptions(args: seq[string]): tuple[opts: GlobalOptions, rest: seq[string], ok: bool] =
-  result.opts = GlobalOptions(color: cmAuto, quiet: false, verbose: false, release: false)
+  result.opts = GlobalOptions(color: cmAuto, quiet: false, verbose: false,
+                              release: false, staticLink: false, target: "")
   result.rest = @[]
   result.ok = true
   var i = 0
@@ -85,6 +103,17 @@ proc parseGlobalOptions(args: seq[string]): tuple[opts: GlobalOptions, rest: seq
       result.opts.verbose = true
     elif arg == "--release":
       result.opts.release = true
+    elif arg == "--static":
+      result.opts.staticLink = true
+    elif arg == "--target":
+      if i + 1 >= args.len:
+        stderr.writeLine("error: --target requires a triple (e.g. aarch64-linux-gnu)")
+        result.ok = false
+        return
+      inc i
+      result.opts.target = args[i]
+    elif arg.startsWith("--target="):
+      result.opts.target = arg["--target=".len .. ^1]
     else:
       result.rest.add(arg)
     inc i
@@ -94,6 +123,80 @@ proc shouldUseColor(opts: GlobalOptions): bool =
   of cmOn: true
   of cmOff: false
   of cmAuto: terminal.isatty(stdout)
+
+proc wantStaticLink(opts: GlobalOptions): bool =
+  ## --static or BUX_STATIC=1
+  if opts.staticLink: return true
+  let e = getEnv("BUX_STATIC")
+  result = e == "1" or e.toLowerAscii() in ["true", "yes", "on"]
+
+proc resolveRuntimeFlavor(opts: GlobalOptions): RuntimeFlavor =
+  ## Linux/cloud/embed first. Windows is not a product target (rfWin historical).
+  let e = getEnv("BUX_RUNTIME").toLowerAscii()
+  case e
+  of "full", "posix":
+    return rfFull
+  of "minimal", "thin", "embed", "embedded", "freestanding":
+    return rfMinimal
+  of "win", "windows":
+    return rfWin
+  of "":
+    discard
+  else:
+    # Unknown value → fall through to defaults
+    discard
+  when defined(windows):
+    return rfWin
+  # Fully-static containers: OpenSSL static is painful → thin runtime default
+  if wantStaticLink(opts):
+    return rfMinimal
+  # Cross without explicit full: prefer thin (host may lack target libcrypto)
+  if opts.target.len > 0:
+    return rfMinimal
+  return rfFull
+
+proc runtimeFileName(flavor: RuntimeFlavor): string =
+  case flavor
+  of rfFull: "runtime.c"
+  of rfMinimal: "runtime_minimal.c"
+  of rfWin: "runtime_win.c"
+
+proc isThinRuntime(flavor: RuntimeFlavor): bool =
+  flavor in {rfMinimal, rfWin}
+
+proc findOnPath(bin: string): bool =
+  ## True if `bin` resolves as an executable on PATH (or is an absolute path).
+  if bin.len == 0: return false
+  if '/' in bin or '\\' in bin:
+    return fileExists(bin)
+  let (outp, code) = execCmdEx(&"command -v {quoteShell(bin)} 2>/dev/null")
+  result = code == 0 and outp.strip().len > 0
+
+proc resolveCCompiler(opts: GlobalOptions): string =
+  ## Prefer BUX_CC, then <triple>-gcc for --target, then clang -target, else host cc.
+  let envCc = getEnv("BUX_CC")
+  if envCc.len > 0:
+    return envCc
+  if opts.target.len > 0:
+    let tripleGcc = opts.target & "-gcc"
+    if findOnPath(tripleGcc):
+      return tripleGcc
+    if findOnPath("clang"):
+      return "clang"
+    # Fall through — user may still have a named cross compiler elsewhere
+    return tripleGcc
+  when defined(windows):
+    return "gcc"
+  else:
+    return "cc"
+
+proc cTargetFlags(opts: GlobalOptions, ccBin: string): string =
+  ## Extra flags for cross: clang needs -target; *-gcc is already a cross binary.
+  if opts.target.len == 0: return ""
+  let base = ccBin.extractFilename.toLowerAscii()
+  if base == "clang" or base.startsWith("clang-"):
+    return " -target " & opts.target
+  ""
 
 proc printError(msg: string, useColor: bool) =
   if useColor:
@@ -487,9 +590,87 @@ proc cmdSearch*(args: seq[string], opts: GlobalOptions): int =
     echo &"  {p.name}  {p.version}  — {desc}"
   return 0
 
+
+proc packageChecksum*(dir: string): string =
+  ## Deterministic sha1 of all `*.bux` under dir (sorted paths + contents).
+  ## Used for bux.lock Checksum — cloud install reproducibility (session 79).
+  if dir.len == 0 or not dirExists(dir):
+    return ""
+  var files: seq[string] = @[]
+  for f in walkDirRec(dir):
+    if f.endsWith(".bux"):
+      files.add(f)
+  files.sort(system.cmp)
+  var blob = ""
+  for f in files:
+    let rel = relativePath(f, dir)
+    blob.add(rel)
+    blob.add("\n")
+    try:
+      blob.add(readFile(f))
+    except CatchableError:
+      discard
+    blob.add("\0")
+  result = toLowerAscii($secureHash(blob))
+
+proc verifyLockedInstall*(root: string, useColor: bool, opts: GlobalOptions): int =
+  ## `bux install --locked`: require bux.lock and verify path deps + checksums.
+  let lockPath = root / "bux.lock"
+  if not fileExists(lockPath):
+    printError("install --locked: bux.lock missing (run `bux install` first)", useColor)
+    return 1
+  let lock = loadLockfile(lockPath)
+  if lock.entries.len == 0:
+    if not opts.quiet:
+      printInfo("install --locked: empty lock (no dependencies)", useColor)
+    return 0
+  for e in lock.entries:
+    let src = e.source
+    if src.startsWith("http://") or src.startsWith("https://") or src.endsWith(".git"):
+      # Git: ensure cache dir exists
+      let depDir = getHomeDir() / ".bux" / "packages" / e.name
+      if not dirExists(depDir):
+        printError(&"install --locked: git package '{e.name}' not cached at {depDir}", useColor)
+        printError("hint: run `bux install` once to clone, then commit bux.lock", useColor)
+        return 1
+      if e.checksum.len > 0:
+        let got = packageChecksum(depDir)
+        if got != e.checksum:
+          printError(&"install --locked: checksum mismatch for '{e.name}'", useColor)
+          printError(&"  lock: {e.checksum}", useColor)
+          printError(&"  got:  {got}", useColor)
+          return 1
+    else:
+      # Path source (absolute or relative)
+      let absPath = if src.isAbsolute: src else: root / src
+      if not dirExists(absPath):
+        printError(&"install --locked: path '{e.name}' missing: {absPath}", useColor)
+        return 1
+      if e.checksum.len > 0:
+        let got = packageChecksum(absPath)
+        if got != e.checksum:
+          printError(&"install --locked: checksum mismatch for '{e.name}'", useColor)
+          printError(&"  lock: {e.checksum}", useColor)
+          printError(&"  got:  {got}", useColor)
+          return 1
+    if not opts.quiet:
+      printInfo(&"locked ok: {e.name} {e.version}", useColor)
+  if not opts.quiet:
+    printInfo(&"install --locked: {lock.entries.len} package(s) verified", useColor)
+  return 0
+
 proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
   let useColor = shouldUseColor(opts)
+  var lockedOnly = false
+  for a in args:
+    if a == "--locked":
+      lockedOnly = true
+    elif a.startsWith("-"):
+      printError(&"unknown install option '{a}'", useColor)
+      return 1
   let root = getCurrentDir()
+  if lockedOnly:
+    return verifyLockedInstall(root, useColor, opts)
   let manifestPath = root / "bux.toml"
   if not fileExists(manifestPath):
     printError("no bux.toml found", useColor)
@@ -510,11 +691,12 @@ proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
         return 1
       # Read dependency manifest
       let depManifestPath = absPath / "bux.toml"
+      let csum = packageChecksum(absPath)
       if fileExists(depManifestPath):
         let depMan = loadManifest(depManifestPath)
-        lock.entries.add(LockEntry(name: dep.name, version: depMan.version, source: absPath))
+        lock.entries.add(LockEntry(name: dep.name, version: depMan.version, source: absPath, checksum: csum))
       else:
-        lock.entries.add(LockEntry(name: dep.name, version: "0.0.0", source: absPath))
+        lock.entries.add(LockEntry(name: dep.name, version: "0.0.0", source: absPath, checksum: csum))
       if not opts.quiet:
         printInfo(&"Resolved path dependency '{dep.name}' from {absPath}", useColor)
     of dkGit:
@@ -530,7 +712,8 @@ proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
         if not opts.quiet:
           printInfo(&"Using cached '{dep.name}' from {depDir}", useColor)
       # Lock stores git URL; build loads from cache by name
-      lock.entries.add(LockEntry(name: dep.name, version: dep.gitVersion, source: dep.gitUrl))
+      let csumGit = packageChecksum(depDir)
+      lock.entries.add(LockEntry(name: dep.name, version: dep.gitVersion, source: dep.gitUrl, checksum: csumGit))
     of dkVersion:
       # Registry lookup (E.1)
       if reg.path.len == 0:
@@ -541,7 +724,8 @@ proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
         printError(&"package '{dep.name}' not found in registry", useColor)
         return 1
       if pkg.resolvedPath.len > 0 and dirExists(pkg.resolvedPath):
-        lock.entries.add(LockEntry(name: dep.name, version: pkg.version, source: pkg.resolvedPath))
+        let csum = packageChecksum(pkg.resolvedPath)
+        lock.entries.add(LockEntry(name: dep.name, version: pkg.version, source: pkg.resolvedPath, checksum: csum))
         if not opts.quiet:
           printInfo(&"Resolved '{dep.name}' {pkg.version} → {pkg.resolvedPath}", useColor)
       elif isGitSource(pkg.source):
@@ -553,7 +737,8 @@ proc cmdInstall*(args: seq[string], opts: GlobalOptions): int =
           if code != 0:
             printError(&"failed to clone {pkg.source}: {outp}", useColor)
             return 1
-        lock.entries.add(LockEntry(name: dep.name, version: pkg.version, source: pkg.source))
+        let csumG = packageChecksum(depDir)
+        lock.entries.add(LockEntry(name: dep.name, version: pkg.version, source: pkg.source, checksum: csumG))
         if not opts.quiet:
           printInfo(&"Resolved '{dep.name}' {pkg.version} → git {pkg.source}", useColor)
       else:
@@ -750,14 +935,25 @@ proc mergeDecls(stdlibDecls: seq[Decl], userDecls: seq[Decl]): seq[Decl] =
 proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   var opts = opts
   var pathArgs: seq[string] = @[]
-  for a in args:
+  var i = 0
+  while i < args.len:
+    let a = args[i]
     if a == "--release":
       opts.release = true
+    elif a == "--static":
+      opts.staticLink = true
+    elif a == "--target":
+      if i + 1 < args.len:
+        inc i
+        opts.target = args[i]
+    elif a.startsWith("--target="):
+      opts.target = a["--target=".len .. ^1]
     elif a.startsWith("-"):
-      # ignore unknown flags for forward-compat; keep path-like later
+      # ignore unknown flags for forward-compat
       discard
     else:
       pathArgs.add(a)
+    inc i
   let useColor = shouldUseColor(opts)
   let root = if pathArgs.len > 0: absolutePath(pathArgs[0]) else: getCurrentDir()
   let (pctx, status) = prepareProject(root, useColor, opts)
@@ -805,11 +1001,11 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
     return 1
 
   let baseDir = stdlibDir.parentDir()
-  # Windows / BUX_RUNTIME=win → minimal runtime (no pthread/OpenSSL).
-  # Full POSIX runtime is rt/runtime.c.
-  let forceWinRt = getEnv("BUX_RUNTIME") == "win" or getEnv("BUX_RUNTIME") == "windows"
-  let useWinRt = forceWinRt or (when defined(windows): true else: false)
-  let runtimeName = if useWinRt: "runtime_win.c" else: "runtime.c"
+  # Runtime pick: full POSIX | minimal (Linux static/embed) | win (historical).
+  # See resolveRuntimeFlavor — BUX_RUNTIME, --static, --target.
+  let flavor = resolveRuntimeFlavor(opts)
+  let thinRt = isThinRuntime(flavor)
+  let runtimeName = runtimeFileName(flavor)
   let runtimeSrc = baseDir / "rt" / runtimeName
   if fileExists(runtimeSrc):
     copyFile(runtimeSrc, runtimeDst)
@@ -830,26 +1026,25 @@ proc cmdBuild*(args: seq[string], opts: GlobalOptions): int =
   let outputFile = buildDir / (outputName & exeSuffix)
   let optFlags = if opts.release: "-O2 -DNDEBUG" else: "-O0 -g"
   let extraCflags = getEnv("BUX_CFLAGS")
-  let cflags = if extraCflags.len > 0: optFlags & " " & extraCflags else: optFlags
-  # Host C toolchain + link flags
-  let envCc = getEnv("BUX_CC")
-  let ccBin =
-    if envCc.len > 0: envCc
-    else:
-      when defined(windows): "gcc"
-      else: "cc"
+  var cflags = if extraCflags.len > 0: optFlags & " " & extraCflags else: optFlags
+  let doStatic = wantStaticLink(opts)
+  if doStatic:
+    cflags = cflags & " -static"
+  # Host / cross C toolchain + link flags
+  let ccBin = resolveCCompiler(opts)
+  cflags = cflags & cTargetFlags(opts, ccBin)
   let ldStable =
     when defined(linux):
-      if useWinRt: "" else: " -Wl,--build-id=none"
+      if thinRt: "" else: " -Wl,--build-id=none"
     else:
       ""
   # Note: -l libs must come *after* .c/.o inputs (GNU ld left-to-right).
   let (hostCflags, hostLibs) =
-    if useWinRt:
+    if thinRt:
       # gc-sections drops mono stdlib that is never called (crypto/tasks, …)
       (" -ffunction-sections -fdata-sections", " -Wl,--gc-sections -lm")
     else:
-      (" -pthread" & ldStable, " -lm -lcrypto")
+      (" -pthread" & ldStable, " -lm -lssl -lcrypto")
   let ccCmd = &"{ccBin} {cflags}{hostCflags} -o {outputFile} {cFile} {runtimeDst} {ioDst}{hostLibs} 2>&1"
   if opts.verbose:
     printInfo(&"running: {ccCmd}", useColor)

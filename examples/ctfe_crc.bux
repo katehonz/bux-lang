@@ -1,0 +1,82 @@
+// Session 75 — CTFE tables for embedded / firmware-style use.
+// Precomputes CRC-8 (poly 0x07) cells at compile time; runtime only indexes them.
+import Std::Io::{PrintLine, PrintInt};
+
+const POLY: int = 0x07;
+
+// One shift step of CRC-8 (MSB-first).
+const func CrcStep(crc: int) -> int {
+    let c: int = crc & 0xFF;
+    if (c & 0x80) != 0 {
+        return ((c << 1) ^ POLY) & 0xFF;
+    }
+    return (c << 1) & 0xFF;
+}
+
+// Fold remaining shift steps (recursive — CTFE-friendly).
+const func CrcFold(crc: int, bits: int) -> int {
+    if bits <= 0 {
+        return crc & 0xFF;
+    }
+    return CrcFold(CrcStep(crc), bits - 1);
+}
+
+const func Crc8Byte(byte: int) -> int {
+    return CrcFold(byte & 0xFF, 8);
+}
+
+// Known table cells (full 256-entry array const init is future work).
+const CRC_0: int = Crc8Byte(0);
+const CRC_1: int = Crc8Byte(1);
+const CRC_2: int = Crc8Byte(2);
+const CRC_65: int = Crc8Byte(65);   // 'A'
+const CRC_255: int = Crc8Byte(255);
+
+// Table size as CTFE power-of-two (classic embedded pattern).
+const func Pow2(n: int) -> int {
+    if n <= 0 {
+        return 1;
+    }
+    return 2 * Pow2(n - 1);
+}
+const TABLE_SIZE: int = Pow2(8); // 256
+
+func Crc8Known(b: int) -> int {
+    if b == 0 { return CRC_0; }
+    if b == 1 { return CRC_1; }
+    if b == 2 { return CRC_2; }
+    if b == 65 { return CRC_65; }
+    if b == 255 { return CRC_255; }
+    return -1;
+}
+
+func Main() -> int {
+    PrintInt(TABLE_SIZE);
+    PrintLine("");
+    PrintInt(CRC_0);
+    PrintLine("");
+    PrintInt(CRC_1);
+    PrintLine("");
+    PrintInt(CRC_65);
+    PrintLine("");
+    if TABLE_SIZE != 256 {
+        PrintLine("FAIL ctfe_crc TABLE_SIZE");
+        return 1;
+    }
+    if CRC_0 != 0 {
+        PrintLine("FAIL ctfe_crc CRC_0");
+        return 1;
+    }
+    // Reference: poly 0x07, byte 0x01 → 0x07 after 8 steps
+    if CRC_1 != 7 {
+        PrintLine("FAIL ctfe_crc CRC_1 expected 7");
+        return 1;
+    }
+    let a: int = Crc8Known(1);
+    if a != 7 {
+        PrintLine("FAIL ctfe_crc runtime path");
+        return 1;
+    }
+    PrintLine("PASS ctfe_crc");
+    return 0;
+}

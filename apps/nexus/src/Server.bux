@@ -1,12 +1,17 @@
 module Server {
 
     import Std::Io::{Print, PrintLine, PrintInt};
-    import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError};
-    import Std::String::{String_Len, String_StartsWith};
+    import Std::Net::{
+        Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close, Net_LastError,
+        Tls_ServerCtx, Tls_ServerCtxMtls, Tls_CtxFree, Tls_Accept, Tls_Send, Tls_Recv, Tls_Close, Tls_LastError
+    };
+    import Std::String::{String_Len, String_StartsWith, String_Eq};
     import Std::Channel::{Channel, Channel_New, Channel_Send, Channel_Recv};
     import Std::Array::{Array_Drop};
+    import Std::Os::{Os_InstallStopHandlers, Os_ShouldStop, Os_SetStopListenFd};
+    import Std::Time::{Time_NowMs};
     import Config::{ServerConfig};
-    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse, Request_WantsKeepAlive, HeaderEntry};
+    import Http::{HttpRequest, HttpResponse, Http_StatusText, Http_NewResponse, Http_MethodName, Request_WantsKeepAlive, HeaderEntry};
     import Errors::{ParseResult};
     import Parser::{ParseRequest};
     import Router::{Router, Router_Dispatch};
@@ -21,8 +26,11 @@ module Server {
     /// Cap requests per TCP connection (safety + fair scheduling).
     const MAX_KEEPALIVE_REQUESTS: int = 1000;
 
+    /// fd < 0 is a poison pill: worker exits cleanly.
+    /// tls is null for plain HTTP; non-null SSL* for HTTPS (session 78).
     pub struct ConnectionTask {
         fd: int;
+        tls: *void;
     }
 
     pub func BuildResponse(resp: HttpResponse, keepAlive: bool) -> String {
@@ -34,7 +42,7 @@ module Server {
         bux_sb_append(sb, Http_StatusText(resp.statusCode));
         bux_sb_append(sb, "\r\n");
 
-        bux_sb_append(sb, "Server: Nexus/0.3.0 (Bux)\r\n");
+        bux_sb_append(sb, "Server: Nexus/0.6.0 (Bux)\r\n");
 
         if bux_strlen(resp.extraHeaders) > 0 {
             bux_sb_append(sb, resp.extraHeaders);
@@ -68,40 +76,97 @@ module Server {
         return result;
     }
 
-    /// Serve one TCP client: zero or more HTTP requests (HTTP/1.1 keep-alive).
-    pub func HandleConnection(fd: int, router: Router) {
+    func ConnRecv(fd: int, tls: *void, maxLen: int) -> String {
+        if tls != null as *void {
+            return Tls_Recv(tls, maxLen);
+        }
+        return Net_Recv(fd, maxLen);
+    }
+
+    func ConnSend(fd: int, tls: *void, data: String) -> int {
+        if tls != null as *void {
+            return Tls_Send(tls, data);
+        }
+        return Net_Send(fd, data);
+    }
+
+    /// Structured access log: method path status duration_ms
+    func AccessLog(method: String, path: String, status: int, ms: int64) {
+        Print(method);
+        Print(" ");
+        Print(path);
+        Print(" ");
+        PrintInt(status);
+        Print(" ");
+        PrintInt(ms as int);
+        PrintLine("ms");
+    }
+
+    /// Serve one TCP (or TLS) client: zero or more HTTP/1.1 keep-alive requests.
+    pub func HandleConnection(fd: int, tls: *void, router: Router, config: ServerConfig) {
         var reqCount: int = 0;
+        let maxRecv: int = config.maxBodyBytes;
         while reqCount < MAX_KEEPALIVE_REQUESTS {
-            let raw: String = Net_Recv(fd, 8192);
+            if Os_ShouldStop() {
+                return;
+            }
+            let raw: String = ConnRecv(fd, tls, maxRecv);
             if String_Len(raw) == 0 {
                 return;
             }
 
-            // HTTP/2 preface detection — one-shot response, then close
-            if String_StartsWith(raw, "PRI * HTTP/2.0") {
-                let resp: HttpResponse = Http_NewResponse(200, "text/plain; charset=utf-8",
-                "HTTP/2 detected — full support planned for future release.\r\n");
-                Net_Send(fd, BuildResponse(resp, false));
+            if String_Len(raw) as int >= maxRecv {
+                let resp: HttpResponse = Http_NewResponse(413, "text/plain; charset=utf-8", "Payload Too Large");
+                ConnSend(fd, tls, BuildResponse(resp, false));
                 return;
             }
 
+            if String_StartsWith(raw, "PRI * HTTP/2.0") {
+                let resp: HttpResponse = Http_NewResponse(200, "text/plain; charset=utf-8",
+                "HTTP/2 detected — full support planned for future release.\r\n");
+                ConnSend(fd, tls, BuildResponse(resp, false));
+                return;
+            }
+
+            let t0: int64 = Time_NowMs();
             let parsed: ParseResult = ParseRequest(raw);
             var keepAlive: bool = false;
+            var statusOut: int = 400;
+            var methodName: String = "?";
+            var pathOut: String = "-";
+
             if parsed.tag == ParseResult_Ok {
                 var req: HttpRequest = parsed.data.Ok_0;
+                methodName = Http_MethodName(req.method);
+                pathOut = req.path;
+                if String_Len(req.body) as int > maxRecv {
+                    let resp: HttpResponse = Http_NewResponse(413, "text/plain; charset=utf-8", "Payload Too Large");
+                    ConnSend(fd, tls, BuildResponse(resp, false));
+                    Array_Drop<HeaderEntry>(&req.headers);
+                    return;
+                }
                 keepAlive = Request_WantsKeepAlive(&req);
-                // Last request on the connection quota must close
                 if reqCount + 1 >= MAX_KEEPALIVE_REQUESTS {
                     keepAlive = false;
                 }
                 let resp: HttpResponse = Router_Dispatch(router, req);
-                Net_Send(fd, BuildResponse(resp, keepAlive));
-                // Free header buffer (moved into req at parse; no Drop on nested fields)
+                statusOut = resp.statusCode;
+                ConnSend(fd, tls, BuildResponse(resp, keepAlive));
                 Array_Drop<HeaderEntry>(&req.headers);
             } else {
                 let resp: HttpResponse = Http_NewResponse(400, "text/plain; charset=utf-8", "Bad Request");
-                Net_Send(fd, BuildResponse(resp, false));
+                statusOut = 400;
+                ConnSend(fd, tls, BuildResponse(resp, false));
+                if config.accessLog {
+                    let dt: int64 = Time_NowMs() - t0;
+                    AccessLog("?", "-", 400, dt);
+                }
                 return;
+            }
+
+            if config.accessLog {
+                let dt: int64 = Time_NowMs() - t0;
+                AccessLog(methodName, pathOut, statusOut, dt);
             }
 
             reqCount = reqCount + 1;
@@ -114,12 +179,19 @@ module Server {
     pub struct WorkerCtx {
         taskQueue: *Channel<ConnectionTask>;
         router: Router;
+        config: ServerConfig;
     }
 
     pub func Worker(ctx: *WorkerCtx) {
         while true {
             let task: ConnectionTask = Channel_Recv<ConnectionTask>(ctx.taskQueue);
-            HandleConnection(task.fd, ctx.router);
+            if task.fd < 0 {
+                return;
+            }
+            HandleConnection(task.fd, task.tls, ctx.router, ctx.config);
+            if task.tls != null as *void {
+                Tls_Close(task.tls);
+            }
             Net_Close(task.fd);
         }
     }
@@ -127,29 +199,78 @@ module Server {
     pub struct AcceptorCtx {
         serverFd: int;
         taskQueue: *Channel<ConnectionTask>;
+        workerCount: int;
+        tlsCtx: *void;
     }
 
     pub func Acceptor(ctx: *AcceptorCtx) {
-        while true {
+        while !Os_ShouldStop() {
             let fd: int = Net_Accept(ctx.serverFd);
             if fd >= 0 {
-                let task: ConnectionTask = ConnectionTask { fd: fd };
+                var tls: *void = null as *void;
+                if ctx.tlsCtx != null as *void {
+                    tls = Tls_Accept(ctx.tlsCtx, fd);
+                    if tls == null as *void {
+                        Print("WARN: TLS handshake failed: ");
+                        PrintLine(Tls_LastError());
+                        Net_Close(fd);
+                        continue;
+                    }
+                }
+                let task: ConnectionTask = ConnectionTask { fd: fd, tls: tls };
                 Channel_Send<ConnectionTask>(ctx.taskQueue, task);
+            } else {
+                if Os_ShouldStop() {
+                    break;
+                }
             }
         }
+        var i: int = 0;
+        while i < ctx.workerCount {
+            let poison: ConnectionTask = ConnectionTask { fd: -1, tls: null as *void };
+            Channel_Send<ConnectionTask>(ctx.taskQueue, poison);
+            i = i + 1;
+        }
+        PrintLine("acceptor: stop — workers poisoned");
     }
 
     pub func RunServer(config: ServerConfig, router: Router) -> int {
         PrintLine("================================================");
-        PrintLine("  Nexus HTTP Server v0.3.0");
-        PrintLine("  HTTP/1.1 keep-alive + thread-pool");
+        PrintLine("  Nexus HTTP Server v0.6.0");
+        PrintLine("  HTTP/1.1 + TLS/mTLS + keep-alive + graceful stop");
         PrintLine("  Built with Bux");
         PrintLine("================================================");
         PrintLine("");
 
+        Os_InstallStopHandlers();
+
+        var tlsCtx: *void = null as *void;
+        if config.tlsEnabled {
+            if String_Eq(config.tlsCertPath, "") || String_Eq(config.tlsKeyPath, "") {
+                PrintLine("FATAL: TLS enabled but NEXUS_TLS_CERT / NEXUS_TLS_KEY not set");
+                return 1;
+            }
+            if !String_Eq(config.tlsClientCaPath, "") {
+                tlsCtx = Tls_ServerCtxMtls(config.tlsCertPath, config.tlsKeyPath, config.tlsClientCaPath);
+                PrintLine("mTLS: client certificates required");
+                Print("Client CA: ");
+                PrintLine(config.tlsClientCaPath);
+            } else {
+                tlsCtx = Tls_ServerCtx(config.tlsCertPath, config.tlsKeyPath);
+            }
+            if tlsCtx == null as *void {
+                Print("FATAL: TLS context failed: ");
+                PrintLine(Tls_LastError());
+                return 1;
+            }
+            Print("TLS cert: ");
+            PrintLine(config.tlsCertPath);
+        }
+
         let serverFd: int = Net_Create();
         if serverFd < 0 {
             PrintLine("FATAL: socket() failed");
+            if tlsCtx != null as *void { Tls_CtxFree(tlsCtx); }
             return 1;
         }
 
@@ -161,43 +282,66 @@ module Server {
             Print("FATAL: bind failed: ");
             PrintLine(Net_LastError());
             Net_Close(serverFd);
+            if tlsCtx != null as *void { Tls_CtxFree(tlsCtx); }
             return 1;
         }
 
         if !Net_Listen(serverFd, config.backlog) {
             PrintLine("FATAL: listen() failed");
             Net_Close(serverFd);
+            if tlsCtx != null as *void { Tls_CtxFree(tlsCtx); }
             return 1;
         }
 
-        Print("Listening on http://");
+        Os_SetStopListenFd(serverFd);
+
+        if config.tlsEnabled {
+            Print("Listening on https://");
+        } else {
+            Print("Listening on http://");
+        }
         Print(config.bindAddr);
         Print(":");
         PrintInt(config.port);
         PrintLine("");
         PrintInt(config.workerCount);
-        PrintLine(" worker threads  |  keep-alive: on  |  static: ./public/");
+        Print(" worker threads  |  keep-alive: on  |  max-body: ");
+        PrintInt(config.maxBodyBytes);
+        PrintLine(" B");
         PrintLine("Endpoints:  /  /api/health  /api/info  /ws");
-        PrintLine("Press Ctrl+C to stop.");
+        PrintLine("Stop: Ctrl+C / SIGTERM (graceful).");
         PrintLine("");
 
         let taskQueue: Channel<ConnectionTask> = Channel_New<ConnectionTask>(config.backlog as int64);
-        let workerCtx: WorkerCtx = WorkerCtx { taskQueue: &taskQueue, router: router };
-        let acceptorCtx: AcceptorCtx = AcceptorCtx { serverFd: serverFd, taskQueue: &taskQueue };
+        let workerCtx: WorkerCtx = WorkerCtx {
+            taskQueue: &taskQueue,
+            router: router,
+            config: config
+        };
+        let acceptorCtx: AcceptorCtx = AcceptorCtx {
+            serverFd: serverFd,
+            taskQueue: &taskQueue,
+            workerCount: config.workerCount,
+            tlsCtx: tlsCtx
+        };
 
-        // Spawn workers (main thread will also become one)
         var i: int = 0;
-        while i < config.workerCount - 1 {
+        while i < config.workerCount {
             spawn Worker(&workerCtx);
             i = i + 1;
         }
 
-        // Spawn acceptor
-        spawn Acceptor(&acceptorCtx);
+        Acceptor(&acceptorCtx);
 
-        // Main thread works too
-        Worker(&workerCtx);
+        Os_SetStopListenFd(-1);
+        if serverFd >= 0 {
+            Net_Close(serverFd);
+        }
+        if tlsCtx != null as *void {
+            Tls_CtxFree(tlsCtx);
+        }
 
+        PrintLine("nexus: acceptor stopped — exit");
         return 0;
     }
 

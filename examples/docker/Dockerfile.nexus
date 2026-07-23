@@ -1,0 +1,26 @@
+# Session 78 — Nexus in a slim runtime image (dynamic link: pthread + OpenSSL).
+#
+# From repo root (after building apps/nexus/build/nexus on Linux):
+#   docker build -f examples/docker/Dockerfile.nexus -t bux-nexus .
+#   docker run --rm -p 8080:8080 bux-nexus
+#
+# HTTPS:
+#   docker run --rm -p 8443:8443 \
+#     -v $PWD/certs:/certs:ro \
+#     -e NEXUS_PORT=8443 -e NEXUS_TLS=1 \
+#     -e NEXUS_TLS_CERT=/certs/cert.pem -e NEXUS_TLS_KEY=/certs/key.pem \
+#     bux-nexus
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY apps/nexus/build/nexus /app/nexus
+COPY apps/nexus/public /app/public
+ENV NEXUS_BIND=0.0.0.0
+ENV NEXUS_PORT=8080
+ENV NEXUS_WORKERS=4
+ENV NEXUS_ACCESS_LOG=1
+EXPOSE 8080
+ENTRYPOINT ["/app/nexus"]

@@ -20,7 +20,7 @@ On macOS:
 brew install nim gcc make openssl
 ```
 
-> **Note:** The `Std::Crypto` module requires OpenSSL (`-lcrypto`). The build system links it automatically.
+> **Note:** Crypto + TLS require OpenSSL (`-lssl -lcrypto`). The build system links both automatically on the full (POSIX) runtime.
 
 ---
 
@@ -107,23 +107,51 @@ Output = "Bin"
 
 Build output goes to `build/` by default.
 
-### Cross-Compilation
+### Cross-Compilation, static, and thin runtime (Linux-first)
 
-Use `--target <triple>` to cross-compile for a different platform. Bux generates C code and uses `clang` with the `-target` flag for cross-compilation.
+Bux targets **Linux** (primary), **cloud/containers**, and **embedded/cross**. Windows is not a product focus.
 
 ```bash
-# Cross-compile for ARM Linux
-./buxc build --target aarch64-linux-gnu
+# Thin runtime (no pthread / OpenSSL / sockets) — good for CLI & embed
+BUX_RUNTIME=minimal ./buxc build
 
-# Cross-compile for x86_64 Linux (explicit)
-./buxc build --target x86_64-linux-gnu
+# Fully-static binary (implies minimal runtime; container / distroless friendly)
+./buxc --static --release build
+# same: BUX_STATIC=1 ./buxc --release build
 
-# Cross-compile and run project build
-./buxc project --target x86_64-linux-gnu
-./buxc run --target aarch64-linux-gnu
+# Cross-compile for ARM64 Linux (prefers aarch64-linux-gnu-gcc, else clang -target)
+./buxc --static --release --target aarch64-linux-gnu build
+
+# Override C compiler
+BUX_CC=aarch64-linux-gnu-gcc ./buxc --static --target aarch64-linux-gnu build
+
+# musl fully-static (Alpine-friendly; needs musl-tools or zig)
+BUX_CC=musl-gcc BUX_RUNTIME=minimal ./buxc --static --release build
+# or: BUX_CC='zig cc -target x86_64-linux-musl' …  (use a wrapper script)
+make test-musl-static   # SKIP if no musl-gcc/zig
 ```
 
-> **Note:** `clang` must be installed for cross-compilation. Without `--target`, Bux uses the system `cc` compiler.
+| Switch / env | Effect |
+|--------------|--------|
+| `BUX_RUNTIME=full` | `rt/runtime.c` — POSIX + OpenSSL (default on Unix) |
+| `BUX_RUNTIME=minimal` / `thin` / `embed` | `rt/runtime_minimal.c` — thin single-threaded |
+| `BUX_RUNTIME=win` | `rt/runtime_win.c` — historical MinGW smoke only |
+| `--static` / `BUX_STATIC=1` | `-static` link; defaults to minimal runtime |
+| `--target <triple>` | Cross compile; defaults to minimal runtime |
+| `BUX_CC` | Force C compiler binary |
+| `BUX_CFLAGS` | Extra flags appended to the C line |
+
+```bash
+# Smoke all of the above (+ CTFE CRC example)
+make test-linux-targets
+
+# Build static hello for Docker scratch/distroless
+./tools/build_static_hello.sh
+docker build -f examples/docker/Dockerfile.static \
+  --build-arg BIN=build/hello_static -t bux-hello-static .
+```
+
+> **Note:** Full runtime + fully-static OpenSSL is intentionally not the default (painful). Use minimal for static containers; keep full runtime for servers that need net/crypto (`nexus`).
 
 ---
 
@@ -137,6 +165,7 @@ make test-stdlib     # stdlib golden packages
 make test-registry   # package registry (local + HTTP index)
 make test-apps       # showcase apps build + simpledb/jwt CLI smoke (in `make test`)
 make test-dwarf      # #line maps + .debug_info + --release (in `make test`)
+make test-linux-targets  # minimal runtime + static + aarch64 cross + CTFE CRC
 make test-registry   # package registry local + HTTP (in `make test`)
 make test-selfhost-smoke  # buxc2: move_field + multi-file #line (in `make test`)
 make test-lsp        # hover + references/rename + call hierarchy
@@ -205,7 +234,7 @@ make test                          # full sequential suite (local)
 | `build` | ubuntu | `make build` → upload `buxc` artifact |
 | `unit` | ubuntu | `fmt-check` + `test-unit` (reuse artifact) |
 | `examples` | ubuntu | `test-examples` (full list) |
-| `goldens` | ubuntu | `test-errors` + `test-stdlib` + `test-registry` + `test-dwarf` + `test-drop-move` |
+| `goldens` | ubuntu | `test-errors` + `test-stdlib` + `test-registry` + `test-dwarf` + `test-drop-move` + `test-linux-targets` |
 | `apps` | ubuntu | `test-apps` |
 | `selfhost` | ubuntu | `test-selfhost-smoke` |
 | `macos` | macos-14 | rebuild + `test-unit` + `test-examples-smoke` (subset) |
@@ -331,8 +360,9 @@ bux/
 │   ├── Task.bux
 │   └── Channel.bux
 ├── rt/               # C runtime
-│   ├── runtime.c       # full POSIX + OpenSSL (Unix)
-│   ├── runtime_win.c   # MinGW minimal (Windows / BUX_RUNTIME=win)
+│   ├── runtime.c          # full POSIX + OpenSSL (Unix default)
+│   ├── runtime_minimal.c  # thin: no pthread/net/crypto (static/embed)
+│   ├── runtime_win.c      # MinGW historical (BUX_RUNTIME=win)
 │   └── io.c
 ├── examples/         # Example programs
 ├── tests/            # Unit tests (Nim)

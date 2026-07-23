@@ -1,0 +1,84 @@
+// Session 76 — cross-function pointer ownership transfer.
+// TakeItems(&bag) moves bag.items inside the callee; the caller must not
+// auto-Drop bag.items (only remaining fields / skip parent Drop).
+import Std::Io::{PrintLine};
+import Std::Array::{Array, Array_New, Array_Push, Array_Len, Array_Get};
+import Std::String::{String_FromInt, String_Concat};
+import Std::Test::{Test_AssertTrue, Test_Pass};
+
+@[Drop]
+struct Tracked {
+    id: int,
+    counter: *int
+}
+
+func Tracked_Drop(self: *Tracked) {
+    if self.counter != null as *int {
+        *self.counter = *self.counter + 1;
+    }
+}
+
+@[Drop]
+struct Bag {
+    items: Array<int>,
+    tag: Tracked
+}
+
+func Bag_Drop(self: *Bag) {
+    Array_Drop<int>(&self.items);
+    Tracked_Drop(&self.tag);
+}
+
+// Callee moves p.items out of the pointee — caller passed &bag.
+func TakeItems(p: *Bag) -> Array<int> {
+    return p.items;
+}
+
+func NestedTake(p: *Bag) -> Array<int> {
+    let moved: Array<int> = p.items;
+    return moved;
+}
+
+// Caller holds bag and transfers via &bag into TakeItems.
+func CallTakeItems(counter: *int) -> int {
+    var items: Array<int> = Array_New<int>(2);
+    Array_Push<int>(&items, 1);
+    Array_Push<int>(&items, 2);
+    let bag: Bag = Bag {
+        items: items,
+        tag: Tracked { id: 1, counter: counter }
+    };
+    let taken: Array<int> = TakeItems(&bag);
+    Test_AssertTrue(Array_Len<int>(&taken) == 2);
+    Test_AssertTrue(Array_Get<int>(&taken, 0) == 1);
+    return Array_Len<int>(&taken) as int;
+}
+
+func CallNestedTake(counter: *int) -> int {
+    var items2: Array<int> = Array_New<int>(1);
+    Array_Push<int>(&items2, 9);
+    let bag2: Bag = Bag {
+        items: items2,
+        tag: Tracked { id: 2, counter: counter }
+    };
+    let taken2: Array<int> = NestedTake(&bag2);
+    Test_AssertTrue(Array_Get<int>(&taken2, 0) == 9);
+    return Array_Get<int>(&taken2, 0);
+}
+
+func Main() -> int {
+    var drops: int = 0;
+
+    let n: int = CallTakeItems(&drops);
+    Test_AssertTrue(n == 2);
+    // bag left scope inside CallTakeItems → only tag Drop (items moved out)
+    Test_AssertTrue(drops == 1);
+
+    let v: int = CallNestedTake(&drops);
+    Test_AssertTrue(v == 9);
+    Test_AssertTrue(drops == 2);
+
+    PrintLine(String_Concat("cross_fn_drops=", String_FromInt(drops as int64)));
+    Test_Pass("move_cross_fn");
+    return 0;
+}

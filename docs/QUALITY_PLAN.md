@@ -1,8 +1,10 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
-> **Дата:** 2026-07-21  
-> **Текущо:** v0.5.x — macros, field-move via pointers, Windows hello  
-> **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.
+> **Дата:** 2026-07-23  
+> **Текущо:** v0.5.x — CI cloud smokes + registry path cleanup (session 82)  
+> **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.  
+> **Платформен фокус:** **Linux** (primary) · **cloud-native** (servers, containers, HTTP) · **embedded** (cross, freestanding-ish, CTFE).  
+> **Не-цел:** MS Windows като product platform (исторически CI/hello smoke остават; няма roadmap investment).
 
 ---
 
@@ -33,8 +35,9 @@
 3. **Selfhost като dogfood** — компилаторът и apps (`nexus`, `boko`) са proof.
 4. **Инструменти** — fmt, test, LSP, package install без ръчна магия.
 5. **Стабилна спецификация** — LanguageRef = реалното поведение.
+6. **Целеви среди** — Linux servers/containers, cloud HTTP services, embedded/cross (ARM/RISC-V), не desktop Windows.
 
-Не целим „по-добър Rust“. Целим **единствения език с gradual safety + Go-стил concurrency без GC**.
+Не целим „по-добър Rust“. Целим **единствения език с gradual safety + Go-стил concurrency без GC**, удобен за **cloud + systems на Linux**.
 
 ---
 
@@ -1207,8 +1210,197 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Платформен фокус (v0.5 → v1.0)
+
+| Ниша | Какво значи за Bux | Статус / посока |
+|------|--------------------|-----------------|
+| **Linux** | Host + CI + full `rt/runtime.c` (pthread, ucontext, sockets, OpenSSL) | ✅ primary; macOS secondary smoke only |
+| **Cloud-native** | HTTP/HTTPS, registry (lock+HTTPS), containers, musl docs | ✅ sessions 75–79 |
+| **Embedded** | Cross (`--target`), CTFE tables, **thin runtime**, no-GC story | ✅ minimal + aarch64 + ctfe_crc (75); 🔧 riscv / bare-metal spike |
+| **Windows** | Не е product target | ⛔ no further investment (existing MinGW hello = historical) |
+
+**Правило:** нов runtime / stdlib / CI effort отива към Linux + cloud + embedded. Windows-only work не влиза в следващи сесии.
+
+---
+
+## Сесия 75 (Linux / cloud / embedded foundation)
+
+1. **`rt/runtime_minimal.c`** — thin runtime (no pthread / ucontext / sockets / OpenSSL);
+   same feature surface as historical `runtime_win.c`, documented for Linux static/embed.
+2. **Bootstrap CLI** (`bootstrap/cli.nim`):
+   - `BUX_RUNTIME=full|minimal|thin|embed|win`
+   - `--static` / `BUX_STATIC=1` → fully-static link; defaults to minimal runtime
+   - `--target <triple>` → prefers `<triple>-gcc`, else `clang -target`; defaults minimal
+   - `BUX_CC` override; thin link uses `-ffunction-sections -Wl,--gc-sections -lm`
+3. **CTFE bitwise + hex** (`bootstrap/sema.nim`):
+   - `^` `&` `|` `<<` `>>` in const eval
+   - `0x` / `0b` / `0o` integer literals in CTFE
+4. **Example** `examples/ctfe_crc.bux` — recursive CRC-8 table cells + `Pow2(8)` size
+5. **Smoke** `tools/smoke_linux_targets.sh` / `make test-linux-targets`:
+   - minimal hello run
+   - `--static --release` + `file` statically linked
+   - `--target aarch64-linux-gnu` when cross-gcc present
+   - ctfe_crc under minimal
+6. **Container** `examples/docker/Dockerfile.static` + `tools/build_static_hello.sh`
+7. **CI** goldens job installs `gcc-aarch64-linux-gnu` and runs `test-linux-targets`
+8. Docs: BuildAndTest + QUALITY_PLAN platform section
+
+**Verified:** smoke 4/4 PASS; CRC_1=`#define 7`; aarch64 static ELF.
+
+---
+
+## Сесия 76 (P0: ownership + macros + selfhost parity)
+
+1. **Cross-function pointer ownership** (`bootstrap/hir_lower.nim`):
+   - `TakeItems(&bag)` where callee does `return p.items` / `let x = p.items`
+   - Call site marks owner `bag` + partial path `items`; remaining fields still Drop
+   - Example `examples/move_cross_fn.bux` + smoke in `test-drop-move`
+2. **Macro `$x:tt`** — broader than `expr`: any single call-site AST fragment
+   (bootstrap + selfhost); example `examples/macro_tt.bux`
+3. **Selfhost link parity** (`src/cli.bux`):
+   - `--static`, `--target`, `BUX_RUNTIME`, `BUX_CC`, `BUX_STATIC`
+   - `Cli_LinkProgram` shared by single-file + project builds
+   - Thin runtime → no pthread/OpenSSL; full → POSIX as before
+4. Docs: LanguageRef tt + QUALITY_PLAN
+
+**Verified:** move_cross_fn PASS; macro_tt PASS; smoke_drop_move; buxc2 `--static project` → static ELF + `Hello, Bux!`.
+
+---
+
+## Сесия 77 (selfhost cross-fn + Nexus production polish)
+
+1. **Selfhost cross-fn ownership** (`src/c_backend.bux`):
+   - `CBE_MarkCrossFuncFromCall` scans callee HIR for `p.field` moves
+   - Call site `TakeItems(&bag)` → partial move on `bag` (no double-free)
+   - Verified: `buxc2 run move_cross_fn` → `cross_fn_drops=2` PASS
+2. **Runtime stop handlers** (`rt/runtime.c`):
+   - `bux_install_stop_handlers` / `bux_should_stop` / `bux_set_stop_listen_fd`
+   - SIGINT/SIGTERM set flag + close listen fd (unblock accept)
+   - Thin/win runtimes: no-op stubs
+3. **Stdlib** `Os_InstallStopHandlers` / `Os_ShouldStop` / `Os_SetStopListenFd`
+4. **Nexus 0.4.0**:
+   - Graceful stop: main=acceptor; poison workers (`fd=-1`); exit on SIGTERM
+   - Access log: `METHOD path status ms` (`NEXUS_ACCESS_LOG`)
+   - Max body: `NEXUS_MAX_BODY` (default 1 MiB) → 413
+   - Config fields + `/api/health` version 0.4.0
+5. TLS deferred (needs SSL context in runtime — not this session)
+
+**Verified:** SIGTERM exits nexus; health JSON 0.4.0; access log lines; selfhost cross_fn.
+
+---
+
+## Сесия 78 (Nexus TLS + container story)
+
+1. **Runtime TLS** (`rt/runtime.c` + OpenSSL `libssl`):
+   - `bux_tls_server_ctx` / `accept` / `send` / `recv` / `close` / `error`
+   - Thin/win: stubs; full POSIX links **`-lssl -lcrypto`**
+2. **Stdlib** `Std::Net` — `Tls_ServerCtx`, `Tls_Accept`, `Tls_Send`, `Tls_Recv`, …
+3. **Nexus 0.5.0**:
+   - `NEXUS_TLS=1` + `NEXUS_TLS_CERT` / `NEXUS_TLS_KEY` (PEM)
+   - `ConnectionTask.tls` handle; `ConnRecv`/`ConnSend` dual plain/TLS
+   - Banner `https://` when TLS; SIGTERM still graceful
+4. **Smoke** `tools/smoke_nexus_tls.sh` / `make test-nexus-tls` (openssl self-signed + curl -k)
+5. **Containers**:
+   - `examples/docker/Dockerfile.nexus` (debian-slim + libssl3)
+   - `examples/http_health.bux` + `Dockerfile.health` + `tools/build_health_bin.sh`
+6. CLI link flags bootstrap + selfhost: `-lssl -lcrypto`
+
+**Verified:** `curl -k https://…/api/health` → 0.5.0; SIGTERM exit; health binary HTTP.
+
+---
+
+## Сесия 79 (registry lock/HTTPS + musl path)
+
+1. **`bux install` lock checksums** — sha1 of sorted `*.bux` sources per package
+2. **`bux install --locked`** — CI mode: verify paths + checksums; no re-resolve
+3. **`BUX_REGISTRY_INSECURE=1`** — self-signed HTTPS registry fetch (`curl -k`)
+4. **Smoke** `tools/smoke_registry.sh`:
+   - lock deterministic (diff two installs)
+   - `--locked` ok / missing fail / checksum mismatch fail
+   - HTTP + **HTTPS** self-signed index
+5. **musl path** `tools/smoke_musl_static.sh` / `make test-musl-static`
+   - `BUX_CC=musl-gcc` or zig musl wrapper + `BUX_RUNTIME=minimal --static`
+   - SKIP when toolchain absent (documented)
+6. Docs: Packages.md lock section; BuildAndTest musl; Dockerfile.alpine-health
+
+**Verified:** registry smoke full PASS; musl SKIP (no toolchain on host).
+
+---
+
+## Сесия 80 (selfhost install --locked + Nexus mTLS)
+
+1. **Selfhost `install` / `install --locked`** (`src/cli.bux`):
+   - Write `bux.lock` with sha1 checksums (shell `sha1sum` of sorted `*.bux`)
+   - `--locked` verifies paths + checksums (CI parity with bootstrap session 79)
+   - Manifest: parse `[Dependencies]` + `{ Path = "..." }` inline tables
+2. **mTLS** (`rt/runtime.c` `bux_tls_server_ctx_ex`):
+   - Optional client CA → `SSL_VERIFY_PEER | FAIL_IF_NO_PEER_CERT`
+   - `Tls_ServerCtxMtls` in `Std::Net`
+   - Nexus `NEXUS_TLS_CLIENT_CA` → require client certs (v0.6.0)
+3. **Smokes**: `tools/smoke_selfhost_install.sh`, `tools/smoke_nexus_mtls.sh`
+   - `make test-selfhost-install` / `make test-nexus-mtls`
+
+**Verified:** selfhost lock/locked/mismatch; mTLS reject without cert + accept with cert.
+
+---
+
+## Сесия 81 (selfhost full registry)
+
+1. **`src/registry.bux`** — load index from `$BUX_REGISTRY` / `~/.bux` / `config/registry.toml`
+   - HTTP(S) fetch via curl/wget → `~/.bux/cache/registry_http.toml`
+   - `BUX_REGISTRY_REFRESH`, `BUX_REGISTRY_INSECURE` (parity with bootstrap)
+2. **CLI** `search` / `add <name>` / `add <name> <version|url>`
+3. **Build path deps** — merge `depUrl` absolute/relative package `src/` (not only `deps/`)
+4. **Runtime discovery** — `BUX_STDLIB/../rt` when building outside the monorepo tree
+5. **Smoke** `tools/smoke_selfhost_registry.sh` / `make test-selfhost-registry`
+
+**Verified:** search greet; add+install+run Hello, Bux!; HTTP registry search.
+
+---
+
+## Сесия 82 (CI cloud/selfhost smokes + polish)
+
+1. **CI apps job** — `test-nexus-tls` + `test-nexus-mtls` (openssl + curl)
+2. **CI selfhost job** — `test-selfhost-install` + `test-selfhost-registry`
+3. **Registry paths** — `expandFilename` for file:/path: sources (no `..` in lock)
+4. Docs already cover sessions 75–81 platform stack
+
+**Verified:** local smokes previously green; CI wiring ready for GHA.
+
+---
+
 ## Следващи стъпки
 
-1. Windows: more examples (strings/ownership) on MinGW; optional Win OpenSSL
-2. Macro: true token-tree `tt` / nested pattern rewrite depth
-3. Cross-function pointer ownership transfer (callee `*Bag` param)
+### P0 — Compiler / language
+
+1. ~~Cross-function pointer ownership~~ ✅ session 76
+2. ~~Selfhost `--static` / `BUX_RUNTIME` / `--target`~~ ✅ session 76
+3. ~~Macro `tt` broader than expr~~ ✅ session 76 (raw delimiter-balanced tokens still open)
+4. Macro: raw token-tree delimiter balancing / deeper nested rewrite edge cases
+5. ~~Selfhost cross-fn moves~~ ✅ session 77
+
+### P1 — Linux / cloud-native
+
+6. ~~**Static path**~~ ✅ session 75–76
+7. ~~**Multi-arch Linux smoke**~~ ✅ session 75
+8. ~~**Nexus production polish**~~ ✅ session 77
+9. ~~**Nexus TLS**~~ ✅ session 78
+10. ~~**Container story**~~ ✅ session 78
+11. ~~**Registry + deploy**~~ ✅ session 79 (HTTPS + lock checksum + `--locked`)
+12. ~~**musl path**~~ ✅ session 79 (smoke + docs; SKIP without toolchain)
+13. ~~**mTLS / client certs**~~ ✅ session 80 (`NEXUS_TLS_CLIENT_CA`)
+14. ~~**Selfhost install --locked**~~ ✅ session 80
+15. ~~**Selfhost full registry**~~ ✅ session 81 (search / add / HTTP / path-dep build)
+16. **Language P0 leftovers** — raw macro `tt` delimiter balancing (optional)
+
+### P2 — Embedded / cross
+
+12. ~~**Cross / thin / CTFE**~~ ✅ session 75
+13. **riscv64 cross smoke** (when toolchain available)
+14. **no-libc / bare-metal research** (spike only) — Cortex-M / qemu-system; not v1.0 blocker
+
+### Изрично **не** правим
+
+- Повече Windows examples / Win OpenSSL / Win sockets
+- Windows като required CI gate за product features (остава optional historical smoke ако CI вече го има)
+- Desktop GUI / Win32 APIs

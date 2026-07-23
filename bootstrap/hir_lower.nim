@@ -98,6 +98,7 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type
 proc autoDropFuncName(ctx: var LowerCtx, ty: Type): string
 proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type
 proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type]): Type
+proc markCrossFuncPtrMoves(ctx: var LowerCtx, call: Expr)
 
 proc resolvePtrAlias(ctx: LowerCtx, name: string): string =
   ## Follow `p → bag` aliases (depth-limited).
@@ -173,8 +174,173 @@ proc markMovedOutFromAst(ctx: var LowerCtx, expr: Expr) =
   of ekTuple:
     for e in expr.exprTupleElements:
       ctx.markMovedOutFromAst(e)
+  of ekCall:
+    # Cross-function: Take(&bag) may move fields of bag (session 76)
+    ctx.markCrossFuncPtrMoves(expr)
+    for a in expr.exprCallArgs:
+      ctx.markMovedOutFromAst(a)
   else:
     discard
+
+
+proc argAmpOwner(ctx: LowerCtx, arg: Expr): string =
+  ## If arg is `&local` (or cast of that), return the owner local name.
+  ## Also: bare pointer local that aliases an owner (`p` where p→bag).
+  if arg == nil: return ""
+  var e = arg
+  while e != nil and e.kind == ekCast:
+    e = e.exprCastOperand
+  if e != nil and e.kind == ekUnary and e.exprUnaryOp == tkAmp:
+    var op = e.exprUnaryOperand
+    while op != nil and op.kind == ekCast:
+      op = op.exprCastOperand
+    if op != nil and op.kind == ekIdent and op.exprIdent.len > 0:
+      return ctx.resolvePtrAlias(op.exprIdent)
+    return ""
+  if e != nil and e.kind == ekIdent and e.exprIdent.len > 0:
+    let owner = ctx.resolvePtrAlias(e.exprIdent)
+    if owner != e.exprIdent:
+      return owner
+  ""
+
+proc fieldPathFromParam(expr: Expr, param: string): seq[string] =
+  ## If `expr` is `param.a.b` / `(*param).a` / `param` auto-deref field chain,
+  ## return path `["a","b"]`. Empty if not rooted at param.
+  result = @[]
+  if expr == nil or param.len == 0: return
+  var path: seq[string] = @[]
+  var e = expr
+  while e != nil and e.kind == ekField:
+    path.insert(e.exprFieldName, 0)
+    e = e.exprFieldObj
+  while e != nil and e.kind == ekUnary and e.exprUnaryOp == tkStar:
+    e = e.exprUnaryOperand
+  if e != nil and e.kind == ekIdent and e.exprIdent == param and path.len > 0:
+    result = path
+
+proc scanExprParamMoves(e: Expr, param: string, paths: var HashSet[string], whole: var bool)
+proc scanBlockParamMoves(blk: Block, param: string, paths: var HashSet[string], whole: var bool)
+
+proc scanExprParamMoves(e: Expr, param: string, paths: var HashSet[string], whole: var bool) =
+  ## Detect ownership moves of pointee fields through pointer param `param`.
+  if e == nil or param.len == 0: return
+  case e.kind
+  of ekField:
+    let path = fieldPathFromParam(e, param)
+    if path.len > 0:
+      paths.incl(path.join("."))
+  of ekUnary:
+    if e.exprUnaryOp == tkStar and e.exprUnaryOperand != nil and
+       e.exprUnaryOperand.kind == ekIdent and
+       e.exprUnaryOperand.exprIdent == param:
+      whole = true
+    else:
+      scanExprParamMoves(e.exprUnaryOperand, param, paths, whole)
+  of ekStructInit:
+    for f in e.exprStructInitFields:
+      scanExprParamMoves(f.value, param, paths, whole)
+  of ekTuple:
+    for el in e.exprTupleElements:
+      scanExprParamMoves(el, param, paths, whole)
+  of ekCall:
+    if e.exprCallCallee != nil:
+      scanExprParamMoves(e.exprCallCallee, param, paths, whole)
+    for a in e.exprCallArgs:
+      scanExprParamMoves(a, param, paths, whole)
+  of ekBinary:
+    scanExprParamMoves(e.exprBinaryLeft, param, paths, whole)
+    scanExprParamMoves(e.exprBinaryRight, param, paths, whole)
+  of ekAssign:
+    # `let x = p.items` style via assign value
+    scanExprParamMoves(e.exprAssignValue, param, paths, whole)
+  of ekBlock:
+    if e.exprBlock != nil:
+      scanBlockParamMoves(e.exprBlock, param, paths, whole)
+  of ekCast:
+    scanExprParamMoves(e.exprCastOperand, param, paths, whole)
+  else:
+    discard
+
+proc scanStmtParamMoves(s: Stmt, param: string, paths: var HashSet[string], whole: var bool) =
+  if s == nil: return
+  case s.kind
+  of skReturn:
+    scanExprParamMoves(s.stmtReturnValue, param, paths, whole)
+  of skLet:
+    scanExprParamMoves(s.stmtLetInit, param, paths, whole)
+  of skExpr:
+    scanExprParamMoves(s.stmtExpr, param, paths, whole)
+  of skIf:
+    scanExprParamMoves(s.stmtIfCond, param, paths, whole)
+    if s.stmtIfThen != nil: scanBlockParamMoves(s.stmtIfThen, param, paths, whole)
+    if s.stmtIfElse != nil: scanBlockParamMoves(s.stmtIfElse, param, paths, whole)
+    for br in s.stmtIfElseIfs:
+      scanExprParamMoves(br.cond, param, paths, whole)
+      if br.blk != nil: scanBlockParamMoves(br.blk, param, paths, whole)
+  of skWhile:
+    scanExprParamMoves(s.stmtWhileCond, param, paths, whole)
+    if s.stmtWhileBody != nil: scanBlockParamMoves(s.stmtWhileBody, param, paths, whole)
+  of skFor:
+    scanExprParamMoves(s.stmtForIter, param, paths, whole)
+    if s.stmtForBody != nil: scanBlockParamMoves(s.stmtForBody, param, paths, whole)
+  of skMatch:
+    scanExprParamMoves(s.stmtMatchSubject, param, paths, whole)
+    for arm in s.stmtMatchArms:
+      if arm.body != nil:
+        scanExprParamMoves(arm.body, param, paths, whole)
+  else:
+    discard
+
+proc scanBlockParamMoves(blk: Block, param: string, paths: var HashSet[string], whole: var bool) =
+  if blk == nil: return
+  for st in blk.stmts:
+    scanStmtParamMoves(st, param, paths, whole)
+
+proc paramIsPointer(p: Param): bool =
+  ## True if the parameter type is a pointer (`*T` / `&T` / `own` pointer-ish).
+  if p.ptype == nil: return false
+  p.ptype.kind in {tekPointer, tekOwn}
+
+proc markCrossFuncPtrMoves(ctx: var LowerCtx, call: Expr) =
+  ## Session 76: `TakeItems(&bag)` where TakeItems moves `p.items` → mark bag.
+  if call == nil or call.kind != ekCall: return
+  var calleeName = ""
+  if call.exprCallCallee == nil: return
+  case call.exprCallCallee.kind
+  of ekIdent:
+    calleeName = call.exprCallCallee.exprIdent
+    if ctx.importTable.hasKey(calleeName):
+      calleeName = ctx.importTable[calleeName]
+  of ekPath:
+    calleeName = call.exprCallCallee.exprPath.join("_")
+  of ekGenericCall:
+    calleeName = call.exprCallCallee.exprGenericCallee
+  else:
+    return
+  if calleeName.len == 0: return
+  let sym = ctx.globalScope.lookup(calleeName)
+  if sym == nil or sym.decl == nil or sym.decl.kind != dkFunc: return
+  let decl = sym.decl
+  if decl.declFuncBody == nil: return
+  for i, arg in call.exprCallArgs:
+    if i >= decl.declFuncParams.len: break
+    let fp = decl.declFuncParams[i]
+    if not paramIsPointer(fp): continue
+    let owner = ctx.argAmpOwner(arg)
+    if owner.len == 0: continue
+    if not ctx.hasPendingDrop(owner): continue
+    var paths = initHashSet[string]()
+    var whole = false
+    scanBlockParamMoves(decl.declFuncBody, fp.name, paths, whole)
+    if not whole and paths.len == 0: continue
+    if whole:
+      ctx.markMovedOutLocal(owner)
+    else:
+      if not ctx.partialMovedFields.hasKey(owner):
+        ctx.partialMovedFields[owner] = initHashSet[string]()
+      for path in paths:
+        ctx.partialMovedFields[owner].incl(path)
+      ctx.markMovedOutLocal(owner)
 
 proc shouldSkipDrop(ctx: LowerCtx, dropNode: HirNode, skipName: string): bool =
   ## Skip Drop for explicit skipName or any moved-out local.
@@ -1461,6 +1627,8 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
       return hirBinary(expr.exprBinaryOp, left, right, typ, loc)
 
   of ekCall:
+    # Cross-function pointer ownership (before any lowering side effects)
+    ctx.markCrossFuncPtrMoves(expr)
     # Method call desugaring: obj.method(args) → Type_method(obj, args)
     if expr.exprCallCallee.kind == ekField:
       let methodName = expr.exprCallCallee.exprFieldName
@@ -2006,6 +2174,8 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
 
   case stmt.kind
   of skExpr:
+    if stmt.stmtExpr != nil:
+      ctx.markMovedOutFromAst(stmt.stmtExpr)
     return ctx.flushPending(ctx.lowerExpr(stmt.stmtExpr))
 
   of skLet:

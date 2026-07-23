@@ -63,12 +63,12 @@ module Handlers {
 
     pub func HandleApiHealth() -> HttpResponse {
         return Http_NewResponse(200, "application/json; charset=utf-8",
-        "{\"status\":\"ok\",\"server\":\"Nexus\",\"version\":\"0.3.0\"}");
+        "{\"status\":\"ok\",\"server\":\"Nexus\",\"version\":\"0.6.0\"}");
     }
 
     pub func HandleApiInfo() -> HttpResponse {
         return Http_NewResponse(200, "application/json; charset=utf-8",
-        "{\"name\":\"Nexus\",\"language\":\"Bux\",\"features\":[\"HTTP/1.1\",\"keep-alive\",\"thread-pool\",\"algebraic-enums\"]}");
+        "{\"name\":\"Nexus\",\"language\":\"Bux\",\"features\":[\"HTTP/1.1\",\"TLS\",\"mTLS\",\"keep-alive\",\"thread-pool\",\"graceful-stop\",\"access-log\",\"max-body\"]}");
     }
 
     pub func HandleWebSocketUpgrade(req: HttpRequest) -> HttpResponse {

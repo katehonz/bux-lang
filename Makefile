@@ -5,12 +5,12 @@ BUILD_DIR := build
 # Project-local nimcache so CI can cache compiles (default is ~/.cache/nim).
 NIMFLAGS ?= --nimcache:nimcache
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked ownership_release drop_early_return lifetime_elision ctfe async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field move_field_partial move_field_remaining move_field_nested move_field_ptr c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked ownership_release drop_early_return lifetime_elision ctfe ctfe_crc async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field move_field_partial move_field_remaining move_field_nested move_field_ptr move_cross_fn c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat macro_tt
 
 # Platform smoke (macOS CI): full EXAMPLES still runs on Linux.
-EXAMPLES_SMOKE := hello ownership ownership_release strings map move_field move_field_partial move_field_remaining move_field_nested move_field_ptr c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat
+EXAMPLES_SMOKE := hello ownership ownership_release strings map move_field move_field_partial move_field_remaining move_field_nested move_field_ptr move_cross_fn c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat macro_tt ctfe_crc
 
-.PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit ensure-buxc
+.PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit test-linux-targets ensure-buxc
 
 all: build
 
@@ -37,7 +37,7 @@ debug: dev
 	@echo "Debug binary: buxc_debug"
 
 # Full local / sequential suite (same coverage as split CI jobs combined).
-test: build fmt-check test-examples test-errors test-stdlib test-registry test-dwarf test-drop-move test-apps test-selfhost-smoke test-unit
+test: build fmt-check test-examples test-errors test-stdlib test-registry test-dwarf test-drop-move test-linux-targets test-apps test-selfhost-smoke test-unit
 
 # Nim unit tests + tiny CLI smoke (needs Nim + buxc).
 test-unit: ensure-buxc
@@ -264,6 +264,45 @@ test-dwarf: ensure-buxc
 	@echo "=== DWARF / #line smoke (E.4) ==="
 	@chmod +x tools/smoke_dwarf.sh
 	@tools/smoke_dwarf.sh
+
+# Session 75 — Linux / cloud / embedded: minimal runtime, static, aarch64 cross, CTFE CRC
+.PHONY: test-linux-targets
+test-linux-targets: ensure-buxc
+	@echo "=== Linux targets smoke (minimal / static / cross) ==="
+	@chmod +x tools/smoke_linux_targets.sh
+	@tools/smoke_linux_targets.sh
+
+# Session 78 — Nexus HTTPS (self-signed) smoke
+.PHONY: test-nexus-tls
+test-nexus-tls: ensure-buxc
+	@echo "=== Nexus TLS smoke ==="
+	@chmod +x tools/smoke_nexus_tls.sh
+	@tools/smoke_nexus_tls.sh
+
+# Session 79 — musl static (SKIP if no musl-gcc/zig)
+.PHONY: test-musl-static
+test-musl-static: ensure-buxc
+	@echo "=== musl static smoke ==="
+	@chmod +x tools/smoke_musl_static.sh
+	@tools/smoke_musl_static.sh
+
+# Session 80 — selfhost install --locked + Nexus mTLS
+.PHONY: test-selfhost-install test-nexus-mtls test-selfhost-registry
+test-selfhost-install: ensure-buxc selfhost
+	@echo "=== Selfhost install --locked ==="
+	@chmod +x tools/smoke_selfhost_install.sh
+	@tools/smoke_selfhost_install.sh
+
+test-nexus-mtls: ensure-buxc
+	@echo "=== Nexus mTLS smoke ==="
+	@chmod +x tools/smoke_nexus_mtls.sh
+	@tools/smoke_nexus_mtls.sh
+
+# Session 81 — selfhost full registry (search / add / HTTP)
+test-selfhost-registry: ensure-buxc selfhost
+	@echo "=== Selfhost registry ==="
+	@chmod +x tools/smoke_selfhost_registry.sh
+	@tools/smoke_selfhost_registry.sh
 
 # Drop / field-move goldens (whole + partial field move; early-return counts)
 .PHONY: test-drop-move

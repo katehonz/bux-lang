@@ -745,7 +745,20 @@ proc evalExpr(sema: Sema, expr: Expr, locals: Table[string, CtValue]): CtValue =
   of ekLiteral:
     case expr.exprLit.kind
     of tkIntLiteral:
-      return CtValue(kind: ctkInt, intVal: parseBiggestInt(expr.exprLit.text))
+      # Support 0x / 0b / 0o prefixes (parseBiggestInt is decimal-only).
+      let lit = expr.exprLit.text
+      try:
+        if lit.len >= 3 and lit[0] == '0':
+          let p = lit[1].toLowerAscii()
+          if p == 'x':
+            return CtValue(kind: ctkInt, intVal: BiggestInt(parseHexInt(lit[2 .. ^1])))
+          elif p == 'b':
+            return CtValue(kind: ctkInt, intVal: BiggestInt(parseBinInt(lit[2 .. ^1])))
+          elif p == 'o':
+            return CtValue(kind: ctkInt, intVal: BiggestInt(parseOctInt(lit[2 .. ^1])))
+        return CtValue(kind: ctkInt, intVal: parseBiggestInt(lit))
+      except ValueError:
+        return CtValue(kind: ctkVoid)
     of tkBoolLiteral:
       return CtValue(kind: ctkBool, boolVal: expr.exprLit.text == "true")
     of tkStringLiteral:
@@ -786,6 +799,12 @@ proc evalExpr(sema: Sema, expr: Expr, locals: Table[string, CtValue]): CtValue =
       of tkPercent:
         if right.intVal != 0:
           return CtValue(kind: ctkInt, intVal: left.intVal mod right.intVal)
+      # Bitwise (session 75 — embedded CRC / flag tables at compile time)
+      of tkCaret: return CtValue(kind: ctkInt, intVal: left.intVal xor right.intVal)
+      of tkAmp: return CtValue(kind: ctkInt, intVal: left.intVal and right.intVal)
+      of tkPipe: return CtValue(kind: ctkInt, intVal: left.intVal or right.intVal)
+      of tkShl: return CtValue(kind: ctkInt, intVal: left.intVal shl right.intVal)
+      of tkShr: return CtValue(kind: ctkInt, intVal: left.intVal shr right.intVal)
       of tkEq: return CtValue(kind: ctkBool, boolVal: left.intVal == right.intVal)
       of tkNe: return CtValue(kind: ctkBool, boolVal: left.intVal != right.intVal)
       of tkLt: return CtValue(kind: ctkBool, boolVal: left.intVal < right.intVal)

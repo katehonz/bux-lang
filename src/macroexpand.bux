@@ -449,12 +449,21 @@ module MacroExpand {
             e.macroPat = pat;
             return e;
         }
-        // expr / tt
+        // expr rejects stmt/pat wrappers
+        if String_Eq(kindStr, "expr") {
+            if aexp.kind == ekMacroStmt || aexp.kind == ekMacroPat { return null as *Expr; }
+            return aexp;
+        }
+        // tt — any single call-site AST fragment (session 76; raw token trees later)
+        if String_Eq(kindStr, "tt") {
+            return aexp;
+        }
+        // default: treat as expr
         if aexp.kind == ekMacroStmt || aexp.kind == ekMacroPat { return null as *Expr; }
         return aexp;
     }
 
-    // Fragment kind check: "ident" | "literal" | "block" | "stmt" | "pat" | expr|tt
+    // Fragment kind check: "ident" | "literal" | "block" | "stmt" | "pat" | "expr" | "tt"
     func Macro_FragMatches(kindStr: String, aexp: *Expr) -> bool {
         return Macro_CoerceArg(kindStr, aexp) != null as *Expr;
     }

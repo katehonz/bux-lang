@@ -1,12 +1,15 @@
-/* Bux Runtime — Windows / MinGW minimal build (session 71)
+/* Bux Runtime — minimal / embedded / static (session 75)
  *
- * No pthread, ucontext, BSD sockets, or OpenSSL. Enough for hello and
- * basic single-threaded programs. Advanced features return failure / no-op.
+ * Thin single-threaded runtime: no pthread, ucontext, BSD sockets, or OpenSSL.
+ * Enough for hello, CTFE tables, CLI tools, and static/container binaries.
+ * Advanced features (tasks, net, crypto) return failure / no-op.
  *
- * Linked with -ffunction-sections -fdata-sections -Wl,--gc-sections so
- * monomorphized stdlib in main.c that is never called is discarded.
+ * Select via: BUX_RUNTIME=minimal|thin|embed  (also default under --static)
+ * Windows CI still uses runtime_win.c (same feature set, Win32 ifdefs).
+ * Full POSIX + OpenSSL: rt/runtime.c (default on Unix).
  *
- * Unix full runtime remains rt/runtime.c (POSIX + OpenSSL).
+ * Link with -ffunction-sections -fdata-sections -Wl,--gc-sections so
+ * monomorphized stdlib that is never called is discarded.
  */
 
 #include <stdio.h>
@@ -471,6 +474,7 @@ int bux_chdir(const char* path) {
 }
 
 /* ── Time ─────────────────────────────────────────────────────────────── */
+/* Stop handlers — no-op stubs (no multi-threaded server on thin runtime) */
 void bux_install_stop_handlers(void) {}
 int bux_should_stop(void) { return 0; }
 void bux_set_stop_listen_fd(int fd) { (void)fd; }
@@ -580,6 +584,7 @@ BuxString bux_socket_recv(int fd, int max_len) {
 int bux_socket_close(int fd) { (void)fd; return -1; }
 const char* bux_socket_error(void) { return "sockets not available on this platform"; }
 
+/* TLS stubs (thin runtime has no OpenSSL) */
 void* bux_tls_server_ctx_ex(const char* cert, const char* key, const char* ca) {
     (void)cert; (void)key; (void)ca; return NULL;
 }
@@ -596,7 +601,7 @@ BuxString bux_tls_recv(void* ssl, int max_len) {
     BuxString s; s.data = NULL; s.len = 0; return s;
 }
 void bux_tls_close(void* ssl) { (void)ssl; }
-const char* bux_tls_error(void) { return "tls not available on this platform"; }
+const char* bux_tls_error(void) { return "tls not available on thin runtime"; }
 
 /* ── Crypto — stubs (no OpenSSL) ──────────────────────────────────────── */
 static void zero_out(unsigned char* out, int n) {

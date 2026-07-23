@@ -1517,6 +1517,41 @@ int64_t bux_time_ms(void) {
     return 0;
 }
 
+/* ============================================================================
+ * Cooperative process stop (SIGINT / SIGTERM) — cloud / container friendly
+ * ============================================================================ */
+static volatile sig_atomic_t g_bux_should_stop = 0;
+static int g_bux_stop_listen_fd = -1;
+
+static void bux_stop_signal_handler(int sig) {
+    (void)sig;
+    g_bux_should_stop = 1;
+    /* Unblock accept() so servers can drain and exit. */
+    if (g_bux_stop_listen_fd >= 0) {
+        int fd = g_bux_stop_listen_fd;
+        g_bux_stop_listen_fd = -1;
+        close(fd);
+    }
+}
+
+void bux_install_stop_handlers(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = bux_stop_signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+}
+
+int bux_should_stop(void) {
+    return g_bux_should_stop != 0;
+}
+
+void bux_set_stop_listen_fd(int fd) {
+    g_bux_stop_listen_fd = fd;
+}
+
 int64_t bux_time_us(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
@@ -1650,6 +1685,126 @@ int bux_socket_close(int fd) {
 
 const char* bux_socket_error(void) {
     return strerror(errno);
+}
+
+/* ============================================================================
+ * TLS server primitives (OpenSSL) — session 78
+ * opaque SSL_CTX* / SSL* as void*
+ * ============================================================================ */
+
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+static int g_bux_tls_inited = 0;
+
+static void bux_tls_ensure_init(void) {
+    if (g_bux_tls_inited) return;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+#else
+    OPENSSL_init_ssl(0, NULL);
+#endif
+    g_bux_tls_inited = 1;
+}
+
+/* Create a server SSL_CTX from PEM cert + key.
+ * If client_ca_path is non-empty, enable mTLS (require & verify client certs).
+ * Returns NULL on failure. */
+void* bux_tls_server_ctx_ex(const char* cert_path, const char* key_path,
+                            const char* client_ca_path) {
+    bux_tls_ensure_init();
+    if (!cert_path || !key_path || !cert_path[0] || !key_path[0]) return NULL;
+    const SSL_METHOD* method = TLS_server_method();
+    SSL_CTX* ctx = SSL_CTX_new(method);
+    if (!ctx) return NULL;
+    /* Prefer TLS 1.2+ */
+#ifdef TLS1_2_VERSION
+    SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+#endif
+    if (SSL_CTX_use_certificate_file(ctx, cert_path, SSL_FILETYPE_PEM) <= 0) {
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+    if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) <= 0) {
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+    if (!SSL_CTX_check_private_key(ctx)) {
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+    /* mTLS: trust client CA and require a client certificate (session 80). */
+    if (client_ca_path && client_ca_path[0]) {
+        if (SSL_CTX_load_verify_locations(ctx, client_ca_path, NULL) != 1) {
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+        SSL_CTX_set_verify(ctx,
+            SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+            NULL);
+        SSL_CTX_set_verify_depth(ctx, 4);
+    }
+    return (void*)ctx;
+}
+
+void* bux_tls_server_ctx(const char* cert_path, const char* key_path) {
+    return bux_tls_server_ctx_ex(cert_path, key_path, NULL);
+}
+
+void bux_tls_ctx_free(void* ctx) {
+    if (ctx) SSL_CTX_free((SSL_CTX*)ctx);
+}
+
+/* SSL_accept on an already-accepted TCP fd. Returns SSL* or NULL. Does not close fd. */
+void* bux_tls_accept(void* ctx, int fd) {
+    if (!ctx || fd < 0) return NULL;
+    SSL* ssl = SSL_new((SSL_CTX*)ctx);
+    if (!ssl) return NULL;
+    SSL_set_fd(ssl, fd);
+    if (SSL_accept(ssl) <= 0) {
+        SSL_free(ssl);
+        return NULL;
+    }
+    return (void*)ssl;
+}
+
+int bux_tls_send(void* ssl, const char* data, int len) {
+    if (!ssl || !data || len <= 0) return 0;
+    int n = SSL_write((SSL*)ssl, data, len);
+    return n;
+}
+
+BuxString bux_tls_recv(void* ssl, int max_len) {
+    BuxString result;
+    result.data = "";
+    result.len = 0;
+    if (!ssl || max_len <= 0) return result;
+    char* buf = (char*)bux_alloc((size_t)max_len + 1);
+    int n = SSL_read((SSL*)ssl, buf, max_len);
+    if (n <= 0) {
+        /* leave empty; caller sees EOF/error */
+        return result;
+    }
+    buf[n] = '\0';
+    result.data = buf;
+    result.len = (size_t)n;
+    return result;
+}
+
+/* Free SSL object only — TCP fd still owned by caller. */
+void bux_tls_close(void* ssl) {
+    if (!ssl) return;
+    SSL* s = (SSL*)ssl;
+    SSL_shutdown(s);
+    SSL_free(s);
+}
+
+const char* bux_tls_error(void) {
+    unsigned long e = ERR_get_error();
+    if (e == 0) return "tls error";
+    return ERR_reason_error_string(e);
 }
 
 /* ============================================================================

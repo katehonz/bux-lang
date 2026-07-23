@@ -171,14 +171,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc make binutils libssl-dev python3 gdb
+            gcc make binutils libssl-dev python3 gdb \
+            gcc-aarch64-linux-gnu
       - name: Download buxc
         uses: actions/download-artifact@v4
         with:
           name: buxc-linux
       - name: Prepare buxc
         run: chmod +x buxc && ./buxc --version
-      - name: errors + stdlib + registry + dwarf
+      - name: errors + stdlib + registry + dwarf + linux-targets
         env:
           BUX_SKIP_BUILD: "1"
         run: |
@@ -188,6 +189,7 @@ jobs:
           make test-registry BUX_SKIP_BUILD=1
           make test-dwarf BUX_SKIP_BUILD=1
           make test-drop-move BUX_SKIP_BUILD=1
+          make test-linux-targets BUX_SKIP_BUILD=1
 
   apps:
     name: apps
@@ -199,19 +201,22 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc make libssl-dev
+          sudo apt-get install -y --no-install-recommends \
+            gcc make libssl-dev openssl curl
       - name: Download buxc
         uses: actions/download-artifact@v4
         with:
           name: buxc-linux
       - name: Prepare buxc
         run: chmod +x buxc && ./buxc --version
-      - name: test-apps
+      - name: test-apps + nexus TLS/mTLS
         env:
           BUX_SKIP_BUILD: "1"
         run: |
           unset BUX_DEBUG_FILE || true
           make test-apps BUX_SKIP_BUILD=1
+          make test-nexus-tls BUX_SKIP_BUILD=1
+          make test-nexus-mtls BUX_SKIP_BUILD=1
 
   selfhost:
     name: selfhost smoke
@@ -223,7 +228,8 @@ jobs:
       - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc make libssl-dev
+          sudo apt-get install -y --no-install-recommends \
+            gcc make libssl-dev openssl curl
       - name: Download buxc
         uses: actions/download-artifact@v4
         with:
@@ -237,6 +243,13 @@ jobs:
           unset BUX_DEBUG_FILE || true
           unset BUX_SELFHOST_FIXED_POINT || true
           make test-selfhost-smoke BUX_SKIP_BUILD=1
+      - name: selfhost install + registry
+        env:
+          BUX_SKIP_BUILD: "1"
+        run: |
+          unset BUX_DEBUG_FILE || true
+          make test-selfhost-install BUX_SKIP_BUILD=1
+          make test-selfhost-registry BUX_SKIP_BUILD=1
       - name: Upload selfhost artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4

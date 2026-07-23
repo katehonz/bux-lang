@@ -1,0 +1,44 @@
+// Session 76 — `$x:tt` accepts any single call-site AST fragment
+// (expr, literal, ident, block, stmt wrapper, …). Broader than `:expr`.
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_Pass};
+
+// id_tt already existed in macro_repeat; here we also wrap blocks and stmts.
+macro! id_tt {
+    ( $x:tt ) => { $x }
+}
+
+macro! wrap_tt {
+    ( $x:tt ) => {
+        let v: int = $x;
+        v + 1
+    }
+}
+
+// stmt fragment via tt (call site parses `let …` as MacroStmt when using stmt kind;
+// with tt, expression form still works: wrap values)
+macro! twice_tt {
+    ( $x:tt ) => { $x + $x }
+}
+
+func Main() -> int {
+    let a: int = id_tt!(21);
+    PrintInt(a);
+    PrintLine("");
+    let b: int = wrap_tt!(10);
+    PrintInt(b);
+    PrintLine("");
+    let c: int = twice_tt!(3 + 4);
+    PrintInt(c);
+    PrintLine("");
+    let d: int = id_tt!({ 1 + 2 });
+    PrintInt(d);
+    PrintLine("");
+    if a != 21 || b != 11 || c != 14 || d != 3 {
+        PrintLine("FAIL macro_tt");
+        return 1;
+    }
+    PrintLine("PASS macro_tt");
+    Test_Pass("macro_tt");
+    return 0;
+}

@@ -15,6 +15,7 @@ module Cli {
     extern func bux_run_nim(nim_file: String, out_bin: String) -> int;
     extern func bux_list_dir(dir: String, ext: String, out_count: *int) -> *String;
     extern func bux_system(cmd: String) -> int;
+    extern func bux_process_output(cmd: String) -> String;
     extern func bux_getenv(name: String) -> String;
     extern func bux_setenv(name: String, value: String) -> int;
     extern func bux_cc_ld_stable() -> String;
@@ -35,6 +36,175 @@ module Cli {
 
     func DirExists(path: String) -> bool {
         return bux_dir_exists(path) != 0;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Link / runtime helpers (session 76 — selfhost parity with bootstrap 75)
+    // ---------------------------------------------------------------------------
+
+    func Cli_EnvTruthy(name: String) -> bool {
+        let v: String = bux_getenv(name);
+        if v == null as String { return false; }
+        if String_Eq(v, "1") { return true; }
+        if String_Eq(v, "true") { return true; }
+        if String_Eq(v, "yes") { return true; }
+        if String_Eq(v, "on") { return true; }
+        return false;
+    }
+
+    func Cli_RuntimeRel(isStatic: bool, targetTriple: String) -> String {
+        let env: String = bux_getenv("BUX_RUNTIME");
+        if env != null as String {
+            if String_Eq(env, "win") || String_Eq(env, "windows") {
+                return "rt/runtime_win.c";
+            }
+            if String_Eq(env, "minimal") || String_Eq(env, "thin") ||
+               String_Eq(env, "embed") || String_Eq(env, "embedded") ||
+               String_Eq(env, "freestanding") {
+                return "rt/runtime_minimal.c";
+            }
+            if String_Eq(env, "full") || String_Eq(env, "posix") {
+                return "rt/runtime.c";
+            }
+        }
+        if isStatic {
+            return "rt/runtime_minimal.c";
+        }
+        if targetTriple != null as String && !String_Eq(targetTriple, "") {
+            return "rt/runtime_minimal.c";
+        }
+        return "rt/runtime.c";
+    }
+
+    func Cli_IsThinRuntimePath(rtPath: String) -> bool {
+        if String_Contains(rtPath, "runtime_minimal.c") { return true; }
+        if String_Contains(rtPath, "runtime_win.c") { return true; }
+        return false;
+    }
+
+    func Cli_FindRtFile(projectDir: String, rel: String) -> String {
+        // Try projectDir/rel, then parent, then grandparent (selfhost build dirs).
+        var p: String = bux_path_join(projectDir, rel);
+        if FileExists(p) { return p; }
+        p = bux_path_join(projectDir, String_Concat("../", rel));
+        if FileExists(p) { return p; }
+        p = bux_path_join(projectDir, String_Concat("../../", rel));
+        if FileExists(p) { return p; }
+        // Next to stdlib: $BUX_STDLIB/../rt/...
+        let stdlib: String = bux_getenv("BUX_STDLIB");
+        if stdlib != null as String && !String_Eq(stdlib, "") {
+            p = bux_path_join(bux_path_parent(stdlib), rel);
+            if FileExists(p) { return p; }
+        }
+        // Also try finding lib/ next to project to infer repo root
+        let libBeside: String = Cli_FindStdlibDir(projectDir);
+        if !String_Eq(libBeside, "") {
+            p = bux_path_join(bux_path_parent(libBeside), rel);
+            if FileExists(p) { return p; }
+        }
+        // cwd-relative (single-file builds)
+        if FileExists(rel) { return rel; }
+        p = String_Concat("../", rel);
+        if FileExists(p) { return p; }
+        p = String_Concat("../../", rel);
+        if FileExists(p) { return p; }
+        return "";
+    }
+
+    func Cli_PickCc(targetTriple: String) -> String {
+        let envCc: String = bux_getenv("BUX_CC");
+        if envCc != null as String && !String_Eq(envCc, "") {
+            return envCc;
+        }
+        if targetTriple != null as String && !String_Eq(targetTriple, "") {
+            let tripleGcc: String = String_Concat(targetTriple, "-gcc");
+            let probe: String = String_Concat("command -v ", tripleGcc);
+            probe = String_Concat(probe, " >/dev/null 2>&1");
+            if bux_system(probe) == 0 {
+                return tripleGcc;
+            }
+            let probeClang: String = "command -v clang >/dev/null 2>&1";
+            if bux_system(probeClang) == 0 {
+                return "clang";
+            }
+            return tripleGcc;
+        }
+        return "cc";
+    }
+
+    func Cli_CcNeedsTargetFlag(ccBin: String) -> bool {
+        // clang needs -target; *-gcc is already a cross binary.
+        if String_Eq(ccBin, "clang") { return true; }
+        if String_Contains(ccBin, "clang-") { return true; }
+        if String_Contains(ccBin, "/clang") { return true; }
+        return false;
+    }
+
+    func Cli_LinkProgram(cFile: String, outBin: String, projectDir: String,
+                         targetTriple: String, isRelease: bool, isStatic: bool) -> int {
+        let relRt: String = Cli_RuntimeRel(isStatic, targetTriple);
+        let rtPath: String = Cli_FindRtFile(projectDir, relRt);
+        let ioPath: String = Cli_FindRtFile(projectDir, "rt/io.c");
+        if String_Eq(rtPath, "") {
+            Print("Error: runtime not found: ");
+            PrintLine(relRt);
+            return 1;
+        }
+        if String_Eq(ioPath, "") {
+            PrintLine("Error: rt/io.c not found");
+            return 1;
+        }
+
+        let thin: bool = Cli_IsThinRuntimePath(rtPath);
+        var optFlags: String = "-O0 -g";
+        if isRelease {
+            optFlags = "-O2 -DNDEBUG";
+        }
+        let extraCf: String = bux_getenv("BUX_CFLAGS");
+        if extraCf != null as String && !String_Eq(extraCf, "") {
+            optFlags = String_Concat(optFlags, " ");
+            optFlags = String_Concat(optFlags, extraCf);
+        }
+        if isStatic || Cli_EnvTruthy("BUX_STATIC") {
+            optFlags = String_Concat(optFlags, " -static");
+        }
+
+        let ccBin: String = Cli_PickCc(targetTriple);
+        var cmdBuf: StringBuilder = StringBuilder_NewCap(768);
+        StringBuilder_Append(&cmdBuf, ccBin);
+        StringBuilder_Append(&cmdBuf, " ");
+        StringBuilder_Append(&cmdBuf, optFlags);
+        if targetTriple != null as String && !String_Eq(targetTriple, "") {
+            if Cli_CcNeedsTargetFlag(ccBin) {
+                StringBuilder_Append(&cmdBuf, " -target ");
+                StringBuilder_Append(&cmdBuf, targetTriple);
+            }
+        }
+        if thin {
+            StringBuilder_Append(&cmdBuf, " -ffunction-sections -fdata-sections");
+        } else {
+            StringBuilder_Append(&cmdBuf, " -pthread");
+            StringBuilder_Append(&cmdBuf, bux_cc_ld_stable());
+        }
+        StringBuilder_Append(&cmdBuf, " -o ");
+        StringBuilder_Append(&cmdBuf, outBin);
+        StringBuilder_Append(&cmdBuf, " ");
+        StringBuilder_Append(&cmdBuf, cFile);
+        StringBuilder_Append(&cmdBuf, " ");
+        StringBuilder_Append(&cmdBuf, rtPath);
+        StringBuilder_Append(&cmdBuf, " ");
+        StringBuilder_Append(&cmdBuf, ioPath);
+        if thin {
+            StringBuilder_Append(&cmdBuf, " -Wl,--gc-sections -lm");
+        } else {
+            StringBuilder_Append(&cmdBuf, " -lm -lssl -lcrypto");
+        }
+        let ccRc: int = bux_system(StringBuilder_Build(&cmdBuf));
+        if ccRc != 0 {
+            PrintLine("Error: C compilation failed");
+            return 1;
+        }
+        return 0;
     }
 
     // ---------------------------------------------------------------------------
@@ -289,11 +459,11 @@ func Cli_Compile(source: String, sourceName: String, targetTriple: String) -> St
 // Build command
 // ---------------------------------------------------------------------------
 
-func Cli_Build(srcPath: String, outPath: String, targetTriple: String, isRelease: bool) -> int {
+func Cli_Build(srcPath: String, outPath: String, targetTriple: String, isRelease: bool, isStatic: bool) -> int {
     // If building the standard project entry point, use full project build
     // which merges stdlib and supports multi-file projects
     if String_Eq(srcPath, "src/Main.bux") || String_Eq(srcPath, "src/main.bux") {
-        let rc: int = Cli_BuildProject(".", targetTriple, isRelease);
+        let rc: int = Cli_BuildProject(".", targetTriple, isRelease, isStatic);
         if rc == 0 && !String_Eq(outPath, "build/main") {
             // Rename output if custom path was requested
             bux_system(String_Concat(String_Concat("mv build/main ", outPath), " 2>/dev/null || true"));
@@ -328,69 +498,10 @@ func Cli_Build(srcPath: String, outPath: String, targetTriple: String, isRelease
     Print("  → C written to ");
     PrintLine(cFile);
 
-    // Find runtime.c and io.c for linking (rt/ directory)
-    var rtPath: String = "rt/runtime.c";
-    var ioPath: String = "rt/io.c";
-    if !FileExists(rtPath) {
-        rtPath = "../rt/runtime.c";
-    }
-    if !FileExists(ioPath) {
-        ioPath = "../rt/io.c";
-    }
-    if !FileExists(rtPath) {
-        rtPath = "../../rt/runtime.c";
-    }
-    if !FileExists(ioPath) {
-        ioPath = "../../rt/io.c";
-    }
-
-    // Compile with cc or clang for cross-compilation
-    // Default: -O0 -g (debug, matches bootstrap). --release: -O2 -DNDEBUG.
     PrintLine("Compiling C...");
-    var cmdBuf: StringBuilder = StringBuilder_NewCap(512);
-    var optFlags: String = "-O0 -g";
-    if isRelease {
-        optFlags = "-O2 -DNDEBUG";
-    }
-    let extraCf: String = bux_getenv("BUX_CFLAGS");
-    if extraCf != null as String && !String_Eq(extraCf, "") {
-        optFlags = String_Concat(optFlags, " ");
-        optFlags = String_Concat(optFlags, extraCf);
-    }
-    if !String_Eq(targetTriple, "") {
-        StringBuilder_Append(&cmdBuf, "clang ");
-        StringBuilder_Append(&cmdBuf, optFlags);
-        StringBuilder_Append(&cmdBuf, " -pthread");
-        StringBuilder_Append(&cmdBuf, bux_cc_ld_stable());
-        StringBuilder_Append(&cmdBuf, " -target ");
-        StringBuilder_Append(&cmdBuf, targetTriple);
-        StringBuilder_Append(&cmdBuf, " ");
-    } else {
-        StringBuilder_Append(&cmdBuf, "cc ");
-        StringBuilder_Append(&cmdBuf, optFlags);
-        StringBuilder_Append(&cmdBuf, " -pthread");
-        StringBuilder_Append(&cmdBuf, bux_cc_ld_stable());
-        StringBuilder_Append(&cmdBuf, " ");
-    }
-    StringBuilder_Append(&cmdBuf, "-o ");
-    StringBuilder_Append(&cmdBuf, outPath);
-    StringBuilder_Append(&cmdBuf, " ");
-    StringBuilder_Append(&cmdBuf, cFile);
-    StringBuilder_Append(&cmdBuf, " ");
-    if FileExists(rtPath) {
-        StringBuilder_Append(&cmdBuf, rtPath);
-        StringBuilder_Append(&cmdBuf, " ");
-    }
-    if FileExists(ioPath) {
-        StringBuilder_Append(&cmdBuf, ioPath);
-        StringBuilder_Append(&cmdBuf, " ");
-    }
-    StringBuilder_Append(&cmdBuf, "-lm");
-    StringBuilder_Append(&cmdBuf, " -lcrypto");
-    let ccRc: int = bux_system(StringBuilder_Build(&cmdBuf));
-    if ccRc != 0 {
-        PrintLine("Error: C compilation failed");
-        return 1;
+    let linkRc: int = Cli_LinkProgram(cFile, outPath, ".", targetTriple, isRelease, isStatic);
+    if linkRc != 0 {
+        return linkRc;
     }
     Print("  → Binary: ");
     PrintLine(outPath);
@@ -923,6 +1034,40 @@ func Cli_Init() -> int {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Registry — search / add by name (session 81)
+// ---------------------------------------------------------------------------
+
+func Cli_Search(query: String) -> int {
+    let reg: Registry = Reg_FindIndex();
+    if String_Eq(reg.path, "") {
+        if !String_Eq(reg.sourceUrl, "") {
+            Print("Error: failed to fetch registry from ");
+            PrintLine(reg.sourceUrl);
+            PrintLine("hint: curl/wget + network, or BUX_REGISTRY=local file");
+        } else {
+            PrintLine("Error: no package registry (set BUX_REGISTRY or config/registry.toml)");
+        }
+        return 1;
+    }
+    if !String_Eq(reg.sourceUrl, "") {
+        Print("Registry: ");
+        PrintLine(reg.sourceUrl);
+        Print("  (cached: ");
+        Print(reg.path);
+        PrintLine(")");
+    } else {
+        Print("Registry: ");
+        PrintLine(reg.path);
+    }
+    let hits: int = Reg_Search(reg, query);
+    if hits == 0 {
+        PrintLine("No packages matched.");
+        return 1;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Add — add a dependency to bux.toml
 // ---------------------------------------------------------------------------
 
@@ -952,6 +1097,48 @@ func Cli_Add(pkgName: String, url: String) -> int {
     return 0;
 }
 
+/// Resolve package from registry index and add as path/git dep.
+func Cli_AddFromRegistry(pkgName: String, versionReq: String) -> int {
+    let reg: Registry = Reg_FindIndex();
+    if String_Eq(reg.path, "") {
+        if !String_Eq(reg.sourceUrl, "") {
+            Print("Error: failed to fetch registry from ");
+            PrintLine(reg.sourceUrl);
+        } else {
+            PrintLine("Error: no package registry (set BUX_REGISTRY)");
+        }
+        return 1;
+    }
+    let pkg: RegistryPackage = Reg_Lookup(reg, pkgName, versionReq);
+    if String_Eq(pkg.name, "") {
+        Print("Error: package '");
+        Print(pkgName);
+        PrintLine("' not found in registry");
+        PrintLine("hint: buxc search  |  buxc add name <url>");
+        return 1;
+    }
+    var url: String = pkg.source;
+    if !String_Eq(pkg.resolvedPath, "") {
+        url = pkg.resolvedPath;
+    }
+    if !String_Eq(reg.sourceUrl, "") {
+        Print("Resolved '");
+        Print(pkgName);
+        Print("' ");
+        Print(pkg.version);
+        Print(" from registry ");
+        PrintLine(reg.sourceUrl);
+    } else {
+        Print("Resolved '");
+        Print(pkgName);
+        Print("' ");
+        Print(pkg.version);
+        Print(" from registry ");
+        PrintLine(reg.path);
+    }
+    return Cli_Add(pkgName, url);
+}
+
 // ---------------------------------------------------------------------------
 // Remove — remove a dependency from bux.toml
 // ---------------------------------------------------------------------------
@@ -979,6 +1166,242 @@ func Cli_Remove(pkgName: String) -> int {
         return 1;
     }
     Print("Removed dependency: "); PrintLine(pkgName);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Package checksum (session 80 — selfhost install --locked parity)
+// ---------------------------------------------------------------------------
+
+func Cli_PackageChecksum(dir: String) -> String {
+    // Same idea as bootstrap: sha1 of sorted *.bux paths+contents via shell.
+    if String_Eq(dir, "") || !DirExists(dir) {
+        return "";
+    }
+    let cmd: String = String_Concat(
+        "find \"",
+        String_Concat(dir, "\" -name '*.bux' -type f 2>/dev/null | LC_ALL=C sort | xargs cat 2>/dev/null | sha1sum | awk '{print $1}'")
+    );
+    let out: String = bux_process_output(cmd);
+    if out == null as String { return ""; }
+    // trim trailing newline
+    var s: String = String_Trim(out);
+    return s;
+}
+
+func Cli_ShellQuote(s: String) -> String {
+    return String_Concat("\"", String_Concat(s, "\""));
+}
+
+func Cli_IsAbsPath(p: String) -> bool {
+    if String_Eq(p, "") { return false; }
+    if p[0] == 47 as char8 { return true; } // /
+    return false;
+}
+
+func Cli_DepResolvedPath(projectDir: String, depName: String, depUrl: String) -> String {
+    // Path dep: absolute or relative; git dep: deps/<name>
+    if Cli_IsAbsPath(depUrl) {
+        return depUrl;
+    }
+    if String_StartsWith(depUrl, "http://") || String_StartsWith(depUrl, "https://") ||
+       String_EndsWith(depUrl, ".git") {
+        return bux_path_join(bux_path_join(projectDir, "deps"), depName);
+    }
+    // relative path
+    return bux_path_join(projectDir, depUrl);
+}
+
+func Cli_InstallLocked(projectDir: String) -> int {
+    let lockPath: String = bux_path_join(projectDir, "bux.lock");
+    if !FileExists(lockPath) {
+        PrintLine("Error: install --locked: bux.lock missing (run install first)");
+        return 1;
+    }
+    let content: String = ReadFile(lockPath);
+    if content == null as String || String_Eq(content, "") {
+        PrintLine("Error: install --locked: empty lock");
+        return 1;
+    }
+    // Parse [[Package]] blocks: Name, Version, Source, Checksum
+    var name: String = "";
+    var version: String = "";
+    var source: String = "";
+    var checksum: String = "";
+    var verified: int = 0;
+    let nlines: uint = String_SplitCount(content, "\n");
+    var li: uint = 0;
+    while li <= nlines {
+        var line: String = "";
+        if li < nlines {
+            line = String_Trim(String_SplitPart(content, "\n", li));
+        }
+        let isEnd: bool = li == nlines;
+        let isNew: bool = String_StartsWith(line, "[[Package]]") || String_StartsWith(line, "[[package]]");
+        if (isNew || isEnd) && !String_Eq(name, "") {
+            // verify entry
+            var path: String = source;
+            if !Cli_IsAbsPath(path) && !String_StartsWith(path, "http") {
+                path = bux_path_join(projectDir, source);
+            }
+            if String_StartsWith(source, "http://") || String_StartsWith(source, "https://") ||
+               String_EndsWith(source, ".git") {
+                path = bux_path_join(bux_path_join(projectDir, "deps"), name);
+            }
+            if !DirExists(path) {
+                Print("Error: install --locked: missing ");
+                Print(name);
+                Print(" at ");
+                PrintLine(path);
+                return 1;
+            }
+            if !String_Eq(checksum, "") {
+                let got: String = Cli_PackageChecksum(path);
+                if !String_Eq(got, checksum) {
+                    Print("Error: install --locked: checksum mismatch for ");
+                    PrintLine(name);
+                    Print("  lock: "); PrintLine(checksum);
+                    Print("  got:  "); PrintLine(got);
+                    return 1;
+                }
+            }
+            Print("locked ok: ");
+            Print(name);
+            Print(" ");
+            PrintLine(version);
+            verified = verified + 1;
+            name = "";
+            version = "";
+            source = "";
+            checksum = "";
+        }
+        if isEnd { break; }
+        if isNew {
+            li = li + 1;
+            continue;
+        }
+        if String_StartsWith(line, "Name") || String_StartsWith(line, "name") {
+            // Name = "x"
+            let parts: uint = String_SplitCount(line, "\"");
+            if parts >= 2 {
+                name = String_SplitPart(line, "\"", 1);
+            }
+        } else if String_StartsWith(line, "Version") || String_StartsWith(line, "version") {
+            let parts: uint = String_SplitCount(line, "\"");
+            if parts >= 2 {
+                version = String_SplitPart(line, "\"", 1);
+            }
+        } else if String_StartsWith(line, "Source") || String_StartsWith(line, "source") {
+            let parts: uint = String_SplitCount(line, "\"");
+            if parts >= 2 {
+                source = String_SplitPart(line, "\"", 1);
+            }
+        } else if String_StartsWith(line, "Checksum") || String_StartsWith(line, "checksum") {
+            let parts: uint = String_SplitCount(line, "\"");
+            if parts >= 2 {
+                checksum = String_SplitPart(line, "\"", 1);
+            }
+        }
+        li = li + 1;
+    }
+    Print("install --locked: ");
+    PrintInt(verified as int64);
+    PrintLine(" package(s) verified");
+    return 0;
+}
+
+func Cli_Install(projectDir: String, lockedOnly: bool) -> int {
+    if lockedOnly {
+        return Cli_InstallLocked(projectDir);
+    }
+    let tomlPath: String = bux_path_join(projectDir, "bux.toml");
+    if !FileExists(tomlPath) {
+        PrintLine("Error: no bux.toml found");
+        return 1;
+    }
+    let man: Manifest = Manifest_Load(tomlPath);
+    if man.depCount == 0 {
+        // empty lock
+        discard WriteFile(bux_path_join(projectDir, "bux.lock"), "");
+        PrintLine("install: no dependencies (empty lock)");
+        return 0;
+    }
+    var sb: StringBuilder = StringBuilder_NewCap(1024);
+    var i: int = 0;
+    while i < man.depCount {
+        var depName: String = "";
+        var depUrl: String = "";
+        if i == 0 { depName = man.depName0; depUrl = man.depUrl0; }
+        else if i == 1 { depName = man.depName1; depUrl = man.depUrl1; }
+        else if i == 2 { depName = man.depName2; depUrl = man.depUrl2; }
+        else if i == 3 { depName = man.depName3; depUrl = man.depUrl3; }
+        else if i == 4 { depName = man.depName4; depUrl = man.depUrl4; }
+        else if i == 5 { depName = man.depName5; depUrl = man.depUrl5; }
+        else if i == 6 { depName = man.depName6; depUrl = man.depUrl6; }
+        else if i == 7 { depName = man.depName7; depUrl = man.depUrl7; }
+
+        // Fetch git deps into deps/<name> when missing
+        if String_StartsWith(depUrl, "http://") || String_StartsWith(depUrl, "https://") ||
+           String_EndsWith(depUrl, ".git") {
+            let depsDir: String = bux_path_join(projectDir, "deps");
+            discard bux_mkdir_if_needed(depsDir);
+            let depPath: String = bux_path_join(depsDir, depName);
+            if !DirExists(depPath) {
+                Print("Fetching "); Print(depName); Print(" from "); PrintLine(depUrl);
+                let cmd: String = String_Concat("git clone --quiet \"", String_Concat(depUrl, String_Concat("\" \"", String_Concat(depPath, "\""))));
+                if bux_system(cmd) != 0 {
+                    Print("Error: failed to fetch "); PrintLine(depName);
+                    return 1;
+                }
+            }
+        }
+
+        let path: String = Cli_DepResolvedPath(projectDir, depName, depUrl);
+        if !DirExists(path) {
+            Print("Error: dependency path missing: ");
+            PrintLine(path);
+            return 1;
+        }
+        var ver: String = "0.0.0";
+        let depToml: String = bux_path_join(path, "bux.toml");
+        if FileExists(depToml) {
+            let dm: Manifest = Manifest_Load(depToml);
+            if !String_Eq(dm.version, "") {
+                ver = dm.version;
+            }
+        }
+        let csum: String = Cli_PackageChecksum(path);
+        StringBuilder_Append(&sb, "[[Package]]\n");
+        StringBuilder_Append(&sb, "Name = \"");
+        StringBuilder_Append(&sb, depName);
+        StringBuilder_Append(&sb, "\"\n");
+        StringBuilder_Append(&sb, "Version = \"");
+        StringBuilder_Append(&sb, ver);
+        StringBuilder_Append(&sb, "\"\n");
+        StringBuilder_Append(&sb, "Source = \"");
+        StringBuilder_Append(&sb, path);
+        StringBuilder_Append(&sb, "\"\n");
+        if !String_Eq(csum, "") {
+            StringBuilder_Append(&sb, "Checksum = \"");
+            StringBuilder_Append(&sb, csum);
+            StringBuilder_Append(&sb, "\"\n");
+        }
+        StringBuilder_Append(&sb, "\n");
+        Print("Resolved ");
+        Print(depName);
+        Print(" ");
+        Print(ver);
+        Print(" → ");
+        PrintLine(path);
+        i = i + 1;
+    }
+    let lockPath: String = bux_path_join(projectDir, "bux.lock");
+    if !WriteFile(lockPath, StringBuilder_Build(&sb)) {
+        PrintLine("Error: cannot write bux.lock");
+        return 1;
+    }
+    Print("Generated ");
+    PrintLine(lockPath);
     return 0;
 }
 
@@ -1302,7 +1725,7 @@ func Cli_Test(projectDir: String, filter: String) -> int {
     // Without --filter, build and run the project's own Main first.
     // With --filter, only run matching tests/*.bux files.
     if String_Eq(filter, "") {
-        let mainRc: int = Cli_BuildProject(projectDir, "", false);
+        let mainRc: int = Cli_BuildProject(projectDir, "", false, false);
         if mainRc != 0 {
             PrintLine("Main test build failed");
             return mainRc;
@@ -1419,7 +1842,7 @@ func Cli_Test(projectDir: String, filter: String) -> int {
             }
         }
 
-        let buildRc: int = Cli_BuildProject(tmpDir, "", false);
+        let buildRc: int = Cli_BuildProject(tmpDir, "", false, false);
         if buildRc != 0 {
             PrintLine("FAIL │");
             failed = failed + 1;
@@ -1467,7 +1890,7 @@ func Cli_Test(projectDir: String, filter: String) -> int {
     return 0;
 }
 
-func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool) -> int {
+func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool, isStatic: bool) -> int {
     let man: Manifest = Manifest_Load(bux_path_join(projectDir, "bux.toml"));
     var outName: String = man.name;
     if String_Eq(outName, "") {
@@ -1629,27 +2052,37 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
         PrintLine("");
     }
 
-    // Merge dependency declarations (deps shadow stdlib, user shadows deps)
+    // Merge dependency declarations (path or deps/<name>; shadow stdlib)
     if man.depCount > 0 {
-        let depsDir: String = bux_path_join(projectDir, "deps");
         var di: int = 0;
         while di < man.depCount {
             var depName: String = "";
-            if di == 0 { depName = man.depName0; }
-            else if di == 1 { depName = man.depName1; }
-            else if di == 2 { depName = man.depName2; }
-            else if di == 3 { depName = man.depName3; }
-            else if di == 4 { depName = man.depName4; }
-            else if di == 5 { depName = man.depName5; }
-            else if di == 6 { depName = man.depName6; }
-            else if di == 7 { depName = man.depName7; }
-            let depSrcDir: String = bux_path_join(bux_path_join(depsDir, depName), "src");
+            var depUrl: String = "";
+            if di == 0 { depName = man.depName0; depUrl = man.depUrl0; }
+            else if di == 1 { depName = man.depName1; depUrl = man.depUrl1; }
+            else if di == 2 { depName = man.depName2; depUrl = man.depUrl2; }
+            else if di == 3 { depName = man.depName3; depUrl = man.depUrl3; }
+            else if di == 4 { depName = man.depName4; depUrl = man.depUrl4; }
+            else if di == 5 { depName = man.depName5; depUrl = man.depUrl5; }
+            else if di == 6 { depName = man.depName6; depUrl = man.depUrl6; }
+            else if di == 7 { depName = man.depName7; depUrl = man.depUrl7; }
+            // Prefer resolved path (absolute / relative / deps/<name>)
+            let depRoot: String = Cli_DepResolvedPath(projectDir, depName, depUrl);
+            var depSrcDir: String = bux_path_join(depRoot, "src");
+            if !DirExists(depSrcDir) {
+                // package root may be the src tree itself
+                if DirExists(depRoot) {
+                    depSrcDir = depRoot;
+                }
+            }
             if DirExists(depSrcDir) {
                 var depFileCount: int = 0;
                 let depFiles: *String = bux_list_dir(depSrcDir, ".bux", &depFileCount);
                 if depFileCount > 0 {
                     Print("Merging dependency: ");
                     PrintLine(depName);
+                    Print("  from ");
+                    PrintLine(depSrcDir);
                     var dfi: int = 0;
                     while dfi < depFileCount {
                         Print("  Merging ");
@@ -1661,6 +2094,9 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
                         dfi = dfi + 1;
                     }
                 }
+            } else {
+                Print("WARN: dependency sources not found for ");
+                PrintLine(depName);
             }
             di = di + 1;
         }
@@ -1742,69 +2178,11 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
     Print("C code written to ");
     PrintLine(cFile);
 
-    // Find runtime.c and io.c (look in rt/ directory)
-    var rtPath: String = bux_path_join(projectDir, "rt/runtime.c");
-    var ioPath: String = bux_path_join(projectDir, "rt/io.c");
-    if !FileExists(rtPath) {
-        rtPath = bux_path_join(projectDir, "../rt/runtime.c");
-    }
-    if !FileExists(ioPath) {
-        ioPath = bux_path_join(projectDir, "../rt/io.c");
-    }
-    if !FileExists(rtPath) {
-        rtPath = bux_path_join(projectDir, "../../rt/runtime.c");
-    }
-    if !FileExists(ioPath) {
-        ioPath = bux_path_join(projectDir, "../../rt/io.c");
-    }
-
-    // Compile with cc — default debug (-O0 -g); --release → -O2 -DNDEBUG
     PrintLine("Compiling C...");
     let outBin: String = bux_path_join(buildDir, outName);
-    var ccBuf: StringBuilder = StringBuilder_NewCap(512);
-    var optFlags2: String = "-O0 -g";
-    if isRelease {
-        optFlags2 = "-O2 -DNDEBUG";
-    }
-    let extraCf2: String = bux_getenv("BUX_CFLAGS");
-    if extraCf2 != null as String && !String_Eq(extraCf2, "") {
-        optFlags2 = String_Concat(optFlags2, " ");
-        optFlags2 = String_Concat(optFlags2, extraCf2);
-    }
-    if !String_Eq(targetTriple, "") {
-        StringBuilder_Append(&ccBuf, "clang ");
-        StringBuilder_Append(&ccBuf, optFlags2);
-        StringBuilder_Append(&ccBuf, " -pthread");
-        StringBuilder_Append(&ccBuf, bux_cc_ld_stable());
-        StringBuilder_Append(&ccBuf, " -target ");
-        StringBuilder_Append(&ccBuf, targetTriple);
-        StringBuilder_Append(&ccBuf, " ");
-    } else {
-        StringBuilder_Append(&ccBuf, "cc ");
-        StringBuilder_Append(&ccBuf, optFlags2);
-        StringBuilder_Append(&ccBuf, " -pthread");
-        StringBuilder_Append(&ccBuf, bux_cc_ld_stable());
-        StringBuilder_Append(&ccBuf, " ");
-    }
-    StringBuilder_Append(&ccBuf, "-o ");
-    StringBuilder_Append(&ccBuf, outBin);
-    StringBuilder_Append(&ccBuf, " ");
-    StringBuilder_Append(&ccBuf, cFile);
-    StringBuilder_Append(&ccBuf, " ");
-    if FileExists(rtPath) {
-        StringBuilder_Append(&ccBuf, rtPath);
-        StringBuilder_Append(&ccBuf, " ");
-    }
-    if FileExists(ioPath) {
-        StringBuilder_Append(&ccBuf, ioPath);
-        StringBuilder_Append(&ccBuf, " ");
-    }
-    StringBuilder_Append(&ccBuf, "-lm");
-    StringBuilder_Append(&ccBuf, " -lcrypto");
-    let ccRc: int = bux_system(StringBuilder_Build(&ccBuf));
-    if ccRc != 0 {
-        PrintLine("Error: C compilation failed");
-        return 1;
+    let linkRc2: int = Cli_LinkProgram(cFile, outBin, projectDir, targetTriple, isRelease, isStatic);
+    if linkRc2 != 0 {
+        return linkRc2;
     }
 
     Print("Build successful: ");
@@ -1816,8 +2194,8 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool)
 // Run command — build project and execute
 // ---------------------------------------------------------------------------
 
-func Cli_RunProject(projectDir: String, targetTriple: String, isRelease: bool) -> int {
-    let rc: int = Cli_BuildProject(projectDir, targetTriple, isRelease);
+func Cli_RunProject(projectDir: String, targetTriple: String, isRelease: bool, isStatic: bool) -> int {
+    let rc: int = Cli_BuildProject(projectDir, targetTriple, isRelease, isStatic);
     if rc != 0 {
         return rc;
     }
@@ -1837,9 +2215,10 @@ func Cli_RunProject(projectDir: String, targetTriple: String, isRelease: bool) -
 // ---------------------------------------------------------------------------
 
 func Cli_Run(args: *String, argCount: int) -> int {
-    /* Scan for --target and --release flags before processing command */
+    /* Scan for --target / --release / --static before processing command */
     var targetTriple: String = "";
     var isRelease: bool = false;
+    var isStatic: bool = Cli_EnvTruthy("BUX_STATIC");
     var ai: int = 1;
     while ai < argCount {
         if String_Eq(args[ai], "--target") && ai + 1 < argCount {
@@ -1854,7 +2233,15 @@ func Cli_Run(args: *String, argCount: int) -> int {
             ai = ai - 1;
         } else if String_Eq(args[ai], "--release") {
             isRelease = true;
-            /* Remove --release from args by shifting */
+            var j: int = ai;
+            while j + 1 < argCount {
+                args[j] = args[j + 1];
+                j = j + 1;
+            }
+            argCount = argCount - 1;
+            ai = ai - 1;
+        } else if String_Eq(args[ai], "--static") {
+            isStatic = true;
             var j: int = ai;
             while j + 1 < argCount {
                 args[j] = args[j + 1];
@@ -1869,12 +2256,17 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if argCount < 2 {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, doc, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, add, remove, fetch, install, search, fmt, doc, test, run, project, help, version");
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
+        PrintLine("  search [query]         Search package registry");
+        PrintLine("  install [--locked]     Write/verify bux.lock (checksums)");
+        PrintLine("  add <name> [ver|url]   Registry resolve or explicit source");
         PrintLine("  fmt  --check [path]    Exit 1 if any file would be reformatted (CI)");
         PrintLine("  doc  --out file.md [path]  API docs from /// comments");
         PrintLine("  --release              Optimize (-O2 -DNDEBUG); default is -O0 -g");
-        PrintLine("  BUX_CFLAGS             Extra flags appended to cc");
+        PrintLine("  --static               Fully-static link (minimal runtime)");
+        PrintLine("  --target <triple>      Cross-compile (e.g. aarch64-linux-gnu)");
+        PrintLine("  BUX_CFLAGS / BUX_CC / BUX_RUNTIME / BUX_STATIC / BUX_REGISTRY");
         return 0;
     }
 
@@ -1887,12 +2279,17 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
         PrintLine("Bux Self-Hosting Compiler v0.2.0");
         PrintLine("Usage: buxc <command> [args]");
-        PrintLine("Commands: build, check, new, init, add, remove, fetch, fmt, doc, test, run, project, help, version");
+        PrintLine("Commands: build, check, new, init, add, remove, fetch, install, search, fmt, doc, test, run, project, help, version");
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
+        PrintLine("  search [query]         Search package registry");
+        PrintLine("  install [--locked]     Write/verify bux.lock (checksums)");
+        PrintLine("  add <name> [ver|url]   Registry resolve or explicit source");
         PrintLine("  fmt  --check [path]    Exit 1 if any file would be reformatted (CI)");
         PrintLine("  doc  --out file.md [path]  API docs from /// comments");
         PrintLine("  --release              Optimize (-O2 -DNDEBUG); default is -O0 -g");
-        PrintLine("  BUX_CFLAGS             Extra flags appended to cc");
+        PrintLine("  --static               Fully-static link (minimal runtime)");
+        PrintLine("  --target <triple>      Cross-compile (e.g. aarch64-linux-gnu)");
+        PrintLine("  BUX_CFLAGS / BUX_CC / BUX_RUNTIME / BUX_STATIC / BUX_REGISTRY");
         PrintLine("Pipeline modules:");
         PrintLine("  Lexer      ✅");
         PrintLine("  Parser     ✅");
@@ -1914,12 +2311,31 @@ func Cli_Run(args: *String, argCount: int) -> int {
         return Cli_Init();
     }
 
+    if String_Eq(cmd, "search") {
+        var query: String = "";
+        if argCount >= 3 {
+            query = args[2];
+        }
+        return Cli_Search(query);
+    }
+
     if String_Eq(cmd, "add") {
-        if argCount < 4 {
-            PrintLine("Usage: buxc add <name> <url>");
+        if argCount < 3 {
+            PrintLine("Usage: buxc add <name> [version|url]");
+            PrintLine("  buxc add greet           # resolve from registry");
+            PrintLine("  buxc add greet 0.1.1     # registry version");
+            PrintLine("  buxc add greet /path/or/git-url");
             return 1;
         }
-        return Cli_Add(args[2], args[3]);
+        if argCount >= 4 {
+            let a3: String = args[3];
+            if !String_Contains(a3, "/") && !String_StartsWith(a3, "http") &&
+               !String_EndsWith(a3, ".git") {
+                return Cli_AddFromRegistry(args[2], a3);
+            }
+            return Cli_Add(args[2], a3);
+        }
+        return Cli_AddFromRegistry(args[2], "*");
     }
 
     if String_Eq(cmd, "remove") {
@@ -1932,6 +2348,21 @@ func Cli_Run(args: *String, argCount: int) -> int {
 
     if String_Eq(cmd, "fetch") {
         return Cli_Fetch();
+    }
+
+    if String_Eq(cmd, "install") {
+        var lockedOnly: bool = false;
+        var dir: String = ".";
+        var ii: int = 2;
+        while ii < argCount {
+            if String_Eq(args[ii], "--locked") {
+                lockedOnly = true;
+            } else if !String_StartsWith(args[ii], "-") {
+                dir = args[ii];
+            }
+            ii = ii + 1;
+        }
+        return Cli_Install(dir, lockedOnly);
     }
 
     if String_Eq(cmd, "fmt") {
@@ -1980,13 +2411,13 @@ func Cli_Run(args: *String, argCount: int) -> int {
         let out: String = "build/main";
         if argCount >= 3 { src = args[2]; }
         if argCount >= 4 { out = args[3]; }
-        return Cli_Build(src, out, targetTriple, isRelease);
+        return Cli_Build(src, out, targetTriple, isRelease, isStatic);
     }
 
     if String_Eq(cmd, "project") {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
-        return Cli_BuildProject(dir, targetTriple, isRelease);
+        return Cli_BuildProject(dir, targetTriple, isRelease, isStatic);
     }
 
     if String_Eq(cmd, "test") {
@@ -2011,7 +2442,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     if String_Eq(cmd, "run") {
         let dir: String = ".";
         if argCount >= 3 { dir = args[2]; }
-        return Cli_RunProject(dir, targetTriple, isRelease);
+        return Cli_RunProject(dir, targetTriple, isRelease, isStatic);
     }
 
     Print("Unknown command: ");

@@ -16,7 +16,11 @@ Nexus is a from-scratch web server that demonstrates Bux's systems-programming c
 | **WebSocket** | RFC 6455 upgrade handshake detection, `Sec-WebSocket-Key` extraction |
 | **Static files** | Serves from `public/` with MIME-type detection for 20+ file types, directory-traversal protection |
 | **JSON API** | Built-in `/api/health` and `/api/info` endpoints |
-| **Logging** | Per-request structured logging (method, path, status code) |
+| **Logging** | Access log: `METHOD path status duration_ms` (`NEXUS_ACCESS_LOG=0` to disable) |
+| **Limits** | `NEXUS_MAX_BODY` (default 1 MiB) → HTTP 413 when exceeded |
+| **Graceful stop** | SIGINT/SIGTERM: close listen fd, poison workers, exit 0 |
+| **TLS / HTTPS** | OpenSSL server mode via `NEXUS_TLS=1` + PEM cert/key |
+| **mTLS** | `NEXUS_TLS_CLIENT_CA` PEM → require client certificates |
 
 ## Quick Start
 
@@ -34,10 +38,32 @@ cd apps/nexus
 ./nexus
 
 # Optional env (also used by `make bench-nexus`)
-# NEXUS_PORT=18080 NEXUS_BIND=127.0.0.1 NEXUS_WORKERS=4 ./build/nexus
+# NEXUS_PORT=18080 NEXUS_BIND=127.0.0.1 NEXUS_WORKERS=4 \
+# NEXUS_MAX_BODY=1048576 NEXUS_ACCESS_LOG=1 ./build/nexus
+
+# HTTPS (self-signed example)
+# openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365 -subj /CN=localhost
+# NEXUS_TLS=1 NEXUS_TLS_CERT=cert.pem NEXUS_TLS_KEY=key.pem NEXUS_PORT=8443 ./build/nexus
+# curl -k https://127.0.0.1:8443/api/health
+
+# mTLS (require client cert signed by CA)
+# NEXUS_TLS_CLIENT_CA=ca.pem NEXUS_TLS=1 NEXUS_TLS_CERT=server.pem NEXUS_TLS_KEY=server.key …
+# curl --cert client.pem --key client.key --cacert ca.pem https://…
 ```
 
-Server starts on `http://0.0.0.0:8080` (override with `NEXUS_PORT` / `NEXUS_BIND`):
+Server starts on `http://0.0.0.0:8080` (or `https://` when TLS is enabled).
+Stop with **Ctrl+C** or `kill -TERM` (graceful: workers drained via poison pills).
+
+Smoke: `make test-nexus-tls` (self-signed cert + curl -k).
+
+### Docker
+
+```bash
+# Full Nexus (needs libssl3)
+../../buxc --release build   # from apps/nexus
+docker build -f ../../examples/docker/Dockerfile.nexus -t bux-nexus ../..
+docker run --rm -p 8080:8080 bux-nexus
+```
 
 ```
 ╔══════════════════════════════════════════════╗

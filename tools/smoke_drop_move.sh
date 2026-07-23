@@ -150,6 +150,36 @@ if ! sed -n '/^Array_int TakeViaPtr/,/^}/p' "$TMP/mptr/build/main.c" | grep -q '
 fi
 echo "  move_field_ptr: PASS (run + no Bag_Drop + Tracked_Drop remaining)"
 
+# --- cross-function pointer ownership TakeItems(&bag) ---
+echo "=== smoke: move_cross_fn ==="
+mkdir -p "$TMP/mcf/src"
+cp -a "$ROOT/rt" "$TMP/mcf/"
+cat > "$TMP/mcf/bux.toml" <<'EOF'
+[Package]
+Name    = "move_cross_fn"
+Version = "0.1.0"
+Type    = "bin"
+
+[Build]
+Output = "Bin"
+EOF
+cp "$ROOT/examples/move_cross_fn.bux" "$TMP/mcf/src/Main.bux"
+out=$(cd "$TMP/mcf" && "$BUXC" run .)
+echo "$out" | grep -q 'cross_fn_drops=2'
+echo "$out" | grep -q 'PASS'
+# CallTakeItems must Tracked_Drop remaining tag, not Bag_Drop (would free moved items)
+if sed -n '/^int CallTakeItems/,/^}/p' "$TMP/mcf/build/main.c" | grep -q 'Bag_Drop'; then
+  echo "error: CallTakeItems still Bag_Drops after TakeItems(&bag)" >&2
+  sed -n '/^int CallTakeItems/,/^}/p' "$TMP/mcf/build/main.c"
+  exit 1
+fi
+if ! sed -n '/^int CallTakeItems/,/^}/p' "$TMP/mcf/build/main.c" | grep -q 'Tracked_Drop'; then
+  echo "error: CallTakeItems missing Tracked_Drop for remaining tag" >&2
+  sed -n '/^int CallTakeItems/,/^}/p' "$TMP/mcf/build/main.c"
+  exit 1
+fi
+echo "  move_cross_fn: PASS (run + no Bag_Drop + Tracked_Drop remaining)"
+
 # --- early return Drop counts ---
 echo "=== smoke: drop_early_return ==="
 mkdir -p "$TMP/de/src"
@@ -168,4 +198,4 @@ out=$(cd "$TMP/de" && "$BUXC" run .)
 echo "$out" | grep -q 'PASS'
 echo "  drop_early_return: PASS"
 
-echo "PASS: smoke_drop_move (field-move + partial + remaining + nested + ptr + early-return)"
+echo "PASS: smoke_drop_move (field-move + partial + remaining + nested + ptr + cross-fn + early-return)"

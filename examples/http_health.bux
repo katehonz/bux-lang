@@ -1,0 +1,78 @@
+// Session 78 — tiny health HTTP server for containers / ops probes.
+// Needs full POSIX runtime (sockets). Not TLS — use Nexus for HTTPS.
+import Std::Io::{Print, PrintLine, PrintInt};
+import Std::Net::{Net_Create, Net_SetReuse, Net_Bind, Net_Listen, Net_Accept, Net_Send, Net_Recv, Net_Close};
+import Std::String::{String_Len, String_Contains, String_FromInt, String_Concat, String_ToInt};
+import Std::Os::{Os_GetEnv, Os_InstallStopHandlers, Os_ShouldStop, Os_SetStopListenFd};
+
+func HealthBody() -> String {
+    return "{\"status\":\"ok\",\"server\":\"bux-health\",\"version\":\"0.1.0\"}\n";
+}
+
+func BuildHttp(body: String) -> String {
+    let n: int = String_Len(body) as int;
+    return String_Concat(
+        String_Concat(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ",
+            String_FromInt(n as int64)
+        ),
+        String_Concat("\r\nConnection: close\r\n\r\n", body)
+    );
+}
+
+func Main() -> int {
+    var port: int = 8080;
+    let pe: String = Os_GetEnv("HEALTH_PORT");
+    if String_Len(pe) > 0 {
+        let p: int64 = String_ToInt(pe);
+        if p > 0 && p < 65536 {
+            port = p as int;
+        }
+    }
+    var bind: String = "0.0.0.0";
+    let bindEnv: String = Os_GetEnv("HEALTH_BIND");
+    if String_Len(bindEnv) > 0 {
+        bind = bindEnv;
+    }
+
+    Os_InstallStopHandlers();
+    let fd: int = Net_Create();
+    if fd < 0 {
+        PrintLine("socket failed");
+        return 1;
+    }
+    discard Net_SetReuse(fd);
+    if !Net_Bind(fd, bind, port) {
+        PrintLine("bind failed");
+        return 1;
+    }
+    if !Net_Listen(fd, 64) {
+        PrintLine("listen failed");
+        return 1;
+    }
+    Os_SetStopListenFd(fd);
+    Print("health listening on http://");
+    Print(bind);
+    Print(":");
+    PrintInt(port);
+    PrintLine("");
+
+    let body: String = HealthBody();
+    let resp: String = BuildHttp(body);
+
+    while !Os_ShouldStop() {
+        let c: int = Net_Accept(fd);
+        if c < 0 {
+            if Os_ShouldStop() { break; }
+            continue;
+        }
+        let raw: String = Net_Recv(c, 4096);
+        if String_Contains(raw, "GET ") {
+            discard Net_Send(c, resp);
+        }
+        Net_Close(c);
+    }
+    Net_Close(fd);
+    PrintLine("health: stopped");
+    return 0;
+}

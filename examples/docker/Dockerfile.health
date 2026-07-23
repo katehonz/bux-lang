@@ -1,0 +1,18 @@
+# Session 78 — minimal health probe image (dynamic glibc + no OpenSSL needed if
+# linked without crypto... full runtime still needs libcrypto today).
+#
+# Build binary first:
+#   ./tools/build_health_bin.sh
+#   docker build -f examples/docker/Dockerfile.health -t bux-health .
+#   docker run --rm -p 8080:8080 bux-health
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY build/http_health /app/http_health
+ENV HEALTH_BIND=0.0.0.0
+ENV HEALTH_PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["/app/http_health"]

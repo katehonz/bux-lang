@@ -1006,8 +1006,15 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
       let pat = exprToPattern(arg)
       if pat == nil: return nil
       return Expr(kind: ekMacroPat, loc: arg.loc, exprMacroPat: pat)
-    of mfkExpr, mfkTt:
+    of mfkExpr:
       if arg.kind in {ekMacroStmt, ekMacroPat}: return nil
+      return arg
+    of mfkTt:
+      # Session 76: token-tree is a *superset* of expr — any single
+      # well-formed AST fragment the call parser already produced:
+      # expr, block, ident, literal, path, call, stmt, or pat wrapper.
+      # (True delimiter-balanced raw tokens remain future work.)
+      if arg == nil: return nil
       return arg
 
   proc fragMatches(k: MacroFragKind, arg: Expr): bool =

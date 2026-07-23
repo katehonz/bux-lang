@@ -1,0 +1,20 @@
+# Session 75 — fully-static Bux binary in a distroless/scratch container.
+#
+# Build (from repo root):
+#   # 1) produce a static host binary with the bootstrap compiler
+#   ./buxc --static --release build /path/to/pkg
+#   # or use the helper:
+#   ./tools/build_static_hello.sh
+#
+#   # 2) package it
+#   docker build -f examples/docker/Dockerfile.static \
+#     --build-arg BIN=build/hello_static \
+#     -t bux-hello-static .
+#
+# Run:
+#   docker run --rm bux-hello-static
+
+ARG BIN=build/hello_static
+FROM scratch
+COPY ${BIN} /app
+ENTRYPOINT ["/app"]

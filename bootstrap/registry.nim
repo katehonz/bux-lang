@@ -44,12 +44,13 @@ proc resolvePackageSource(pkg: var RegistryPackage, indexDir: string) =
       p = p[2 .. ^1]
     if not p.isAbsolute:
       p = indexDir / p
-    pkg.resolvedPath = p.absolutePath
+    # Collapse ../ segments for cleaner lockfiles (session 82)
+    pkg.resolvedPath = expandFilename(p)
   elif pkg.source.startsWith("path:"):
     var p = pkg.source["path:".len .. ^1]
     if not p.isAbsolute:
       p = indexDir / p
-    pkg.resolvedPath = p.absolutePath
+    pkg.resolvedPath = expandFilename(p)
     pkg.source = "file:" & pkg.resolvedPath
 
 proc parseRegistryToml(content, indexPath: string): seq[RegistryPackage] =
@@ -115,14 +116,18 @@ proc fetchRegistryUrl*(url: string): string =
   if not force and fileExists(cachePath) and cachedUrl == url:
     return cachePath.absolutePath
 
-  # Prefer curl; fall back to wget
+  # Prefer curl; fall back to wget.
+  # BUX_REGISTRY_INSECURE=1 → allow self-signed HTTPS (dev / smoke only).
+  let insecure = getEnv("BUX_REGISTRY_INSECURE").len > 0
   var ok = false
   if findExe("curl").len > 0:
-    let cmd = &"curl -fsSL --max-time 30 -o {quoteShell(cachePath)} {quoteShell(url)}"
+    let kflag = if insecure: " -k" else: ""
+    let cmd = &"curl -fsSL{kflag} --max-time 30 -o {quoteShell(cachePath)} {quoteShell(url)}"
     let (_, code) = execCmdEx(cmd)
     ok = code == 0 and fileExists(cachePath) and getFileSize(cachePath) > 0
   elif findExe("wget").len > 0:
-    let cmd = &"wget -q -T 30 -O {quoteShell(cachePath)} {quoteShell(url)}"
+    let nflag = if insecure: " --no-check-certificate" else: ""
+    let cmd = &"wget -q{nflag} -T 30 -O {quoteShell(cachePath)} {quoteShell(url)}"
     let (_, code) = execCmdEx(cmd)
     ok = code == 0 and fileExists(cachePath) and getFileSize(cachePath) > 0
   else:

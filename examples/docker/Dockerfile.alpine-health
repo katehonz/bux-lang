@@ -1,0 +1,21 @@
+# Session 79 — Alpine multi-stage build of http_health with musl (when host
+# can run docker). The *builder* stage expects a prebuilt Linux binary
+# produced on Alpine or via musl-gcc:
+#
+#   # On Alpine / with musl-gcc:
+#   BUX_CC=musl-gcc BUX_RUNTIME=minimal ./buxc --static --release build …
+#   # or: ./tools/smoke_musl_static.sh
+#
+#   docker build -f examples/docker/Dockerfile.alpine-health -t bux-health-alpine .
+#
+# Fallback: copy a glibc binary and use debian (see Dockerfile.health).
+
+FROM alpine:3.20 AS runtime
+RUN apk add --no-cache ca-certificates
+WORKDIR /app
+# Prefer a static musl binary if present; else fail the build clearly.
+COPY build/http_health_musl /app/http_health
+ENV HEALTH_BIND=0.0.0.0
+ENV HEALTH_PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["/app/http_health"]

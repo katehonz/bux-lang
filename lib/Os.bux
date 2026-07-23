@@ -7,6 +7,9 @@ module Std::Os {
     extern func bux_getcwd() -> String;
     extern func bux_chdir(path: String) -> int;
     extern func bux_exit(code: int);
+    extern func bux_install_stop_handlers();
+    extern func bux_should_stop() -> int;
+    extern func bux_set_stop_listen_fd(fd: int);
 
     func Os_ArgsCount() -> int {
         return bux_argc();
@@ -35,6 +38,22 @@ module Std::Os {
     /* Terminate the process with the given exit code */
     func Os_Exit(code: int) {
         bux_exit(code);
+    }
+
+    /// Install SIGINT/SIGTERM handlers that set a cooperative stop flag
+    /// (and close the listen fd if registered via Os_SetStopListenFd).
+    func Os_InstallStopHandlers() {
+        bux_install_stop_handlers();
+    }
+
+    /// True after SIGINT/SIGTERM (or if handlers not installed: always false).
+    func Os_ShouldStop() -> bool {
+        return bux_should_stop() != 0;
+    }
+
+    /// Register the server listen fd so stop signals can unblock accept().
+    func Os_SetStopListenFd(fd: int) {
+        bux_set_stop_listen_fd(fd);
     }
 
 }

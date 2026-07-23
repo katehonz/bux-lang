@@ -877,9 +877,30 @@ return p.items;      // same as (*p).items
 Nested paths work the same: `p.inner.items` resolves `p → outer` then path
 `inner.items`.
 
+#### Cross-function pointer transfer (session 76)
+
+When the **caller** passes `&bag` (or a pointer alias) into a function whose
+parameter is `*Bag`, and the **callee** moves fields of that param
+(`return p.items` / `let x = p.items`), the call site marks `bag` the same way
+as a local partial move — parent `Bag_Drop` is skipped; remaining fields Drop.
+
+```bux
+func TakeItems(p: *Bag) -> Array<int> {
+    return p.items;
+}
+
+func Caller() {
+    let bag: Bag = …;
+    let items: Array<int> = TakeItems(&bag);
+    // bag.items transferred; Tracked_Drop(&bag.tag) still runs
+}
+```
+
+Analysis is **same-module / known callee body** only (bootstrap HIR today).
+
 Golden smoke: `make test-drop-move` / `examples/move_field_partial.bux` /
 `examples/move_field_remaining.bux` / `examples/move_field_nested.bux` /
-`examples/move_field_ptr.bux`.
+`examples/move_field_ptr.bux` / `examples/move_cross_fn.bux`.
 
 #### Manual Drop and non-Drop types
 
@@ -891,10 +912,11 @@ Golden smoke: `make test-drop-move` / `examples/move_field_partial.bux` /
 #### Limits (honest)
 
 - Partial field moves skip the **parent** `Type_Drop` and drop **remaining**
-  droppable fields individually, including nested paths `a.b.c` and pointer
-  aliases `p = &owner` (sessions 70/73/74).
-- Pointer aliases are tracked for **local** `p = &local` only (not parameters
-  that point at caller-owned data across function boundaries).
+  droppable fields individually, including nested paths `a.b.c`, local pointer
+  aliases `p = &owner`, and **cross-function** `&owner` args when the callee
+  body is visible (sessions 70/73/74/76).
+- Local pointer aliases (`p = &local`) are tracked in-function; cross-function
+  uses callee-body scan of pointer params (not full borrow checking).
 - Interface Drop uses a static `TypeName_Drop` symbol (zero cost), not dynamic
   dispatch through a vtable.
 - Double-free bugs in **unchecked** code that manually free *and* auto-drop are
@@ -1262,7 +1284,7 @@ macro! with_acc {
   |------|---------|
   | `expr` | any expression |
   | `ident` | bare identifier (`ekIdent`) |
-  | `tt` | token-tree (MVP: same as `expr`) |
+  | `tt` | token-tree: any single call-site AST fragment (expr/ident/lit/block/stmt/pat); broader than `expr` |
   | `literal` / `lit` | int/float/string/char/bool literal only |
   | `block` | block expression `{ … }` |
   | `stmt` | one statement (`let`/`if`/… or expression-stmt) |
