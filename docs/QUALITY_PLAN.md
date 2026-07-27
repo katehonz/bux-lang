@@ -94,7 +94,7 @@
 |---|--------|------|--------|
 | E.1 | Package registry protocol (git/HTTP) | `bux add foo` без path hacks | ✅ local index + **HTTP(S) URL** cache + file/git + `search` |
 | E.2 | 3–5 production-quality apps в `apps/` | Showcase | ✅ 4 apps + `make test-apps` smoke (build + CLI) |
-| E.3 | Language freeze + semver policy | Trust | ✅ draft `docs/SEMVER.md` |
+| E.3 | Language freeze + semver policy | Trust | ✅ **v1.0.0** + active `docs/SEMVER.md` |
 | E.4 | Debugger/DWARF basics | Systems audience | ✅ `#line`→`.bux` + `-g` / `--release`; `make test-dwarf` |
 | E.5 | Benchmarks vs C/Zig/Nim (micro + nexus) | Marketing + regression | ✅ micro + C/Nim/Zig twins + `make bench-nexus` (wrk) |
 
@@ -1212,7 +1212,7 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
-## Платформен фокус (v0.5 → v1.0)
+## Платформен фокус (v0.5 → v1.0 ✅)
 
 | Ниша | Какво значи за Bux | Статус / посока |
 |------|--------------------|-----------------|

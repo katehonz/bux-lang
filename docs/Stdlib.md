@@ -1,6 +1,11 @@
 # Bux Standard Library
 
-The Bux standard library provides core functionality for systems programming. All modules are merged into every compilation, so no explicit linking is needed.
+> **Status:** Documented API for **v1.0.0**. Sources live under `lib/`; modules are
+> merged into every compilation (no separate link step for stdlib).
+
+The standard library targets systems and cloud-on-Linux programming (I/O, collections,
+net/TLS with full runtime, crypto, tasks/channels). Thin/static builds use
+`BUX_RUNTIME=minimal` — see [BuildAndTest.md](BuildAndTest.md).
 
 ---
 
@@ -280,8 +285,8 @@ func Main() -> int {
     let s: String = String_Replace("hello world", "world", "Bux");
     PrintLine(s);  // "hello Bux"
 
-    let fmt: String = String_Format2("{0} + {1} = magic", "Bux", "QBE");
-    PrintLine(fmt);  // "Bux + QBE = magic"
+    let fmt: String = String_Format2("{0} + {1} = magic", "Bux", "C");
+    PrintLine(fmt);  // "Bux + C = magic"
 
     let found: String = String_Find("hello world", "world");
     if found as uint != 0 {

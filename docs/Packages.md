@@ -1,8 +1,9 @@
 # Bux Package Manager
 
-> **Status:** Path + git + **local/file registry** (E.1) + **HTTP(S) index URL** (cached under `~/.bux/cache/`).
+> **Status (v1.0):** Path + git + **local/file registry** + **HTTP(S) index URL**  
+> (cached under `~/.bux/cache/`). Lockfile + `bux install --locked` for CI.
 
-See also: [SEMVER.md](SEMVER.md) for version policy.
+See also: [SEMVER.md](SEMVER.md) for version policy (active as of language **v1.0.0**).
 
 ---
 

@@ -1,9 +1,12 @@
 # Bux Programming Language — Roadmap to v1.0.0
 
-> **Version:** 0.3.1 (2026-06-06)
-> **Bootstrap:** Nim (`bootstrap/`) — compiles `src/` → `buxc`
+> **Historical document.** Language **v1.0.0** shipped 2026-07-27 (tag `v1.0.0`).  
+> For current status use: [`README.md`](README.md), [`docs/LanguageRef.md`](docs/LanguageRef.md),  
+> [`docs/RELEASE_v1.0.0.md`](docs/RELEASE_v1.0.0.md), [`docs/QUALITY_PLAN.md`](docs/QUALITY_PLAN.md).
+>
+> **Version (this file):** frozen archive of pre-1.0 planning  
+> **Bootstrap:** Nim (`bootstrap/`) — compiles `src/` → `buxc`  
 > **Self-host:** Bux (`src/`) — compiles via `buxc` → `buxc2`
-> **Target:** Bux v1.0.0 — fully self-hosting, gradual ownership, tooling
 
 ---
 

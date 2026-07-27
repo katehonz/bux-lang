@@ -1,6 +1,11 @@
 # Bux Language Reference
 
-This document describes the Bux programming language as implemented by the bootstrap compiler.
+> **Status:** Normative for **v1.0.0** (language freeze).  
+> Describes Bux as implemented by the **bootstrap** (`buxc`, Nim) and **self-hosted** (`buxc2`) compilers.  
+> Behaviour here is the contract for semver after 1.0 — see [`SEMVER.md`](SEMVER.md) and [`RELEASE_v1.0.0.md`](RELEASE_v1.0.0.md).
+
+This document is the primary language specification. Compiler bugs that contradict
+it are fixed without a MAJOR version bump; intentional breaking changes require MAJOR.
 
 ---
 

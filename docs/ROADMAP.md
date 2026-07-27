@@ -1,9 +1,11 @@
 # Bux Language Roadmap — New Constructs
 
-> **Updated:** 2026-07-27 | **Status:** ✅ Constructs for v1.0 shipped (language freeze)  
-> Recent: macros (`tt`/`type`/juxta), stdlib daily APIs, Linux/riscv smoke; see `docs/RELEASE_v1.0.0.md`.
+> **Updated:** 2026-07-27 | **Status:** ✅ Constructs for **v1.0.0** shipped (language freeze)  
+> Recent: macros (`tt`/`type`/juxta), stdlib daily APIs, Linux/riscv smoke.  
+> Release: [`RELEASE_v1.0.0.md`](RELEASE_v1.0.0.md) · Spec: [`LanguageRef.md`](LanguageRef.md).
 
-This document tracks planned language constructs beyond Phase 8 strategy.
+This document tracks language constructs (historical + status). For the normative
+spec use LanguageRef; for post-1.0 optional work see QUALITY_PLAN session 88 backlog.
 
 ---
 

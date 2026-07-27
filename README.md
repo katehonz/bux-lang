@@ -284,9 +284,9 @@ bux/
 ├── tests/            # 🧪 Unit tests (Nim)
 ├── examples/         # Example programs
 ├── apps/             # Real-world applications
-├── docs/             # Documentation
+├── docs/             # Documentation (LanguageRef = v1.0 normative)
 ├── README.md
-├── PLAN.md           # Roadmap to v1.0.0
+├── PLAN.md           # Historical roadmap (pre-1.0)
 └── Makefile
 ```
 
@@ -296,14 +296,15 @@ bux/
 
 | Doc | Description |
 |-----|-------------|
-| [`docs/LanguageRef.md`](docs/LanguageRef.md) | Language reference |
+| [`docs/LanguageRef.md`](docs/LanguageRef.md) | **Normative** language reference (v1.0) |
 | [`docs/Stdlib.md`](docs/Stdlib.md) | Standard library API |
-| [`docs/BuildAndTest.md`](docs/BuildAndTest.md) | Build, test, and tooling |
-| [`docs/QUALITY_PLAN.md`](docs/QUALITY_PLAN.md) | Roadmap toward a “good” v1.0 |
+| [`docs/BuildAndTest.md`](docs/BuildAndTest.md) | Build, test, cross, tooling |
 | [`docs/Packages.md`](docs/Packages.md) | Package manager + registry |
-| [`docs/SEMVER.md`](docs/SEMVER.md) | Versioning policy |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Feature status (constructs) |
-| [`PLAN.md`](PLAN.md) | Long-form phase plan |
+| [`docs/SEMVER.md`](docs/SEMVER.md) | Semver policy (**active** post-1.0) |
+| [`docs/RELEASE_v1.0.0.md`](docs/RELEASE_v1.0.0.md) | v1.0.0 freeze notes |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Language construct status |
+| [`docs/QUALITY_PLAN.md`](docs/QUALITY_PLAN.md) | Session history + path to v1.0 (archive) |
+| [`PLAN.md`](PLAN.md) | Historical phase plan (pre-1.0) |
 
 ---
 

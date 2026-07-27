@@ -1,5 +1,8 @@
 # Build and Test Guide
 
+> **Compiler:** **v1.0.0** — `./buxc --version` → `bux 1.0.0 (bootstrap)`  
+> Selfhost: `make selfhost` → `buxc2` reports `Bux 1.0.0 (self-hosting)`.
+
 This guide covers building the Bux bootstrap compiler, creating projects, and running tests.
 
 ---
