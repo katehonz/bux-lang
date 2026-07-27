@@ -18,6 +18,9 @@ type
     generatedStructInsts*: Table[string, bool]  # Track generated struct instantiations
     extraStructs*: seq[tuple[name: string, fields: seq[tuple[name: string, typ: Type]]]]
     structInstMap*: Table[string, tuple[baseName: string, typeArgs: seq[Type]]]  # Mangled name -> base + args
+    genericEnums*: Table[string, Decl]  # Generic enum declarations
+    generatedEnumInsts*: Table[string, bool]  # Track generated enum instantiations
+    extraEnums*: seq[tuple[name: string, variants: seq[HirEnumVariant]]]
     genericFuncs*: Table[string, Decl]  # Generic function declarations
     generatedFuncInsts*: Table[string, bool]  # Track generated function instantiations
     extraFuncs*: seq[HirFunc]  # Monomorphized generic methods
@@ -38,6 +41,8 @@ type
     ## Locals whose value was moved into another owner (struct field, let, return).
     ## Auto-Drop is skipped for these (session 37 — field-move ownership).
     movedOutLocals*: HashSet[string]
+    ## Current let/var init type (for inferring generic enum concrete names in struct inits)
+    currentInitTypeExpr*: TypeExpr
     ## Partial field moves: local → dotted paths moved out by value
     ## (e.g. "items", "inner.items" for nested `a.b.c` — session 70/73).
     ## When parent Type_Drop is skipped, remaining droppable fields still Drop.
@@ -876,6 +881,9 @@ proc initLowerCtx*(module: Module, sema: Sema): LowerCtx =
   result.generatedStructInsts = initTable[string, bool]()
   result.extraStructs = @[]
   result.structInstMap = initTable[string, tuple[baseName: string, typeArgs: seq[Type]]]()
+  result.genericEnums = initTable[string, Decl]()
+  result.generatedEnumInsts = initTable[string, bool]()
+  result.extraEnums = @[]
   result.genericFuncs = initTable[string, Decl]()
   result.generatedFuncInsts = initTable[string, bool]()
   result.extraFuncs = @[]
@@ -970,6 +978,56 @@ proc substituteType(ctx: var LowerCtx, te: TypeExpr, subst: Table[string, Type])
           ctx.generatedStructInsts[mangledName] = true
           ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
       return makeNamed(mangledName)
+    if te.typeArgs.len > 0 and ctx.genericEnums.hasKey(te.typeName):
+      var suffix = ""
+      for i, arg in te.typeArgs:
+        if i > 0: suffix.add("_")
+        let argType = substituteType(ctx, arg, subst)
+        suffix.add(argType.toString)
+      let mangledName = te.typeName & "_" & suffix
+      if not ctx.generatedEnumInsts.hasKey(mangledName):
+        let genericDecl = ctx.genericEnums[te.typeName]
+        var hasUnresolved = false
+        for arg in te.typeArgs:
+          let argType = substituteType(ctx, arg, subst)
+          for tp in genericDecl.declEnumTypeParams:
+            if argType.kind == tkNamed and argType.name == tp.name:
+              hasUnresolved = true
+              break
+          if hasUnresolved: break
+        if not hasUnresolved:
+          var localSubst = subst
+          for j, tp in genericDecl.declEnumTypeParams:
+            if j < te.typeArgs.len:
+              localSubst[tp.name] = substituteType(ctx, te.typeArgs[j], subst)
+          var variants: seq[HirEnumVariant] = @[]
+          for v in genericDecl.declEnumVariants:
+            var fields: seq[Type] = @[]
+            for f in v.fields:
+              fields.add(if f != nil: substituteType(ctx, f, localSubst) else: makeUnknown())
+            var namedFields: seq[tuple[name: string, typ: Type]] = @[]
+            for nf in v.namedFields:
+              let fType = if nf.ftype != nil: substituteType(ctx, nf.ftype, localSubst) else: makeUnknown()
+              namedFields.add((nf.name, fType))
+            variants.add(HirEnumVariant(name: v.name, fields: fields, namedFields: namedFields))
+            if fields.len > 1:
+              var nestedFields: seq[tuple[name: string, typ: Type]] = @[]
+              for i, ft in fields:
+                nestedFields.add((v.name & "_" & $i, ft))
+              let nestedName = mangledName & "_" & v.name & "_Payload"
+              ctx.extraStructs.add((nestedName, nestedFields))
+            elif namedFields.len > 0:
+              var nestedFields: seq[tuple[name: string, typ: Type]] = @[]
+              for nf in namedFields:
+                nestedFields.add((nf.name, nf.typ))
+              let nestedName = mangledName & "_" & v.name & "_Payload"
+              ctx.extraStructs.add((nestedName, nestedFields))
+          ctx.extraEnums.add((mangledName, variants))
+          ctx.generatedEnumInsts[mangledName] = true
+          var concreteArgs: seq[Type] = @[]
+          for arg in te.typeArgs: concreteArgs.add(ctx.resolveTypeExpr(arg))
+          ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
+      return makeNamed(mangledName)
     return ctx.resolveTypeExpr(te)
   of tekOwn:
     return substituteType(ctx, te.pointerPointee, subst)
@@ -1028,6 +1086,56 @@ proc resolveTypeExpr(ctx: var LowerCtx, te: TypeExpr): Type =
           ctx.extraStructs.add((mangledName, fields))
           ctx.generatedStructInsts[mangledName] = true
           ctx.structInstMap[mangledName] = (te.typeName, concreteArgs)
+      return makeNamed(mangledName)
+    if te.typeArgs.len > 0 and ctx.genericEnums.hasKey(te.typeName):
+      var suffix = ""
+      for i, arg in te.typeArgs:
+        if i > 0: suffix.add("_")
+        let argType = ctx.resolveTypeExpr(arg)
+        suffix.add(argType.toString)
+      let mangledName = te.typeName & "_" & suffix
+      if not ctx.generatedEnumInsts.hasKey(mangledName):
+        let genericDecl = ctx.genericEnums[te.typeName]
+        var hasUnresolved = false
+        for arg in te.typeArgs:
+          let argType = ctx.resolveTypeExpr(arg)
+          for tp in genericDecl.declEnumTypeParams:
+            if argType.kind == tkNamed and argType.name == tp.name:
+              hasUnresolved = true
+              break
+          if hasUnresolved: break
+        if not hasUnresolved:
+          var subst = initTable[string, Type]()
+          for j, tp in genericDecl.declEnumTypeParams:
+            if j < te.typeArgs.len:
+              subst[tp.name] = ctx.resolveTypeExpr(te.typeArgs[j])
+          var variants: seq[HirEnumVariant] = @[]
+          for v in genericDecl.declEnumVariants:
+            var fields: seq[Type] = @[]
+            for f in v.fields:
+              fields.add(if f != nil: substituteType(ctx, f, subst) else: makeUnknown())
+            var namedFields: seq[tuple[name: string, typ: Type]] = @[]
+            for nf in v.namedFields:
+              let fType = if nf.ftype != nil: substituteType(ctx, nf.ftype, subst) else: makeUnknown()
+              namedFields.add((nf.name, fType))
+            variants.add(HirEnumVariant(name: v.name, fields: fields, namedFields: namedFields))
+            if fields.len > 1:
+              var nestedFields: seq[tuple[name: string, typ: Type]] = @[]
+              for i, ft in fields:
+                nestedFields.add((v.name & "_" & $i, ft))
+              let nestedName = mangledName & "_" & v.name & "_Payload"
+              ctx.extraStructs.add((nestedName, nestedFields))
+            elif namedFields.len > 0:
+              var nestedFields: seq[tuple[name: string, typ: Type]] = @[]
+              for nf in namedFields:
+                nestedFields.add((nf.name, nf.typ))
+              let nestedName = mangledName & "_" & v.name & "_Payload"
+              ctx.extraStructs.add((nestedName, nestedFields))
+          ctx.extraEnums.add((mangledName, variants))
+          ctx.generatedEnumInsts[mangledName] = true
+          var concreteArgs2: seq[Type] = @[]
+          for arg in te.typeArgs: concreteArgs2.add(ctx.resolveTypeExpr(arg))
+          ctx.structInstMap[mangledName] = (te.typeName, concreteArgs2)
       return makeNamed(mangledName)
     case te.typeName
     of "void": return makeVoid()
@@ -1171,47 +1279,69 @@ proc resolveExprType(ctx: var LowerCtx, expr: Expr): Type =
       # Check if this is a _Data union field access
       if objType.name.endsWith("_Data"):
         let enumName = objType.name[0..^6]
-        let enumSym = ctx.globalScope.lookup(enumName)
+        var enumSym = ctx.globalScope.lookup(enumName)
+        var enumDecl: Decl = nil
         if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
-          for variant in enumSym.decl.declEnumVariants:
+          enumDecl = enumSym.decl
+        elif ctx.structInstMap.hasKey(enumName):
+          let (baseName, typeArgs) = ctx.structInstMap[enumName]
+          let baseSym = ctx.globalScope.lookup(baseName)
+          if baseSym != nil and baseSym.decl != nil and baseSym.decl.kind == dkEnum:
+            enumDecl = baseSym.decl
+        if enumDecl != nil:
+          var subst = initTable[string, Type]()
+          if ctx.structInstMap.hasKey(enumName):
+            var ti: int = 0
+            for tp in enumDecl.declEnumTypeParams:
+              if ti < ctx.structInstMap[enumName][1].len:
+                subst[tp.name] = ctx.structInstMap[enumName][1][ti]
+              ti = ti + 1
+          for variant in enumDecl.declEnumVariants:
             for i, f in variant.fields:
               let fieldName = variant.name & "_" & $i
               if fieldName == expr.exprFieldName:
-                return ctx.resolveTypeExpr(f)
+                return substituteType(ctx, f, subst)
             for nf in variant.namedFields:
               if nf.name == expr.exprFieldName:
-                return ctx.resolveTypeExpr(nf.ftype)
+                return substituteType(ctx, nf.ftype, subst)
       var sym = ctx.globalScope.lookup(objType.name)
       var decl = if sym != nil: sym.decl else: nil
       # If the type is a monomorphized generic struct instance, look up the base
       if decl == nil and ctx.structInstMap.hasKey(objType.name):
         let (baseName, typeArgs) = ctx.structInstMap[objType.name]
         let baseSym = ctx.globalScope.lookup(baseName)
-        if baseSym != nil and baseSym.decl != nil and baseSym.decl.kind == dkStruct:
-          decl = baseSym.decl
-          var subst = initTable[string, Type]()
-          for i, tp in decl.declStructTypeParams:
-            if i < typeArgs.len:
-              subst[tp.name] = typeArgs[i]
-          for f in decl.declStructFields:
-            if f.name == expr.exprFieldName:
-              if f.ftype != nil:
-                case f.ftype.kind
-                of tekNamed:
-                  if f.ftype.typeArgs.len > 0:
+        if baseSym != nil and baseSym.decl != nil:
+          if baseSym.decl.kind == dkStruct:
+            decl = baseSym.decl
+            var subst = initTable[string, Type]()
+            for i, tp in decl.declStructTypeParams:
+              if i < typeArgs.len:
+                subst[tp.name] = typeArgs[i]
+            for f in decl.declStructFields:
+              if f.name == expr.exprFieldName:
+                if f.ftype != nil:
+                  case f.ftype.kind
+                  of tekNamed:
+                    if f.ftype.typeArgs.len > 0:
+                      return substituteType(ctx, f.ftype, subst)
+                    case f.ftype.typeName
+                    of "int", "int32", "int64": return makeInt()
+                    of "float64": return makeFloat64()
+                    of "float32": return makeFloat32()
+                    of "bool": return makeBool()
+                    else:
+                      if subst.hasKey(f.ftype.typeName):
+                        return subst[f.ftype.typeName]
+                      return makeNamed(f.ftype.typeName)
+                  of tekOwn, tekPointer:
                     return substituteType(ctx, f.ftype, subst)
-                  case f.ftype.typeName
-                  of "int", "int32", "int64": return makeInt()
-                  of "float64": return makeFloat64()
-                  of "float32": return makeFloat32()
-                  of "bool": return makeBool()
-                  else:
-                    if subst.hasKey(f.ftype.typeName):
-                      return subst[f.ftype.typeName]
-                    return makeNamed(f.ftype.typeName)
-                of tekOwn, tekPointer:
-                  return substituteType(ctx, f.ftype, subst)
-                else: return makeUnknown()
+                  else: return makeUnknown()
+          elif baseSym.decl.kind == dkEnum:
+            # Generated enum struct: fields are tag and data
+            if expr.exprFieldName == "tag":
+              return makeNamed(objType.name & "_Tag")
+            if expr.exprFieldName == "data":
+              return makeNamed(objType.name & "_Data")
       if decl != nil:
         case decl.kind
         of dkStruct:
@@ -1849,6 +1979,16 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
         let argType = ctx.resolveTypeExpr(targ)
         suffix.add(argType.toString)
       structName = structName & "_" & suffix
+    elif ctx.currentInitTypeExpr != nil and ctx.currentInitTypeExpr.kind == tekNamed and
+         ctx.currentInitTypeExpr.typeName == structName and
+         ctx.currentInitTypeExpr.typeArgs.len > 0:
+      # Infer type args from enclosing let/var declaration
+      var suffix = ""
+      for i, targ in ctx.currentInitTypeExpr.typeArgs:
+        if i > 0: suffix.add("_")
+        let argType = ctx.resolveTypeExpr(targ)
+        suffix.add(argType.toString)
+      structName = structName & "_" & suffix
     # Simple enum init: EnumName { tag: EnumName_Variant } -> EnumName_Variant
     var enumDecl: Decl = nil
     let enumSym = ctx.globalScope.lookup(structName)
@@ -2181,7 +2321,9 @@ proc lowerStmt(ctx: var LowerCtx, stmt: Stmt): HirNode =
   of skLet:
     var initHir: HirNode = nil
     if stmt.stmtLetInit != nil:
+      ctx.currentInitTypeExpr = stmt.stmtLetType
       initHir = ctx.lowerExpr(stmt.stmtLetInit)
+      ctx.currentInitTypeExpr = nil
     let allocaType = if stmt.stmtLetType != nil:
       # Full resolve covers named, pointer, slice, tuple, func, refs, etc.
       ctx.resolveTypeExpr(stmt.stmtLetType)
@@ -2809,12 +2951,14 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
         discard
 
 
-  # First pass: collect generic functions and generic structs
+  # First pass: collect generic functions, generic structs, and generic enums
   for decl in module.items:
     if decl.kind == dkFunc and decl.declFuncTypeParams.len > 0:
       ctx.genericFuncs[decl.declFuncName] = decl
     if decl.kind == dkStruct and decl.declStructTypeParams.len > 0:
       ctx.genericStructs[decl.declStructName] = decl
+    if decl.kind == dkEnum and decl.declEnumTypeParams.len > 0:
+      ctx.genericEnums[decl.declEnumName] = decl
     if decl.kind == dkImpl and decl.declImplTypeParams.len > 0:
       let typeName = decl.declImplTypeName
       for methodDecl in decl.declImplMethods:
@@ -2864,6 +3008,8 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
           fields.add((f.name, fType))
         structs.add((decl.declStructName, fields))
     of dkEnum:
+      # Skip generic enums — instantiated on demand via generateEnumInstance
+      if decl.declEnumTypeParams.len > 0: continue
       var variants: seq[HirEnumVariant] = @[]
       for v in decl.declEnumVariants:
         var fields: seq[Type] = @[]
@@ -2906,9 +3052,95 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
   for s in ctx.extraStructs:
     structs.add(s)
 
+  # Add monomorphized generic enums
+  for e in ctx.extraEnums:
+    enums.add(e)
+
   # Add monomorphized generic methods
   for f in ctx.extraFuncs:
     funcs.add(f)
+
+  # Mangle generic enum tag references in all function bodies
+  proc substEnumName(name: string, ctx: LowerCtx): string =
+    result = name
+    for enumName, _ in ctx.genericEnums:
+      # Check if name IS the generic enum name (bare type reference)
+      if name == enumName:
+        for en in ctx.extraEnums:
+          if en.name.startsWith(enumName & "_"):
+            return en.name
+      # Check if name starts with generic enum name + "_" (tag reference)
+      let prefix = enumName & "_"
+      if name.startsWith(prefix) and name != enumName:
+        let rest = name[prefix.len..^1]
+        # Skip if already a concrete instance (e.g., "Pair_int_String_First")
+        var alreadyConcrete = false
+        for en in ctx.extraEnums:
+          if name.startsWith(en.name & "_") or name == en.name:
+            alreadyConcrete = true
+            break
+        if not alreadyConcrete:
+          for en in ctx.extraEnums:
+            if en.name.startsWith(enumName & "_"):
+              return en.name & "_" & rest
+
+  # Also substitute type names in hAlloca and hStructInit from extraEnums
+  proc substEnumType(typ: var Type, ctx: LowerCtx) =
+    if typ.kind == tkNamed:
+      for enumName, _ in ctx.genericEnums:
+        if typ.name == enumName:
+          for en in ctx.extraEnums:
+            if en.name.startsWith(enumName & "_"):
+              typ = makeNamed(en.name)
+              return
+
+  proc mangleHirNode(n: HirNode, ctx: LowerCtx) =
+    if n == nil: return
+    case n.kind
+    of hVar:       n.varName = substEnumName(n.varName, ctx)
+    of hStructInit: n.structInitName = substEnumName(n.structInitName, ctx)
+    of hFieldAccess: n.fieldAccessName = substEnumName(n.fieldAccessName, ctx)
+    of hArrowField: n.arrowFieldName = substEnumName(n.arrowFieldName, ctx)
+    of hAlloca:     substEnumType(n.allocaType, ctx)
+    else: discard
+    # Walk children by variant
+    case n.kind
+    of hUnary: mangleHirNode(n.unaryOperand, ctx)
+    of hBinary: mangleHirNode(n.binaryLeft, ctx); mangleHirNode(n.binaryRight, ctx)
+    of hAssign: mangleHirNode(n.assignTarget, ctx); mangleHirNode(n.assignValue, ctx)
+    of hIf:     mangleHirNode(n.ifCond, ctx); mangleHirNode(n.ifThen, ctx); mangleHirNode(n.ifElse, ctx)
+    of hWhile:  mangleHirNode(n.whileCond, ctx); mangleHirNode(n.whileBody, ctx)
+    of hLoop:   mangleHirNode(n.loopBody, ctx)
+    of hReturn: mangleHirNode(n.returnValue, ctx)
+    of hDefer:  mangleHirNode(n.deferBody, ctx)
+    of hLoad:   mangleHirNode(n.loadPtr, ctx)
+    of hStore:  mangleHirNode(n.storePtr, ctx); mangleHirNode(n.storeValue, ctx)
+    of hFieldPtr: mangleHirNode(n.fieldPtrBase, ctx)
+    of hFieldAccess: mangleHirNode(n.fieldAccessBase, ctx)
+    of hArrowField: mangleHirNode(n.arrowFieldBase, ctx)
+    of hIndexPtr: mangleHirNode(n.indexPtrBase, ctx); mangleHirNode(n.indexPtrIndex, ctx)
+    of hCall:
+      for c in n.callArgs: mangleHirNode(c, ctx)
+    of hCallIndirect:
+      mangleHirNode(n.callIndirectCallee, ctx)
+      for c in n.callIndirectArgs: mangleHirNode(c, ctx)
+    of hCast:   mangleHirNode(n.castOperand, ctx)
+    of hSpawn:
+      for c in n.spawnArgs: mangleHirNode(c, ctx)
+    of hBlock:
+      for c in n.blockStmts: mangleHirNode(c, ctx)
+      mangleHirNode(n.blockExpr, ctx)
+    of hStructInit:
+      for sf in n.structInitFields.mitems:
+        mangleHirNode(sf.value, ctx)
+    of hSliceInit:
+      for c in n.sliceInitElements: mangleHirNode(c, ctx)
+    of hSliceIndex:
+      mangleHirNode(n.sliceIndexBase, ctx); mangleHirNode(n.sliceIndexIndex, ctx)
+    else: discard
+
+  for f in mitems(funcs):
+    mangleHirNode(f.body, ctx)
 
   # Collect interface info for vtable generation
   var ifaceInfos: seq[tuple[name: string, hasAssocTypes: bool, methods: seq[tuple[name: string, params: seq[Type], ret: Type]]]] = @[]

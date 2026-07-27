@@ -45,21 +45,21 @@ func Main() -> int {
     Test_AssertFalse(Set_IsEmpty<int>(&s));
     Set_Free<int>(&s);
 
-    let ok: Result = Result_NewOk(42);
-    let err: Result = Result_NewErr("boom");
-    Test_AssertTrue(Result_IsOk(ok));
-    Test_AssertTrue(Result_IsErr(err));
-    Test_AssertEqInt(Result_UnwrapOr(err, -1), -1);
-    let recovered: Result = Result_Or(err, Result_NewOk(7));
-    Test_AssertEqInt(Result_UnwrapOr(recovered, 0), 7);
-    Test_AssertTrue(String_Eq(Result_UnwrapErr(err), "boom"));
+    let ok: Result<int, String> = Result_NewOk<int, String>(42);
+    let err: Result<int, String> = Result_NewErr<int, String>("boom");
+    Test_AssertTrue(Result_IsOk<int, String>(ok));
+    Test_AssertTrue(Result_IsErr<int, String>(err));
+    Test_AssertEqInt(Result_UnwrapOr<int, String>(err, -1), -1);
+    let recovered: Result<int, String> = Result_Or<int, String>(err, Result_NewOk<int, String>(7));
+    Test_AssertEqInt(Result_UnwrapOr<int, String>(recovered, 0), 7);
+    Test_AssertTrue(String_Eq(Result_UnwrapErr<int, String>(err), "boom"));
 
-    let some: Option = Option_NewSome(5);
-    let none: Option = Option_NewNone();
-    Test_AssertTrue(Option_IsSome(some));
-    Test_AssertEqInt(Option_UnwrapOr(none, 9), 9);
-    let filled: Option = Option_Or(none, Option_NewSome(3));
-    Test_AssertEqInt(Option_UnwrapOr(filled, 0), 3);
+    let some: Option<int> = Option_NewSome<int>(5);
+    let none: Option<int> = Option_NewNone<int>();
+    Test_AssertTrue(Option_IsSome<int>(some));
+    Test_AssertEqInt(Option_UnwrapOr<int>(none, 9), 9);
+    let filled: Option<int> = Option_Or<int>(none, Option_NewSome<int>(3));
+    Test_AssertEqInt(Option_UnwrapOr<int>(filled, 0), 3);
 
     PrintLine("stdlib_collections: ok");
     Test_Pass("stdlib_collections");

@@ -2,6 +2,10 @@ module Std::Iter {
 
     import Std::Array::*;
 
+    // SAFETY: Iter<T> stores a raw *T pointer to the source array's element buffer.
+    // The iterator MUST NOT outlive the source Array<T>. Modifying the source array
+    // (e.g. Array_Push which may reallocate the buffer) while an iterator is active
+    // will result in a dangling pointer and undefined behavior.
     struct Iter<T> {
         data: *T,
         len: uint,

@@ -1498,6 +1498,14 @@ module CBackend {
             return;
         }
 
+        // Is (type test): check if the tag of an enum matches a variant
+        if kind == hIs {
+            // Should have been lowered to hBinary in HIR lowering
+            // Fallback: always emit false
+            StringBuilder_Append(&cbe.sb, "0");
+            return;
+        }
+
         // Struct init: ((TypeName){.field = value, ...})
         if kind == hStructInit {
             // Field values taken by value → skip auto-Drop of those locals

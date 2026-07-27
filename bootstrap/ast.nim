@@ -462,6 +462,7 @@ type
     of dkEnum:
       declEnumName*: string
       declEnumBaseType*: TypeExpr
+      declEnumTypeParams*: seq[TypeParam]
       declEnumVariants*: seq[EnumVariant]
     of dkUnion:
       declUnionName*: string

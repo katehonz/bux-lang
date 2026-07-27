@@ -1099,7 +1099,10 @@ module Parser {
             if parserCheck(p, tkPipe) || parserPeek(p, 0) == tkEndOfFile {
                 break;
             }
-            if params.paramCount >= 9 { break; }
+            if params.paramCount >= 9 {
+                parserEmitDiag(p, line, col, "too many closure parameters (max 8)");
+                break;
+            }
             let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected parameter name in closure");
             discard parserExpect(p, tkColon, "expected ':' in closure parameter");
             let ptype: *TypeExpr = parserParseType(p);
@@ -1989,7 +1992,11 @@ module Parser {
             if parserCheck(p, tkRParen) || parserPeek(p, 0) == tkEndOfFile {
                 break;
             }
-            if d.paramCount >= 9 { break; }
+            if d.paramCount >= 9 {
+                let tok: LexToken = parserCurToken(p);
+                parserEmitDiag(p, tok.line, tok.column, "too many function parameters (max 8)");
+                break;
+            }
             let nameTok: LexToken = parserExpectIdentOrKeyword(p, "expected parameter name");
             discard parserExpect(p, tkColon, "expected ':' in parameter");
             let ptype: *TypeExpr = parserParseType(p);
@@ -2169,7 +2176,10 @@ module Parser {
 
         discard parserExpect(p, tkLBrace, "expected '{'");
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
-            if fieldCount >= 256 { break; }
+            if fieldCount >= 256 {
+                parserEmitDiag(p, line, col, "too many struct fields (max 255)");
+                break;
+            }
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
             let beforePos: int = p.pos;
@@ -2210,9 +2220,15 @@ module Parser {
         d.isPublic = isPublic;
         d.strValue = nameTok.text;
 
+        // Type params <T: Bound, U: Bound2>
+        parserParseTypeParams(p, d);
+
         discard parserExpect(p, tkLBrace, "expected '{'");
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
-            if d.variantCount >= 9 { break; }
+            if d.variantCount >= 9 {
+                parserEmitDiag(p, line, col, "too many enum variants (max 8)");
+                break;
+            }
             if parserCheck(p, tkNewLine) || parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
             let vName: LexToken = parserExpect(p, tkIdent, "expected variant name");
 
@@ -2675,6 +2691,9 @@ module Parser {
                 let ifaceName: LexToken = parserExpect(p, tkIdent, "expected interface name");
                 d.strValue2 = ifaceName.text;
             }
+
+            // Type params <T: Bound, U: Bound2>
+            parserParseTypeParams(p, d);
 
             discard parserExpect(p, tkLBrace, "expected '{'");
             var methods: *Decl = null as *Decl;

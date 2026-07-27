@@ -3,48 +3,46 @@ module Std::Result {
 
     extern func bux_exit(code: int);
 
-    enum Result {
-        Ok(int),
-        Err(String),
+    enum Result<T, E> {
+        Ok(T),
+        Err(E),
     }
 
-    func Result_NewOk(value: int) -> Result {
-        let r: Result = Result { tag: Result_Ok };
+    func Result_NewOk<T, E>(value: T) -> Result<T, E> {
+        let r: Result<T, E> = Result { tag: Result_Ok };
         r.data.Ok_0 = value;
         return r;
     }
 
-    func Result_NewErr(msg: String) -> Result {
-        let r: Result = Result { tag: Result_Err };
+    func Result_NewErr<T, E>(msg: E) -> Result<T, E> {
+        let r: Result<T, E> = Result { tag: Result_Err };
         r.data.Err_0 = msg;
         return r;
     }
 
-    func Result_IsOk(r: Result) -> bool {
+    func Result_IsOk<T, E>(r: Result<T, E>) -> bool {
         return r.tag == Result_Ok;
     }
 
-    func Result_IsErr(r: Result) -> bool {
+    func Result_IsErr<T, E>(r: Result<T, E>) -> bool {
         return r.tag == Result_Err;
     }
 
-    func Result_Unwrap(r: Result) -> int {
+    func Result_Unwrap<T, E>(r: Result<T, E>) -> T {
         if r.tag != Result_Ok {
             PrintLine("panic: unwrap on Err");
-            return 0;
         }
         return r.data.Ok_0;
     }
 
-    func Result_UnwrapOr(r: Result, fallback: int) -> int {
+    func Result_UnwrapOr<T, E>(r: Result<T, E>, fallback: T) -> T {
         if r.tag == Result_Ok {
             return r.data.Ok_0;
         }
         return fallback;
     }
 
-    /* Unwrap Ok or panic with a custom message */
-    func Result_Expect(r: Result, msg: String) -> int {
+    func Result_Expect<T, E>(r: Result<T, E>, msg: String) -> T {
         if r.tag != Result_Ok {
             PrintLine(msg);
             bux_exit(1);
@@ -52,17 +50,14 @@ module Std::Result {
         return r.data.Ok_0;
     }
 
-    /* Extract Err payload (panics if Ok) */
-    func Result_UnwrapErr(r: Result) -> String {
+    func Result_UnwrapErr<T, E>(r: Result<T, E>) -> E {
         if r.tag != Result_Err {
             PrintLine("panic: unwrap_err on Ok");
-            return "";
         }
         return r.data.Err_0;
     }
 
-    /* If r is Ok return it, otherwise return other */
-    func Result_Or(r: Result, other: Result) -> Result {
+    func Result_Or<T, E>(r: Result<T, E>, other: Result<T, E>) -> Result<T, E> {
         if r.tag == Result_Ok {
             return r;
         }

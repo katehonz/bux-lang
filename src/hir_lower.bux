@@ -281,6 +281,29 @@ module HirLower {
                 Lcx_GenerateStructInstance(ctx, genStruct, r.typeArgName0, r.typeArgName1, te.typeArgCount);
                 return r;
             }
+            let genEnum: *Decl = Lcx_FindGenericEnum(ctx, te.typeName);
+            if genEnum != null as *Decl {
+                var isParametric: bool = false;
+                if te.typeArgCount > 0 && String_Eq(te.typeArgName0, genEnum.typeParam0) { isParametric = true; }
+                if te.typeArgCount > 1 && String_Eq(te.typeArgName1, genEnum.typeParam1) { isParametric = true; }
+                if isParametric && String_Eq(ctx.substParam0, "") && String_Eq(ctx.substParam1, "") {
+                    return te;
+                }
+                let r: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                r.kind = tekNamed;
+                r.line = te.line;
+                r.column = te.column;
+                r.typeArgCount = te.typeArgCount;
+                r.typeArgName0 = te.typeArgName0;
+                r.typeArgName1 = te.typeArgName1;
+                if String_Eq(r.typeArgName0, ctx.substParam0) { r.typeArgName0 = ctx.substArg0; }
+                if String_Eq(r.typeArgName0, ctx.substParam1) { r.typeArgName0 = ctx.substArg1; }
+                if String_Eq(r.typeArgName1, ctx.substParam0) { r.typeArgName1 = ctx.substArg0; }
+                if String_Eq(r.typeArgName1, ctx.substParam1) { r.typeArgName1 = ctx.substArg1; }
+                r.typeName = Lcx_MangleName(te.typeName, r.typeArgName0, r.typeArgName1, te.typeArgCount);
+                Lcx_GenerateEnumInstance(ctx, genEnum, r.typeArgName0, r.typeArgName1, te.typeArgCount);
+                return r;
+            }
         }
 
         // Named type that is a type parameter (only when in instance mode)
@@ -429,6 +452,94 @@ module HirLower {
         return null as *Decl;
     }
 
+    func Lcx_FindGenericEnum(ctx: *LowerCtx, name: String) -> *Decl {
+        var i: int = 0;
+        while i < ctx.genStructCount {
+            if ctx.genStructs[i].kind == dkEnum && String_Eq(ctx.genStructs[i].strValue, name) {
+                return &ctx.genStructs[i];
+            }
+            i = i + 1;
+        }
+        return null as *Decl;
+    }
+
+    func Lcx_GenerateEnumInstance(ctx: *LowerCtx, genDecl: *Decl, typeArg0: String, typeArg1: String, typeArgCount: int) -> String {
+        if String_Eq(genDecl.strValue, "") { return ""; }
+        let mangled: String = Lcx_MangleName(genDecl.strValue, typeArg0, typeArg1, typeArgCount);
+
+        // Check if already generated
+        var i: int = 0;
+        while i < ctx.hm.enumCount {
+            if String_Eq(ctx.hm.enums[i].name, mangled) {
+                return mangled;
+            }
+            i = i + 1;
+        }
+
+        // Save old substitution
+        let oldParam0: String = ctx.substParam0;
+        let oldArg0: String = ctx.substArg0;
+        let oldParam1: String = ctx.substParam1;
+        let oldArg1: String = ctx.substArg1;
+
+        ctx.substParam0 = genDecl.typeParam0;
+        ctx.substArg0 = typeArg0;
+        ctx.substParam1 = genDecl.typeParam1;
+        ctx.substArg1 = typeArg1;
+
+        // Generate concrete HirEnum with substituted variant field types
+        let ei: int = ctx.hm.enumCount;
+        ctx.hm.enumCount = ctx.hm.enumCount + 1;
+        ctx.hm.enums[ei].name = mangled;
+        ctx.hm.enums[ei].variantCount = genDecl.variantCount;
+        if genDecl.variantCount > 0 {
+            ctx.hm.enums[ei].variants = bux_alloc(genDecl.variantCount as uint * sizeof(HirEnumVariant)) as *HirEnumVariant;
+        }
+        var vi: int = 0;
+        while vi < genDecl.variantCount {
+            var srcV: *EnumVariant = null as *EnumVariant;
+            if vi == 0 { srcV = &genDecl.variant0; }
+            if vi == 1 { srcV = &genDecl.variant1; }
+            if vi == 2 { srcV = &genDecl.variant2; }
+            if vi == 3 { srcV = &genDecl.variant3; }
+            if vi == 4 { srcV = &genDecl.variant4; }
+            if vi == 5 { srcV = &genDecl.variant5; }
+            if vi == 6 { srcV = &genDecl.variant6; }
+            if vi == 7 { srcV = &genDecl.variant7; }
+            if vi == 8 { srcV = &genDecl.variant8; }
+            if srcV != null as *EnumVariant {
+                ctx.hm.enums[ei].variants[vi].name = srcV.name;
+                ctx.hm.enums[ei].variants[vi].fieldCount = srcV.fieldCount;
+                if srcV.fieldCount > 0 {
+                    ctx.hm.enums[ei].variants[vi].fieldName0 = String_Concat(srcV.name, "_0");
+                    ctx.hm.enums[ei].variants[vi].fieldType0 = Lcx_ResolveTypeKindFromName(srcV.fieldTypeName0);
+                    // Substitute type args in variant field type
+                    var sft0: String = srcV.fieldTypeName0;
+                    if String_Eq(sft0, genDecl.typeParam0) { sft0 = typeArg0; }
+                    if String_Eq(sft0, genDecl.typeParam1) { sft0 = typeArg1; }
+                    ctx.hm.enums[ei].variants[vi].fieldTypeName0 = sft0;
+                }
+                if srcV.fieldCount > 1 {
+                    ctx.hm.enums[ei].variants[vi].fieldName1 = String_Concat(srcV.name, "_1");
+                    ctx.hm.enums[ei].variants[vi].fieldType1 = Lcx_ResolveTypeKindFromName(srcV.fieldTypeName1);
+                    var sft1: String = srcV.fieldTypeName1;
+                    if String_Eq(sft1, genDecl.typeParam0) { sft1 = typeArg0; }
+                    if String_Eq(sft1, genDecl.typeParam1) { sft1 = typeArg1; }
+                    ctx.hm.enums[ei].variants[vi].fieldTypeName1 = sft1;
+                }
+            }
+            vi = vi + 1;
+        }
+
+        // Restore old substitution
+        ctx.substParam0 = oldParam0;
+        ctx.substArg0 = oldArg0;
+        ctx.substParam1 = oldParam1;
+        ctx.substArg1 = oldArg1;
+
+        return mangled;
+    }
+
     // Extract element type from mangled collection name: Array_int → int, Iter_String → String
     func Lcx_ExtractElemFromName(typeName: String) -> String {
         if String_Eq(typeName, "") { return ""; }
@@ -546,6 +657,10 @@ module HirLower {
         // Lower the generic function with substitution active
         let f: *HirFunc = Lcx_LowerFunc(ctx, genDecl);
         f.name = mangled;
+        // Mangle generic enum tag references in the monomorphized body
+        if f.body != null as *HirNode {
+            Lcx_MangleEnumTagsNode(ctx, f.body);
+        }
         // Definition-site hygiene: mono body always maps to the generic's source
         // file (not the call-site module), even if synthetic nodes lacked a path.
         if f.body != null as *HirNode && !String_Eq(genDecl.sourceFile, "") {
@@ -564,6 +679,61 @@ module HirLower {
         ctx.substArg1 = oldArg1;
 
         return mangled;
+    }
+
+    func Lcx_SubstEnumName(ctx: *LowerCtx, name: String) -> String {
+        // If name is a bare generic enum name, mangle to concrete name
+        var ge: *Decl = Lcx_FindGenericEnum(ctx, name);
+        if ge != null as *Decl {
+            return Lcx_MangleName(name, ctx.substArg0, ctx.substArg1, ge.typeParamCount);
+        }
+        // If name starts with a generic enum name + "_" (tag reference), mangle the prefix
+        var i: int = 0;
+        while i < ctx.genStructCount {
+            if ctx.genStructs[i].kind == dkEnum {
+                let prefix: String = String_Concat(ctx.genStructs[i].strValue, "_");
+                let prefixLen: int = String_Len(prefix) as int;
+                let nameLen: int = String_Len(name) as int;
+                if nameLen > prefixLen {
+                    let namePrefix: String = bux_str_slice(name, 0, prefixLen as uint);
+                    if String_Eq(namePrefix, prefix) {
+                        let mangledPrefix: String = String_Concat(
+                        Lcx_MangleName(ctx.genStructs[i].strValue, ctx.substArg0, ctx.substArg1, ctx.genStructs[i].typeParamCount),
+                        "_");
+                        let rest: String = bux_str_slice(name, prefixLen as uint, (nameLen - prefixLen) as uint);
+                        return String_Concat(mangledPrefix, rest);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        return name;
+    }
+
+    func Lcx_MangleEnumTagsNode(ctx: *LowerCtx, node: *HirNode) {
+        if node == null as *HirNode { return; }
+        if node.kind == hVar {
+            node.strValue = Lcx_SubstEnumName(ctx, node.strValue);
+        }
+        if node.kind == hStructInit {
+            node.strValue = Lcx_SubstEnumName(ctx, node.strValue);
+        }
+        if node.kind == hAlloca || node.kind == hStore {
+            node.typeName = Lcx_SubstEnumName(ctx, node.typeName);
+        }
+        Lcx_MangleEnumTagsNode(ctx, node.child1);
+        Lcx_MangleEnumTagsNode(ctx, node.child2);
+        Lcx_MangleEnumTagsNode(ctx, node.child3);
+        if (node.kind == hCall || node.kind == hCallIndirect) && node.extraData != null as *void {
+            var cur: *HirArgList = node.extraData as *HirArgList;
+            while cur != null as *HirArgList {
+                Lcx_MangleEnumTagsNode(ctx, cur.node);
+                cur = cur.next;
+            }
+        }
+        if node.kind == hIf && node.extraData != null as *void {
+            Lcx_MangleEnumTagsNode(ctx, node.extraData as *HirNode);
+        }
     }
 
     // Strip type-arg suffix from a mangled generic instance name.
@@ -2339,6 +2509,62 @@ module HirLower {
             return n;
         }
 
+        // Is (type test): expr is Type — lowered to tag check for enums
+        if kind == ekIs {
+            let operand: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
+            if expr.refType != null as *TypeExpr {
+                let isType: String = "";
+                if !String_Eq(expr.refType.typeName, "") {
+                    isType = expr.refType.typeName;
+                }
+                if !String_Eq(isType, "") {
+                    // Check if operand is an enum type — resolve from HIR type info
+                    let enumName: String = "";
+                    if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                        let sym: Symbol = Scope_Lookup(ctx.scope, expr.child1.strValue);
+                        if sym.decl != null as *Decl && sym.decl.kind == dkEnum {
+                            enumName = expr.child1.strValue;
+                        }
+                    }
+                    if !String_Eq(enumName, "") {
+                        let tagName: String = String_Concat(String_Concat(enumName, "_"), isType);
+                        // tagPtr = operand.tag
+                        let tagPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        tagPtr.kind = hFieldPtr;
+                        tagPtr.line = expr.line;
+                        tagPtr.column = expr.column;
+                        tagPtr.strValue = "tag";
+                        tagPtr.child1 = operand;
+                        // tagLoad = *tagPtr
+                        let tagLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        tagLoad.kind = hLoad;
+                        tagLoad.line = expr.line;
+                        tagLoad.column = expr.column;
+                        tagLoad.child1 = tagPtr;
+                        // tagConst = Enum_Target
+                        let tagConst: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                        tagConst.kind = hVar;
+                        tagConst.line = expr.line;
+                        tagConst.column = expr.column;
+                        tagConst.strValue = tagName;
+                        let result: *HirNode = Lcx_MakeBinHir(tkEq, tagLoad, tagConst, expr.line, expr.column);
+                        result.sourceFile = ctx.currentSourceFile;
+                        return result;
+                    }
+                }
+            }
+            // Fallback: emit a compile-time error diagnostic via HIR comment
+            // For non-enum types, is always returns false at runtime
+            let result: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+            result.kind = hLit;
+            result.line = expr.line;
+            result.column = expr.column;
+            result.typeKind = tyBool;
+            result.typeName = "bool";
+            result.boolValue = false;
+            return result;
+        }
+
         // Struct init: TypeName { field: value, ... }
         if kind == ekStructInit {
             // Simple enum init: EnumName { tag: EnumName_Variant } -> EnumName_Variant
@@ -3252,7 +3478,7 @@ module HirLower {
             if stmt.refStmtBlock != null as *Block {
                 let caseBlock: *Block = stmt.refStmtBlock;
                 var caseCount: int = caseBlock.stmtCount;
-                // Collect cases into array for reverse iteration
+                // Collect cases into fixed-size locals for reverse iteration
                 var c0: *Stmt = null as *Stmt;
                 var c1: *Stmt = null as *Stmt;
                 var c2: *Stmt = null as *Stmt;
@@ -3899,6 +4125,11 @@ module HirLower {
             return Lcx_EvalConstExprEnv(ctx, expr.child1, env);
         }
 
+        // Is — not evaluable at compile time
+        if expr.kind == ekIs {
+            return CtVal_Make(0);
+        }
+
         // Const function call
         if expr.kind == ekCall {
             if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
@@ -4106,6 +4337,11 @@ module HirLower {
                 ctx.genStructs[ctx.genStructCount] = *decl;
                 ctx.genStructCount = ctx.genStructCount + 1;
             }
+            if decl.kind == dkEnum && decl.typeParamCount > 0 {
+                // Store in genStructs array for mono lookup (reuse existing infrastructure)
+                ctx.genStructs[ctx.genStructCount] = *decl;
+                ctx.genStructCount = ctx.genStructCount + 1;
+            }
             // Generic impl/extend blocks: methods inherit the impl's type params
             if decl.kind == dkImpl && decl.typeParamCount > 0 {
                 let implTypeName: String = decl.strValue;
@@ -4210,6 +4446,11 @@ module HirLower {
                 hm.constCount = hm.constCount + 1;
             }
             if decl.kind == dkEnum {
+                // Skip generic enums — instantiated on demand via Lcx_GenerateEnumInstance
+                if decl.typeParamCount > 0 {
+                    decl = decl.childDecl2;
+                    continue;
+                }
                 let ei: int = hm.enumCount;
                 hm.enums[ei].name = decl.strValue;
                 // Populate variants

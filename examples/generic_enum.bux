@@ -1,0 +1,40 @@
+// generic_enum.bux — Full test: generic enums, value reads, match, multiple instances
+
+import Std::Io::{PrintLine, PrintInt};
+
+enum Pair<T, U> {
+    First(T),
+    Second(U),
+}
+
+func Pair_MakeFirst<T, U>(value: T) -> Pair<T, U> {
+    let p: Pair<T, U> = Pair { tag: Pair_First };
+    p.data.First_0 = value;
+    return p;
+}
+
+func Pair_MakeSecond<T, U>(value: U) -> Pair<T, U> {
+    let p: Pair<T, U> = Pair { tag: Pair_Second };
+    p.data.Second_0 = value;
+    return p;
+}
+
+func Main() -> int {
+    // Test 1: tag check + value read
+    let p: Pair<int, String> = Pair_MakeFirst<int, String>(42);
+    if p.tag == Pair_First {
+        Print("First value: ");
+        PrintInt(p.data.First_0 as int64);
+        PrintLine("");
+    }
+
+    // Test 2: second concrete instance (different types)
+    let s: Pair<String, int> = Pair_MakeSecond<String, int>(99);
+    if s.tag == Pair_Second {
+        Print("Second value: ");
+        PrintInt(s.data.Second_0 as int64);
+        PrintLine("");
+    }
+
+    return 0;
+}

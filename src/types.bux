@@ -162,8 +162,21 @@ module Types {
 
     func Type_Eq(a: Type, b: Type) -> bool {
         if a.kind != b.kind { return false; }
-        if a.kind == tyNamed || a.kind == tyTypeParam {
+        if a.kind == tyNamed || a.kind == tyTypeParam || a.kind == tyFunc {
             return String_Eq(a.name, b.name);
+        }
+        if a.kind == tyPointer {
+            if a.innerKind1 != b.innerKind1 { return false; }
+            return String_Eq(a.innerName1, b.innerName1);
+        }
+        if a.kind == tySlice || a.kind == tyTuple {
+            if a.innerKind1 != b.innerKind1 { return false; }
+            if !String_Eq(a.innerName1, b.innerName1) { return false; }
+            if a.innerKind2 != b.innerKind2 { return false; }
+            if !String_Eq(a.innerName2, b.innerName2) { return false; }
+            if a.innerKind3 != b.innerKind3 { return false; }
+            if !String_Eq(a.innerName3, b.innerName3) { return false; }
+            return true;
         }
         return true;
     }

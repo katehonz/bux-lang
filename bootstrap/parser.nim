@@ -1404,6 +1404,7 @@ proc parseEnumDecl(p: var Parser, isPublic: bool): Decl =
   let loc = p.currentLoc
   discard p.expect(tkEnum, "expected 'enum'")
   let name = p.expect(tkIdent, "expected enum name").text
+  let typeParams = p.parseTypeParams()
   var baseType: TypeExpr = nil
   if p.check(tkColon):
     discard p.advance()
@@ -1444,6 +1445,7 @@ proc parseEnumDecl(p: var Parser, isPublic: bool): Decl =
   discard p.expect(tkRBrace, "expected '}' to close enum")
   return Decl(kind: dkEnum, loc: loc, isPublic: isPublic,
               declEnumName: name, declEnumBaseType: baseType,
+              declEnumTypeParams: typeParams,
               declEnumVariants: variants)
 
 proc parseUnionDecl(p: var Parser, isPublic: bool): Decl =
