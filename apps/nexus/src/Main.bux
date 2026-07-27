@@ -87,7 +87,7 @@ module Main {
         let tlsEnv: String = Os_GetEnv("NEXUS_TLS");
         if String_Len(tlsEnv) > 0 {
             if String_Eq(tlsEnv, "1") || String_Eq(tlsEnv, "true") || String_Eq(tlsEnv, "on") ||
-               String_Eq(tlsEnv, "https") {
+            String_Eq(tlsEnv, "https") {
                 config.tlsEnabled = true;
             }
         }

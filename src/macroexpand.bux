@@ -467,7 +467,7 @@ module MacroExpand {
             wrap.child1 = aexp;
             // group flag: tuple or non-empty slice lit
             wrap.boolValue = aexp.kind == ekTuple ||
-                (aexp.kind == ekSlice && aexp.callArgCount > 0);
+            (aexp.kind == ekSlice && aexp.callArgCount > 0);
             return wrap;
         }
         // type — session 87: named / pointer type from call-site expr shape
@@ -845,7 +845,7 @@ module MacroExpand {
 
     // Build callArgs for a call/macro-call, flattening MacroRep and MacroTt groups.
     func Macro_SubstCallArgs(oldArgs: *ExprList, env: *MacroEnv, file: String, line: uint32, col: uint32,
-                              outCount: *int) -> *ExprList {
+    outCount: *int) -> *ExprList {
         var first: *ExprList = null as *ExprList;
         var last: *ExprList = null as *ExprList;
         var count: int = 0;
@@ -895,8 +895,8 @@ module MacroExpand {
                 let bound: *Expr = Env_Lookup(env, a.strValue);
                 // Bare `$args:tt` group → flatten tuple/slice elements as call args
                 if bound != null as *Expr && bound.kind == ekMacroTt && bound.boolValue &&
-                   bound.child1 != null as *Expr &&
-                   (bound.child1.kind == ekTuple || bound.child1.kind == ekSlice) {
+                bound.child1 != null as *Expr &&
+                (bound.child1.kind == ekTuple || bound.child1.kind == ekSlice) {
                     var tel: *ExprList = bound.child1.callArgs;
                     while tel != null as *ExprList {
                         let ce: *Expr = Ast_CloneExpr(tel.expr);
@@ -1197,8 +1197,8 @@ module MacroExpand {
                 let k1: String = Macro_KindAt(kinds, 1);
                 let only: *Expr = expArgs.expr;
                 if String_Eq(k0, "ident") && String_Eq(k1, "tt") &&
-                   only != null as *Expr && only.kind == ekCall &&
-                   only.child1 != null as *Expr && only.child1.kind == ekIdent {
+                only != null as *Expr && only.kind == ekCall &&
+                only.child1 != null as *Expr && only.child1.kind == ekIdent {
                     let callee: *Expr = only.child1;
                     // Build MacroTt group from call args (tuple of elements)
                     let inner: *Expr = bux_alloc(sizeof(Expr)) as *Expr;

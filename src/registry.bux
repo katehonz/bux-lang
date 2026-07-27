@@ -100,8 +100,8 @@ module Registry {
         }
         // prefer curl
         let curlCmd: String = String_Concat(
-            "curl -fsSL",
-            String_Concat(kflag, String_Concat(" --max-time 30 -o \"", String_Concat(cachePath, String_Concat("\" \"", String_Concat(url, "\"")))))
+        "curl -fsSL",
+        String_Concat(kflag, String_Concat(" --max-time 30 -o \"", String_Concat(cachePath, String_Concat("\" \"", String_Concat(url, "\"")))))
         );
         var ok: bool = false;
         if bux_system("command -v curl >/dev/null 2>&1") == 0 {
@@ -112,8 +112,8 @@ module Registry {
                 nflag = " --no-check-certificate";
             }
             let wgetCmd: String = String_Concat(
-                "wget -q",
-                String_Concat(nflag, String_Concat(" -T 30 -O \"", String_Concat(cachePath, String_Concat("\" \"", String_Concat(url, "\"")))))
+            "wget -q",
+            String_Concat(nflag, String_Concat(" -T 30 -O \"", String_Concat(cachePath, String_Concat("\" \"", String_Concat(url, "\"")))))
             );
             ok = bux_system(wgetCmd) == 0 && Reg_FileExists(cachePath);
         }
@@ -141,240 +141,240 @@ module Registry {
         if String_StartsWith(src, "file:") {
             p = String_Slice(src, 5, bux_strlen(src) - 5);
             if String_StartsWith(p, "//") {
-                p = String_Slice(p, 2, bux_strlen(p) - 2);
-            }
-        } else if String_StartsWith(src, "path:") {
-            p = String_Slice(src, 5, bux_strlen(src) - 5);
-        } else {
-            return "";
+            p = String_Slice(p, 2, bux_strlen(p) - 2);
         }
-        if String_StartsWith(p, "/") {
-            return p;
+    } else if String_StartsWith(src, "path:") {
+        p = String_Slice(src, 5, bux_strlen(src) - 5);
+    } else {
+        return "";
+    }
+    if String_StartsWith(p, "/") {
+        return p;
+    }
+    return bux_path_join(indexDir, p);
+}
+
+func Reg_SetPkg(reg: *Registry, idx: int, pkg: RegistryPackage) {
+    if idx == 0 { reg.p0 = pkg; }
+    else if idx == 1 { reg.p1 = pkg; }
+    else if idx == 2 { reg.p2 = pkg; }
+    else if idx == 3 { reg.p3 = pkg; }
+    else if idx == 4 { reg.p4 = pkg; }
+    else if idx == 5 { reg.p5 = pkg; }
+    else if idx == 6 { reg.p6 = pkg; }
+    else if idx == 7 { reg.p7 = pkg; }
+    else if idx == 8 { reg.p8 = pkg; }
+    else if idx == 9 { reg.p9 = pkg; }
+    else if idx == 10 { reg.p10 = pkg; }
+    else if idx == 11 { reg.p11 = pkg; }
+    else if idx == 12 { reg.p12 = pkg; }
+    else if idx == 13 { reg.p13 = pkg; }
+    else if idx == 14 { reg.p14 = pkg; }
+    else if idx == 15 { reg.p15 = pkg; }
+}
+
+func Reg_GetPkg(reg: Registry, idx: int) -> RegistryPackage {
+    if idx == 0 { return reg.p0; }
+    if idx == 1 { return reg.p1; }
+    if idx == 2 { return reg.p2; }
+    if idx == 3 { return reg.p3; }
+    if idx == 4 { return reg.p4; }
+    if idx == 5 { return reg.p5; }
+    if idx == 6 { return reg.p6; }
+    if idx == 7 { return reg.p7; }
+    if idx == 8 { return reg.p8; }
+    if idx == 9 { return reg.p9; }
+    if idx == 10 { return reg.p10; }
+    if idx == 11 { return reg.p11; }
+    if idx == 12 { return reg.p12; }
+    if idx == 13 { return reg.p13; }
+    if idx == 14 { return reg.p14; }
+    return reg.p15;
+}
+
+func Reg_ParseContent(content: String, indexPath: String) -> Registry {
+    var reg: Registry;
+    reg.path = indexPath;
+    reg.sourceUrl = "";
+    reg.count = 0;
+    let indexDir: String = bux_path_parent(indexPath);
+    var cur: RegistryPackage;
+    var inPkg: bool = false;
+    let nlines: uint = String_SplitCount(content, "\n");
+    var i: uint = 0;
+    while i <= nlines {
+        var line: String = "";
+        if i < nlines {
+            line = String_Trim(String_SplitPart(content, "\n", i));
         }
-        return bux_path_join(indexDir, p);
-    }
-
-    func Reg_SetPkg(reg: *Registry, idx: int, pkg: RegistryPackage) {
-        if idx == 0 { reg.p0 = pkg; }
-        else if idx == 1 { reg.p1 = pkg; }
-        else if idx == 2 { reg.p2 = pkg; }
-        else if idx == 3 { reg.p3 = pkg; }
-        else if idx == 4 { reg.p4 = pkg; }
-        else if idx == 5 { reg.p5 = pkg; }
-        else if idx == 6 { reg.p6 = pkg; }
-        else if idx == 7 { reg.p7 = pkg; }
-        else if idx == 8 { reg.p8 = pkg; }
-        else if idx == 9 { reg.p9 = pkg; }
-        else if idx == 10 { reg.p10 = pkg; }
-        else if idx == 11 { reg.p11 = pkg; }
-        else if idx == 12 { reg.p12 = pkg; }
-        else if idx == 13 { reg.p13 = pkg; }
-        else if idx == 14 { reg.p14 = pkg; }
-        else if idx == 15 { reg.p15 = pkg; }
-    }
-
-    func Reg_GetPkg(reg: Registry, idx: int) -> RegistryPackage {
-        if idx == 0 { return reg.p0; }
-        if idx == 1 { return reg.p1; }
-        if idx == 2 { return reg.p2; }
-        if idx == 3 { return reg.p3; }
-        if idx == 4 { return reg.p4; }
-        if idx == 5 { return reg.p5; }
-        if idx == 6 { return reg.p6; }
-        if idx == 7 { return reg.p7; }
-        if idx == 8 { return reg.p8; }
-        if idx == 9 { return reg.p9; }
-        if idx == 10 { return reg.p10; }
-        if idx == 11 { return reg.p11; }
-        if idx == 12 { return reg.p12; }
-        if idx == 13 { return reg.p13; }
-        if idx == 14 { return reg.p14; }
-        return reg.p15;
-    }
-
-    func Reg_ParseContent(content: String, indexPath: String) -> Registry {
-        var reg: Registry;
-        reg.path = indexPath;
-        reg.sourceUrl = "";
-        reg.count = 0;
-        let indexDir: String = bux_path_parent(indexPath);
-        var cur: RegistryPackage;
-        var inPkg: bool = false;
-        let nlines: uint = String_SplitCount(content, "\n");
-        var i: uint = 0;
-        while i <= nlines {
-            var line: String = "";
-            if i < nlines {
-                line = String_Trim(String_SplitPart(content, "\n", i));
+        let flush: bool = (i == nlines) || String_Eq(line, "[[package]]") || String_Eq(line, "[[Package]]");
+        if flush && inPkg && !String_Eq(cur.name, "") {
+            cur.resolvedPath = Reg_ResolveSource(cur.source, indexDir);
+            if reg.count < 16 {
+                Reg_SetPkg(&reg, reg.count, cur);
+                reg.count = reg.count + 1;
             }
-            let flush: bool = (i == nlines) || String_Eq(line, "[[package]]") || String_Eq(line, "[[Package]]");
-            if flush && inPkg && !String_Eq(cur.name, "") {
-                cur.resolvedPath = Reg_ResolveSource(cur.source, indexDir);
-                if reg.count < 16 {
-                    Reg_SetPkg(&reg, reg.count, cur);
-                    reg.count = reg.count + 1;
-                }
-                cur.name = "";
-                cur.version = "";
-                cur.source = "";
-                cur.description = "";
-                cur.resolvedPath = "";
-            }
-            if i == nlines { break; }
-            if String_Eq(line, "") || String_StartsWith(line, "#") {
-                i = i + 1;
-                continue;
-            }
-            if String_Eq(line, "[[package]]") || String_Eq(line, "[[Package]]") {
-                inPkg = true;
-                i = i + 1;
-                continue;
-            }
-            if !inPkg {
-                i = i + 1;
-                continue;
-            }
-            let eqc: uint = String_SplitCount(line, "=");
-            if eqc >= 2 {
-                let key: String = String_Trim(String_SplitPart(line, "=", 0));
-                let val: String = Reg_StripQuotes(String_SplitPart(line, "=", 1));
-                // lowercase-ish compare for common keys
-                if String_Eq(key, "name") || String_Eq(key, "Name") {
-                    cur.name = val;
-                } else if String_Eq(key, "version") || String_Eq(key, "Version") {
-                    cur.version = val;
-                } else if String_Eq(key, "source") || String_Eq(key, "Source") {
-                    cur.source = val;
-                } else if String_Eq(key, "description") || String_Eq(key, "Description") {
-                    cur.description = val;
-                }
-            }
+            cur.name = "";
+            cur.version = "";
+            cur.source = "";
+            cur.description = "";
+            cur.resolvedPath = "";
+        }
+        if i == nlines { break; }
+        if String_Eq(line, "") || String_StartsWith(line, "#") {
             i = i + 1;
+            continue;
         }
-        return reg;
+        if String_Eq(line, "[[package]]") || String_Eq(line, "[[Package]]") {
+            inPkg = true;
+            i = i + 1;
+            continue;
+        }
+        if !inPkg {
+            i = i + 1;
+            continue;
+        }
+        let eqc: uint = String_SplitCount(line, "=");
+        if eqc >= 2 {
+            let key: String = String_Trim(String_SplitPart(line, "=", 0));
+            let val: String = Reg_StripQuotes(String_SplitPart(line, "=", 1));
+            // lowercase-ish compare for common keys
+            if String_Eq(key, "name") || String_Eq(key, "Name") {
+                cur.name = val;
+            } else if String_Eq(key, "version") || String_Eq(key, "Version") {
+                cur.version = val;
+            } else if String_Eq(key, "source") || String_Eq(key, "Source") {
+                cur.source = val;
+            } else if String_Eq(key, "description") || String_Eq(key, "Description") {
+                cur.description = val;
+            }
+        }
+        i = i + 1;
     }
+    return reg;
+}
 
-    func Reg_FindIndex() -> Registry {
-        var reg: Registry;
-        reg.path = "";
-        reg.sourceUrl = "";
-        reg.count = 0;
-        let env: String = bux_getenv("BUX_REGISTRY");
-        if env != null as String && !String_Eq(env, "") {
-            if Reg_IsHttpUrl(env) {
-                let local: String = Reg_FetchHttp(env);
-                if String_Eq(local, "") {
-                    reg.sourceUrl = env;
-                    return reg;
-                }
-                let content: String = bux_read_file(local);
-                reg = Reg_ParseContent(content, local);
+func Reg_FindIndex() -> Registry {
+    var reg: Registry;
+    reg.path = "";
+    reg.sourceUrl = "";
+    reg.count = 0;
+    let env: String = bux_getenv("BUX_REGISTRY");
+    if env != null as String && !String_Eq(env, "") {
+        if Reg_IsHttpUrl(env) {
+            let local: String = Reg_FetchHttp(env);
+            if String_Eq(local, "") {
                 reg.sourceUrl = env;
-                reg.path = local;
                 return reg;
             }
-            if Reg_FileExists(env) {
-                let content: String = bux_read_file(env);
-                reg = Reg_ParseContent(content, env);
-                reg.path = env;
-                return reg;
-            }
-        }
-        let home: String = bux_getenv("HOME");
-        if home != null as String && !String_Eq(home, "") {
-            let homeIdx: String = bux_path_join(bux_path_join(home, ".bux"), "registry.toml");
-            if Reg_FileExists(homeIdx) {
-                let content: String = bux_read_file(homeIdx);
-                reg = Reg_ParseContent(content, homeIdx);
-                reg.path = homeIdx;
-                return reg;
-            }
-        }
-        // cwd-relative candidates
-        let cwd: String = bux_getcwd();
-        var c0: String = bux_path_join(cwd, "config/registry.toml");
-        if Reg_FileExists(c0) {
-            let content: String = bux_read_file(c0);
-            reg = Reg_ParseContent(content, c0);
-            reg.path = c0;
+            let content: String = bux_read_file(local);
+            reg = Reg_ParseContent(content, local);
+            reg.sourceUrl = env;
+            reg.path = local;
             return reg;
         }
-        c0 = bux_path_join(cwd, "../config/registry.toml");
-        if Reg_FileExists(c0) {
-            let content: String = bux_read_file(c0);
-            reg = Reg_ParseContent(content, c0);
-            reg.path = c0;
+        if Reg_FileExists(env) {
+            let content: String = bux_read_file(env);
+            reg = Reg_ParseContent(content, env);
+            reg.path = env;
             return reg;
         }
-        c0 = bux_path_join(cwd, "../../config/registry.toml");
-        if Reg_FileExists(c0) {
-            let content: String = bux_read_file(c0);
-            reg = Reg_ParseContent(content, c0);
-            reg.path = c0;
+    }
+    let home: String = bux_getenv("HOME");
+    if home != null as String && !String_Eq(home, "") {
+        let homeIdx: String = bux_path_join(bux_path_join(home, ".bux"), "registry.toml");
+        if Reg_FileExists(homeIdx) {
+            let content: String = bux_read_file(homeIdx);
+            reg = Reg_ParseContent(content, homeIdx);
+            reg.path = homeIdx;
             return reg;
         }
+    }
+    // cwd-relative candidates
+    let cwd: String = bux_getcwd();
+    var c0: String = bux_path_join(cwd, "config/registry.toml");
+    if Reg_FileExists(c0) {
+        let content: String = bux_read_file(c0);
+        reg = Reg_ParseContent(content, c0);
+        reg.path = c0;
         return reg;
     }
-
-    func Reg_VersionOk(have: String, req: String) -> bool {
-        if String_Eq(req, "") || String_Eq(req, "*") { return true; }
-        return String_Eq(have, req);
+    c0 = bux_path_join(cwd, "../config/registry.toml");
+    if Reg_FileExists(c0) {
+        let content: String = bux_read_file(c0);
+        reg = Reg_ParseContent(content, c0);
+        reg.path = c0;
+        return reg;
     }
+    c0 = bux_path_join(cwd, "../../config/registry.toml");
+    if Reg_FileExists(c0) {
+        let content: String = bux_read_file(c0);
+        reg = Reg_ParseContent(content, c0);
+        reg.path = c0;
+        return reg;
+    }
+    return reg;
+}
 
-    // Lookup by name; versionReq "*" = last matching entry (highest listed last).
-    func Reg_Lookup(reg: Registry, name: String, versionReq: String) -> RegistryPackage {
-        var found: RegistryPackage;
-        found.name = "";
-        var i: int = 0;
-        while i < reg.count {
-            let p: RegistryPackage = Reg_GetPkg(reg, i);
-            if String_Eq(p.name, name) && Reg_VersionOk(p.version, versionReq) {
-                found = p;
-            }
-            i = i + 1;
+func Reg_VersionOk(have: String, req: String) -> bool {
+    if String_Eq(req, "") || String_Eq(req, "*") { return true; }
+    return String_Eq(have, req);
+}
+
+// Lookup by name; versionReq "*" = last matching entry (highest listed last).
+func Reg_Lookup(reg: Registry, name: String, versionReq: String) -> RegistryPackage {
+    var found: RegistryPackage;
+    found.name = "";
+    var i: int = 0;
+    while i < reg.count {
+        let p: RegistryPackage = Reg_GetPkg(reg, i);
+        if String_Eq(p.name, name) && Reg_VersionOk(p.version, versionReq) {
+            found = p;
         }
-        return found;
+        i = i + 1;
     }
+    return found;
+}
 
-    func Reg_Search(reg: Registry, query: String) -> int {
-        // print hits; return count
-        var hits: int = 0;
-        // Dedupe by name: keep last version
-        // Simple O(n^2): for each pkg, if last occurrence of name, print
-        var i: int = 0;
-        while i < reg.count {
-            let p: RegistryPackage = Reg_GetPkg(reg, i);
-            var isLast: bool = true;
-            var j: int = i + 1;
-            while j < reg.count {
-                let q: RegistryPackage = Reg_GetPkg(reg, j);
-                if String_Eq(q.name, p.name) {
-                    isLast = false;
-                    break;
-                }
-                j = j + 1;
+func Reg_Search(reg: Registry, query: String) -> int {
+    // print hits; return count
+    var hits: int = 0;
+    // Dedupe by name: keep last version
+    // Simple O(n^2): for each pkg, if last occurrence of name, print
+    var i: int = 0;
+    while i < reg.count {
+        let p: RegistryPackage = Reg_GetPkg(reg, i);
+        var isLast: bool = true;
+        var j: int = i + 1;
+        while j < reg.count {
+            let q: RegistryPackage = Reg_GetPkg(reg, j);
+            if String_Eq(q.name, p.name) {
+                isLast = false;
+                break;
             }
-            if isLast {
-                var ok: bool = true;
-                if !String_Eq(query, "") {
-                    ok = String_Contains(p.name, query) || String_Contains(p.description, query);
-                }
-                if ok {
-                    Print("  ");
-                    Print(p.name);
-                    Print("  ");
-                    Print(p.version);
-                    Print("  — ");
-                    if !String_Eq(p.description, "") {
-                        PrintLine(p.description);
-                    } else {
-                        PrintLine(p.source);
-                    }
-                    hits = hits + 1;
-                }
-            }
-            i = i + 1;
+            j = j + 1;
         }
-        return hits;
+        if isLast {
+            var ok: bool = true;
+            if !String_Eq(query, "") {
+                ok = String_Contains(p.name, query) || String_Contains(p.description, query);
+            }
+            if ok {
+                Print("  ");
+                Print(p.name);
+                Print("  ");
+                Print(p.version);
+                Print("  — ");
+                if !String_Eq(p.description, "") {
+                    PrintLine(p.description);
+                } else {
+                    PrintLine(p.source);
+                }
+                hits = hits + 1;
+            }
+        }
+        i = i + 1;
     }
+    return hits;
+}
 }

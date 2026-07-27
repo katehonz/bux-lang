@@ -59,8 +59,8 @@ module Cli {
                 return "rt/runtime_win.c";
             }
             if String_Eq(env, "minimal") || String_Eq(env, "thin") ||
-               String_Eq(env, "embed") || String_Eq(env, "embedded") ||
-               String_Eq(env, "freestanding") {
+            String_Eq(env, "embed") || String_Eq(env, "embedded") ||
+            String_Eq(env, "freestanding") {
                 return "rt/runtime_minimal.c";
             }
             if String_Eq(env, "full") || String_Eq(env, "posix") {
@@ -141,7 +141,7 @@ module Cli {
     }
 
     func Cli_LinkProgram(cFile: String, outBin: String, projectDir: String,
-                         targetTriple: String, isRelease: bool, isStatic: bool) -> int {
+    targetTriple: String, isRelease: bool, isStatic: bool) -> int {
         let relRt: String = Cli_RuntimeRel(isStatic, targetTriple);
         let rtPath: String = Cli_FindRtFile(projectDir, relRt);
         let ioPath: String = Cli_FindRtFile(projectDir, "rt/io.c");
@@ -1179,8 +1179,8 @@ func Cli_PackageChecksum(dir: String) -> String {
         return "";
     }
     let cmd: String = String_Concat(
-        "find \"",
-        String_Concat(dir, "\" -name '*.bux' -type f 2>/dev/null | LC_ALL=C sort | xargs cat 2>/dev/null | sha1sum | awk '{print $1}'")
+    "find \"",
+    String_Concat(dir, "\" -name '*.bux' -type f 2>/dev/null | LC_ALL=C sort | xargs cat 2>/dev/null | sha1sum | awk '{print $1}'")
     );
     let out: String = bux_process_output(cmd);
     if out == null as String { return ""; }
@@ -1205,7 +1205,7 @@ func Cli_DepResolvedPath(projectDir: String, depName: String, depUrl: String) ->
         return depUrl;
     }
     if String_StartsWith(depUrl, "http://") || String_StartsWith(depUrl, "https://") ||
-       String_EndsWith(depUrl, ".git") {
+    String_EndsWith(depUrl, ".git") {
         return bux_path_join(bux_path_join(projectDir, "deps"), depName);
     }
     // relative path
@@ -1245,7 +1245,7 @@ func Cli_InstallLocked(projectDir: String) -> int {
                 path = bux_path_join(projectDir, source);
             }
             if String_StartsWith(source, "http://") || String_StartsWith(source, "https://") ||
-               String_EndsWith(source, ".git") {
+            String_EndsWith(source, ".git") {
                 path = bux_path_join(bux_path_join(projectDir, "deps"), name);
             }
             if !DirExists(path) {
@@ -1342,7 +1342,7 @@ func Cli_Install(projectDir: String, lockedOnly: bool) -> int {
 
         // Fetch git deps into deps/<name> when missing
         if String_StartsWith(depUrl, "http://") || String_StartsWith(depUrl, "https://") ||
-           String_EndsWith(depUrl, ".git") {
+        String_EndsWith(depUrl, ".git") {
             let depsDir: String = bux_path_join(projectDir, "deps");
             discard bux_mkdir_if_needed(depsDir);
             let depPath: String = bux_path_join(depsDir, depName);
@@ -2254,7 +2254,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     }
 
     if argCount < 2 {
-        PrintLine("Bux Self-Hosting Compiler v0.2.0");
+        PrintLine("Bux Self-Hosting Compiler v1.0.0");
         PrintLine("Usage: buxc <command> [args]");
         PrintLine("Commands: build, check, new, init, add, remove, fetch, install, search, fmt, doc, test, run, project, help, version");
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
@@ -2272,12 +2272,12 @@ func Cli_Run(args: *String, argCount: int) -> int {
 
     let cmd: String = args[1];
     if String_Eq(cmd, "version") || String_Eq(cmd, "--version") || String_Eq(cmd, "-v") {
-        PrintLine("Bux 0.2.0 (self-hosting bootstrap)");
+        PrintLine("Bux 1.0.0 (self-hosting)");
         return 0;
     }
 
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
-        PrintLine("Bux Self-Hosting Compiler v0.2.0");
+        PrintLine("Bux Self-Hosting Compiler v1.0.0");
         PrintLine("Usage: buxc <command> [args]");
         PrintLine("Commands: build, check, new, init, add, remove, fetch, install, search, fmt, doc, test, run, project, help, version");
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
@@ -2330,7 +2330,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
         if argCount >= 4 {
             let a3: String = args[3];
             if !String_Contains(a3, "/") && !String_StartsWith(a3, "http") &&
-               !String_EndsWith(a3, ".git") {
+            !String_EndsWith(a3, ".git") {
                 return Cli_AddFromRegistry(args[2], a3);
             }
             return Cli_Add(args[2], a3);

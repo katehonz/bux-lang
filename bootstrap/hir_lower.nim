@@ -2734,18 +2734,37 @@ proc lowerClosureFunc(ctx: var LowerCtx, expr: Expr): HirFunc =
     f.retType = ctx.resolveTypeExpr(expr.exprClosureReturnType)
   else:
     f.retType = makeVoid()
-  # Body with closure rewriting
+  # Body with closure rewriting — isolate Drop/defer stack like lowerFunc.
+  # Nested closure lowering previously kept the outer function's deferStmts,
+  # so `return` inside a capture emitted Array_Drop for outer locals (session 88).
   let savedDepth = ctx.closureDepth
   let savedExpr = ctx.currentClosureExpr
   let savedEnv = ctx.envInstanceName
+  let oldDefers = ctx.deferStmts
+  let oldMovedOut = ctx.movedOutLocals
+  let oldPartialMoved = ctx.partialMovedFields
+  ctx.deferStmts = @[]
+  ctx.movedOutLocals = initHashSet[string]()
+  ctx.partialMovedFields = initTable[string, HashSet[string]]()
   ctx.closureDepth = ctx.closureDepth + 1
   ctx.currentClosureExpr = expr
   ctx.envInstanceName = f.envInstanceName
   if expr.exprClosureBody != nil:
     f.body = ctx.lowerBlock(expr.exprClosureBody)
+  # Emit pending auto-drops for locals allocated *inside* the closure body only
+  if ctx.deferStmts.len > 0 and f.body != nil and f.body.kind == hBlock:
+    var lastIsReturn = false
+    if f.body.blockStmts.len > 0 and f.body.blockStmts[^1].kind == hReturn:
+      lastIsReturn = true
+    if not lastIsReturn:
+      for i in countdown(ctx.deferStmts.len - 1, 0):
+        ctx.emitDropOrPartial(f.body.blockStmts, ctx.deferStmts[i], "")
   ctx.closureDepth = savedDepth
   ctx.currentClosureExpr = savedExpr
   ctx.envInstanceName = savedEnv
+  ctx.deferStmts = oldDefers
+  ctx.movedOutLocals = oldMovedOut
+  ctx.partialMovedFields = oldPartialMoved
   ctx.extraFuncs.add(f)
   return f
 

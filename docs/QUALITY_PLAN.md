@@ -1,10 +1,11 @@
-# Bux — План към „добър“ език (v0.5 → v1.0)
+# Bux — План към „добър“ език (v0.5 → **v1.0.0** ✅)
 
-> **Дата:** 2026-07-23  
-> **Текущо:** v0.5.x — `:type` macros + Array_Reverse (session 87)  
+> **Дата:** 2026-07-27  
+> **Текущо:** **v1.0.0** — language freeze (session 88 / release)  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.  
 > **Платформен фокус:** **Linux** (primary) · **cloud-native** (servers, containers, HTTP) · **embedded** (cross, freestanding-ish, CTFE).  
-> **Не-цел:** MS Windows като product platform (исторически CI/hello smoke остават; няма roadmap investment).
+> **Не-цел:** MS Windows като product platform (исторически CI/hello smoke остават; няма roadmap investment).  
+> **Release notes:** `docs/RELEASE_v1.0.0.md` · **Semver:** `docs/SEMVER.md` (active).
 
 ---
 
@@ -113,7 +114,7 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
-## Acceptance criteria за „добър v1.0“
+## Acceptance criteria за „добър v1.0“ — **met; tagged v1.0.0**
 
 - [x] Всички examples + apps + selfhost smoke на CI (`make test` via `.github/workflows/ci.yml`); selfhost-loop optional
 - [x] Array/Map/String/Test API покрива 90% от ежедневните нужди (+ Insert/Remove/Clone/case/GetOr)
@@ -121,6 +122,7 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 - [x] `bux test` + `bux fmt` + `bux check` са default developer loop (`--filter` / `--check` shipped)
 - [x] LanguageRef синхронизиран с компилатора (incl. C.1 elision)
 - [x] Поне един външен/temp проект build-ва с registry dep (`tools/smoke_registry.sh` + HTTP)
+- [x] Version strings + SEMVER active + `docs/RELEASE_v1.0.0.md` (session 88)
 
 ---
 
@@ -1461,22 +1463,18 @@ bootstrap + **buxc2** `macro_tt_raw` (incl. slice) PASS.
 
 ---
 
-## Следващи стъпки
+## Сесия 88 (v1.0.0 language freeze)
 
-### P0 — Compiler / language
+1. Version banners: bootstrap + selfhost CLI → **1.0.0**; root `bux.toml` → 1.0.0
+2. `docs/SEMVER.md` — **Active** (post-1.0 MAJOR = breaking)
+3. `docs/RELEASE_v1.0.0.md` — freeze notes + verify commands
+4. README / QUALITY_PLAN / ROADMAP status → v1.0.0
+5. Tag `v1.0.0` after `make test` gate
 
-1. ~~… through session 86~~ ✅
-2. ~~**`:type` macro fragments**~~ ✅ session 87
-3. Optional: richer free-form (operators-only tt); generics in `:type` (`Array<int>`)
-
-### P1 — Linux / cloud-native
-
-4. ~~(sessions 75–81)~~ ✅
-
-### P2 — Embedded / cross
-
-5. ~~riscv64 smoke + freestanding notes~~ ✅ session 85
-6. Optional: real `runtime_freestanding.c` + Cortex-M qemu — not v1.0
+**Post-1.0 backlog (MINOR, not freeze blockers):**
+- Generics in `:type` (`Array<int>`); operators-only tt paste
+- `runtime_freestanding.c` + Cortex-M research
+- LSP / IDE versioning independent of language MAJOR
 
 ### Изрично **не** правим
 

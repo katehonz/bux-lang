@@ -2465,8 +2465,8 @@ module Parser {
                         if String_Eq(kname, "lit") { kname = "literal"; }
                         if String_Eq(kname, "pattern") { kname = "pat"; }
                         if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
-                            || String_Eq(kname, "literal") || String_Eq(kname, "block")
-                            || String_Eq(kname, "stmt") || String_Eq(kname, "pat") || String_Eq(kname, "type")) {
+                        || String_Eq(kname, "literal") || String_Eq(kname, "block")
+                        || String_Eq(kname, "stmt") || String_Eq(kname, "pat") || String_Eq(kname, "type")) {
                             kname = "expr";
                         }
                         if nIn == 0 {
@@ -2519,8 +2519,8 @@ module Parser {
                     if String_Eq(kname, "lit") { kname = "literal"; }
                     if String_Eq(kname, "pattern") { kname = "pat"; }
                     if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
-                        || String_Eq(kname, "literal") || String_Eq(kname, "block")
-                        || String_Eq(kname, "stmt") || String_Eq(kname, "pat") || String_Eq(kname, "type")) {
+                    || String_Eq(kname, "literal") || String_Eq(kname, "block")
+                    || String_Eq(kname, "stmt") || String_Eq(kname, "pat") || String_Eq(kname, "type")) {
                         kname = "expr";
                     }
                     if rule.paramCount < 9 {

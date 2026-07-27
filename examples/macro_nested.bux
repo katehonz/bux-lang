@@ -28,8 +28,8 @@ macro! double_each_sum {
     ( $($x:expr),* ) => {
         var __t: int = 0;
         $(
-            $( __t = __t + $x; )*
-            $( __t = __t + $x; )*
+        $( __t = __t + $x; )*
+        $( __t = __t + $x; )*
         )*
         __t
     }

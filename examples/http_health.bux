@@ -12,11 +12,11 @@ func HealthBody() -> String {
 func BuildHttp(body: String) -> String {
     let n: int = String_Len(body) as int;
     return String_Concat(
-        String_Concat(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ",
-            String_FromInt(n as int64)
-        ),
-        String_Concat("\r\nConnection: close\r\n\r\n", body)
+    String_Concat(
+    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ",
+    String_FromInt(n as int64)
+    ),
+    String_Concat("\r\nConnection: close\r\n\r\n", body)
     );
 }
 

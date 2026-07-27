@@ -92,7 +92,7 @@ module Manifest {
                     while pi + 4 < pl {
                         // match ASCII 'P','a','t','h'
                         if line[pi] == 80 as char8 && line[pi + 1] == 97 as char8 &&
-                           line[pi + 2] == 116 as char8 && line[pi + 3] == 104 as char8 {
+                        line[pi + 2] == 116 as char8 && line[pi + 3] == 104 as char8 {
                             var q1: int = -1;
                             var qj: uint = pi;
                             while qj < pl {

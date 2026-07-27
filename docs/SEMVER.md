@@ -1,6 +1,6 @@
 # Bux Semantic Versioning Policy
 
-> Status: Draft for v0.x → v1.0 freeze (E.3)
+> Status: **Active** as of **v1.0.0** (language freeze)
 
 Bux follows [Semantic Versioning 2.0.0](https://semver.org/) with the
 clarifications below.
@@ -19,18 +19,18 @@ MAJOR.MINOR.PATCH[-prerelease]
 | **MINOR** | Backward-compatible features |
 | **PATCH** | Backward-compatible bug fixes |
 
-During **0.x** (pre-1.0):
+### Before 1.0 (historical 0.x)
 
-- `0.MINOR.PATCH` — MINOR may still introduce breaking changes (documented in
-  the release notes and `MIGRATION_*.sh` when needed).
-- Prefer deprecation warnings for at least one MINOR before removal when
-  practical.
+During **0.x**, MINOR could still introduce breaking changes (documented in
+release notes and `MIGRATION_*.sh` when needed).
 
-After **1.0.0** (language freeze):
+### From **1.0.0** (language freeze)
 
-- Breaking changes require a MAJOR bump and a migration guide.
-- The Language Reference is the normative spec; compiler bugs that contradict
-  the ref are fixed without a MAJOR bump.
+- Breaking changes require a **MAJOR** bump and a migration guide.
+- The **Language Reference** (`docs/LanguageRef.md`) is the normative spec;
+  compiler bugs that contradict the ref are fixed without a MAJOR bump.
+- New diagnostics and stricter `@[Checked]` are allowed in MINOR when
+  documented; prefer gating with attributes when practical.
 
 ---
 
@@ -48,12 +48,14 @@ After **1.0.0** (language freeze):
   (prefer contextual keywords)
 - New diagnostics / stricter `@[Checked]` (document; may be gated)
 - Formatter whitespace-only changes
+- New optional CLI flags and commands
 
 ---
 
 ## Package versions (registry)
 
-Registry packages use the same MAJOR.MINOR.PATCH scheme.
+Registry packages use the same MAJOR.MINOR.PATCH scheme (independent of the
+compiler version).
 
 `bux add foo` / `bux add foo 0.1` resolution:
 
@@ -70,7 +72,8 @@ Lockfiles pin the **resolved** version and source path/URL.
 ## Release checklist (maintainers)
 
 1. Update `docs/LanguageRef.md` if behaviour changed
-2. Update `docs/QUALITY_PLAN.md` / changelog notes
-3. Run `make test` (includes `fmt-check`, examples, goldens)
-4. Run `make selfhost-loop`
-5. Tag `vMAJOR.MINOR.PATCH`
+2. Update `docs/QUALITY_PLAN.md` / release notes
+3. Bump compiler version strings (`bootstrap/cli.nim`, `src/cli.bux`, root `bux.toml`)
+4. Run `make test` (includes `fmt-check`, examples, goldens)
+5. Run `make selfhost` and preferably `make selfhost-loop`
+6. Tag `vMAJOR.MINOR.PATCH` and push the tag

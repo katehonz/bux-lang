@@ -2,13 +2,14 @@
 
 ![Bux Language](bux-lang-01.jpeg)
 
-> **Status:** v0.5.x — Bootstrap (`buxc`, Nim) and self-hosted (`buxc2`, Bux) both compile `.bux` → C → native binary.
+> **Status:** **v1.0.0** — language freeze. Bootstrap (`buxc`, Nim) and self-hosted (`buxc2`, Bux) both compile `.bux` → C → native binary.
 > **Selfhost loop:** deterministic C codegen + ELF verified.
 > **Gradual Ownership:** `@[Checked]` borrow checker, `@[Release]` zero-cost mode, `borrow &mut` expressions.
 > **Closures:** multi-instance capturing closures via fat function pointers (`BuxFn { code, env }`) in both compilers.
 > **Tuples:** `(T, U)` types and `.0`/`.1` field access (bootstrap + selfhost).
 > **Green Threads:** M:N scheduler with channels (Go-style goroutines without GC).
 > **Examples:** 40+ programs pass (`make test-examples`). Apps: `boko-framework`, `jwt-pitbul`, `nexus`, `simpledb`.
+> **Semver:** after 1.0, breaking changes require MAJOR (`docs/SEMVER.md`).
 
 Bux is a fast, compiled, strongly-typed systems programming language. Features a C backend for native code generation, raw multi-line strings, gradual ownership (opt-in borrow checking), multi-instance closures, async/await, generics, algebraic enums, and a package manager.
 
