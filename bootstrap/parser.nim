@@ -449,6 +449,19 @@ proc parseMacroArg(p: var Parser): Expr =
     return Expr(kind: ekMacroPat, loc: loc, exprMacroPat: pat)
   p.parseExpr()
 
+proc parseMacroRepExpr(p: var Parser): Expr =
+  ## Expression-level `$( body ),*` or `$( body )*` inside call args (templates only).
+  let loc = p.currentLoc
+  discard p.expect(tkDollar, "expected '$' to start expression macro rep")
+  discard p.expect(tkLParen, "expected '(' after '$' in expression macro rep")
+  let body = p.parseExpr()
+  discard p.expect(tkRParen, "expected ')' after expression macro rep body")
+  # Optional separator token before Kleene star: `),*` vs `)*`
+  if p.check(tkComma):
+    discard p.advance()
+  discard p.expect(tkStar, "expected '*' after expression macro rep")
+  return Expr(kind: ekMacroRep, loc: loc, exprMacroRepBody: body)
+
 proc parseStringInterpolation(p: var Parser, tok: Token): Expr =
   ## Parse a string literal that contains {expr} interpolations.
   let text = tok.text
@@ -688,6 +701,10 @@ proc parsePostfix(p: var Parser): Expr =
           discard p.advance()
           let operand = p.parseExpr()
           args.add(Expr(kind: ekSpread, loc: operand.loc, exprSpreadOperand: operand))
+          argNames.add("")
+        elif p.macroTemplateMode and p.check(tkDollar) and p.peek(1) == tkLParen:
+          # Expression-level `$( expr ),*` / `$( expr )*` (session 84)
+          args.add(p.parseMacroRepExpr())
           argNames.add("")
         elif p.peek() == tkIdent and p.peek(1) == tkColon:
           # Named argument: name: value
@@ -1650,10 +1667,11 @@ proc parseMacroFragKind(p: var Parser, kindTok: Token): MacroFragKind =
   of "block": mfkBlock
   of "stmt": mfkStmt
   of "pat", "pattern": mfkPat
+  of "type": mfkType
   else:
     p.emitError(kindTok.loc,
       "unsupported macro fragment kind '" & kindTok.text &
-      "' (expr|ident|tt|literal|block|stmt|pat)")
+      "' (expr|ident|tt|literal|block|stmt|pat|type)")
     mfkExpr
 
 proc parseMacroFragment(p: var Parser): MacroFragment =
@@ -1662,7 +1680,13 @@ proc parseMacroFragment(p: var Parser): MacroFragment =
   if not fragTok.text.startsWith("$"):
     p.emitError(fragTok.loc, "macro fragment must start with '$' (e.g. $x:expr)")
   discard p.expect(tkColon, "expected ':' after macro fragment name")
-  let kindTok = p.expect(tkIdent, "expected fragment kind (expr|ident|tt|literal|block|stmt|pat)")
+  # `type` is a keyword (tkType); other kinds are bare idents
+  var kindTok: Token
+  if p.check(tkType):
+    kindTok = p.advance()
+    kindTok.text = "type"
+  else:
+    kindTok = p.expect(tkIdent, "expected fragment kind (expr|ident|tt|literal|block|stmt|pat|type)")
   let k = p.parseMacroFragKind(kindTok)
   result = MacroFragment(
     name: fragTok.text,
@@ -1685,7 +1709,12 @@ proc parseMacroRepGroup(p: var Parser): MacroFragment =
     if not fragTok.text.startsWith("$"):
       p.emitError(fragTok.loc, "macro fragment must start with '$'")
     discard p.expect(tkColon, "expected ':' after fragment name")
-    let kindTok = p.expect(tkIdent, "expected fragment kind")
+    var kindTok: Token
+    if p.check(tkType):
+      kindTok = p.advance()
+      kindTok.text = "type"
+    else:
+      kindTok = p.expect(tkIdent, "expected fragment kind")
     names.add(fragTok.text)
     kinds.add(p.parseMacroFragKind(kindTok))
     p.skipNewlines()
@@ -1762,6 +1791,11 @@ proc parseMacroDecl(p: var Parser, isPublic: bool): Decl =
           discard p.advance()
         elif p.check(tkSemicolon):
           discard p.advance()
+        elif p.check(tkDollar):
+          # Juxtaposition (session 86): `$f:ident $args:tt` without comma
+          continue
+        elif p.check(tkIdent) and p.at.text.startsWith("$"):
+          continue
         else:
           break
     discard p.expect(tkRParen, "expected ')' to close macro pattern")

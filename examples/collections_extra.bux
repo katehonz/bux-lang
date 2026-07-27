@@ -1,0 +1,72 @@
+// Session 83 — Array RemoveAt/Insert/SwapRemove/Clone + String Cmp/IndexOf/case
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::{
+    Array, Array_New, Array_Push, Array_Get, Array_Len, Array_Free,
+    Array_RemoveAt, Array_Insert, Array_SwapRemove, Array_Clone
+};
+import Std::String::{
+    String_Eq, String_Cmp, String_IndexOf, String_ToUpper, String_ToLower
+};
+import Std::Map::{Map, Map_New, Map_Set, Map_GetOr, Map_Free};
+import Std::Test::{
+    Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_AssertEqString, Test_Pass
+};
+
+func Main() -> int {
+    // --- Array_Insert / RemoveAt ---
+    var arr: Array<int> = Array_New<int>(4);
+    Array_Push<int>(&arr, 10);
+    Array_Push<int>(&arr, 30);
+    Array_Insert<int>(&arr, 1, 20);       // [10, 20, 30]
+    Array_Insert<int>(&arr, 3, 40);       // append via insert at len
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 4);
+    Test_AssertEqInt(Array_Get<int>(&arr, 0), 10);
+    Test_AssertEqInt(Array_Get<int>(&arr, 1), 20);
+    Test_AssertEqInt(Array_Get<int>(&arr, 2), 30);
+    Test_AssertEqInt(Array_Get<int>(&arr, 3), 40);
+
+    let rem: int = Array_RemoveAt<int>(&arr, 1);  // remove 20 → [10, 30, 40]
+    Test_AssertEqInt(rem, 20);
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 3);
+    Test_AssertEqInt(Array_Get<int>(&arr, 1), 30);
+
+    // --- Array_SwapRemove (order not preserved) ---
+    let swapped: int = Array_SwapRemove<int>(&arr, 0);  // remove 10, last→front
+    Test_AssertEqInt(swapped, 10);
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 2);
+
+    // --- Array_Clone ---
+    var clone: Array<int> = Array_Clone<int>(&arr);
+    Test_AssertEqInt(Array_Len<int>(&clone) as int, Array_Len<int>(&arr) as int);
+    Test_AssertEqInt(Array_Get<int>(&clone, 0), Array_Get<int>(&arr, 0));
+    Array_Push<int>(&clone, 99);
+    Test_AssertEqInt(Array_Len<int>(&clone) as int, 3);
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 2);  // original unchanged
+
+    Array_Free<int>(&arr);
+    Array_Free<int>(&clone);
+
+    // --- String_Cmp / IndexOf / ToUpper / ToLower ---
+    Test_AssertEqInt(String_Cmp("abc", "abc"), 0);
+    Test_AssertTrue(String_Cmp("a", "b") < 0);
+    Test_AssertTrue(String_Cmp("z", "a") > 0);
+    Test_AssertEqInt(String_IndexOf("hello world", "world"), 6);
+    Test_AssertEqInt(String_IndexOf("hello", "xyz"), -1);
+    Test_AssertEqInt(String_IndexOf("aaa", "a"), 0);
+
+    Test_AssertEqString(String_ToUpper("Hello, Bux!"), "HELLO, BUX!");
+    Test_AssertEqString(String_ToLower("Hello, Bux!"), "hello, bux!");
+    Test_AssertEqString(String_ToUpper("123"), "123");
+    Test_AssertEqString(String_ToLower(""), "");
+
+    // --- Map_GetOr ---
+    var m: Map<int, int> = Map_New<int, int>(8);
+    Map_Set<int, int>(&m, 1, 100);
+    Test_AssertEqInt(Map_GetOr<int, int>(&m, 1, -1), 100);
+    Test_AssertEqInt(Map_GetOr<int, int>(&m, 99, -1), -1);
+    Map_Free<int, int>(&m);
+
+    PrintLine("collections_extra: all checks passed");
+    Test_Pass("collections_extra");
+    return 0;
+}

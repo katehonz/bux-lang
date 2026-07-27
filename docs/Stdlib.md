@@ -85,6 +85,11 @@ struct Array<T> {
 | `Array_Contains<T>` | `func Array_Contains<T>(arr: *Array<T>, value: T) -> bool` | Linear search for value |
 | `Array_IndexOf<T>` | `func Array_IndexOf<T>(arr: *Array<T>, value: T) -> int` | First index or -1 |
 | `Array_Extend<T>` | `func Array_Extend<T>(arr: *Array<T>, other: *Array<T>)` | Append all from other |
+| `Array_RemoveAt<T>` | `func Array_RemoveAt<T>(arr: *Array<T>, index: uint) -> T` | Remove at index (shift left) |
+| `Array_Insert<T>` | `func Array_Insert<T>(arr: *Array<T>, index: uint, value: T)` | Insert at index (`0..=len`) |
+| `Array_SwapRemove<T>` | `func Array_SwapRemove<T>(arr: *Array<T>, index: uint) -> T` | O(1) remove (swap with last) |
+| `Array_Clone<T>` | `func Array_Clone<T>(arr: *Array<T>) -> Array<T>` | Shallow clone (value copy) |
+| `Array_Reverse<T>` | `func Array_Reverse<T>(arr: *Array<T>)` | Reverse elements in place |
 | `Array_Get<T>` | `func Array_Get<T>(arr: *Array<T>, index: uint) -> T` | Get element at index |
 | `Array_Set<T>` | `func Array_Set<T>(arr: *Array<T>, index: uint, value: T)` | Set element at index |
 | `Array_First<T>` | `func Array_First<T>(arr: *Array<T>) -> T` | First element (bounds-checked) |
@@ -257,6 +262,10 @@ String manipulation utilities.
 | `String_IsBlank` | `func String_IsBlank(s: String) -> bool` | True if empty or only whitespace |
 | `String_Repeat` | `func String_Repeat(s: String, count: uint) -> String` | Repeat string N times |
 | `String_Find` | `func String_Find(haystack: String, needle: String) -> String` | Find substring (returns pointer; 0 = not found) |
+| `String_IndexOf` | `func String_IndexOf(s: String, needle: String) -> int` | Byte index of first match, or `-1` |
+| `String_Cmp` | `func String_Cmp(a: String, b: String) -> int` | Lexicographic compare (`strcmp`) |
+| `String_ToUpper` | `func String_ToUpper(s: String) -> String` | ASCII `a`–`z` → upper (allocates) |
+| `String_ToLower` | `func String_ToLower(s: String) -> String` | ASCII `A`–`Z` → lower (allocates) |
 | `String_Replace` | `func String_Replace(s: String, old: String, new: String) -> String` | Replace first occurrence |
 | `String_ReplaceAll` | `func String_ReplaceAll(s: String, old: String, new: String) -> String` | Replace all non-overlapping occurrences |
 | `String_Format1` | `func String_Format1(pattern: String, a0: String) -> String` | Format with 1 arg (`{0}`) |
@@ -430,6 +439,7 @@ struct Map<K, V> {
 | `Map_New<K,V>` | `func Map_New<K,V>(cap: uint) -> Map<K,V>` | Create map |
 | `Map_Set<K,V>` | `func Map_Set<K,V>(m: *Map<K,V>, key: K, value: V)` | Insert/update |
 | `Map_Get<K,V>` | `func Map_Get<K,V>(m: *Map<K,V>, key: K) -> V` | Get value (zero if missing) |
+| `Map_GetOr<K,V>` | `func Map_GetOr<K,V>(m: *Map<K,V>, key: K, defaultVal: V) -> V` | Get or default if missing |
 | `Map_Has<K,V>` | `func Map_Has<K,V>(m: *Map<K,V>, key: K) -> bool` | Check key exists |
 | `Map_Remove<K,V>` | `func Map_Remove<K,V>(m: *Map<K,V>, key: K) -> bool` | Remove key (true if present) |
 | `Map_Clear<K,V>` | `func Map_Clear<K,V>(m: *Map<K,V>)` | Remove all entries (keeps capacity) |
@@ -481,6 +491,7 @@ struct StringMap<V> {
 | `StringMap_New<V>` | `func StringMap_New<V>(cap: uint) -> StringMap<V>` | Create map |
 | `StringMap_Set<V>` | `func StringMap_Set<V>(m: *StringMap<V>, key: String, value: V)` | Insert/update |
 | `StringMap_Get<V>` | `func StringMap_Get<V>(m: *StringMap<V>, key: String) -> V` | Get value |
+| `StringMap_GetOr<V>` | `func StringMap_GetOr<V>(m: *StringMap<V>, key: String, defaultVal: V) -> V` | Get or default if missing |
 | `StringMap_Has<V>` | `func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool` | Check key exists |
 | `StringMap_Remove<V>` | `func StringMap_Remove<V>(m: *StringMap<V>, key: String) -> bool` | Remove key |
 | `StringMap_Clear<V>` | `func StringMap_Clear<V>(m: *StringMap<V>)` | Clear all entries |
@@ -1010,6 +1021,7 @@ import Std::Test::*;
 | `Test_AssertEqInt` | `func Test_AssertEqInt(a: int, b: int)` | Integer equality |
 | `Test_AssertNeqInt` | `func Test_AssertNeqInt(a: int, b: int)` | Integer inequality |
 | `Test_AssertEqString` | `func Test_AssertEqString(a: String, b: String)` | String equality |
+| `Test_AssertNeqString` | `func Test_AssertNeqString(a: String, b: String)` | String inequality |
 | `Test_AssertEqBool` | `func Test_AssertEqBool(a: bool, b: bool)` | Boolean equality |
 | `Test_Fail` / `Test_Pass` | `func ...(msg: String)` | Explicit fail / log pass |
 | `Test_Exit` | `func Test_Exit(code: int)` | Exit with code |

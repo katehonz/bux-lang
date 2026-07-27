@@ -46,6 +46,15 @@ module Std::Test {
         }
     }
 
+    /// Assert two strings differ.
+    func Test_AssertNeqString(a: String, b: String) {
+        if String_Eq(a, b) {
+            PrintLine("ASSERT_NEQ_STRING FAILED: both are");
+            PrintLine(b);
+            bux_exit(1);
+        }
+    }
+
     /// Assert two bools are equal.
     func Test_AssertEqBool(a: bool, b: bool) {
         if a != b {

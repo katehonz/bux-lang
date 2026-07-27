@@ -723,6 +723,35 @@ module Parser {
             return first;
         }
 
+        // Slice / array literal: [a, b, c] (session 85 — also :tt group flatten)
+        if kind == tkLBracket {
+            discard parserAdvance(p);
+            let se: *Expr = parserMakeExpr(ekSlice, line, col);
+            var firstEl: *ExprList = null as *ExprList;
+            var lastEl: *ExprList = null as *ExprList;
+            var elCount: int = 0;
+            while !parserCheck(p, tkRBracket) {
+                let elem: *Expr = parserParseExpr(p);
+                let node: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                node.expr = elem;
+                node.next = null as *ExprList;
+                node.argName = "";
+                if firstEl == null as *ExprList {
+                    firstEl = node;
+                    lastEl = node;
+                } else {
+                    lastEl.next = node;
+                    lastEl = node;
+                }
+                elCount = elCount + 1;
+                if !parserMatch(p, tkComma) { break; }
+            }
+            discard parserExpect(p, tkRBracket, "expected ']' to close slice");
+            se.callArgs = firstEl;
+            se.callArgCount = elCount;
+            return se;
+        }
+
         // Empty-param closure: `||` is lexed as tkPipePipe (logical-or token).
         // As a primary it can only mean a zero-param closure: || -> T { ... }
         if kind == tkPipePipe {
@@ -1145,8 +1174,20 @@ module Parser {
                 while !parserCheck(p, tkRParen) {
                     var argExpr: *Expr = null as *Expr;
                     var argName: String = "";
-                    // Named argument: name: value
-                    if parserPeek(p, 0) == tkIdent && parserPeek(p, 1) == tkColon {
+                    // Expression-level `$( expr ),*` / `$( expr )*` in macro templates
+                    if p.macroTemplateMode && parserCheck(p, tkDollar) && parserPeek(p, 1) == tkLParen {
+                        discard parserAdvance(p); // $
+                        discard parserAdvance(p); // (
+                        let repBody: *Expr = parserParseExpr(p);
+                        discard parserExpect(p, tkRParen, "expected ')' after expression macro rep body");
+                        if parserCheck(p, tkComma) {
+                            discard parserAdvance(p);
+                        }
+                        discard parserExpect(p, tkStar, "expected '*' after expression macro rep");
+                        argExpr = parserMakeExpr(ekMacroRep, line, col);
+                        argExpr.child1 = repBody;
+                    } else if parserPeek(p, 0) == tkIdent && parserPeek(p, 1) == tkColon {
+                        // Named argument: name: value
                         let nameTok: LexToken = parserCurToken(p);
                         argName = nameTok.text;
                         discard parserAdvance(p); // ident
@@ -2413,13 +2454,19 @@ module Parser {
                             parserEmitDiag(p, fragTok.line, fragTok.column, "macro fragment must start with '$'");
                         }
                         discard parserExpect(p, tkColon, "expected ':' after fragment name");
-                        let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
-                        var kname: String = kindTok.text;
+                        var kname: String = "";
+                        if parserCheck(p, tkType) {
+                            discard parserAdvance(p);
+                            kname = "type";
+                        } else {
+                            let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
+                            kname = kindTok.text;
+                        }
                         if String_Eq(kname, "lit") { kname = "literal"; }
                         if String_Eq(kname, "pattern") { kname = "pat"; }
                         if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
                             || String_Eq(kname, "literal") || String_Eq(kname, "block")
-                            || String_Eq(kname, "stmt") || String_Eq(kname, "pat")) {
+                            || String_Eq(kname, "stmt") || String_Eq(kname, "pat") || String_Eq(kname, "type")) {
                             kname = "expr";
                         }
                         if nIn == 0 {
@@ -2460,13 +2507,20 @@ module Parser {
                         parserEmitDiag(p, fragTok.line, fragTok.column, "macro fragment must start with '$'");
                     }
                     discard parserExpect(p, tkColon, "expected ':' after fragment name");
-                    let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
-                    var kname: String = kindTok.text;
+                    // `type` is a keyword (tkType); other kinds are idents
+                    var kname: String = "";
+                    if parserCheck(p, tkType) {
+                        discard parserAdvance(p);
+                        kname = "type";
+                    } else {
+                        let kindTok: LexToken = parserExpect(p, tkIdent, "expected fragment kind");
+                        kname = kindTok.text;
+                    }
                     if String_Eq(kname, "lit") { kname = "literal"; }
                     if String_Eq(kname, "pattern") { kname = "pat"; }
                     if !(String_Eq(kname, "expr") || String_Eq(kname, "ident") || String_Eq(kname, "tt")
                         || String_Eq(kname, "literal") || String_Eq(kname, "block")
-                        || String_Eq(kname, "stmt") || String_Eq(kname, "pat")) {
+                        || String_Eq(kname, "stmt") || String_Eq(kname, "pat") || String_Eq(kname, "type")) {
                         kname = "expr";
                     }
                     if rule.paramCount < 9 {
@@ -2478,6 +2532,16 @@ module Parser {
                     while parserCheck(p, tkNewLine) { discard parserAdvance(p); }
                     if parserMatch(p, tkComma) { continue; }
                     if parserMatch(p, tkSemicolon) { continue; }
+                    // Juxtaposition (session 86): `$f:ident $args:tt` without comma
+                    if parserCheck(p, tkDollar) {
+                        continue;
+                    }
+                    if parserPeek(p, 0) == tkIdent {
+                        let nxt: LexToken = parserCurToken(p);
+                        if String_StartsWith(nxt.text, "$") {
+                            continue;
+                        }
+                    }
                     break;
                 }
             }

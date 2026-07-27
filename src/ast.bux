@@ -130,6 +130,9 @@ module Ast {
     const ekMacroCall: int = 28;   // name!(args) — expanded before sema
     const ekMacroStmt: int = 29;   // `$s:stmt` arg wrapper (expand only)
     const ekMacroPat: int = 30;    // `$p:pat` arg wrapper (expand only)
+    const ekMacroTt: int = 31;     // `$x:tt` bound fragment (expand only; boolValue=group)
+    const ekMacroRep: int = 32;    // `$( expr ),*` expression-level rep (expand only)
+    const ekMacroType: int = 33;   // `$t:type` bound type (expand only; refType)
 
     struct ExprList {
         expr: *Expr,

@@ -71,6 +71,8 @@ module Std::String {
 
     /// True if `s` begins with `prefix`.
     func String_StartsWith(s: String, prefix: String) -> bool {
+        if s == null as String { return false; }
+        if prefix == null as String { return false; }
         let s_len: uint = bux_strlen(s);
         let p_len: uint = bux_strlen(prefix);
         if p_len > s_len {
@@ -82,6 +84,8 @@ module Std::String {
 
     /// True if `s` ends with `suffix`.
     func String_EndsWith(s: String, suffix: String) -> bool {
+        if s == null as String { return false; }
+        if suffix == null as String { return false; }
         let s_len: uint = bux_strlen(s);
         let suf_len: uint = bux_strlen(suffix);
         if suf_len > s_len {
@@ -292,6 +296,58 @@ module Std::String {
 
     func String_Format3(pattern: String, a0: String, a1: String, a2: String) -> String {
         return bux_str_format(pattern, a0, a1, a2, "", "", "", "", "");
+    }
+
+    /// Lexicographic compare: `<0` if a<b, `0` if equal, `>0` if a>b (`strcmp`).
+    func String_Cmp(a: String, b: String) -> int {
+        return bux_strcmp(a, b);
+    }
+
+    /// Byte index of first `needle` in `s`, or `-1` if not found.
+    func String_IndexOf(s: String, needle: String) -> int {
+        let pos: String = bux_strstr(s, needle);
+        if String_IsNull(pos) {
+            return -1;
+        }
+        return String_Offset(pos, s) as int;
+    }
+
+    /// ASCII lower → upper (`a`–`z` only). Non-ASCII bytes unchanged.
+    func String_ToUpper(s: String) -> String {
+        let n: uint = bux_strlen(s);
+        var sb: StringBuilder = StringBuilder_NewCap(n + 1);
+        var i: uint = 0;
+        while i < n {
+            let c: int = s[i] as int;
+            if c >= 97 && c <= 122 {
+                StringBuilder_AppendChar(&sb, (c - 32) as char8);
+            } else {
+                StringBuilder_AppendChar(&sb, c as char8);
+            }
+            i = i + 1;
+        }
+        let result: String = StringBuilder_Build(&sb);
+        StringBuilder_Free(&sb);
+        return result;
+    }
+
+    /// ASCII upper → lower (`A`–`Z` only). Non-ASCII bytes unchanged.
+    func String_ToLower(s: String) -> String {
+        let n: uint = bux_strlen(s);
+        var sb: StringBuilder = StringBuilder_NewCap(n + 1);
+        var i: uint = 0;
+        while i < n {
+            let c: int = s[i] as int;
+            if c >= 65 && c <= 90 {
+                StringBuilder_AppendChar(&sb, (c + 32) as char8);
+            } else {
+                StringBuilder_AppendChar(&sb, c as char8);
+            }
+            i = i + 1;
+        }
+        let result: String = StringBuilder_Build(&sb);
+        StringBuilder_Free(&sb);
+        return result;
     }
 
 }

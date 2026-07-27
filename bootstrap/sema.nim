@@ -1921,9 +1921,9 @@ proc checkExpr*(sema: var Sema, expr: Expr, scope: Scope): Type =
     # Should have been expanded before analyze; leftover is a compiler bug
     sema.emitError(expr.loc, "unexpanded macro call '" & expr.exprMacroName & "!'")
     return makeUnknown()
-  of ekMacroStmt, ekMacroPat:
+  of ekMacroStmt, ekMacroPat, ekMacroTt, ekMacroRep, ekMacroType:
     # Expand-only wrappers; must not reach type-checking
-    sema.emitError(expr.loc, "internal: unexpanded macro stmt/pat fragment")
+    sema.emitError(expr.loc, "internal: unexpanded macro fragment")
     return makeUnknown()
   of ekClosure:
     let savedRetType = sema.currentRetType

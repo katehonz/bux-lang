@@ -122,6 +122,9 @@ BUX_RUNTIME=minimal ./buxc build
 # Cross-compile for ARM64 Linux (prefers aarch64-linux-gnu-gcc, else clang -target)
 ./buxc --static --release --target aarch64-linux-gnu build
 
+# Cross-compile for RISC-V 64 (session 85; needs riscv64-linux-gnu-gcc)
+./buxc --static --release --target riscv64-linux-gnu build
+
 # Override C compiler
 BUX_CC=aarch64-linux-gnu-gcc ./buxc --static --target aarch64-linux-gnu build
 
@@ -142,7 +145,7 @@ make test-musl-static   # SKIP if no musl-gcc/zig
 | `BUX_CFLAGS` | Extra flags appended to the C line |
 
 ```bash
-# Smoke all of the above (+ CTFE CRC example)
+# Smoke all of the above (+ CTFE CRC + optional aarch64/riscv64 cross)
 make test-linux-targets
 
 # Build static hello for Docker scratch/distroless
@@ -152,6 +155,36 @@ docker build -f examples/docker/Dockerfile.static \
 ```
 
 > **Note:** Full runtime + fully-static OpenSSL is intentionally not the default (painful). Use minimal for static containers; keep full runtime for servers that need net/crypto (`nexus`).
+
+### Cross toolchains
+
+| Triple | Typical package | Smoke |
+|--------|-----------------|-------|
+| `aarch64-linux-gnu` | `gcc-aarch64-linux-gnu` | `make test-linux-targets` (SKIP if missing) |
+| `riscv64-linux-gnu` | `gcc-riscv64-linux-gnu` | same (session 85) |
+
+`clang -target <triple>` alone is **not** enough: you still need target headers and libc
+(sysroot). Prefer `*-gcc` from a cross package, or set `BUX_CC` to a wrapper that
+already knows the sysroot (e.g. Zig `zig cc -target …`).
+
+### Freestanding / bare-metal (research spike, not v1.0)
+
+`BUX_RUNTIME=minimal` / `--static` is the **Linux userspace / container / CTFE** path:
+it still links against a libc (`malloc`, `printf`, `strlen`, …). It is *not* true
+no-libc freestanding firmware.
+
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Thin runtime (no pthread/OpenSSL) | ✅ | `rt/runtime_minimal.c` |
+| Static musl / distroless | ✅ | `make test-musl-static`, Dockerfiles |
+| Linux multi-arch cross | ✅ | aarch64 + riscv64 smokes (SKIP without gcc) |
+| True freestanding (`-ffreestanding`, no libc) | 🔬 spike | Needs custom alloc, panic, and I/O stubs |
+| Cortex-M / qemu-system | 🔬 spike | Same; plus linker scripts and startup |
+
+**Practical path today:** build with `BUX_RUNTIME=minimal --static --target …` for
+Linux userspace on foreign ISAs; treat bare-metal as a research project that
+starts from a custom `runtime_freestanding.c` (not shipped) and does **not**
+import `Std::Net` / `Std::Task` / OpenSSL.
 
 ---
 
@@ -165,7 +198,7 @@ make test-stdlib     # stdlib golden packages
 make test-registry   # package registry (local + HTTP index)
 make test-apps       # showcase apps build + simpledb/jwt CLI smoke (in `make test`)
 make test-dwarf      # #line maps + .debug_info + --release (in `make test`)
-make test-linux-targets  # minimal runtime + static + aarch64 cross + CTFE CRC
+make test-linux-targets  # minimal + static + aarch64/riscv64 cross (SKIP) + CTFE CRC
 make test-registry   # package registry local + HTTP (in `make test`)
 make test-selfhost-smoke  # buxc2: move_field + multi-file #line (in `make test`)
 make test-lsp        # hover + references/rename + call hierarchy

@@ -140,4 +140,80 @@ module Std::Array {
         }
     }
 
+    /// Remove element at `index`, shifting later elements left. Returns the removed value.
+    func Array_RemoveAt<T>(self: *Array<T>, index: uint) -> T {
+        bux_bounds_check(index, self.len);
+        let val: T = self.data[index];
+        var i: uint = index;
+        while i + 1 < self.len {
+            self.data[i] = self.data[i + 1];
+            i = i + 1;
+        }
+        self.len = self.len - 1;
+        return val;
+    }
+
+    /// Insert `value` at `index` (`0..=len`), shifting later elements right.
+    func Array_Insert<T>(self: *Array<T>, index: uint, value: T) {
+        // allow index == len (append); panic if index > len
+        bux_bounds_check(index, self.len + 1);
+        if self.len >= self.cap {
+            var newCap: uint = self.cap * 2;
+            if newCap == 0 {
+                newCap = 4;
+            }
+            self.cap = newCap;
+            self.data = bux_realloc(self.data as *void, self.cap * sizeof(T)) as *T;
+        }
+        var i: uint = self.len;
+        while i > index {
+            self.data[i] = self.data[i - 1];
+            i = i - 1;
+        }
+        self.data[index] = value;
+        self.len = self.len + 1;
+    }
+
+    /// O(1) remove: swap `index` with last, then pop. Does not preserve order.
+    func Array_SwapRemove<T>(self: *Array<T>, index: uint) -> T {
+        bux_bounds_check(index, self.len);
+        let val: T = self.data[index];
+        self.len = self.len - 1;
+        if index < self.len {
+            self.data[index] = self.data[self.len];
+        }
+        return val;
+    }
+
+    /// Shallow clone: new buffer, elements copied by value.
+    func Array_Clone<T>(self: *Array<T>) -> Array<T> {
+        var cap: uint = self.len;
+        if cap == 0 {
+            cap = 1;
+        }
+        var out: Array<T> = Array_New<T>(cap);
+        var i: uint = 0;
+        while i < self.len {
+            Array_Push<T>(&out, self.data[i]);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    /// Reverse elements in place.
+    func Array_Reverse<T>(self: *Array<T>) {
+        if self.len < 2 {
+            return;
+        }
+        var i: uint = 0;
+        var j: uint = self.len - 1;
+        while i < j {
+            let tmp: T = self.data[i];
+            self.data[i] = self.data[j];
+            self.data[j] = tmp;
+            i = i + 1;
+            j = j - 1;
+        }
+    }
+
 }

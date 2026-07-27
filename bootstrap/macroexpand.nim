@@ -24,6 +24,45 @@ proc emitErr(res: var MacroExpandResult, loc: SourceLocation, msg: string) =
 proc cloneExpr*(e: Expr): Expr
 proc cloneStmt*(s: Stmt): Stmt
 proc cloneBlock*(b: Block): Block
+proc cloneTypeExpr*(t: TypeExpr): TypeExpr
+
+proc cloneTypeExpr*(t: TypeExpr): TypeExpr =
+  if t == nil: return nil
+  case t.kind
+  of tekNamed:
+    result = TypeExpr(kind: tekNamed, loc: t.loc, typeName: t.typeName, typeArgs: @[])
+    for a in t.typeArgs:
+      result.typeArgs.add(cloneTypeExpr(a))
+  of tekPath:
+    result = TypeExpr(kind: tekPath, loc: t.loc, pathSegments: t.pathSegments)
+  of tekSlice:
+    result = TypeExpr(kind: tekSlice, loc: t.loc,
+      sliceElement: cloneTypeExpr(t.sliceElement), sliceSize: cloneExpr(t.sliceSize))
+  of tekOwn:
+    result = TypeExpr(kind: tekOwn, loc: t.loc,
+      pointerPointee: cloneTypeExpr(t.pointerPointee), refLifetime: t.refLifetime)
+  of tekPointer:
+    result = TypeExpr(kind: tekPointer, loc: t.loc,
+      pointerPointee: cloneTypeExpr(t.pointerPointee), refLifetime: t.refLifetime)
+  of tekRef:
+    result = TypeExpr(kind: tekRef, loc: t.loc,
+      pointerPointee: cloneTypeExpr(t.pointerPointee), refLifetime: t.refLifetime)
+  of tekMutRef:
+    result = TypeExpr(kind: tekMutRef, loc: t.loc,
+      pointerPointee: cloneTypeExpr(t.pointerPointee), refLifetime: t.refLifetime)
+  of tekDynRef:
+    result = TypeExpr(kind: tekDynRef, loc: t.loc, dynInterface: t.dynInterface)
+  of tekTuple:
+    result = TypeExpr(kind: tekTuple, loc: t.loc, tupleElements: @[])
+    for el in t.tupleElements:
+      result.tupleElements.add(cloneTypeExpr(el))
+  of tekSelf:
+    result = TypeExpr(kind: tekSelf, loc: t.loc)
+  of tekFunc:
+    result = TypeExpr(kind: tekFunc, loc: t.loc, funcParams: @[],
+      funcRet: cloneTypeExpr(t.funcRet))
+    for p in t.funcParams:
+      result.funcParams.add(cloneTypeExpr(p))
 
 proc cloneBlock*(b: Block): Block =
   if b == nil: return nil
@@ -203,6 +242,16 @@ proc cloneExpr*(e: Expr): Expr =
   of ekMacroPat:
     result = Expr(kind: ekMacroPat, loc: e.loc,
       exprMacroPat: clonePattern(e.exprMacroPat))
+  of ekMacroTt:
+    result = Expr(kind: ekMacroTt, loc: e.loc,
+      exprMacroTtInner: cloneExpr(e.exprMacroTtInner),
+      exprMacroTtGroup: e.exprMacroTtGroup)
+  of ekMacroRep:
+    result = Expr(kind: ekMacroRep, loc: e.loc,
+      exprMacroRepBody: cloneExpr(e.exprMacroRepBody))
+  of ekMacroType:
+    result = Expr(kind: ekMacroType, loc: e.loc,
+      exprMacroType: cloneTypeExpr(e.exprMacroType))
 
 proc cloneStmt*(s: Stmt): Stmt =
   if s == nil: return nil
@@ -340,6 +389,12 @@ proc graftExprLoc(e: Expr, loc: SourceLocation) =
     graftStmtLoc(e.exprMacroStmt, loc)
   of ekMacroPat:
     discard
+  of ekMacroTt:
+    graftExprLoc(e.exprMacroTtInner, loc)
+  of ekMacroRep:
+    graftExprLoc(e.exprMacroRepBody, loc)
+  of ekMacroType:
+    discard
   else: discard
 
 proc graftStmtLoc(s: Stmt, loc: SourceLocation) =
@@ -440,6 +495,10 @@ proc renameIdents(e: Expr, map: Table[string, string]): Expr =
     c.exprTernaryCond = renameIdents(c.exprTernaryCond, map)
     c.exprTernaryThen = renameIdents(c.exprTernaryThen, map)
     c.exprTernaryElse = renameIdents(c.exprTernaryElse, map)
+  of ekMacroRep:
+    c.exprMacroRepBody = renameIdents(c.exprMacroRepBody, map)
+  of ekMacroTt:
+    c.exprMacroTtInner = renameIdents(c.exprMacroTtInner, map)
   else: discard
   result = c
 
@@ -539,6 +598,7 @@ proc gensymLocals(b: Block, callLoc: SourceLocation): Block =
 
 proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr
 proc substStmt(s: Stmt, env: MacroEnv, callLoc: SourceLocation): Stmt
+proc substType(t: TypeExpr, env: MacroEnv, callLoc: SourceLocation): TypeExpr
 proc substBlock(b: Block, env: MacroEnv, callLoc: SourceLocation): Block
 proc substStmtsFlat(stmts: seq[Stmt], env: MacroEnv, callLoc: SourceLocation): seq[Stmt]
 proc substPattern(p: Pattern, env: MacroEnv, callLoc: SourceLocation): Pattern
@@ -608,6 +668,10 @@ proc collectListNames(e: Expr, env: MacroEnv, into: var seq[string]) =
         if st == nil: continue
         if st.kind == skExpr: collectListNames(st.stmtExpr, env, into)
         elif st.kind == skLet: collectListNames(st.stmtLetInit, env, into)
+  of ekMacroRep:
+    collectListNames(e.exprMacroRepBody, env, into)
+  of ekMacroTt:
+    collectListNames(e.exprMacroTtInner, env, into)
   else: discard
 
 proc collectListNamesStmt(st: Stmt, env: MacroEnv, into: var seq[string]) =
@@ -689,6 +753,7 @@ proc substStmt(s: Stmt, env: MacroEnv, callLoc: SourceLocation): Stmt =
     if letBn.len > 0:
       c.stmtLetName = letBn
       expandUnhygienic.incl(letBn)
+    c.stmtLetType = substType(c.stmtLetType, env, callLoc)
     c.stmtLetInit = substExpr(c.stmtLetInit, env, callLoc)
   of skIf:
     c.stmtIfCond = substExpr(c.stmtIfCond, env, callLoc)
@@ -748,11 +813,55 @@ proc substStmt(s: Stmt, env: MacroEnv, callLoc: SourceLocation): Stmt =
   c.loc = callLoc
   result = c
 
+proc substType(t: TypeExpr, env: MacroEnv, callLoc: SourceLocation): TypeExpr =
+  ## Substitute `$t:type` in type positions (sizeof, cast, let annotation, …).
+  if t == nil: return nil
+  if t.kind == tekNamed and t.typeName.startsWith("$") and env.singles.hasKey(t.typeName):
+    let bound = env.singles[t.typeName]
+    if bound != nil and bound.kind == ekMacroType and bound.exprMacroType != nil:
+      result = cloneTypeExpr(bound.exprMacroType)
+      if result != nil: result.loc = callLoc
+      return
+  result = cloneTypeExpr(t)
+  if result == nil: return
+  result.loc = callLoc
+  case result.kind
+  of tekNamed:
+    var args: seq[TypeExpr] = @[]
+    for a in result.typeArgs:
+      args.add(substType(a, env, callLoc))
+    result.typeArgs = args
+  of tekSlice:
+    result.sliceElement = substType(result.sliceElement, env, callLoc)
+    result.sliceSize = substExpr(result.sliceSize, env, callLoc)
+  of tekOwn, tekPointer, tekRef, tekMutRef:
+    result.pointerPointee = substType(result.pointerPointee, env, callLoc)
+  of tekTuple:
+    var els: seq[TypeExpr] = @[]
+    for el in result.tupleElements:
+      els.add(substType(el, env, callLoc))
+    result.tupleElements = els
+  of tekFunc:
+    var ps: seq[TypeExpr] = @[]
+    for p in result.funcParams:
+      ps.add(substType(p, env, callLoc))
+    result.funcParams = ps
+    result.funcRet = substType(result.funcRet, env, callLoc)
+  else:
+    discard
+
 proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr =
   if e == nil: return nil
   # Fragment splice: $x → clone of bound argument (already call-site loc)
   if e.kind == ekIdent and env.singles.hasKey(e.exprIdent):
     result = cloneExpr(env.singles[e.exprIdent])
+    # Value position: unwrap MacroTt wrapper (groups become tuples as values)
+    if result != nil and result.kind == ekMacroTt:
+      result = cloneExpr(result.exprMacroTtInner)
+    # Type fragments are not values — leave as-is only if wrongly spliced as expr
+    if result != nil and result.kind == ekMacroType:
+      # Recover as sizeof? no — invalid value splice
+      return newLiteralExpr(Token(kind: tkIntLiteral, text: "0", loc: callLoc))
     graftExprLoc(result, callLoc)
     return
   # Bare use of list frag outside $(…)* → first element if any, else 0
@@ -760,6 +869,10 @@ proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr =
     let items = env.lists[e.exprIdent]
     if items.len > 0:
       result = cloneExpr(items[0])
+      if result != nil and result.kind == ekMacroTt:
+        result = cloneExpr(result.exprMacroTtInner)
+      if result != nil and result.kind == ekMacroType:
+        return newLiteralExpr(Token(kind: tkIntLiteral, text: "0", loc: callLoc))
       graftExprLoc(result, callLoc)
       return
     return newLiteralExpr(Token(kind: tkIntLiteral, text: "0", loc: callLoc))
@@ -785,9 +898,58 @@ proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr =
   of ekCall:
     c.exprCallCallee = substExpr(c.exprCallCallee, env, callLoc)
     var args: seq[Expr] = @[]
+    var argNames: seq[string] = @[]
     for a in c.exprCallArgs:
+      # Expression-level `$( body ),*` → flatten into N call arguments
+      if a != nil and a.kind == ekMacroRep:
+        var listNames: seq[string] = @[]
+        collectListNames(a.exprMacroRepBody, env, listNames)
+        if listNames.len == 0:
+          args.add(substExpr(a.exprMacroRepBody, env, callLoc))
+          argNames.add("")
+        else:
+          var n = 0
+          for ln in listNames:
+            if env.lists.hasKey(ln):
+              n = max(n, env.lists[ln].len)
+          for i in 0 ..< n:
+            var singles = initTable[string, Expr]()
+            for k, v in env.singles.pairs: singles[k] = v
+            var lists = initTable[string, seq[Expr]]()
+            for k, v in env.lists.pairs:
+              if k notin listNames:
+                lists[k] = v
+            for ln in listNames:
+              if env.lists.hasKey(ln) and i < env.lists[ln].len:
+                singles[ln] = env.lists[ln][i]
+            let subEnv = MacroEnv(singles: singles, lists: lists)
+            args.add(substExpr(a.exprMacroRepBody, subEnv, callLoc))
+            argNames.add("")
+        continue
+      # Bare `$args:tt` that is a delimiter-balanced group → flatten elems
+      if a != nil and a.kind == ekIdent and env.singles.hasKey(a.exprIdent):
+        let bound = env.singles[a.exprIdent]
+        if bound != nil and bound.kind == ekMacroTt and bound.exprMacroTtGroup and
+           bound.exprMacroTtInner != nil:
+          let inner = bound.exprMacroTtInner
+          if inner.kind == ekTuple:
+            for el in inner.exprTupleElements:
+              let ce = cloneExpr(el)
+              graftExprLoc(ce, callLoc)
+              args.add(ce)
+              argNames.add("")
+            continue
+          if inner.kind == ekSlice:
+            for el in inner.exprSliceElements:
+              let ce = cloneExpr(el)
+              graftExprLoc(ce, callLoc)
+              args.add(ce)
+              argNames.add("")
+            continue
       args.add(substExpr(a, env, callLoc))
+      argNames.add("")
     c.exprCallArgs = args
+    c.exprCallArgNames = argNames
   of ekIndex:
     c.exprIndexObj = substExpr(c.exprIndexObj, env, callLoc)
     c.exprIndexIdx = substExpr(c.exprIndexIdx, env, callLoc)
@@ -812,8 +974,12 @@ proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr =
     c.exprTupleElements = els
   of ekCast:
     c.exprCastOperand = substExpr(c.exprCastOperand, env, callLoc)
+    c.exprCastType = substType(c.exprCastType, env, callLoc)
   of ekIs:
     c.exprIsOperand = substExpr(c.exprIsOperand, env, callLoc)
+    c.exprIsType = substType(c.exprIsType, env, callLoc)
+  of ekSizeOf:
+    c.exprSizeOfType = substType(c.exprSizeOfType, env, callLoc)
   of ekTry:
     c.exprTryOperand = substExpr(c.exprTryOperand, env, callLoc)
   of ekUnwrap:
@@ -1010,16 +1176,76 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
       if arg.kind in {ekMacroStmt, ekMacroPat}: return nil
       return arg
     of mfkTt:
-      # Session 76: token-tree is a *superset* of expr — any single
-      # well-formed AST fragment the call parser already produced:
-      # expr, block, ident, literal, path, call, stmt, or pat wrapper.
-      # (True delimiter-balanced raw tokens remain future work.)
+      # Session 76/84/85: token-tree is a *superset* of expr — any single
+      # well-formed AST fragment. Delimiter-balanced multi-element groups
+      # `(a, b)` (tuple) and `[a, b]` (slice lit) flatten when spliced as
+      # the sole call argument: `$f($args)` → `f(a, b)`.
       if arg == nil: return nil
-      return arg
+      if arg.kind == ekMacroTt: return arg
+      let isGroup =
+        arg.kind == ekTuple or
+        (arg.kind == ekSlice and arg.exprSliceElements.len > 0)
+      return Expr(kind: ekMacroTt, loc: arg.loc,
+        exprMacroTtInner: arg, exprMacroTtGroup: isGroup)
+    of mfkType:
+      # Session 87 — type fragment from call-site expr shape
+      if arg == nil: return nil
+      if arg.kind == ekMacroType: return arg
+      proc exprToType(x: Expr): TypeExpr =
+        if x == nil: return nil
+        case x.kind
+        of ekIdent:
+          return TypeExpr(kind: tekNamed, loc: x.loc, typeName: x.exprIdent, typeArgs: @[])
+        of ekPath:
+          return TypeExpr(kind: tekPath, loc: x.loc, pathSegments: x.exprPath)
+        of ekUnary:
+          if x.exprUnaryOp == tkStar:
+            let inner = exprToType(x.exprUnaryOperand)
+            if inner == nil: return nil
+            return TypeExpr(kind: tekPointer, loc: x.loc, pointerPointee: inner, refLifetime: "")
+          if x.exprUnaryOp == tkAmp:
+            let inner = exprToType(x.exprUnaryOperand)
+            if inner == nil: return nil
+            return TypeExpr(kind: tekRef, loc: x.loc, pointerPointee: inner, refLifetime: "")
+          return nil
+        of ekGenericCall:
+          # Foo<Bar> written as generic-call shape at call site (limited)
+          var targs: seq[TypeExpr] = @[]
+          for ta in x.exprGenericTypeArgs:
+            targs.add(cloneTypeExpr(ta))
+          return TypeExpr(kind: tekNamed, loc: x.loc, typeName: x.exprGenericCallee, typeArgs: targs)
+        else:
+          return nil
+      let ty = exprToType(arg)
+      if ty == nil: return nil
+      return Expr(kind: ekMacroType, loc: arg.loc, exprMacroType: ty)
 
   proc fragMatches(k: MacroFragKind, arg: Expr): bool =
     ## Kind constraint at match time (after arg expand).
     coerceArg(k, arg) != nil
+
+  ## Session 86 — free-form juxta: single call arg `F(a, b)` matches
+  ## pattern `$f:ident $args:tt` (or `$f:ident, $args:tt`) as two fragments.
+  proc juxtaCallSplit(rule: MacroRule, inArgs: seq[Expr]): seq[Expr] =
+    result = inArgs
+    if inArgs.len != 1 or inArgs[0] == nil: return
+    if inArgs[0].kind != ekCall: return
+    if inArgs[0].exprCallCallee == nil or inArgs[0].exprCallCallee.kind != ekIdent:
+      return
+    # Exactly two fixed frags: ident + tt (no reps)
+    if rule.frags.len != 2: return
+    if rule.frags[0].isRep or rule.frags[1].isRep: return
+    let k0 = if rule.frags[0].kinds.len > 0: rule.frags[0].kinds[0] else: rule.frags[0].kind
+    let k1 = if rule.frags[1].kinds.len > 0: rule.frags[1].kinds[0] else: rule.frags[1].kind
+    if k0 != mfkIdent or k1 != mfkTt: return
+    let callee = inArgs[0].exprCallCallee
+    var elems: seq[Expr] = @[]
+    for a in inArgs[0].exprCallArgs:
+      elems.add(a)
+    let inner = Expr(kind: ekTuple, loc: inArgs[0].loc, exprTupleElements: elems)
+    let group = Expr(kind: ekMacroTt, loc: inArgs[0].loc,
+      exprMacroTtInner: inner, exprMacroTtGroup: true)
+    result = @[callee, group]
 
   var matched: MacroRule
   var env: MacroEnv
@@ -1031,7 +1257,7 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
     var gi = 0
     var ai = 0
     let useGroups = nReps > 1 and groups.len > 1
-    let flat = args
+    let flat = juxtaCallSplit(rule, args)
 
     for frag in rule.frags:
       if failed: break

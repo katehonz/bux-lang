@@ -63,6 +63,14 @@ module Std::Map {
         return zero;
     }
 
+    /// Like `Map_Get`, but returns `defaultVal` when the key is absent.
+    func Map_GetOr<K, V>(m: *Map<K, V>, key: K, defaultVal: V) -> V {
+        if Map_Has<K, V>(m, key) {
+            return Map_Get<K, V>(m, key);
+        }
+        return defaultVal;
+    }
+
     func Map_Has<K, V>(m: *Map<K, V>, key: K) -> bool {
         var keyPtr: *K = &key;
         let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
@@ -184,6 +192,14 @@ module Std::Map {
         }
         var zero: V = 0 as V;
         return zero;
+    }
+
+    /// Like `StringMap_Get`, but returns `defaultVal` when the key is absent.
+    func StringMap_GetOr<V>(m: *StringMap<V>, key: String, defaultVal: V) -> V {
+        if StringMap_Has<V>(m, key) {
+            return StringMap_Get<V>(m, key);
+        }
+        return defaultVal;
     }
 
     func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool {

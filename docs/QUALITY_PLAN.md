@@ -1,7 +1,7 @@
 # Bux — План към „добър“ език (v0.5 → v1.0)
 
 > **Дата:** 2026-07-23  
-> **Текущо:** v0.5.x — CI cloud smokes + registry path cleanup (session 82)  
+> **Текущо:** v0.5.x — `:type` macros + Array_Reverse (session 87)  
 > **Цел:** Език, с който се пишат реални проекти комфортно, безопасно (по избор) и с надежден toolchain.  
 > **Платформен фокус:** **Linux** (primary) · **cloud-native** (servers, containers, HTTP) · **embedded** (cross, freestanding-ish, CTFE).  
 > **Не-цел:** MS Windows като product platform (исторически CI/hello smoke остават; няма roadmap investment).
@@ -116,7 +116,7 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 ## Acceptance criteria за „добър v1.0“
 
 - [x] Всички examples + apps + selfhost smoke на CI (`make test` via `.github/workflows/ci.yml`); selfhost-loop optional
-- [ ] Array/Map/String/Test API покрива 90% от ежедневните нужди
+- [x] Array/Map/String/Test API покрива 90% от ежедневните нужди (+ Insert/Remove/Clone/case/GetOr)
 - [x] `@[Checked]` хваща use-after-move + double `&mut` + dangling return / elision fail
 - [x] `bux test` + `bux fmt` + `bux check` са default developer loop (`--filter` / `--check` shipped)
 - [x] LanguageRef синхронизиран с компилатора (incl. C.1 elision)
@@ -1216,7 +1216,7 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 |------|--------------------|-----------------|
 | **Linux** | Host + CI + full `rt/runtime.c` (pthread, ucontext, sockets, OpenSSL) | ✅ primary; macOS secondary smoke only |
 | **Cloud-native** | HTTP/HTTPS, registry (lock+HTTPS), containers, musl docs | ✅ sessions 75–79 |
-| **Embedded** | Cross (`--target`), CTFE tables, **thin runtime**, no-GC story | ✅ minimal + aarch64 + ctfe_crc (75); 🔧 riscv / bare-metal spike |
+| **Embedded** | Cross (`--target`), CTFE tables, **thin runtime**, no-GC story | ✅ minimal + aarch64 + riscv64 smoke (85) + freestanding notes; bare-metal still spike |
 | **Windows** | Не е product target | ⛔ no further investment (existing MinGW hello = historical) |
 
 **Правило:** нов runtime / stdlib / CI effort отива към Linux + cloud + embedded. Windows-only work не влиза в следващи сесии.
@@ -1369,35 +1369,114 @@ A (stdlib ergonomics)  →  B (compiler holes)  →  C (ownership depth)
 
 ---
 
+## Сесия 83 (stdlib daily API — collections_extra)
+
+1. **Array** (`lib/Array.bux`):
+   - `Array_RemoveAt` — shift-left remove, returns value
+   - `Array_Insert` — insert at `0..=len` (append at end)
+   - `Array_SwapRemove` — O(1) unordered remove
+   - `Array_Clone` — shallow value clone into new buffer
+2. **String** (`lib/String.bux`):
+   - `String_Cmp` — `strcmp` wrapper
+   - `String_IndexOf` — byte index or `-1`
+   - `String_ToUpper` / `String_ToLower` — ASCII only via StringBuilder
+3. **Map** (`lib/Map.bux`):
+   - `Map_GetOr` / `StringMap_GetOr` — default when key missing
+4. **Example** `examples/collections_extra.bux` + Makefile `EXAMPLES`
+5. **Goldens** `tests/stdlib_golden/{array,string}` extended
+6. **Docs** `docs/Stdlib.md` tables updated
+
+**Verified:** `collections_extra` PASS; `make test-stdlib` 3/3 PASS.
+
+---
+
+## Сесия 84 (macro raw `tt` groups + expression-level `$(…),*`)
+
+1. **Delimiter-balanced `:tt` groups** (bootstrap + selfhost):
+   - `$args:tt` that is a multi-element tuple `(a, b)` is wrapped as `ekMacroTt` with group flag
+   - Splice `$f($args)` flattens to `f(a, b)` (not `f((a, b))`)
+   - Value-position splice unwraps to the inner tuple / fragment
+   - Contrast `:expr` keeps the tuple as one argument
+2. **Expression-level rep in templates:**
+   - Parse `$( expr ),*` / `$( expr )*` inside **call argument lists** when `macroTemplateMode`
+   - `ekMacroRep` expands to N call args (zip list fragments)
+   - Example: `apply_rep!(Add3, 1, 2, 3)` → `Add3(1, 2, 3)`
+3. **Example** `examples/macro_tt_raw.bux` + Makefile EXAMPLES / EXAMPLES_SMOKE
+4. **Docs** LanguageRef tt + expression-level rep + limits
+5. **Hardening:** `CBE_NormalizeTypeName` / `String_StartsWith` null-safe
+   (fixed selfhost segfault on `if_let_like` + enum field-move path)
+
+**Verified:** bootstrap + **buxc2** `macro_tt_raw` PASS; `macro_stmt_pat` PASS; macro regressions OK.
+
+---
+
+## Сесия 85 (riscv64 cross smoke + freestanding notes + slice `:tt`)
+
+1. **riscv64 cross smoke** (`tools/smoke_linux_targets.sh`):
+   - Shared `try_cross` helper for aarch64 + riscv64
+   - `PASS` when `${triple}-gcc` present; **SKIP** otherwise (no false fail)
+   - Documented: clang `-target` alone needs a sysroot
+2. **Freestanding / bare-metal research** (`docs/BuildAndTest.md`):
+   - Table: thin/static/cross ✅ vs true freestanding / Cortex-M 🔬
+   - Clarifies `runtime_minimal` still uses libc (not no-libc)
+3. **Delimiter-balanced `:tt` + slice lit** (session 84 extension):
+   - `[a, b]` slice groups flatten like tuples in `$f($args)`
+   - Selfhost parser: primary `[a, b, …]` → `ekSlice` (parity with bootstrap)
+   - `examples/macro_tt_raw.bux` case `apply_tt!(Add, [8, 9])` → 17
+4. Docs: LanguageRef, BuildAndTest, Makefile target blurb
+
+**Verified:** `make test-linux-targets` — minimal/static/aarch64/ctfe PASS; riscv64 SKIP;
+bootstrap + **buxc2** `macro_tt_raw` (incl. slice) PASS.
+
+---
+
+## Сесия 86 (free-form juxta `:tt` paste)
+
+1. **Pattern juxtaposition:** `$f:ident $args:tt` without comma between fragments
+   (bootstrap + selfhost parser continue on next `$…`)
+2. **Expand-time call split:** when rule is exactly two fixed frags `ident` + `tt`
+   and the call site has **one** arg that is `ekCall` with ident callee:
+   - bind `$f` → callee
+   - bind `$args` → MacroTt group of the call’s arguments
+   - `$f($args)` flattens as before → `f(a, b)`
+3. **Example** `apply_juxta!(Add(2, 5))` / `apply_juxta!(Add3(1, 2, 4))` in
+   `examples/macro_tt_raw.bux`
+4. LanguageRef juxta section; comma form still works
+
+**Verified:** bootstrap + **buxc2** `macro_tt_raw` (h=7, i=7) PASS; macro regressions OK.
+
+---
+
+## Сесия 87 (`:type` fragments + Array_Reverse / Test_AssertNeqString)
+
+1. **Macro `$t:type`** (bootstrap + selfhost):
+   - Fragment kind `type` (`type` is a keyword — special-cased in parsers)
+   - Call-site coerce: `int` → named; `*int` → pointer
+   - Subst into `sizeof($t)`, `as $t`, `let x: $t`
+2. **Example** `examples/macro_type.bux` — size_of / cast_zero + reverse/neq
+3. **Stdlib:** `Array_Reverse`, `Test_AssertNeqString`
+4. Docs: LanguageRef type table; Stdlib Array_Reverse
+
+**Verified:** bootstrap + **buxc2** `macro_type` PASS (sizeof int=4, *int=8).
+
+---
+
 ## Следващи стъпки
 
 ### P0 — Compiler / language
 
-1. ~~Cross-function pointer ownership~~ ✅ session 76
-2. ~~Selfhost `--static` / `BUX_RUNTIME` / `--target`~~ ✅ session 76
-3. ~~Macro `tt` broader than expr~~ ✅ session 76 (raw delimiter-balanced tokens still open)
-4. Macro: raw token-tree delimiter balancing / deeper nested rewrite edge cases
-5. ~~Selfhost cross-fn moves~~ ✅ session 77
+1. ~~… through session 86~~ ✅
+2. ~~**`:type` macro fragments**~~ ✅ session 87
+3. Optional: richer free-form (operators-only tt); generics in `:type` (`Array<int>`)
 
 ### P1 — Linux / cloud-native
 
-6. ~~**Static path**~~ ✅ session 75–76
-7. ~~**Multi-arch Linux smoke**~~ ✅ session 75
-8. ~~**Nexus production polish**~~ ✅ session 77
-9. ~~**Nexus TLS**~~ ✅ session 78
-10. ~~**Container story**~~ ✅ session 78
-11. ~~**Registry + deploy**~~ ✅ session 79 (HTTPS + lock checksum + `--locked`)
-12. ~~**musl path**~~ ✅ session 79 (smoke + docs; SKIP without toolchain)
-13. ~~**mTLS / client certs**~~ ✅ session 80 (`NEXUS_TLS_CLIENT_CA`)
-14. ~~**Selfhost install --locked**~~ ✅ session 80
-15. ~~**Selfhost full registry**~~ ✅ session 81 (search / add / HTTP / path-dep build)
-16. **Language P0 leftovers** — raw macro `tt` delimiter balancing (optional)
+4. ~~(sessions 75–81)~~ ✅
 
 ### P2 — Embedded / cross
 
-12. ~~**Cross / thin / CTFE**~~ ✅ session 75
-13. **riscv64 cross smoke** (when toolchain available)
-14. **no-libc / bare-metal research** (spike only) — Cortex-M / qemu-system; not v1.0 blocker
+5. ~~riscv64 smoke + freestanding notes~~ ✅ session 85
+6. Optional: real `runtime_freestanding.c` + Cortex-M qemu — not v1.0
 
 ### Изрично **не** правим
 

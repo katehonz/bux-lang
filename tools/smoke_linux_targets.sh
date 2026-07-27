@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Session 75 — Linux / cloud / embedded smoke:
+# Session 75 / 85 — Linux / cloud / embedded smoke:
 #   1) BUX_RUNTIME=minimal  (thin runtime, run hello)
 #   2) --static --release   (fully-static binary, file(1) check)
 #   3) --target aarch64-linux-gnu (cross build if toolchain present)
-#   4) CTFE CRC example under minimal runtime
+#   4) --target riscv64-linux-gnu (cross if toolchain present; else SKIP)
+#   5) CTFE CRC example under minimal runtime
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUX_STDLIB="${BUX_STDLIB:-$ROOT/lib}"
@@ -38,6 +39,33 @@ EOF
   echo "$d"
 }
 
+# Cross-compile helper: needs <triple>-gcc with target libc/headers.
+# clang -target alone is not enough without a sysroot — we SKIP rather than fail.
+CROSS_PKGS=()
+try_cross() {
+  local triple="$1" label="$2" file_pat="$3"
+  local pkg bin file_out out
+  note "cross $triple"
+  if ! command -v "${triple}-gcc" >/dev/null 2>&1; then
+    echo "SKIP: ${triple}-gcc not on PATH (install gcc-${triple%%-*} or full cross-gcc)"
+    return 0
+  fi
+  pkg=$(mkpkg "hello_${label}" "$ROOT/examples/hello.bux")
+  CROSS_PKGS+=("$pkg")
+  out=$("$BUXC" --quiet --static --release --target "$triple" build "$pkg" 2>&1) || {
+    echo "$out" >&2
+    exit 1
+  }
+  bin="$pkg/build/hello_${label}"
+  [[ -x "$bin" ]] || bin="$pkg/build/hello_${label}.exe"
+  file_out=$(file "$bin")
+  echo "$file_out"
+  echo "$file_out" | grep -qiE "$file_pat"
+  echo "$file_out" | grep -qi 'statically linked\|static-pie\|static '
+  echo "PASS: cross $label"
+  pass=$((pass+1))
+}
+
 pass=0
 fail=0
 note() { echo "=== $* ==="; }
@@ -45,7 +73,10 @@ note() { echo "=== $* ==="; }
 # ── 1) minimal runtime ──────────────────────────────────────────────────
 note "minimal runtime (BUX_RUNTIME=minimal)"
 PKG=$(mkpkg hello_min "$ROOT/examples/hello.bux")
-trap 'rm -rf "$PKG" "${PKG2:-}" "${PKG3:-}" "${PKG4:-}"' EXIT
+cleanup() {
+  rm -rf "$PKG" "${PKG2:-}" "${PKG4:-}" "${CROSS_PKGS[@]:-}"
+}
+trap cleanup EXIT
 export BUX_RUNTIME=minimal
 out=$("$BUXC" --quiet run "$PKG" 2>&1) || { echo "$out" >&2; exit 1; }
 echo "$out" | grep -q 'Hello, Bux!'
@@ -78,26 +109,12 @@ echo "PASS: static link"
 pass=$((pass+1))
 
 # ── 3) cross aarch64 (optional toolchain) ───────────────────────────────
-note "cross aarch64-linux-gnu"
-PKG3=$(mkpkg hello_arm "$ROOT/examples/hello.bux")
-if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-  out=$("$BUXC" --quiet --static --release --target aarch64-linux-gnu build "$PKG3" 2>&1) || {
-    echo "$out" >&2
-    exit 1
-  }
-  BIN3="$PKG3/build/hello_arm"
-  [[ -x "$BIN3" ]] || BIN3="$PKG3/build/hello_arm.exe"
-  file_out=$(file "$BIN3")
-  echo "$file_out"
-  echo "$file_out" | grep -qi 'ARM aarch64\|aarch64'
-  echo "$file_out" | grep -qi 'statically linked\|static-pie\|static '
-  echo "PASS: cross aarch64"
-  pass=$((pass+1))
-else
-  echo "SKIP: aarch64-linux-gnu-gcc not on PATH"
-fi
+try_cross "aarch64-linux-gnu" "aarch64" 'ARM aarch64|aarch64'
 
-# ── 4) CTFE CRC under minimal runtime ───────────────────────────────────
+# ── 4) cross riscv64 (optional toolchain) — session 85 ──────────────────
+try_cross "riscv64-linux-gnu" "riscv64" 'RISC-V|riscv64|UCB RISC-V'
+
+# ── 5) CTFE CRC under minimal runtime ───────────────────────────────────
 note "ctfe_crc (minimal)"
 if [[ -f "$ROOT/examples/ctfe_crc.bux" ]]; then
   PKG4=$(mkpkg ctfe_crc "$ROOT/examples/ctfe_crc.bux")

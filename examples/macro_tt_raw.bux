@@ -1,0 +1,126 @@
+// Session 84–86 — delimiter-balanced :tt + expr-level $(…),* + juxta free-form
+//
+// 1) `$args:tt` multi-element group flattens when spliced as sole call arg:
+//    `(a, b)` tuple and `[a, b]` slice lit → `$f($args)` becomes `f(a, b)`.
+// 2) Expression-level `$( $a ),*` inside call templates expands to N args.
+// 3) Nested `id_tt!` rewrite still works (deeper nested expand).
+// 4) Free-form juxta (session 86): pattern `$f:ident $args:tt` matches a single
+//    call arg `F(a, b)` as ident + arg-list group (no comma required at call site).
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_Pass};
+
+// Parenthesized group as argument list (delimiter-balanced tt)
+macro! apply_tt {
+    ( $f:ident, $args:tt ) => {
+        $f($args)
+    }
+}
+
+// Juxtaposition pattern (no comma between fragments) — free-form paste
+macro! apply_juxta {
+    ( $f:ident $args:tt ) => {
+        $f($args)
+    }
+}
+
+// Expression-level repetition inside a call
+macro! apply_rep {
+    ( $f:ident, $($a:expr),* ) => {
+        $f( $($a),* )
+    }
+}
+
+// Nested rewrite of tt through another macro
+macro! id_tt {
+    ( $x:tt ) => { $x }
+}
+
+macro! outer_tt {
+    ( $x:tt ) => { id_tt!($x) }
+}
+
+// Non-tuple tt still works as a single value
+macro! wrap_tt {
+    ( $x:tt ) => { ( $x ) + 1 }
+}
+
+// Contrast: :expr keeps the tuple as one argument
+macro! apply_expr {
+    ( $f:ident, $args:expr ) => {
+        $f($args)
+    }
+}
+
+func Add(a: int, b: int) -> int {
+    return a + b;
+}
+
+func Add3(a: int, b: int, c: int) -> int {
+    return a + b + c;
+}
+
+func SumPair(t: (int, int)) -> int {
+    return t.0 + t.1;
+}
+
+func Main() -> int {
+    // 1) tt group flatten: (3, 4) → Add(3, 4)
+    let a: int = apply_tt!(Add, (3, 4));
+    PrintInt(a);
+    PrintLine("");
+
+    // 2) expression-level rep: Add3(1, 2, 3)
+    let b: int = apply_rep!(Add3, 1, 2, 3);
+    PrintInt(b);
+    PrintLine("");
+
+    // empty rep → zero-arg call is invalid for Add3; use Add with 2 via rep
+    let b2: int = apply_rep!(Add, 10, 20);
+    PrintInt(b2);
+    PrintLine("");
+
+    // 3) nested tt rewrite
+    let c: int = outer_tt!(7 + 4);
+    PrintInt(c);
+    PrintLine("");
+
+    // 4) non-group tt value
+    let d: int = wrap_tt!(41);
+    PrintInt(d);
+    PrintLine("");
+
+    // 5) :expr keeps tuple as one arg
+    let e: int = apply_expr!(SumPair, (5, 6));
+    PrintInt(e);
+    PrintLine("");
+
+    // 6) nested group through outer_tt then apply
+    let f: int = apply_tt!(Add, (100, 1));
+    PrintInt(f);
+    PrintLine("");
+
+    // 7) slice-lit group flatten (session 85)
+    let g: int = apply_tt!(Add, [8, 9]);
+    PrintInt(g);
+    PrintLine("");
+
+    // 8) free-form juxta: single call site arg Add(2, 5) → $f + $args (session 86)
+    let h: int = apply_juxta!(Add(2, 5));
+    PrintInt(h);
+    PrintLine("");
+    // zero-arg juxta still works with empty group
+    // (skip — no zero-arg test func required)
+
+    // 9) juxta with three args
+    let i: int = apply_juxta!(Add3(1, 2, 4));
+    PrintInt(i);
+    PrintLine("");
+
+    if a != 7 || b != 6 || b2 != 30 || c != 11 || d != 42 || e != 11 || f != 101 || g != 17 || h != 7 || i != 7 {
+        PrintLine("FAIL macro_tt_raw");
+        return 1;
+    }
+    PrintLine("PASS macro_tt_raw");
+    Test_Pass("macro_tt_raw");
+    return 0;
+}

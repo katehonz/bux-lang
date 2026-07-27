@@ -136,6 +136,9 @@ type
     ekMacroCall       ## name!(args) — expanded before sema
     ekMacroStmt       ## `$s:stmt` arg wrapper (expand only)
     ekMacroPat        ## `$p:pat` arg wrapper (expand only)
+    ekMacroTt         ## `$x:tt` bound fragment (expand only; may flatten groups)
+    ekMacroRep        ## `$( expr ),*` expression-level rep in templates (expand only)
+    ekMacroType       ## `$t:type` bound type (expand only)
 
   MatchArm* = object
     loc*: SourceLocation
@@ -251,6 +254,18 @@ type
     of ekMacroPat:
       ## Pattern fragment argument (`$p:pat`) — only during expand
       exprMacroPat*: Pattern
+    of ekMacroTt:
+      ## Bound `:tt` fragment. `exprMacroTtGroup` is true for parenthesized
+      ## multi-element groups (parsed as tuples) — flattened when spliced as
+      ## the sole argument of a call (`$f($args)` → `f(a, b)`).
+      exprMacroTtInner*: Expr
+      exprMacroTtGroup*: bool
+    of ekMacroRep:
+      ## Expression-level `$( body ),*` / `$( body )*` in macro templates.
+      exprMacroRepBody*: Expr
+    of ekMacroType:
+      ## Bound `:type` fragment.
+      exprMacroType*: TypeExpr
 
   # ---------------------------------------------------------------------------
   # Statements
@@ -385,6 +400,7 @@ type
     mfkBlock              ## block expression `{ … }`
     mfkStmt               ## one statement (let/if/… or expression-stmt)
     mfkPat                ## match/let pattern
+    mfkType               ## type expression (`int`, `*int`, `String`, …)
 
   MacroFragment* = object
     name*: string              ## primary / first name (compat)

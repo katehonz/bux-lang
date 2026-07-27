@@ -141,6 +141,8 @@ module CBackend {
 
     /// Normalize monomorphized type spellings for C (Array<int> → Array_int).
     func CBE_NormalizeTypeName(name: String) -> String {
+        // Null typeName can appear on partial HIR field nodes; treat as empty.
+        if name == null as String { return ""; }
         if String_Eq(name, "") { return name; }
         if String_StartsWith(name, "Array<") && String_EndsWith(name, ">") {
             let n: uint = String_Len(name);

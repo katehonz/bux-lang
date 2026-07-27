@@ -1,9 +1,10 @@
-// Stdlib golden: Array helpers + Contains/IndexOf/Extend
+// Stdlib golden: Array helpers + Contains/IndexOf/Extend + Insert/Remove/Clone
 import Std::Io::{PrintLine};
 import Std::Array::{
     Array, Array_New, Array_Push, Array_Pop, Array_Clear, Array_IsEmpty,
     Array_First, Array_Last, Array_Cap, Array_Reserve, Array_Len, Array_Get,
-    Array_Contains, Array_IndexOf, Array_Extend, Array_Free
+    Array_Contains, Array_IndexOf, Array_Extend, Array_Free,
+    Array_RemoveAt, Array_Insert, Array_SwapRemove, Array_Clone
 };
 import Std::Test::{
     Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_Pass
@@ -38,12 +39,33 @@ func Main() -> int {
     Test_AssertEqInt(Array_Len<int>(&arr) as int, 4);
     Test_AssertEqInt(Array_Get<int>(&arr, 3), 50);
 
+    // Insert / RemoveAt
+    Array_Insert<int>(&arr, 1, 15);  // [10, 15, 20, 40, 50]
+    Test_AssertEqInt(Array_Get<int>(&arr, 1), 15);
+    Test_AssertEqInt(Array_Len<int>(&arr) as int, 5);
+    let mid: int = Array_RemoveAt<int>(&arr, 1);
+    Test_AssertEqInt(mid, 15);
+    Test_AssertEqInt(Array_Get<int>(&arr, 1), 20);
+
+    // SwapRemove + Clone
+    let n: int = Array_Len<int>(&arr) as int;
+    let lastBefore: int = Array_Get<int>(&arr, (n - 1) as uint);
+    let sw: int = Array_SwapRemove<int>(&arr, 0);
+    Test_AssertEqInt(sw, 10);
+    Test_AssertEqInt(Array_Get<int>(&arr, 0), lastBefore);
+
+    var clone: Array<int> = Array_Clone<int>(&arr);
+    Test_AssertEqInt(Array_Len<int>(&clone) as int, Array_Len<int>(&arr) as int);
+    Array_Push<int>(&clone, 7);
+    Test_AssertTrue(Array_Len<int>(&clone) > Array_Len<int>(&arr));
+
     Array_Clear<int>(&arr);
     Test_AssertTrue(Array_IsEmpty<int>(&arr));
     Test_AssertTrue(Array_Cap<int>(&arr) >= 8);
 
     Array_Free<int>(&arr);
     Array_Free<int>(&extra);
+    Array_Free<int>(&clone);
     PrintLine("stdlib_array: ok");
     Test_Pass("stdlib_array");
     return 0;

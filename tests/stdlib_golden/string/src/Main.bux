@@ -1,8 +1,9 @@
-// Stdlib golden: String_IsEmpty / IsBlank / Repeat / ReplaceAll
+// Stdlib golden: String_IsEmpty / IsBlank / Repeat / ReplaceAll + Cmp/IndexOf/case
 import Std::Io::{PrintLine};
 import Std::String::{
     String_IsEmpty, String_IsBlank, String_Repeat, String_ReplaceAll,
-    String_Eq, String_Len, String_Contains, String_StartsWith, String_EndsWith
+    String_Eq, String_Len, String_Contains, String_StartsWith, String_EndsWith,
+    String_Cmp, String_IndexOf, String_ToUpper, String_ToLower
 };
 import Std::Test::{
     Test_AssertTrue, Test_AssertFalse, Test_AssertEqInt, Test_AssertEqString, Test_Pass
@@ -28,6 +29,13 @@ func Main() -> int {
     Test_AssertTrue(String_Contains("hello", "ell"));
     Test_AssertTrue(String_StartsWith("hello", "he"));
     Test_AssertTrue(String_EndsWith("hello", "lo"));
+
+    Test_AssertEqInt(String_Cmp("aa", "aa"), 0);
+    Test_AssertTrue(String_Cmp("a", "b") < 0);
+    Test_AssertEqInt(String_IndexOf("foo bar baz", "bar"), 4);
+    Test_AssertEqInt(String_IndexOf("foo", "zz"), -1);
+    Test_AssertEqString(String_ToUpper("AbC-12"), "ABC-12");
+    Test_AssertEqString(String_ToLower("AbC-12"), "abc-12");
 
     PrintLine("stdlib_string: ok");
     Test_Pass("stdlib_string");

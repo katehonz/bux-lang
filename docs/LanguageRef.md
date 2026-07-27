@@ -1284,11 +1284,12 @@ macro! with_acc {
   |------|---------|
   | `expr` | any expression |
   | `ident` | bare identifier (`ekIdent`) |
-  | `tt` | token-tree: any single call-site AST fragment (expr/ident/lit/block/stmt/pat); broader than `expr` |
+  | `tt` | token-tree: any single call-site AST fragment; **delimiter-balanced multi-element groups** `(a, b)` and `[a, b]` flatten when spliced as the sole call argument (`$f($args)` → `f(a, b)`, not `f((a, b))`). Non-group `tt` unwraps to the value. Broader than `expr`. |
   | `literal` / `lit` | int/float/string/char/bool literal only |
   | `block` | block expression `{ … }` |
   | `stmt` | one statement (`let`/`if`/… or expression-stmt) |
   | `pat` / `pattern` | match pattern (`_`, literals, `Enum::Var(…)`, …) |
+  | `type` | type expression from call-site shape: named (`int`), pointer (`*int`); spliced into `sizeof($t)`, `as $t`, `let x: $t` |
 
 - Fragment names start with `$` (lexer `$ident`).
 - **Repetition:** `$( $x:expr ),*` / `$( $x:expr )*` — one or more rep fragments per pattern.
@@ -1297,6 +1298,23 @@ macro! with_acc {
   `sum_groups!(1, 2; 10, 20, 30)`.
 - Template `$( stmt; … )*` expands once per list item (zip when multiple lists used).
 - Nested `$( $(…)* )*`: after outer binds list items as singles, inner expands once.
+- **Expression-level rep in templates:** `$f( $($a),* )` — `$( expr ),*` / `$( expr )*`
+  inside call arguments expands to N positional args (session 84).
+- **Delimiter-balanced `:tt` groups:** `apply_tt!(Add, (3, 4))` or
+  `apply_tt!(Add, [3, 4])` with `($f:ident, $args:tt) => { $f($args) }`
+  expands to `Add(3, 4)`. Contrast `:expr`, which keeps the group as one value.
+- **Free-form juxta (session 86):** pattern `$f:ident $args:tt` (comma optional
+  between fragments) matches a **single call-site argument** that is a call
+  expression: `apply_juxta!(Add(2, 5))` → binds `$f=Add`, `$args` = arg-list
+  group, then `$f($args)` flattens to `Add(2, 5)`.
+- **Type fragments (session 87):**
+  ```bux
+  macro! size_of {
+      ( $t:type ) => { sizeof($t) as int }
+  }
+  let n: int = size_of!(int);
+  let p: int = size_of!(*int);
+  ```
 
 ### Invocation
 
@@ -1388,3 +1406,12 @@ Examples: `examples/macro_hygiene.bux`, `examples/macro_unhygienic.bux`.
   Scheme/Rust colored identifiers or `stmt`/`pat` token trees.
 - Macro expansion still yields a **block expression**; unhygienic names are
   scoped to that block (not automatically injected into the caller scope).
+- Expression-level `$(…)*` is only parsed inside **call argument lists** in
+  templates (not as a free-standing primary expression).
+- Raw delimiter-balanced `tt` covers **tuple** `(a, b)` and **slice lit**
+  `[a, b]` groups, plus **juxta call-split** for `$f:ident $args:tt` matching
+  `F(a, b)`. Arbitrary free-form token pastes (operators-only, type-only
+  without AST) remain out of scope.
+
+Examples: `examples/macro_tt.bux`, `examples/macro_tt_raw.bux`,
+`examples/macro_repeat.bux`, `examples/macro_nested.bux`.

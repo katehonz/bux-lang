@@ -454,13 +454,83 @@ module MacroExpand {
             if aexp.kind == ekMacroStmt || aexp.kind == ekMacroPat { return null as *Expr; }
             return aexp;
         }
-        // tt — any single call-site AST fragment (session 76; raw token trees later)
+        // tt — any single call-site AST fragment (session 76/84/85).
+        // Delimiter-balanced multi-element groups (tuple `(a,b)` / slice `[a,b]`)
+        // flatten when spliced as sole call arg: `$f($args)` → `f(a, b)`.
         if String_Eq(kindStr, "tt") {
-            return aexp;
+            if aexp.kind == ekMacroTt { return aexp; }
+            let wrap: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+            wrap.kind = ekMacroTt;
+            wrap.line = aexp.line;
+            wrap.column = aexp.column;
+            wrap.sourceFile = aexp.sourceFile;
+            wrap.child1 = aexp;
+            // group flag: tuple or non-empty slice lit
+            wrap.boolValue = aexp.kind == ekTuple ||
+                (aexp.kind == ekSlice && aexp.callArgCount > 0);
+            return wrap;
+        }
+        // type — session 87: named / pointer type from call-site expr shape
+        if String_Eq(kindStr, "type") {
+            if aexp.kind == ekMacroType { return aexp; }
+            var te: *TypeExpr = null as *TypeExpr;
+            if aexp.kind == ekIdent {
+                te = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekNamed;
+                te.line = aexp.line;
+                te.column = aexp.column;
+                te.typeName = aexp.strValue;
+            } else if aexp.kind == ekUnary && aexp.intValue == tkStar && aexp.child1 != null as *Expr {
+                // *T from unary star
+                let inner: *Expr = Macro_CoerceArg("type", aexp.child1);
+                if inner == null as *Expr || inner.refType == null as *TypeExpr {
+                    return null as *Expr;
+                }
+                te = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+                te.kind = tekPointer;
+                te.line = aexp.line;
+                te.column = aexp.column;
+                te.pointerPointee = inner.refType;
+                if inner.refType != null as *TypeExpr {
+                    te.typeName = String_Concat(inner.refType.typeName, "*");
+                }
+            } else {
+                return null as *Expr;
+            }
+            let tw: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+            tw.kind = ekMacroType;
+            tw.line = aexp.line;
+            tw.column = aexp.column;
+            tw.refType = te;
+            return tw;
         }
         // default: treat as expr
         if aexp.kind == ekMacroStmt || aexp.kind == ekMacroPat { return null as *Expr; }
         return aexp;
+    }
+
+    // Substitute `$t:type` in TypeExpr (named type starting with $)
+    func Macro_SubstType(te: *TypeExpr, env: *MacroEnv) -> *TypeExpr {
+        if te == null as *TypeExpr { return null as *TypeExpr; }
+        if te.kind == tekNamed && String_StartsWith(te.typeName, "$") {
+            let bound: *Expr = Env_Lookup(env, te.typeName);
+            if bound != null as *Expr && bound.kind == ekMacroType && bound.refType != null as *TypeExpr {
+                return bound.refType;
+            }
+        }
+        if te.pointerPointee != null as *TypeExpr {
+            te.pointerPointee = Macro_SubstType(te.pointerPointee, env);
+            if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+                te.typeName = String_Concat(te.pointerPointee.typeName, "*");
+            }
+        }
+        if te.sliceElement != null as *TypeExpr {
+            te.sliceElement = Macro_SubstType(te.sliceElement, env);
+        }
+        if te.funcRet != null as *TypeExpr {
+            te.funcRet = Macro_SubstType(te.funcRet, env);
+        }
+        return te;
     }
 
     // Fragment kind check: "ident" | "literal" | "block" | "stmt" | "pat" | "expr" | "tt"
@@ -773,14 +843,116 @@ module MacroExpand {
     // Substitute $frags in a cloned tree
     // ---------------------------------------------------------------------------
 
+    // Build callArgs for a call/macro-call, flattening MacroRep and MacroTt groups.
+    func Macro_SubstCallArgs(oldArgs: *ExprList, env: *MacroEnv, file: String, line: uint32, col: uint32,
+                              outCount: *int) -> *ExprList {
+        var first: *ExprList = null as *ExprList;
+        var last: *ExprList = null as *ExprList;
+        var count: int = 0;
+        var args: *ExprList = oldArgs;
+        while args != null as *ExprList {
+            let a: *Expr = args.expr;
+            var didFlat: bool = false;
+            // Expression-level `$( body ),*`
+            if a != null as *Expr && a.kind == ekMacroRep && a.child1 != null as *Expr {
+                let body: *Expr = a.child1;
+                let use0: bool = Macro_ExprUsesListName(body, env.listName0);
+                let use1: bool = Macro_ExprUsesListName(body, env.listName1);
+                if !use0 && !use1 {
+                    let node: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                    node.expr = Subst_Expr(body, env, file, line, col);
+                    node.next = null as *ExprList;
+                    node.argName = "";
+                    if first == null as *ExprList { first = node; last = node; }
+                    else { last.next = node; last = node; }
+                    count = count + 1;
+                } else {
+                    var nRep: int = 0;
+                    if use0 && env.listCount0 > nRep { nRep = env.listCount0; }
+                    if use1 && env.listCount1 > nRep { nRep = env.listCount1; }
+                    var li: int = 0;
+                    while li < nRep {
+                        var inner: MacroEnv = Env_New();
+                        Env_CopySingles(&inner, env);
+                        if use0 && li < env.listCount0 {
+                            Env_SetNamed(&inner, env.listName0, Env_ListGet(env, 0, li));
+                        }
+                        if use1 && li < env.listCount1 {
+                            Env_SetNamed(&inner, env.listName1, Env_ListGet(env, 1, li));
+                        }
+                        let node2: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                        node2.expr = Subst_Expr(body, &inner, file, line, col);
+                        node2.next = null as *ExprList;
+                        node2.argName = "";
+                        if first == null as *ExprList { first = node2; last = node2; }
+                        else { last.next = node2; last = node2; }
+                        count = count + 1;
+                        li = li + 1;
+                    }
+                }
+                didFlat = true;
+            } else if a != null as *Expr && a.kind == ekIdent {
+                let bound: *Expr = Env_Lookup(env, a.strValue);
+                // Bare `$args:tt` group → flatten tuple/slice elements as call args
+                if bound != null as *Expr && bound.kind == ekMacroTt && bound.boolValue &&
+                   bound.child1 != null as *Expr &&
+                   (bound.child1.kind == ekTuple || bound.child1.kind == ekSlice) {
+                    var tel: *ExprList = bound.child1.callArgs;
+                    while tel != null as *ExprList {
+                        let ce: *Expr = Ast_CloneExpr(tel.expr);
+                        Graft_Expr(ce, file, line, col);
+                        let node3: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                        node3.expr = ce;
+                        node3.next = null as *ExprList;
+                        node3.argName = "";
+                        if first == null as *ExprList { first = node3; last = node3; }
+                        else { last.next = node3; last = node3; }
+                        count = count + 1;
+                        tel = tel.next;
+                    }
+                    didFlat = true;
+                }
+            }
+            if !didFlat {
+                let node4: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                node4.expr = Subst_Expr(a, env, file, line, col);
+                node4.next = null as *ExprList;
+                node4.argName = "";
+                if first == null as *ExprList { first = node4; last = node4; }
+                else { last.next = node4; last = node4; }
+                count = count + 1;
+            }
+            args = args.next;
+        }
+        *outCount = count;
+        return first;
+    }
+
     func Subst_Expr(e: *Expr, env: *MacroEnv, file: String, line: uint32, col: uint32) -> *Expr {
         if e == null as *Expr { return null as *Expr; }
         if e.kind == ekIdent {
             let bound: *Expr = Env_Lookup(env, e.strValue);
             if bound != null as *Expr {
-                let n: *Expr = Ast_CloneExpr(bound);
-                Graft_Expr(n, file, line, col);
-                return n;
+                // Value position: unwrap MacroTt wrapper
+                if bound.kind == ekMacroTt && bound.child1 != null as *Expr {
+                    let n: *Expr = Ast_CloneExpr(bound.child1);
+                    Graft_Expr(n, file, line, col);
+                    return n;
+                }
+                // Type fragments are not values — leave a zero literal
+                if bound.kind == ekMacroType {
+                    let z: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                    z.kind = ekLiteral;
+                    z.line = line;
+                    z.column = col;
+                    z.tokKind = 0;
+                    z.tokText = "0";
+                    z.intValue = 0;
+                    return z;
+                }
+                let n2: *Expr = Ast_CloneExpr(bound);
+                Graft_Expr(n2, file, line, col);
+                return n2;
             }
         }
         // In-place subst on clone of e
@@ -789,14 +961,24 @@ module MacroExpand {
         c.child1 = Subst_Expr(c.child1, env, file, line, col);
         c.child2 = Subst_Expr(c.child2, env, file, line, col);
         c.child3 = Subst_Expr(c.child3, env, file, line, col);
+        // sizeof / cast / is type annotations
+        if c.refType != null as *TypeExpr {
+            c.refType = Macro_SubstType(c.refType, env);
+        }
         if c.refBlock != null as *Block {
             c.refBlock = Subst_Block_Flat(c.refBlock, env, file, line, col);
         }
-        // callArgs list
-        var args: *ExprList = c.callArgs;
-        while args != null as *ExprList {
-            args.expr = Subst_Expr(args.expr, env, file, line, col);
-            args = args.next;
+        // callArgs: flatten MacroRep + MacroTt groups for calls
+        if c.kind == ekCall || c.kind == ekMacroCall {
+            var nCount: int = 0;
+            c.callArgs = Macro_SubstCallArgs(c.callArgs, env, file, line, col, &nCount);
+            c.callArgCount = nCount;
+        } else {
+            var args2: *ExprList = c.callArgs;
+            while args2 != null as *ExprList {
+                args2.expr = Subst_Expr(args2.expr, env, file, line, col);
+                args2 = args2.next;
+            }
         }
         var arm: *MatchArm = c.matchArms;
         while arm != null as *MatchArm {
@@ -851,6 +1033,10 @@ module MacroExpand {
         c.child1 = Subst_Expr(c.child1, env, file, line, col);
         c.child2 = Subst_Expr(c.child2, env, file, line, col);
         c.child3 = Subst_Expr(c.child3, env, file, line, col);
+        // let x: $t = …
+        if c.refStmtType != null as *TypeExpr {
+            c.refStmtType = Macro_SubstType(c.refStmtType, env);
+        }
         if c.refStmtBlock != null as *Block {
             c.refStmtBlock = Subst_Block(c.refStmtBlock, env, file, line, col);
         }
@@ -1003,10 +1189,48 @@ module MacroExpand {
             }
             let useGroups: bool = nReps > 1 && nGroups > 1;
 
+            // Session 86 — juxta free-form: single arg F(a,b) → $f:ident + $args:tt
+            var ruleArgs: *ExprList = expArgs;
+            var ruleNargs: int = nargs;
+            if !useGroups && nReps == 0 && nSeg == 2 && nargs == 1 && expArgs != null as *ExprList {
+                let k0: String = Macro_KindAt(kinds, 0);
+                let k1: String = Macro_KindAt(kinds, 1);
+                let only: *Expr = expArgs.expr;
+                if String_Eq(k0, "ident") && String_Eq(k1, "tt") &&
+                   only != null as *Expr && only.kind == ekCall &&
+                   only.child1 != null as *Expr && only.child1.kind == ekIdent {
+                    let callee: *Expr = only.child1;
+                    // Build MacroTt group from call args (tuple of elements)
+                    let inner: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                    inner.kind = ekTuple;
+                    inner.line = only.line;
+                    inner.column = only.column;
+                    inner.callArgs = only.callArgs;
+                    inner.callArgCount = only.callArgCount;
+                    let group: *Expr = bux_alloc(sizeof(Expr)) as *Expr;
+                    group.kind = ekMacroTt;
+                    group.line = only.line;
+                    group.column = only.column;
+                    group.child1 = inner;
+                    group.boolValue = true;
+                    let n0: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                    n0.expr = callee;
+                    n0.next = null as *ExprList;
+                    n0.argName = "";
+                    let n1: *ExprList = bux_alloc(sizeof(ExprList)) as *ExprList;
+                    n1.expr = group;
+                    n1.next = null as *ExprList;
+                    n1.argName = "";
+                    n0.next = n1;
+                    ruleArgs = n0;
+                    ruleNargs = 2;
+                }
+            }
+
             env = Env_New();
             var ok: bool = true;
-            var argList: *ExprList = expArgs;
-            var flatLeft: int = nargs;
+            var argList: *ExprList = ruleArgs;
+            var flatLeft: int = ruleNargs;
             var gIdx: int = 0;
             var gOff: int = 0; // offset within current group when useGroups
             var paramIdx: int = 0;
