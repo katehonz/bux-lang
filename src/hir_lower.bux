@@ -3475,46 +3475,29 @@ module HirLower {
                 current = Lcx_LowerBlock(ctx, stmt.refStmtElse, -1);
             }
             // Cases in reverse order (from caseBlock)
+            // Walk linked list: count total, then for each i from total-1 down to 0,
+            // walk from start to find the i-th case. O(n²) but handles any count.
             if stmt.refStmtBlock != null as *Block {
                 let caseBlock: *Block = stmt.refStmtBlock;
-                var caseCount: int = caseBlock.stmtCount;
-                // Collect cases into fixed-size locals for reverse iteration
-                var c0: *Stmt = null as *Stmt;
-                var c1: *Stmt = null as *Stmt;
-                var c2: *Stmt = null as *Stmt;
-                var c3: *Stmt = null as *Stmt;
-                var c4: *Stmt = null as *Stmt;
-                var c5: *Stmt = null as *Stmt;
-                var c6: *Stmt = null as *Stmt;
-                var c7: *Stmt = null as *Stmt;
-                var ci: int = 0;
+                var total: int = 0;
                 var cs: *Stmt = caseBlock.firstStmt;
-                while cs != null as *Stmt && ci < 8 {
-                    if ci == 0 { c0 = cs; }
-                    if ci == 1 { c1 = cs; }
-                    if ci == 2 { c2 = cs; }
-                    if ci == 3 { c3 = cs; }
-                    if ci == 4 { c4 = cs; }
-                    if ci == 5 { c5 = cs; }
-                    if ci == 6 { c6 = cs; }
-                    if ci == 7 { c7 = cs; }
-                    ci = ci + 1;
+                while cs != null as *Stmt {
+                    total = total + 1;
                     cs = cs.nextStmt;
                 }
-                while caseCount > 0 {
-                    caseCount = caseCount - 1;
-                    var c: *Stmt = null as *Stmt;
-                    if caseCount == 0 { c = c0; }
-                    if caseCount == 1 { c = c1; }
-                    if caseCount == 2 { c = c2; }
-                    if caseCount == 3 { c = c3; }
-                    if caseCount == 4 { c = c4; }
-                    if caseCount == 5 { c = c5; }
-                    if caseCount == 6 { c = c6; }
-                    if caseCount == 7 { c = c7; }
-                    if c != null as *Stmt {
-                        let caseVal: *HirNode = Lcx_LowerExpr(ctx, c.child1);
-                        let caseBody: *HirNode = Lcx_LowerBlock(ctx, c.refStmtBlock, -1);
+                var ri: int = total;
+                while ri > 0 {
+                    ri = ri - 1;
+                    // Find ri-th case by walking from start
+                    var i: int = 0;
+                    cs = caseBlock.firstStmt;
+                    while cs != null as *Stmt && i < ri {
+                        cs = cs.nextStmt;
+                        i = i + 1;
+                    }
+                    if cs != null as *Stmt {
+                        let caseVal: *HirNode = Lcx_LowerExpr(ctx, cs.child1);
+                        let caseBody: *HirNode = Lcx_LowerBlock(ctx, cs.refStmtBlock, -1);
                         let cond: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
                         cond.kind = hBinary;
                         cond.intValue = 74;  // tkEq

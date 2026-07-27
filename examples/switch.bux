@@ -1,0 +1,63 @@
+// switch.bux — Test switch with many cases (>8)
+
+import Std::Io::{PrintLine, PrintInt};
+
+func Main() -> int {
+    var x: int = 7;
+
+    switch x {
+        case 0:
+        PrintLine("zero");
+        case 1:
+        PrintLine("one");
+        case 2:
+        PrintLine("two");
+        case 3:
+        PrintLine("three");
+        case 4:
+        PrintLine("four");
+        case 5:
+        PrintLine("five");
+        case 6:
+        PrintLine("six");
+        case 7:
+        PrintLine("seven");
+        case 8:
+        PrintLine("eight");
+        case 9:
+        PrintLine("nine");
+        case 10:
+        PrintLine("ten");
+        default:
+        PrintLine("other");
+    }
+
+    // Test with match at end
+    x = 15;
+    switch x {
+        case 0:
+        PrintLine("a");
+        case 1:
+        PrintLine("b");
+        case 5:
+        PrintLine("c");
+        case 10:
+        PrintLine("d");
+        case 15:
+        PrintLine("fifteen-ok");
+        case 20:
+        PrintLine("e");
+        case 25:
+        PrintLine("f");
+        case 30:
+        PrintLine("g");
+        case 35:
+        PrintLine("h");
+        case 40:
+        PrintLine("i");
+        default:
+        PrintLine("default");
+    }
+
+    return 0;
+}
