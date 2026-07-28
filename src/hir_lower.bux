@@ -2723,7 +2723,8 @@ module HirLower {
             if stmt.child1 != null as *Expr && stmt.child1.kind == ekTry {
                 let tryExpr: *Expr = stmt.child1;
                 let operandExpr: *Expr = tryExpr.child1;
-                let operandTypeExpr: *TypeExpr = if operandExpr != null as *Expr { operandExpr.refType } else { null as *TypeExpr };
+                var operandTypeExpr: *TypeExpr = null as *TypeExpr;
+                if operandExpr != null as *Expr { operandTypeExpr = operandExpr.refType; }
                 var typeName: String = "Result";
                 var errTag: String = "Result_Err";
                 var okField: String = "Ok_0";
