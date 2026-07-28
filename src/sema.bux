@@ -210,6 +210,9 @@ module Sema {
     // Display-name helper for assignment diagnostics.
     func Sema_TypeNameForDiag(te: *TypeExpr, kind: int) -> String {
         if te != null as *TypeExpr {
+            // tekFunc TypeExprs have no typeName set (parser leaves it unset) —
+            // never touch te.typeName for them.
+            if te.kind == tekFunc { return "func"; }
             if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
                 return String_Concat(te.pointerPointee.typeName, "*");
             }
@@ -223,6 +226,25 @@ module Sema {
         if kind == tyFloat64 { return "float64"; }
         if kind == tyPointer { return "*void"; }
         return "?";
+    }
+
+    // Assignability for diagnostics: strict numeric widening, bool family,
+    // exact pointer kind, named types by name (best-effort when refType available).
+    func Sema_CanAssignTo(sema: *Sema, fromKind: int, fromTe: *TypeExpr, toTe: *TypeExpr) -> bool {
+        if fromKind == tyUnknown { return true; }
+        if toTe == null as *TypeExpr { return true; }
+        let toKind: int = Sema_ResolveType(sema, toTe);
+        if toKind == tyUnknown { return true; }
+        if fromKind == tyNamed && toKind == tyNamed {
+            if fromTe != null as *TypeExpr && !String_Eq(fromTe.typeName, "") {
+                return String_Eq(fromTe.typeName, toTe.typeName);
+            }
+            return true;
+        }
+        if fromKind == toKind { return true; }
+        if Sema_IsStrictNumeric(fromKind) && Sema_IsStrictNumeric(toKind) { return true; }
+        if Sema_IsBool(fromKind) && Sema_IsBool(toKind) { return true; }
+        return false;
     }
 
     // ---------------------------------------------------------------------------
@@ -1035,9 +1057,57 @@ module Sema {
         if kind == ekCall {
             let calleeType: int = Sema_CheckExpr(sema, expr.child1);
             Sema_ResolveCallArgs(sema, expr);
+            // Resolve callee decl for call-argument checking: direct calls to
+            // non-generic named functions only (inference handles generics).
+            var callDecl: *Decl = null as *Decl;
+            if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                let callSym: Symbol = Scope_Lookup(sema.scope, expr.child1.strValue);
+                if callSym.kind == skFunc && callSym.decl != null as *Decl {
+                    if callSym.decl.typeParamCount == 0 {
+                        callDecl = callSym.decl;
+                    }
+                }
+            }
+            // Arity check (runs after Sema_ResolveCallArgs so defaults/named args align)
+            if callDecl != null as *Decl && expr.callArgCount != callDecl.paramCount {
+                Sema_EmitError(sema, expr.line, expr.column,
+                    String_Concat("expected ", String_Concat(bux_int_to_str(callDecl.paramCount as int64),
+                    String_Concat(" arguments, got ", bux_int_to_str(expr.callArgCount as int64)))));
+                callDecl = null as *Decl;
+            }
+            var argIdx: int = 0;
             var arg: *ExprList = expr.callArgs;
             while arg != null as *ExprList {
-                discard Sema_CheckExpr(sema, arg.expr);
+                let argKind: int = Sema_CheckExpr(sema, arg.expr);
+                // Per-argument type check against the parameter type
+                if callDecl != null as *Decl && argIdx < callDecl.paramCount {
+                    let cp: *Param = Sema_DeclParam(callDecl, argIdx);
+                    if cp != null as *Param && cp.refParamType != null as *TypeExpr {
+                        // Skip conditions matching the bootstrap: unknown/named/typeparam
+                        // arg kinds, and *char8 -> String (C string interop).
+                        var argSkip: bool = false;
+                        if argKind == tyUnknown || argKind == tyNamed || argKind == tyTypeParam { argSkip = true; }
+                        // Function-typed params: selfhost cannot reliably type function
+                        // values (e.g. '&Double' is tyPointer) — defer like the bootstrap.
+                        if Sema_ResolveType(sema, cp.refParamType) == tyFunc { argSkip = true; }
+                        if !argSkip && argKind == tyPointer && Sema_ResolveType(sema, cp.refParamType) == tyStr {
+                            if arg.expr != null as *Expr && arg.expr.refType != null as *TypeExpr {
+                                if arg.expr.refType.kind == tekPointer && arg.expr.refType.pointerPointee != null as *TypeExpr {
+                                    if String_Eq(arg.expr.refType.pointerPointee.typeName, "char8") { argSkip = true; }
+                                }
+                            }
+                        }
+                        if !argSkip && arg.expr != null as *Expr && !Sema_CanAssignTo(sema, argKind, arg.expr.refType, cp.refParamType) {
+                            let wantName: String = Sema_TypeNameForDiag(cp.refParamType, Sema_ResolveType(sema, cp.refParamType));
+                            let gotName: String = Sema_TypeNameForDiag(arg.expr.refType, argKind);
+                            Sema_EmitError(sema, arg.expr.line, arg.expr.column,
+                                String_Concat("argument ", String_Concat(bux_int_to_str((argIdx + 1) as int64),
+                                String_Concat(": expected ", String_Concat(wantName,
+                                String_Concat(", got ", gotName))))));
+                        }
+                    }
+                }
+                argIdx = argIdx + 1;
                 arg = arg.next;
             }
             // Borrow check: reject double mutable borrow in @[Checked] functions
@@ -1495,31 +1565,12 @@ module Sema {
             }
             // Assignment check: annotation vs initializer (skip when either side is unknown)
             if stmt.refStmtType != null as *TypeExpr && initType != tyUnknown {
-                let annotKind: int = Sema_ResolveType(sema, stmt.refStmtType);
-                if annotKind != tyUnknown {
-                    var mismatch: bool = false;
-                    if initType == tyNamed && annotKind == tyNamed {
-                        // Both named: kinds are equal, compare type names (when available).
-                        if stmt.child1 != null as *Expr && stmt.child1.refType != null as *TypeExpr {
-                            if !String_Eq(stmt.child1.refType.typeName, "") &&
-                            !String_Eq(stmt.child1.refType.typeName, stmt.refStmtType.typeName) {
-                                mismatch = true;
-                            }
-                        }
-                    } else if initType != annotKind {
-                        let numericOk: bool = Sema_IsStrictNumeric(initType) && Sema_IsStrictNumeric(annotKind);
-                        let boolOk: bool = Sema_IsBool(initType) && Sema_IsBool(annotKind);
-                        if !numericOk && !boolOk {
-                            mismatch = true;
-                        }
-                    }
-                    if mismatch {
-                        let gotName: String = Sema_TypeNameForDiag(stmt.child1.refType, initType);
-                        let wantName: String = Sema_TypeNameForDiag(stmt.refStmtType, annotKind);
-                        let msg: String = String_Concat("cannot assign ",
-                            String_Concat(gotName, String_Concat(" to ", wantName)));
-                        Sema_EmitError(sema, stmt.line, stmt.column, msg);
-                    }
+                if !Sema_CanAssignTo(sema, initType, stmt.child1.refType, stmt.refStmtType) {
+                    let gotName: String = Sema_TypeNameForDiag(stmt.child1.refType, initType);
+                    let wantName: String = Sema_TypeNameForDiag(stmt.refStmtType, Sema_ResolveType(sema, stmt.refStmtType));
+                    let msg: String = String_Concat("cannot assign ",
+                        String_Concat(gotName, String_Concat(" to ", wantName)));
+                    Sema_EmitError(sema, stmt.line, stmt.column, msg);
                 }
             }
             sym.isMutable = stmt.boolValue;

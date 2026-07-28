@@ -1,0 +1,9 @@
+extern func PrintInt(n: int);
+extern func PrintLine(s: String);
+
+func Main() -> int {
+    PrintInt("hello");
+    PrintLine(42);
+    PrintInt(true);
+    return 0;
+}
