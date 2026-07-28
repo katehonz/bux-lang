@@ -17,6 +17,17 @@ type
 proc emitErr(res: var MacroExpandResult, loc: SourceLocation, msg: string) =
   res.diagnostics.add(MacroDiagnostic(loc: loc, message: msg))
 
+proc isBinaryPasteOp*(k: TokenKind): bool =
+  ## Operators allowed as `$op:tt` paste into `$op($a, $b)` → `a OP b`.
+  case k
+  of tkPlus, tkMinus, tkStar, tkSlash, tkPercent, tkStarStar,
+     tkAmp, tkPipe, tkCaret, tkShl, tkShr,
+     tkAmpAmp, tkPipePipe,
+     tkEq, tkNe, tkLt, tkLe, tkGt, tkGe:
+    true
+  else:
+    false
+
 # ---------------------------------------------------------------------------
 # Deep clone (bootstrap has no Ast_Clone*)
 # ---------------------------------------------------------------------------
@@ -152,9 +163,12 @@ proc cloneExpr*(e: Expr): Expr =
     for a in e.exprCallArgs:
       result.exprCallArgs.add(cloneExpr(a))
   of ekGenericCall:
+    var gtas: seq[TypeExpr] = @[]
+    for ta in e.exprGenericTypeArgs:
+      gtas.add(cloneTypeExpr(ta))
     result = Expr(kind: ekGenericCall, loc: e.loc,
       exprGenericCallee: e.exprGenericCallee,
-      exprGenericTypeArgs: e.exprGenericTypeArgs)
+      exprGenericTypeArgs: gtas)
   of ekIndex:
     result = Expr(kind: ekIndex, loc: e.loc,
       exprIndexObj: cloneExpr(e.exprIndexObj),
@@ -165,9 +179,12 @@ proc cloneExpr*(e: Expr): Expr =
       exprFieldObj: cloneExpr(e.exprFieldObj),
       exprFieldName: e.exprFieldName)
   of ekStructInit:
+    var stas: seq[TypeExpr] = @[]
+    for ta in e.exprStructInitTypeArgs:
+      stas.add(cloneTypeExpr(ta))
     result = Expr(kind: ekStructInit, loc: e.loc,
       exprStructInitName: e.exprStructInitName,
-      exprStructInitTypeArgs: e.exprStructInitTypeArgs,
+      exprStructInitTypeArgs: stas,
       exprStructInitFields: @[])
     for f in e.exprStructInitFields:
       result.exprStructInitFields.add((f.name, cloneExpr(f.value)))
@@ -895,6 +912,12 @@ proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr =
   of ekRange:
     c.exprRangeLo = substExpr(c.exprRangeLo, env, callLoc)
     c.exprRangeHi = substExpr(c.exprRangeHi, env, callLoc)
+  of ekGenericCall:
+    # Array_New<$t>(…) / Foo<$t, $u> — substitute type fragments in type args
+    var gtas: seq[TypeExpr] = @[]
+    for ta in c.exprGenericTypeArgs:
+      gtas.add(substType(ta, env, callLoc))
+    c.exprGenericTypeArgs = gtas
   of ekCall:
     c.exprCallCallee = substExpr(c.exprCallCallee, env, callLoc)
     var args: seq[Expr] = @[]
@@ -950,12 +973,37 @@ proc substExpr(e: Expr, env: MacroEnv, callLoc: SourceLocation): Expr =
       argNames.add("")
     c.exprCallArgs = args
     c.exprCallArgNames = argNames
+    # Operators-only paste: `$op($a, $b)` where `$op:tt` is a bound binary operator
+    # → rebuild as `$a OP $b` (post-1.0).
+    if c.exprCallCallee != nil and c.exprCallCallee.kind == ekMacroTt and
+       c.exprCallCallee.exprMacroTtInner != nil and
+       c.exprCallCallee.exprMacroTtInner.kind == ekLiteral and
+       c.exprCallArgs.len == 2:
+      let opTok = c.exprCallCallee.exprMacroTtInner.exprLit
+      if opTok.kind.isBinaryPasteOp:
+        result = Expr(kind: ekBinary, loc: callLoc,
+          exprBinaryOp: opTok.kind,
+          exprBinaryLeft: c.exprCallArgs[0],
+          exprBinaryRight: c.exprCallArgs[1])
+        return
+    # Callee already unwrapped to op literal by value-position MacroTt splice
+    if c.exprCallCallee != nil and c.exprCallCallee.kind == ekLiteral and
+       c.exprCallArgs.len == 2 and c.exprCallCallee.exprLit.kind.isBinaryPasteOp:
+      result = Expr(kind: ekBinary, loc: callLoc,
+        exprBinaryOp: c.exprCallCallee.exprLit.kind,
+        exprBinaryLeft: c.exprCallArgs[0],
+        exprBinaryRight: c.exprCallArgs[1])
+      return
   of ekIndex:
     c.exprIndexObj = substExpr(c.exprIndexObj, env, callLoc)
     c.exprIndexIdx = substExpr(c.exprIndexIdx, env, callLoc)
   of ekField:
     c.exprFieldObj = substExpr(c.exprFieldObj, env, callLoc)
   of ekStructInit:
+    var stas: seq[TypeExpr] = @[]
+    for ta in c.exprStructInitTypeArgs:
+      stas.add(substType(ta, env, callLoc))
+    c.exprStructInitTypeArgs = stas
     var fields: seq[tuple[name: string, value: Expr]] = @[]
     for f in c.exprStructInitFields:
       fields.add((f.name, substExpr(f.value, env, callLoc)))
@@ -1247,6 +1295,25 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
       exprMacroTtInner: inner, exprMacroTtGroup: true)
     result = @[callee, group]
 
+  ## Operators-only juxta: single binary arg `1 + 2` matches
+  ## `$a:expr, $op:tt, $b:expr` (or juxta without commas).
+  proc juxtaBinarySplit(rule: MacroRule, inArgs: seq[Expr]): seq[Expr] =
+    result = inArgs
+    if inArgs.len != 1 or inArgs[0] == nil: return
+    if inArgs[0].kind != ekBinary: return
+    if rule.frags.len != 3: return
+    if rule.frags[0].isRep or rule.frags[1].isRep or rule.frags[2].isRep: return
+    let k0 = if rule.frags[0].kinds.len > 0: rule.frags[0].kinds[0] else: rule.frags[0].kind
+    let k1 = if rule.frags[1].kinds.len > 0: rule.frags[1].kinds[0] else: rule.frags[1].kind
+    let k2 = if rule.frags[2].kinds.len > 0: rule.frags[2].kinds[0] else: rule.frags[2].kind
+    if k0 != mfkExpr or k1 != mfkTt or k2 != mfkExpr: return
+    if not inArgs[0].exprBinaryOp.isBinaryPasteOp: return
+    let opTok = Token(kind: inArgs[0].exprBinaryOp, text: "", loc: inArgs[0].loc)
+    let lit = Expr(kind: ekLiteral, loc: inArgs[0].loc, exprLit: opTok)
+    let opTt = Expr(kind: ekMacroTt, loc: inArgs[0].loc,
+      exprMacroTtInner: lit, exprMacroTtGroup: false)
+    result = @[inArgs[0].exprBinaryLeft, opTt, inArgs[0].exprBinaryRight]
+
   var matched: MacroRule
   var env: MacroEnv
   var found = false
@@ -1257,7 +1324,8 @@ proc expandOneCall(call: Expr, macros: Table[string, Decl],
     var gi = 0
     var ai = 0
     let useGroups = nReps > 1 and groups.len > 1
-    let flat = juxtaCallSplit(rule, args)
+    var flat = juxtaCallSplit(rule, args)
+    flat = juxtaBinarySplit(rule, flat)
 
     for frag in rule.frags:
       if failed: break

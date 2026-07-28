@@ -14,9 +14,10 @@ type
 
   ## Which C runtime shim to link (session 75 — Linux / cloud / embedded).
   RuntimeFlavor* = enum
-    rfFull       ## rt/runtime.c — POSIX + OpenSSL
-    rfMinimal    ## rt/runtime_minimal.c — thin, static/container/embed friendly
-    rfWin        ## rt/runtime_win.c — Windows/MinGW (historical)
+    rfFull          ## rt/runtime.c — POSIX + OpenSSL
+    rfMinimal       ## rt/runtime_minimal.c — thin, static/container/embed friendly
+    rfFreestanding  ## rt/runtime_freestanding.c — no-libc research spike
+    rfWin           ## rt/runtime_win.c — Windows/MinGW (historical)
 
   GlobalOptions* = object
     color*: ColorMode
@@ -63,7 +64,7 @@ Registry / toolchain env:
   BUX_REGISTRY_INSECURE=1 Allow self-signed HTTPS registry (dev/smoke)
   BUX_CFLAGS              Extra flags appended to the C compiler line
   BUX_CC                  C compiler binary (overrides --target pick)
-  BUX_RUNTIME             full|minimal|thin|embed|win  (default: full on Unix)
+  BUX_RUNTIME             full|minimal|thin|embed|freestanding|win  (default: full on Unix)
   BUX_STATIC=1            Same as --static
 
 Global options:
@@ -136,8 +137,10 @@ proc resolveRuntimeFlavor(opts: GlobalOptions): RuntimeFlavor =
   case e
   of "full", "posix":
     return rfFull
-  of "minimal", "thin", "embed", "embedded", "freestanding":
+  of "minimal", "thin", "embed", "embedded":
     return rfMinimal
+  of "freestanding", "bare", "nolibc":
+    return rfFreestanding
   of "win", "windows":
     return rfWin
   of "":
@@ -159,10 +162,12 @@ proc runtimeFileName(flavor: RuntimeFlavor): string =
   case flavor
   of rfFull: "runtime.c"
   of rfMinimal: "runtime_minimal.c"
+  of rfFreestanding: "runtime_freestanding.c"
   of rfWin: "runtime_win.c"
 
 proc isThinRuntime(flavor: RuntimeFlavor): bool =
-  flavor in {rfMinimal, rfWin}
+  ## Thin = no OpenSSL / pthread link needs
+  flavor in {rfMinimal, rfFreestanding, rfWin}
 
 proc findOnPath(bin: string): bool =
   ## True if `bin` resolves as an executable on PATH (or is an absolute path).

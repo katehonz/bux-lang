@@ -181,13 +181,25 @@ no-libc freestanding firmware.
 | Thin runtime (no pthread/OpenSSL) | ✅ | `rt/runtime_minimal.c` |
 | Static musl / distroless | ✅ | `make test-musl-static`, Dockerfiles |
 | Linux multi-arch cross | ✅ | aarch64 + riscv64 smokes (SKIP without gcc) |
-| True freestanding (`-ffreestanding`, no libc) | 🔬 spike | Needs custom alloc, panic, and I/O stubs |
-| Cortex-M / qemu-system | 🔬 spike | Same; plus linker scripts and startup |
+| True freestanding (`-ffreestanding`, no libc) | ✅ spike shipped | `rt/runtime_freestanding.c` + `BUX_RUNTIME=freestanding` |
+| Cortex-M / qemu-system | 🔬 research | Needs linker scripts, startup, board UART — not in tree |
 
-**Practical path today:** build with `BUX_RUNTIME=minimal --static --target …` for
-Linux userspace on foreign ISAs; treat bare-metal as a research project that
-starts from a custom `runtime_freestanding.c` (not shipped) and does **not**
-import `Std::Net` / `Std::Task` / OpenSSL.
+**Freestanding runtime** (`rt/runtime_freestanding.c`):
+
+- No hosted libc: bump heap (default 256 KiB), freestanding string/arith helpers
+- Weak hooks `bux_fs_write` / `bux_fs_halt` for board BSP or host overrides
+- Net / Task / TLS / FS return failure stubs
+- Optional `_start` when compiled with `-DBUX_FS_PROVIDE_START` (nostdlib experiments)
+
+```bash
+make test-freestanding          # -ffreestanding -c + package build exit 42
+BUX_RUNTIME=freestanding buxc build .
+# Still uses host crt0 unless you pass -nostdlib / custom start via BUX_CFLAGS
+```
+
+**Practical path for cloud/cross:** `BUX_RUNTIME=minimal --static --target …` for
+Linux userspace. Use `freestanding` only for no-libc research; do **not** import
+`Std::Net` / `Std::Task` / OpenSSL on that path.
 
 ---
 

@@ -1078,6 +1078,58 @@ proc collectGlobals*(sema: var Sema) =
 proc checkExpr*(sema: var Sema, expr: Expr, scope: Scope): Type
 proc checkStmt(sema: var Sema, stmt: Stmt, scope: Scope): Type
 
+proc isResultOrOptionName(name: string): bool =
+  name == "Result" or name.startsWith("Result_") or
+  name == "Option" or name.startsWith("Option_")
+
+proc extractResultOptionPayload*(sema: var Sema, opTy: Type, loc: SourceLocation, opKind: string): Type =
+  ## Payload type of `Result`/`Option` for `?` (try) and `!` (unwrap).
+  ## Prefer type-args (`Result<T,E>` → T); fall back to Ok/Some field on the enum decl.
+  if opTy == nil or opTy.isUnknown:
+    return makeUnknown()
+  if opTy.kind != tkNamed:
+    sema.emitError(loc, opKind & " requires Result or Option operand")
+    return makeUnknown()
+  let name = opTy.name
+  if not isResultOrOptionName(name):
+    sema.emitError(loc, opKind & " requires Result or Option, got " & opTy.toString)
+    return makeUnknown()
+  # Result<T,E> / Option<T> store payload in .inner
+  if opTy.inner.len >= 1:
+    return opTy.inner[0]
+  # Bare / monomorphized name: look up Ok(T) / Some(T) on the enum decl
+  var enumSym = sema.globalScope.lookup(name)
+  if (enumSym == nil or enumSym.decl == nil or enumSym.decl.kind != dkEnum):
+    if name.startsWith("Result_"):
+      enumSym = sema.globalScope.lookup("Result")
+    elif name.startsWith("Option_"):
+      enumSym = sema.globalScope.lookup("Option")
+  let wantVariant =
+    if name == "Option" or name.startsWith("Option_"): "Some"
+    else: "Ok"
+  if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+    var subst = initTable[string, Type]()
+    # Result_String_String → try to bind type params from mangled suffix when possible
+    if opTy.inner.len == 0 and enumSym.decl.declEnumTypeParams.len > 0 and
+       (name.startsWith("Result_") or name.startsWith("Option_")):
+      let prefix = if name.startsWith("Result_"): "Result_" else: "Option_"
+      let rest = name[prefix.len .. ^1]
+      # Split on '_' is imperfect for nested types; for simple T_E it works
+      let parts = rest.split('_')
+      var pi = 0
+      for tp in enumSym.decl.declEnumTypeParams:
+        if pi < parts.len and parts[pi].len > 0:
+          # Re-resolve simple type names (int, String, …)
+          let te = TypeExpr(kind: tekNamed, typeName: parts[pi])
+          subst[tp.name] = sema.resolveType(te)
+        inc pi
+    for variant in enumSym.decl.declEnumVariants:
+      if variant.name == wantVariant and variant.fields.len > 0:
+        let raw = sema.resolveType(variant.fields[0])
+        return sema.substituteTypeInType(raw, subst)
+  # Unknown payload — don't invent int (breaks String Results)
+  return makeUnknown()
+
 proc typeImplements(sema: Sema, t: Type, interfaceName: string): bool =
   ## Check if a type implements an interface by verifying all required methods exist.
   if t.isUnknown: return true
@@ -1838,14 +1890,12 @@ proc checkExpr*(sema: var Sema, expr: Expr, scope: Scope): Type =
     discard sema.checkExpr(expr.exprIsOperand, scope)
     return makeBool()
   of ekTry:
-    discard sema.checkExpr(expr.exprTryOperand, scope)
-    # For now, assume Result<int, String> -> int
-    # TODO: check operand is Result/Option and current function returns same type
-    return makeInt()
+    let opTy = sema.checkExpr(expr.exprTryOperand, scope)
+    # Payload of Result/Option; validates operand is Result or Option
+    return sema.extractResultOptionPayload(opTy, expr.loc, "try operator (`?`)")
   of ekUnwrap:
-    discard sema.checkExpr(expr.exprUnwrapOperand, scope)
-    # Unwrap: extract Ok value or panic on Err
-    return makeInt()
+    let opTy = sema.checkExpr(expr.exprUnwrapOperand, scope)
+    return sema.extractResultOptionPayload(opTy, expr.loc, "unwrap operator (`!`)")
   of ekBlock:
     var blockScope = newScope(scope)
     var lastType = makeVoid()

@@ -997,6 +997,25 @@ func Compute() -> Result {
 ```
 
 `?` can be used on `Result` and `Option` types in any expression context.
+The type of `expr?` is the **Ok / Some payload** (`T` in `Result<T,E>` or
+`Option<T>`), not always `int`. The enclosing function must return a compatible
+Result/Option so Err/None can propagate.
+
+```bux
+// Generic Result — payload type is String
+func GetName() -> Result<String, String> {
+    return Result_NewOk<String, String>("bux");
+}
+func Run() -> Result<String, String> {
+    let n: String = GetName()?;  // n: String
+    return Result_NewOk<String, String>(n);
+}
+```
+
+The postfix unwrap operator `expr!` extracts Ok/Some or panics (and exits) on
+Err/None; its type is likewise the payload type.
+
+See also `examples/try_operator.bux` and `examples/try_generic.bux`.
 
 ---
 
@@ -1312,13 +1331,32 @@ macro! with_acc {
   between fragments) matches a **single call-site argument** that is a call
   expression: `apply_juxta!(Add(2, 5))` → binds `$f=Add`, `$args` = arg-list
   group, then `$f($args)` flattens to `Add(2, 5)`.
-- **Type fragments (session 87):**
+- **Type fragments (session 87+):** named, pointer, and **generic** types
+  (`Array<int>`, `*int`); `$t` substitutes in `sizeof` / cast / let types and
+  monomorph call type args (`Array_New<$t>`).
   ```bux
   macro! size_of {
       ( $t:type ) => { sizeof($t) as int }
   }
+  macro! new_array {
+      ( $t:type, $cap:expr ) => { Array_New<$t>($cap) }
+  }
   let n: int = size_of!(int);
   let p: int = size_of!(*int);
+  let s: int = size_of!(Array<int>);
+  var a: Array<int> = new_array!(int, 4);
+  ```
+- **Operators-only `:tt` paste:**
+  ```bux
+  macro! apply_op {
+      ( $op:tt, $a:expr, $b:expr ) => { $op($a, $b) }
+  }
+  macro! flip_op {
+      ( $a:expr, $op:tt, $b:expr ) => { $op($b, $a) }
+  }
+  let x: int = apply_op!(+, 3, 4);   // 7
+  let y: int = apply_op!(*, 6, 7);   // 42
+  let z: int = flip_op!(10 - 3);     // -7  (juxta binary split)
   ```
 
 ### Invocation
@@ -1415,8 +1453,15 @@ Examples: `examples/macro_hygiene.bux`, `examples/macro_unhygienic.bux`.
   templates (not as a free-standing primary expression).
 - Raw delimiter-balanced `tt` covers **tuple** `(a, b)` and **slice lit**
   `[a, b]` groups, plus **juxta call-split** for `$f:ident $args:tt` matching
-  `F(a, b)`. Arbitrary free-form token pastes (operators-only, type-only
-  without AST) remain out of scope.
+  `F(a, b)`.
+- **Operators-only paste:** bare binary ops as `:tt` (`+`, `*`, `==`, …) and
+  juxta binary split `$a:expr $op:tt $b:expr` on a single binary arg. Template
+  form `$op($a, $b)` rebuilds `a OP b`. See `examples/macro_op_paste.bux`.
+- **`:type` generics:** `Array<int>`, `*int`, nested type args; `$t` splices
+  into `sizeof($t)`, casts, and `Array_New<$t>(…)`. See
+  `examples/macro_type.bux`, `examples/macro_type_generic.bux`.
+- Fully free-form token streams (unparsed soup) remain out of scope.
 
 Examples: `examples/macro_tt.bux`, `examples/macro_tt_raw.bux`,
-`examples/macro_repeat.bux`, `examples/macro_nested.bux`.
+`examples/macro_repeat.bux`, `examples/macro_nested.bux`,
+`examples/macro_type_generic.bux`, `examples/macro_op_paste.bux`.

@@ -1472,9 +1472,21 @@ bootstrap + **buxc2** `macro_tt_raw` (incl. slice) PASS.
 5. Tag `v1.0.0` after `make test` gate
 
 **Post-1.0 backlog (MINOR, not freeze blockers):**
-- Generics in `:type` (`Array<int>`); operators-only tt paste
-- `runtime_freestanding.c` + Cortex-M research
+- ~~Generics in `:type` (`Array<int>`); operators-only tt paste~~ ✅ session 5
+- ~~`runtime_freestanding.c`~~ ✅ session 5 (Cortex-M / board BSP still research)
 - LSP / IDE versioning independent of language MAJOR
+
+### Follow-up (2026-07-28)
+
+1. **`?` / `!` payload types** — bootstrap no longer hardcodes `int`; Ok/Some type
+   from `Result<T,E>` / enum fields (`bootstrap/sema.nim`, `hir_lower.nim`).
+2. **Example** `try_generic` — String Result propagation.
+3. **LSP 0.18** — `textDocument/formatting` (+ range) via `formatSource` / `bux fmt`;
+   VS Code format-on-save default; `tools/smoke_lsp_formatting.sh`.
+4. **Macros:** generic `:type` + `Array_New<$t>`; operators-only `$op($a,$b)` /
+   juxta binary split (`examples/macro_type_generic`, `macro_op_paste`).
+5. **Freestanding:** `rt/runtime_freestanding.c`, `BUX_RUNTIME=freestanding`,
+   `make test-freestanding`.
 
 ### Изрично **не** правим
 

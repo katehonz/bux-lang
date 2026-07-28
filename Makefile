@@ -5,12 +5,12 @@ BUILD_DIR := build
 # Project-local nimcache so CI can cache compiles (default is ~/.cache/nim).
 NIMFLAGS ?= --nimcache:nimcache
 
-EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator ownership ownership_checked ownership_release drop_early_return lifetime_elision ctfe ctfe_crc async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field move_field_partial move_field_remaining move_field_nested move_field_ptr move_cross_fn c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat macro_tt macro_tt_raw macro_type collections_extra generic_enum switch is_operator
+EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums generics generics_struct generic_infer generic_infer2 extend_generic pattern_matching strings strings2 map result_option try_operator try_generic ownership ownership_checked ownership_release drop_early_return lifetime_elision ctfe ctfe_crc async concurrency os_time process json iter trait_bounds channel sync jwt stdlib_ergonomics tuples func_ptr map_remove array_iter_extra string_extra multi_closure iter_hof closure_control match_let string_interp iter_generic generic_infer_hof struct_tuple_pat match_block nested_patterns match_guards pattern_shadow move_field move_field_partial move_field_remaining move_field_nested move_field_ptr move_cross_fn c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat macro_tt macro_tt_raw macro_type macro_type_generic macro_op_paste collections_extra generic_enum switch is_operator
 
 # Platform smoke (macOS CI): full EXAMPLES still runs on Linux.
 EXAMPLES_SMOKE := hello ownership ownership_release strings map move_field move_field_partial move_field_remaining move_field_nested move_field_ptr move_cross_fn c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat macro_tt macro_tt_raw ctfe_crc
 
-.PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp vscode vscode-package fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit test-linux-targets ensure-buxc
+.PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp vscode vscode-package fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit test-linux-targets test-freestanding ensure-buxc
 
 all: build
 
@@ -37,7 +37,7 @@ debug: dev
 	@echo "Debug binary: buxc_debug"
 
 # Full local / sequential suite (same coverage as split CI jobs combined).
-test: build fmt-check test-examples test-errors test-stdlib test-registry test-dwarf test-drop-move test-linux-targets test-apps test-selfhost-smoke test-unit
+test: build fmt-check test-examples test-errors test-stdlib test-registry test-dwarf test-drop-move test-linux-targets test-freestanding test-apps test-selfhost-smoke test-unit
 
 # Nim unit tests + tiny CLI smoke (needs Nim + buxc).
 test-unit: ensure-buxc
@@ -212,6 +212,9 @@ test-lsp: lsp
 	@echo "=== LSP diagnostics (error underlines) smoke ==="
 	@chmod +x tools/smoke_lsp_diagnostics.sh
 	@tools/smoke_lsp_diagnostics.sh
+	@echo "=== LSP formatting smoke ==="
+	@chmod +x tools/smoke_lsp_formatting.sh
+	@tools/smoke_lsp_formatting.sh
 	@echo "=== LSP references / rename smoke ==="
 	@chmod +x tools/smoke_lsp_rename.sh
 	@tools/smoke_lsp_rename.sh
@@ -287,6 +290,13 @@ test-linux-targets: ensure-buxc
 	@echo "=== Linux targets smoke (minimal / static / aarch64+riscv64 cross) ==="
 	@chmod +x tools/smoke_linux_targets.sh
 	@tools/smoke_linux_targets.sh
+
+# post-1.0 — freestanding runtime (-ffreestanding object + BUX_RUNTIME=freestanding package)
+.PHONY: test-freestanding
+test-freestanding: ensure-buxc
+	@echo "=== Freestanding runtime smoke ==="
+	@chmod +x tools/smoke_freestanding.sh
+	@tools/smoke_freestanding.sh
 
 # Session 78 — Nexus HTTPS (self-signed) smoke
 .PHONY: test-nexus-tls

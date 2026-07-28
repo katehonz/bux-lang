@@ -1,0 +1,44 @@
+// Generics in `$t:type` + type-arg splice into Array_New<$t>
+import Std::Io::{PrintLine, PrintInt};
+import Std::Array::{Array, Array_New, Array_Push, Array_Get, Array_Len, Array_Free};
+import Std::Test::{Test_AssertEqInt, Test_Pass};
+
+macro! size_of {
+    ( $t:type ) => { sizeof($t) as int }
+}
+
+macro! new_array {
+    ( $t:type, $cap:expr ) => {
+        Array_New<$t>($cap)
+    }
+}
+
+func Main() -> int {
+    // Generic type fragment: Array<int>
+    let sz: int = size_of!(Array<int>);
+    PrintInt(sz);
+    PrintLine("");
+    if sz < 8 {
+        PrintLine("FAIL size_of Array<int>");
+        return 1;
+    }
+
+    // $t spliced into monomorphized call Array_New<$t>
+    var a: Array<int> = new_array!(int, 4);
+    Array_Push<int>(&a, 10);
+    Array_Push<int>(&a, 20);
+    Test_AssertEqInt(Array_Get<int>(&a, 0), 10);
+    Test_AssertEqInt(Array_Get<int>(&a, 1), 20);
+    Test_AssertEqInt(Array_Len<int>(&a) as int, 2);
+    Array_Free<int>(&a);
+
+    let psz: int = size_of!(*int);
+    if psz != 4 && psz != 8 {
+        PrintLine("FAIL size_of *int");
+        return 1;
+    }
+
+    PrintLine("PASS macro_type_generic");
+    Test_Pass("macro_type_generic");
+    return 0;
+}

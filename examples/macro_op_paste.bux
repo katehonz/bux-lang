@@ -1,0 +1,40 @@
+// Operators-only `:tt` paste — `$op($a, $b)` → `a OP b`
+import Std::Io::{PrintLine, PrintInt};
+import Std::Test::{Test_AssertEqInt, Test_AssertEqBool, Test_Pass};
+
+// Explicit op as call-site tt: apply_op!(+, 3, 4) → 7
+macro! apply_op {
+    ( $op:tt, $a:expr, $b:expr ) => { $op($a, $b) }
+}
+
+// Juxta binary split: flip_op!(10 - 3) → 3 - 10
+macro! flip_op {
+    ( $a:expr, $op:tt, $b:expr ) => { $op($b, $a) }
+}
+
+func Main() -> int {
+    let sum: int = apply_op!(+, 3, 4);
+    Test_AssertEqInt(sum, 7);
+
+    let prod: int = apply_op!(*, 6, 7);
+    Test_AssertEqInt(prod, 42);
+
+    let diff: int = flip_op!(10 - 3);
+    Test_AssertEqInt(diff, -7);
+
+    let eq: bool = apply_op!(==, 5, 5);
+    Test_AssertEqBool(eq, true);
+
+    let lt: bool = apply_op!(<, 2, 9);
+    Test_AssertEqBool(lt, true);
+
+    PrintInt(sum);
+    PrintLine("");
+    PrintInt(prod);
+    PrintLine("");
+    PrintInt(diff);
+    PrintLine("");
+    PrintLine("PASS macro_op_paste");
+    Test_Pass("macro_op_paste");
+    return 0;
+}

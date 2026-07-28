@@ -470,16 +470,30 @@ module MacroExpand {
             (aexp.kind == ekSlice && aexp.callArgCount > 0);
             return wrap;
         }
-        // type — session 87: named / pointer type from call-site expr shape
+        // type — session 87+: named / pointer / generic Array<int> from call-site
         if String_Eq(kindStr, "type") {
             if aexp.kind == ekMacroType { return aexp; }
             var te: *TypeExpr = null as *TypeExpr;
-            if aexp.kind == ekIdent {
+            if aexp.kind == ekIdent || aexp.kind == ekGenericCall {
                 te = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
                 te.kind = tekNamed;
                 te.line = aexp.line;
                 te.column = aexp.column;
-                te.typeName = aexp.strValue;
+                if aexp.kind == ekGenericCall && !String_Eq(aexp.genericCallee, "") {
+                    te.typeName = aexp.genericCallee;
+                } else {
+                    te.typeName = aexp.strValue;
+                }
+                // Generic type args: Array<int> / Map<K,V> (selfhost: up to 2 string args)
+                var gcount: int = aexp.genericTypeArgCount;
+                if gcount > 0 {
+                    te.typeArgName0 = aexp.genericTypeArg0;
+                    te.typeArgCount = 1;
+                    if gcount > 1 {
+                        te.typeArgName1 = aexp.genericTypeArg1;
+                        te.typeArgCount = 2;
+                    }
+                }
             } else if aexp.kind == ekUnary && aexp.intValue == tkStar && aexp.child1 != null as *Expr {
                 // *T from unary star
                 let inner: *Expr = Macro_CoerceArg("type", aexp.child1);
@@ -518,6 +532,35 @@ module MacroExpand {
                 return bound.refType;
             }
         }
+        // Array<$t> / Map<$k,$v> — substitute type-arg name slots
+        if te.kind == tekNamed && te.typeArgCount > 0 {
+            if String_StartsWith(te.typeArgName0, "$") {
+                let b0: *Expr = Env_Lookup(env, te.typeArgName0);
+                if b0 != null as *Expr && b0.kind == ekMacroType && b0.refType != null as *TypeExpr {
+                    // Flatten simple named type arg (int, String, …)
+                    if b0.refType.kind == tekNamed && b0.refType.typeArgCount == 0 {
+                        te.typeArgName0 = b0.refType.typeName;
+                    } else if b0.refType.kind == tekNamed {
+                        // Nested generic: store mangled-ish "Array_int" for mono
+                        te.typeArgName0 = b0.refType.typeName;
+                        if b0.refType.typeArgCount > 0 {
+                            te.typeArgName0 = String_Concat(te.typeArgName0, "_");
+                            te.typeArgName0 = String_Concat(te.typeArgName0, b0.refType.typeArgName0);
+                        }
+                    } else if b0.refType.kind == tekPointer && b0.refType.pointerPointee != null as *TypeExpr {
+                        te.typeArgName0 = String_Concat(b0.refType.pointerPointee.typeName, "p");
+                    }
+                }
+            }
+            if te.typeArgCount > 1 && String_StartsWith(te.typeArgName1, "$") {
+                let b1: *Expr = Env_Lookup(env, te.typeArgName1);
+                if b1 != null as *Expr && b1.kind == ekMacroType && b1.refType != null as *TypeExpr {
+                    if b1.refType.kind == tekNamed {
+                        te.typeArgName1 = b1.refType.typeName;
+                    }
+                }
+            }
+        }
         if te.pointerPointee != null as *TypeExpr {
             te.pointerPointee = Macro_SubstType(te.pointerPointee, env);
             if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
@@ -531,6 +574,27 @@ module MacroExpand {
             te.funcRet = Macro_SubstType(te.funcRet, env);
         }
         return te;
+    }
+
+    // Substitute `$t` in Expr generic type-arg slots (Array_New<$t>)
+    func Macro_SubstGenericTypeArgs(e: *Expr, env: *MacroEnv) {
+        if e == null as *Expr { return; }
+        if e.genericTypeArgCount > 0 && String_StartsWith(e.genericTypeArg0, "$") {
+            let b0: *Expr = Env_Lookup(env, e.genericTypeArg0);
+            if b0 != null as *Expr && b0.kind == ekMacroType && b0.refType != null as *TypeExpr {
+                if b0.refType.kind == tekNamed {
+                    e.genericTypeArg0 = b0.refType.typeName;
+                }
+            }
+        }
+        if e.genericTypeArgCount > 1 && String_StartsWith(e.genericTypeArg1, "$") {
+            let b1: *Expr = Env_Lookup(env, e.genericTypeArg1);
+            if b1 != null as *Expr && b1.kind == ekMacroType && b1.refType != null as *TypeExpr {
+                if b1.refType.kind == tekNamed {
+                    e.genericTypeArg1 = b1.refType.typeName;
+                }
+            }
+        }
     }
 
     // Fragment kind check: "ident" | "literal" | "block" | "stmt" | "pat" | "expr" | "tt"
@@ -961,6 +1025,8 @@ module MacroExpand {
         c.child1 = Subst_Expr(c.child1, env, file, line, col);
         c.child2 = Subst_Expr(c.child2, env, file, line, col);
         c.child3 = Subst_Expr(c.child3, env, file, line, col);
+        // Array_New<$t> / Foo<$t,$u>
+        Macro_SubstGenericTypeArgs(c, env);
         // sizeof / cast / is type annotations
         if c.refType != null as *TypeExpr {
             c.refType = Macro_SubstType(c.refType, env);

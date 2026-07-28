@@ -1,8 +1,8 @@
 {
     "name": "bux-lang",
     "displayName": "Bux Language Support",
-    "description": "Syntax highlighting, snippets, and full LSP support for Bux — live error underlines, hover, go-to-def, rename, call/type hierarchy",
-    "version": "0.2.1",
+    "description": "Syntax highlighting, snippets, and full LSP support for Bux — live error underlines, Format Document, hover, go-to-def, rename, call/type hierarchy",
+    "version": "0.2.2",
     "publisher": "bux-lang",
     "license": "MIT",
     "icon": "icon.png",
@@ -25,6 +25,7 @@
         "Programming Languages",
         "Snippets",
         "Linters",
+        "Formatters",
         "Other"
     ],
     "keywords": [
@@ -32,7 +33,8 @@
         "bux-lang",
         "programming-language",
         "lsp",
-        "syntax"
+        "syntax",
+        "formatter"
     ],
     "activationEvents": [
         "onLanguage:bux",
@@ -107,7 +109,7 @@
                 "bux.lsp.enabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable the Bux language server (diagnostics, hover, go-to-definition, rename, hierarchy)."
+                    "description": "Enable the Bux language server (diagnostics, formatting, hover, go-to-definition, rename, hierarchy)."
                 },
                 "bux.lsp.path": {
                     "type": "string",
@@ -133,6 +135,7 @@
                 "editor.tabSize": 4,
                 "editor.insertSpaces": true,
                 "editor.detectIndentation": false,
+                "editor.formatOnSave": true,
                 "editor.quickSuggestions": {
                     "other": true,
                     "comments": false,

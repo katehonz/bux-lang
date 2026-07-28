@@ -1,7 +1,32 @@
 # Bux — План за подобрения (post-v1.0.0)
 
 > **Дата:** 2026-07-28  
-> **Статус:** Всички приоритетни задачи изпълнени ✅
+> **Статус:** Всички приоритетни задачи изпълнени ✅ · follow-up DX/correctness shipped
+
+---
+
+## Сесия 4 — Try payload type + LSP formatting (2026-07-28)
+
+| # | Задача | Файлове |
+|---|--------|---------|
+| F.5 | `?` / `!` вече връщат **Ok/Some payload type** (не винаги `int`) | `bootstrap/sema.nim`, `bootstrap/hir_lower.nim` |
+| F.6 | Example `try_generic` — `Result<String, String>` + `?` | `examples/try_generic.bux` |
+| D.6 | LSP **v0.18** `textDocument/formatting` (+ range) = `bux fmt` | `tools/lsp_server.nim`, `tools/smoke_lsp_formatting.sh` |
+| D.7 | VS Code format-on-save default; docs | `vscode/package.json`, `docs/LSP.md` |
+
+**Verified:** `try_generic` prints `hello` / `empty name`; `try_operator` still OK; formatting smoke PASS.
+
+## Сесия 5 — Post-1.0 backlog: macros + freestanding (2026-07-28)
+
+| # | Задача | Файлове |
+|---|--------|---------|
+| M.1 | Generics in `$t:type` + `$t` in `Array_New<$t>` | `bootstrap/macroexpand.nim`, `src/macroexpand.bux` |
+| M.2 | Operators-only `:tt` paste (`$op($a,$b)` + juxta binary split) | `bootstrap/parser.nim`, `bootstrap/macroexpand.nim` |
+| M.3 | Examples `macro_type_generic`, `macro_op_paste` | `examples/` |
+| R.1 | `rt/runtime_freestanding.c` + `BUX_RUNTIME=freestanding` | `rt/`, `bootstrap/cli.nim`, `src/cli.bux` |
+| R.2 | `make test-freestanding` smoke | `tools/smoke_freestanding.sh` |
+
+**Verified:** both macro examples PASS; freestanding `-ffreestanding -c` + package exit 42.
 
 ---
 

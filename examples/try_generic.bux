@@ -1,0 +1,32 @@
+// Try operator `?` with generic Result<T,E> (non-int Ok payload).
+import Std::Io::{PrintLine};
+import Std::Result::{Result, Result_NewOk, Result_NewErr};
+import Std::String::{String_Eq};
+
+func GetGreeting(name: String) -> Result<String, String> {
+    if String_Eq(name, "") {
+        return Result_NewErr<String, String>("empty name");
+    }
+    return Result_NewOk<String, String>("hello");
+}
+
+func Greet(name: String) -> Result<String, String> {
+    let g: String = GetGreeting(name)?;
+    return Result_NewOk<String, String>(g);
+}
+
+func Main() -> int {
+    PrintLine("Try generic Result demo:");
+
+    let ok: Result<String, String> = Greet("bux");
+    if ok.tag == Result_Ok {
+        PrintLine(ok.data.Ok_0);
+    }
+
+    let err: Result<String, String> = Greet("");
+    if err.tag == Result_Err {
+        PrintLine(err.data.Err_0);
+    }
+
+    return 0;
+}

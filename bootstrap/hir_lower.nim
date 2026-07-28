@@ -2101,6 +2101,10 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
   of ekTry:
     let operand = ctx.lowerExpr(expr.exprTryOperand)
     var operandType = ctx.resolveExprType(expr.exprTryOperand)
+    # Keep original type args for Ok payload (before mangling to Result_T_E)
+    let payloadArgs: seq[Type] =
+      if operandType != nil and operandType.kind == tkNamed: operandType.inner
+      else: @[]
 
     var typeName = ""
     var errTag = ""
@@ -2112,7 +2116,7 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
 
     # Upgrade bare generic enum name to concrete monomorphization.
     # Sema stores Result/Option without mangled type-args; try needs Result_int_String_Tag.
-    if ctx.genericEnums.hasKey(typeName):
+    if ctx.genericEnums.hasKey(typeName) or typeName == "Result" or typeName == "Option":
       # Prefer resolving call/ident TypeExpr with type args
       if expr.exprTryOperand != nil:
         if expr.exprTryOperand.kind == ekIdent and ctx.varTypeExprs.hasKey(expr.exprTryOperand.exprIdent):
@@ -2131,14 +2135,21 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                (resolved.name == typeName or resolved.name.startsWith(typeName & "_")):
               typeName = resolved.name
       # Enclosing function return type (must match for `?` propagation)
-      let stillBare = operandType == nil or operandType.kind != tkNamed or
-                      typeName == operandType.name
+      var stillBare = typeName == "Result" or typeName == "Option"
       if stillBare and ctx.currentFuncRetType != nil and
          ctx.currentFuncRetType.kind == tkNamed:
         let rn = ctx.currentFuncRetType.name
         if rn.startsWith(typeName & "_"):
           typeName = rn
-      operandType = makeNamed(typeName)
+          stillBare = false
+      # Prefer mangled name from type args: Result + [String,String] → Result_String_String
+      if stillBare and payloadArgs.len > 0 and
+         (typeName == "Result" or typeName == "Option"):
+        var mangled = typeName
+        for a in payloadArgs:
+          mangled = mangled & "_" & a.toString.replace(" ", "").replace("*", "p")
+        typeName = mangled
+      operandType = Type(kind: tkNamed, name: typeName, inner: payloadArgs)
 
     # Err tag / Ok field from base or concrete name
     let baseForTags =
@@ -2156,6 +2167,41 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     else:
       errTag = typeName & "_Err"
       okField = "Ok_0"
+
+    # Payload type (Ok_0 / Some_0) — must match T of Result<T,E>, not always int
+    var okType = makeInt()
+    if payloadArgs.len >= 1:
+      okType = payloadArgs[0]
+    else:
+      var enumSym = ctx.globalScope.lookup(typeName)
+      var enumDecl: Decl = nil
+      if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+        enumDecl = enumSym.decl
+      elif ctx.structInstMap.hasKey(typeName):
+        let (baseName, _) = ctx.structInstMap[typeName]
+        let baseSym = ctx.globalScope.lookup(baseName)
+        if baseSym != nil and baseSym.decl != nil and baseSym.decl.kind == dkEnum:
+          enumDecl = baseSym.decl
+      elif typeName.startsWith("Result_"):
+        let baseSym = ctx.globalScope.lookup("Result")
+        if baseSym != nil and baseSym.decl != nil: enumDecl = baseSym.decl
+      elif typeName.startsWith("Option_"):
+        let baseSym = ctx.globalScope.lookup("Option")
+        if baseSym != nil and baseSym.decl != nil: enumDecl = baseSym.decl
+      if enumDecl != nil:
+        var subst = initTable[string, Type]()
+        if ctx.structInstMap.hasKey(typeName):
+          var ti = 0
+          for tp in enumDecl.declEnumTypeParams:
+            if ti < ctx.structInstMap[typeName][1].len:
+              subst[tp.name] = ctx.structInstMap[typeName][1][ti]
+            inc ti
+        for variant in enumDecl.declEnumVariants:
+          for i, f in variant.fields:
+            let fieldName = variant.name & "_" & $i
+            if fieldName == okField:
+              okType = substituteType(ctx, f, subst)
+              break
 
     let tmpName = ctx.freshTryVar()
     let tmpAlloca = hirAlloca(tmpName, operandType, loc)
@@ -2179,8 +2225,8 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     let dataLoad = HirNode(kind: hLoad, loadPtr: dataPtr,
                            typ: makeNamed(typeName & "_Data"), loc: loc)
     let okPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: okField,
-                        typ: makePointer(makeInt()), loc: loc)
-    let okLoad = HirNode(kind: hLoad, loadPtr: okPtr, typ: makeInt(), loc: loc)
+                        typ: makePointer(okType), loc: loc)
+    let okLoad = HirNode(kind: hLoad, loadPtr: okPtr, typ: okType, loc: loc)
 
     ctx.pendingStmts.add(tmpAlloca)
     ctx.pendingStmts.add(tmpStore)
@@ -2193,14 +2239,66 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
 
     var errTag = "Result_Err"
     var typeName = "Result"
-    if operandType.kind == tkNamed:
+    var okField = "Ok_0"
+    if operandType != nil and operandType.kind == tkNamed:
       typeName = operandType.name
-      if typeName == "Option":
-        errTag = "Option_None"
+      if typeName == "Option" or typeName.startsWith("Option_"):
+        errTag = if typeName == "Option": "Option_None" else: typeName & "_None"
+        okField = "Some_0"
+      elif typeName == "Result":
+        errTag = "Result_Err"
+      else:
+        errTag = typeName & "_Err"
 
+    # Mangle Result + type args when still bare
+    if operandType != nil and operandType.kind == tkNamed and operandType.inner.len > 0 and
+       (typeName == "Result" or typeName == "Option"):
+      var mangled = typeName
+      for a in operandType.inner:
+        mangled = mangled & "_" & a.toString.replace(" ", "").replace("*", "p")
+      typeName = mangled
+      if typeName.startsWith("Option_"):
+        errTag = typeName & "_None"
+        okField = "Some_0"
+      else:
+        errTag = typeName & "_Err"
+        okField = "Ok_0"
+
+    var okType = makeInt()
+    if operandType != nil and operandType.kind == tkNamed and operandType.inner.len >= 1:
+      okType = operandType.inner[0]
+    else:
+      var enumDecl: Decl = nil
+      let enumSym = ctx.globalScope.lookup(
+        if typeName.startsWith("Result_"): "Result"
+        elif typeName.startsWith("Option_"): "Option"
+        else: typeName)
+      if enumSym != nil and enumSym.decl != nil and enumSym.decl.kind == dkEnum:
+        enumDecl = enumSym.decl
+      if enumDecl != nil:
+        var subst = initTable[string, Type]()
+        if ctx.structInstMap.hasKey(typeName):
+          var ti = 0
+          for tp in enumDecl.declEnumTypeParams:
+            if ti < ctx.structInstMap[typeName][1].len:
+              subst[tp.name] = ctx.structInstMap[typeName][1][ti]
+            inc ti
+        elif operandType != nil and operandType.kind == tkNamed:
+          var ti = 0
+          for tp in enumDecl.declEnumTypeParams:
+            if ti < operandType.inner.len:
+              subst[tp.name] = operandType.inner[ti]
+            inc ti
+        for variant in enumDecl.declEnumVariants:
+          for i, f in variant.fields:
+            if variant.name & "_" & $i == okField:
+              okType = substituteType(ctx, f, subst)
+
+    # Same shape as `?`: stack temporary of the Result/Option value (not a pointer).
+    # Typing the var as *Result made C emit `tmp->tag` on a value (invalid).
     let tmpName = ctx.freshTryVar()
     let tmpAlloca = hirAlloca(tmpName, operandType, loc)
-    let tmpVar = hirVar(tmpName, makePointer(operandType), loc)
+    let tmpVar = hirVar(tmpName, operandType, loc)
     let tmpStore = hirStore(tmpVar, operand, loc)
 
     let tagPtr = HirNode(kind: hFieldPtr, fieldPtrBase: tmpVar, fieldName: "tag",
@@ -2210,11 +2308,15 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
     let errConst = hirVar(errTag, makeNamed(typeName & "_Tag"), loc)
     let cond = hirBinary(tkEq, tagLoad, errConst, makeBool(), loc)
 
-    # On error: call bux_panic("unwrap failed")
+    # On error: call bux_panic("unwrap failed") then exit (do not continue with garbage)
     let panicTok = Token(kind: tkStringLiteral, text: "\"unwrap failed\"", loc: loc)
     let panicMsg = HirNode(kind: hLit, litToken: panicTok, typ: makeStr(), loc: loc)
     let panicCall = hirCall("bux_panic", @[panicMsg], makeVoid(), loc)
-    let thenBlock = hirBlock(@[panicCall], nil, makeVoid(), loc)
+    let exitLit = HirNode(kind: hLit,
+      litToken: Token(kind: tkIntLiteral, text: "1", loc: loc),
+      typ: makeInt(), loc: loc)
+    let exitCall = hirCall("bux_exit", @[exitLit], makeVoid(), loc)
+    let thenBlock = hirBlock(@[panicCall, exitCall], nil, makeVoid(), loc)
     let ifNode = HirNode(kind: hIf, ifCond: cond, ifThen: thenBlock,
                           ifElse: nil, typ: makeVoid(), loc: loc)
 
@@ -2223,9 +2325,9 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                            typ: makePointer(makeNamed(typeName & "_Data")), loc: loc)
     let dataLoad = HirNode(kind: hLoad, loadPtr: dataPtr,
                             typ: makeNamed(typeName & "_Data"), loc: loc)
-    let okPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: "Ok_0",
-                         typ: makePointer(makeInt()), loc: loc)
-    let okLoad = HirNode(kind: hLoad, loadPtr: okPtr, typ: makeInt(), loc: loc)
+    let okPtr = HirNode(kind: hFieldPtr, fieldPtrBase: dataLoad, fieldName: okField,
+                         typ: makePointer(okType), loc: loc)
+    let okLoad = HirNode(kind: hLoad, loadPtr: okPtr, typ: okType, loc: loc)
 
     ctx.pendingStmts.add(tmpAlloca)
     ctx.pendingStmts.add(tmpStore)

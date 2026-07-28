@@ -59,9 +59,12 @@ module Cli {
                 return "rt/runtime_win.c";
             }
             if String_Eq(env, "minimal") || String_Eq(env, "thin") ||
-            String_Eq(env, "embed") || String_Eq(env, "embedded") ||
-            String_Eq(env, "freestanding") {
+            String_Eq(env, "embed") || String_Eq(env, "embedded") {
                 return "rt/runtime_minimal.c";
+            }
+            if String_Eq(env, "freestanding") || String_Eq(env, "bare") ||
+            String_Eq(env, "nolibc") {
+                return "rt/runtime_freestanding.c";
             }
             if String_Eq(env, "full") || String_Eq(env, "posix") {
                 return "rt/runtime.c";
@@ -78,6 +81,7 @@ module Cli {
 
     func Cli_IsThinRuntimePath(rtPath: String) -> bool {
         if String_Contains(rtPath, "runtime_minimal.c") { return true; }
+        if String_Contains(rtPath, "runtime_freestanding.c") { return true; }
         if String_Contains(rtPath, "runtime_win.c") { return true; }
         return false;
     }

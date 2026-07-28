@@ -434,10 +434,22 @@ proc isMacroStmtStart(p: Parser): bool =
   p.peek() in {tkLet, tkVar, tkIf, tkWhile, tkFor, tkLoop, tkMatch, tkReturn,
                tkBreak, tkContinue, tkDefer, tkSwitch, tkDo}
 
+proc isBinaryPasteOpToken(k: TokenKind): bool =
+  ## Same set as macroexpand.isBinaryPasteOp — kept local to avoid cycles.
+  case k
+  of tkPlus, tkMinus, tkStar, tkSlash, tkPercent, tkStarStar,
+     tkAmp, tkPipe, tkCaret, tkShl, tkShr,
+     tkAmpAmp, tkPipePipe,
+     tkEq, tkNe, tkLt, tkLe, tkGt, tkGe:
+    true
+  else:
+    false
+
 proc parseMacroArg(p: var Parser): Expr =
   ## Macro call argument:
   ## - statement keywords → ekMacroStmt
   ## - `_` / pattern-only starts → ekMacroPat (also `$p:pat` from expr via coerce)
+  ## - bare binary operators (`+`, `*`, `==`, …) → ekMacroTt (operators-only paste)
   ## - else expression
   let loc = p.currentLoc
   if p.isMacroStmtStart():
@@ -447,6 +459,20 @@ proc parseMacroArg(p: var Parser): Expr =
   if p.check(tkUnderscore):
     let pat = p.parsePattern()
     return Expr(kind: ekMacroPat, loc: loc, exprMacroPat: pat)
+  # Operators-only tt: `apply_op!(+, 1, 2)` / `apply_op!(*, 2, 3)`.
+  # Bare ops are not primary exprs. Unary-capable tokens (`*`, `-`, …) are only
+  # claimed when the next token ends the arg (`,`, `)`, `;`) so `*int` still
+  # parses as a type/expr and juxta `a * b` still works as ekBinary.
+  let pk = p.peek()
+  if isBinaryPasteOpToken(pk):
+    let nxt = p.peek(1)
+    let endsArg = nxt in {tkComma, tkRParen, tkSemicolon, tkEndOfFile, tkNewLine}
+    let unaryCapable = pk in {tkStar, tkMinus, tkBang, tkAmp, tkTilde,
+                              tkPlusPlus, tkMinusMinus}
+    if endsArg or not unaryCapable:
+      let tok = p.advance()
+      let lit = Expr(kind: ekLiteral, loc: loc, exprLit: tok)
+      return Expr(kind: ekMacroTt, loc: loc, exprMacroTtInner: lit, exprMacroTtGroup: false)
   p.parseExpr()
 
 proc parseMacroRepExpr(p: var Parser): Expr =

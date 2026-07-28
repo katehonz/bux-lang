@@ -21,9 +21,11 @@
 #          docs even when `extend T for I` has no methods (no open required).
 # v0.17.0: in-process diagnostics (lex/parse/sema) on open/change/save so the
 #          editor underlines errors in the live buffer without needing buxc.
+# v0.18.0: textDocument/formatting + rangeFormatting via bootstrap `formatSource`
+#          (same rules as `bux fmt` — 4-space brace indent).
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
-import lexer, parser, ast, sema, types, scope, source_location
+import lexer, parser, ast, sema, types, scope, source_location, fmt
 
 # ---------------------------------------------------------------------------
 # JSON-RPC Transport
@@ -2514,6 +2516,64 @@ proc handleDocumentSymbol(stream: FileStream, id: JsonNode, paramsNode: JsonNode
     })
   sendResponse(stream, id, arr)
 
+# ---------------------------------------------------------------------------
+# Document formatting (v0.18 — same engine as `bux fmt`)
+# ---------------------------------------------------------------------------
+
+proc lineCountAndLastLen(s: string): tuple[lines: int, lastLen: int] =
+  ## 0-based end position after last character (for full-document TextEdit).
+  if s.len == 0:
+    return (0, 0)
+  var lines = 0
+  var lastLen = 0
+  var i = 0
+  while i < s.len:
+    if s[i] == '\n':
+      inc lines
+      lastLen = 0
+    else:
+      inc lastLen
+    inc i
+  # Trailing content without final newline still occupies a line
+  if s[^1] != '\n':
+    # last line is incomplete — end character is lastLen
+    discard
+  else:
+    # ends with newline: end is (lines, 0) in LSP (exclusive end after last line)
+    discard
+  result = (lines, lastLen)
+
+proc fullDocumentEdit(uri: string, content: string, formatted: string): JsonNode =
+  ## Single TextEdit replacing the whole buffer with formatted text.
+  if formatted == content:
+    return newJArray()
+  let (endLine, endChar) = lineCountAndLastLen(content)
+  var arr = newJArray()
+  arr.add(%*{
+    "range": {
+      "start": {"line": 0, "character": 0},
+      "end": {"line": endLine, "character": endChar}
+    },
+    "newText": formatted
+  })
+  discard uri
+  return arr
+
+proc handleDocumentFormatting(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## textDocument/formatting — re-indent with 4 spaces (idempotent).
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let doc = getDoc(uri)
+  let formatted = formatSource(doc.content)
+  sendResponse(stream, id, fullDocumentEdit(uri, doc.content, formatted))
+
+proc handleDocumentRangeFormatting(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
+  ## textDocument/rangeFormatting — whole-file format (indent is brace-global).
+  ## Editors that send a selection still get a consistent full reformat.
+  let uri = paramsNode["textDocument"]["uri"].getStr()
+  let doc = getDoc(uri)
+  let formatted = formatSource(doc.content)
+  sendResponse(stream, id, fullDocumentEdit(uri, doc.content, formatted))
+
 proc handleWorkspaceSymbol(stream: FileStream, id: JsonNode, paramsNode: JsonNode) =
   ## workspace/symbol — fuzzy-ish substring filter over workspace + open docs.
   let query = if paramsNode.hasKey("query"): paramsNode["query"].getStr().toLowerAscii() else: ""
@@ -3370,9 +3430,11 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "workspaceSymbolProvider": true,
         "callHierarchyProvider": true,
         "implementationProvider": true,
-        "typeHierarchyProvider": true
+        "typeHierarchyProvider": true,
+        "documentFormattingProvider": true,
+        "documentRangeFormattingProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.17.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.18.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -3469,6 +3531,12 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
 
   of "typeHierarchy/subtypes":
     handleTypeHierarchySubtypes(stream, id, paramsNode)
+
+  of "textDocument/formatting":
+    handleDocumentFormatting(stream, id, paramsNode)
+
+  of "textDocument/rangeFormatting":
+    handleDocumentRangeFormatting(stream, id, paramsNode)
 
   else:
     if id != nil:

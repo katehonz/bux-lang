@@ -8,8 +8,8 @@ Syntax highlighting, snippets, editor defaults, and **Language Server Protocol**
 |------|----------------|
 | **Syntax** | Keywords, types, `f"..."` interpolation, raw `` `...` `` strings, C-strings, macros (`macro!` / `name!()`), attributes (`@[Checked]`), numbers (hex/bin/oct + suffixes), lifetimes |
 | **Snippets** | `main`, `func`, `struct`, `enum`, `match`, `interface`, `extend`, `macro`, `checked`, … |
-| **LSP** | **Live error underlines** (red squiggles on edit), completion, hover, go-to-definition, references, rename, document/workspace symbols, call hierarchy, type hierarchy, go-to-implementation |
-| **Editor** | Bracket colorization, smart indent / on-enter, fold regions (`// region`) |
+| **LSP** | **Live error underlines** (red squiggles on edit), **Format Document** (same as `bux fmt`), completion, hover, go-to-definition, references, rename, document/workspace symbols, call hierarchy, type hierarchy, go-to-implementation |
+| **Editor** | Bracket colorization, smart indent / on-enter, fold regions (`// region`), **format-on-save** default for `[bux]` |
 | **Build** | `buxc` problem matcher for Tasks |
 
 ## Requirements

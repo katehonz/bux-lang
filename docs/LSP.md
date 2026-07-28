@@ -1,13 +1,14 @@
 # Bux Language Server (`bux-lsp`)
 
-> **Status:** **v0.17.0** — stdio JSON-RPC 2.0 language server  
+> **Status:** **v0.18.0** — stdio JSON-RPC 2.0 language server  
 > **Binary:** `tools/bux-lsp` (`make lsp`)  
 > **Editors:** VS Code extension in [`vscode/`](../vscode/README.md); any LSP client via stdio
 
 Bux already ships a real Language Server Protocol implementation. It is **not**
 syntax-only: hover and outline use bootstrap semantic analysis when available,
-and **error underlines (red squiggles)** come from **in-process** lex / parse / type-check
-of the **live editor buffer** on every open, edit, and save.
+**error underlines (red squiggles)** come from **in-process** lex / parse / type-check
+of the **live editor buffer** on every open, edit, and save, and **Format Document**
+uses the same indentation engine as `bux fmt`.
 
 ---
 
@@ -33,13 +34,15 @@ Protocol framing: standard `Content-Length` headers + JSON-RPC 2.0 body.
 
 ---
 
-## Capabilities (v0.16)
+## Capabilities (v0.18)
 
 | Method | Support | Notes |
 |--------|---------|--------|
-| `initialize` / `shutdown` / `exit` | ✅ | `serverInfo`: `bux-lsp` 0.17.0 |
+| `initialize` / `shutdown` / `exit` | ✅ | `serverInfo`: `bux-lsp` 0.18.0 |
 | `textDocument/didOpen` / `didChange` / `didSave` | ✅ | Full text sync (`textDocumentSync: 1`) |
 | `textDocument/publishDiagnostics` | ✅ | **Live underlines** on open/change/save (in-process); optional `buxc` merge on open/save |
+| `textDocument/formatting` | ✅ | Full document — same rules as `bux fmt` (4-space brace indent) |
+| `textDocument/rangeFormatting` | ✅ | Applies full-file format (indent depends on whole brace structure) |
 | `textDocument/completion` | ✅ | Trigger: `.` `:` |
 | `textDocument/hover` | ✅ | Sema types for globals/stdlib; **scoped locals** + inferred `let` |
 | `textDocument/definition` | ✅ | Go to definition |
@@ -123,15 +126,28 @@ make test-lsp
 
 ---
 
+## Format Document / format-on-save
+
+`textDocument/formatting` re-indents the buffer with **4 spaces × brace depth**
+(identical to `bux fmt` / `bootstrap/fmt.nim`). Idempotent: a clean file yields
+an empty edit list.
+
+**VS Code:** the extension defaults `editor.formatOnSave` for `[bux]`. Disable
+with `"editor.formatOnSave": false` in workspace settings if you prefer manual
+only. Command palette: **Format Document**.
+
+```bash
+make test-lsp                 # includes tools/smoke_lsp_formatting.sh
+```
+
 ## Limitations / not yet
 
 Honest gaps (so Reddit / issue trackers stay accurate):
 
-- **No format-on-save via LSP** yet (`bux fmt` exists as CLI; not `textDocument/formatting`)
 - **No semantic tokens** provider (TextMate grammar handles highlighting in VS Code)
 - **No code actions / lightbulbs** (quick-fixes)
 - **No inlay hints**
-- **didChange** uses a fast symbol path; full sema + diagnostics refresh mainly on open/save
+- **rangeFormatting** reformats the whole file (partial selection cannot get correct indent without full brace context)
 - Completion is useful but not a full IDE IntelliSense engine
 - Single-process stdio only (no TCP/socket mode)
 
