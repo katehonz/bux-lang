@@ -140,6 +140,7 @@ test-errors: ensure-buxc
 	@chmod +x tests/error_golden/run.sh
 	@tests/error_golden/run.sh ./$(OUT)
 
+.PHONY: test-error-recovery
 test-error-recovery: ensure-buxc selfhost
 	@echo "=== Selfhost multi-error recovery test ==="
 	@chmod +x _test_error_recovery/run.sh
