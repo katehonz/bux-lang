@@ -2053,36 +2053,109 @@ proc lowerExpr(ctx: var LowerCtx, expr: Expr): HirNode =
                    typ: typ, loc: loc)
 
   of ekIs:
+    # Desugar `expr is Variant` to a tag comparison so LIR/C backends need no hIs.
+    # Simple enums (no data): subject == Enum_Variant
+    # Algebraic enums: subject.tag == Enum_Variant
     let operand = ctx.lowerExpr(expr.exprIsOperand)
-    var isType = makeUnknown()
+    var variantName = ""
     if expr.exprIsType != nil and expr.exprIsType.kind == tekNamed:
-      isType = makeNamed(expr.exprIsType.typeName)
-    return HirNode(kind: hIs, isOperand: operand, isType: isType,
+      variantName = expr.exprIsType.typeName
+    var enumName = ""
+    var opType = ctx.resolveExprType(expr.exprIsOperand)
+    # Prefer TypeExpr with type args so generic enums monomorphize (Result_int_String)
+    if expr.exprIsOperand != nil and expr.exprIsOperand.kind == ekIdent:
+      if ctx.varTypeExprs.hasKey(expr.exprIsOperand.exprIdent):
+        let te = ctx.varTypeExprs[expr.exprIsOperand.exprIdent]
+        if te != nil:
+          let resolved = ctx.resolveTypeExpr(te)
+          if resolved != nil and resolved.kind == tkNamed and resolved.name.len > 0:
+            opType = resolved
+    if opType != nil and opType.kind == tkNamed:
+      enumName = opType.name
+    if enumName.len > 0 and variantName.len > 0:
+      var baseName = enumName
+      if ctx.structInstMap.hasKey(enumName):
+        baseName = ctx.structInstMap[enumName].baseName
+      var hasData = ctx.enumHasDataVariants(baseName)
+      if not hasData:
+        hasData = ctx.enumHasDataVariants(enumName)
+      # Monomorphized data enums always have tag+data layout
+      if not hasData and ctx.structInstMap.hasKey(enumName):
+        hasData = true
+      let tagName = enumName & "_" & variantName
+      if hasData:
+        let tagField = HirNode(kind: hFieldPtr, fieldPtrBase: operand, fieldName: "tag",
+                               typ: makePointer(makeNamed(enumName & "_Tag")), loc: loc)
+        let tagLoad = HirNode(kind: hLoad, loadPtr: tagField,
+                               typ: makeNamed(enumName & "_Tag"), loc: loc)
+        let tagConst = hirVar(tagName, makeNamed(enumName & "_Tag"), loc)
+        return hirBinary(tkEq, tagLoad, tagConst, makeBool(), loc)
+      else:
+        let tagConst = hirVar(tagName, makeNamed(enumName), loc)
+        return hirBinary(tkEq, operand, tagConst, makeBool(), loc)
+    # Non-enum / unresolved: false
+    return HirNode(kind: hLit,
+                   litToken: Token(kind: tkBoolLiteral, text: "false", loc: loc),
                    typ: makeBool(), loc: loc)
 
   of ekTry:
     let operand = ctx.lowerExpr(expr.exprTryOperand)
-    let operandType = ctx.resolveExprType(expr.exprTryOperand)
+    var operandType = ctx.resolveExprType(expr.exprTryOperand)
 
     var typeName = ""
     var errTag = ""
     var okField = ""
-    if operandType.kind == tkNamed:
+    if operandType != nil and operandType.kind == tkNamed:
       typeName = operandType.name
-      case typeName
-      of "Result":
-        errTag = "Result_Err"
-        okField = "Ok_0"
-      of "Option":
-        errTag = "Option_None"
-        okField = "Some_0"
-      else:
-        errTag = typeName & "_Err"
-        okField = "Ok_0"
     else:
-      errTag = "Result_Err"
-      okField = "Ok_0"
       typeName = "Result"
+
+    # Upgrade bare generic enum name to concrete monomorphization.
+    # Sema stores Result/Option without mangled type-args; try needs Result_int_String_Tag.
+    if ctx.genericEnums.hasKey(typeName):
+      # Prefer resolving call/ident TypeExpr with type args
+      if expr.exprTryOperand != nil:
+        if expr.exprTryOperand.kind == ekIdent and ctx.varTypeExprs.hasKey(expr.exprTryOperand.exprIdent):
+          let te = ctx.varTypeExprs[expr.exprTryOperand.exprIdent]
+          if te != nil:
+            let resolved = ctx.resolveTypeExpr(te)
+            if resolved != nil and resolved.kind == tkNamed and resolved.name.startsWith(typeName & "_"):
+              typeName = resolved.name
+        elif expr.exprTryOperand.kind == ekCall and expr.exprTryOperand.exprCallCallee != nil and
+             expr.exprTryOperand.exprCallCallee.kind == ekIdent:
+          let calSym = ctx.globalScope.lookup(expr.exprTryOperand.exprCallCallee.exprIdent)
+          if calSym != nil and calSym.decl != nil and calSym.decl.kind == dkFunc and
+             calSym.decl.declFuncReturnType != nil:
+            let resolved = ctx.resolveTypeExpr(calSym.decl.declFuncReturnType)
+            if resolved != nil and resolved.kind == tkNamed and
+               (resolved.name == typeName or resolved.name.startsWith(typeName & "_")):
+              typeName = resolved.name
+      # Enclosing function return type (must match for `?` propagation)
+      let stillBare = operandType == nil or operandType.kind != tkNamed or
+                      typeName == operandType.name
+      if stillBare and ctx.currentFuncRetType != nil and
+         ctx.currentFuncRetType.kind == tkNamed:
+        let rn = ctx.currentFuncRetType.name
+        if rn.startsWith(typeName & "_"):
+          typeName = rn
+      operandType = makeNamed(typeName)
+
+    # Err tag / Ok field from base or concrete name
+    let baseForTags =
+      if ctx.structInstMap.hasKey(typeName): ctx.structInstMap[typeName].baseName
+      elif ctx.genericEnums.hasKey(typeName): typeName
+      else: typeName
+    if baseForTags == "Option" or typeName.startsWith("Option_"):
+      errTag = typeName & "_None"
+      if typeName == "Option": errTag = "Option_None"
+      okField = "Some_0"
+    elif baseForTags == "Result" or typeName.startsWith("Result_"):
+      errTag = typeName & "_Err"
+      if typeName == "Result": errTag = "Result_Err"
+      okField = "Ok_0"
+    else:
+      errTag = typeName & "_Err"
+      okField = "Ok_0"
 
     let tmpName = ctx.freshTryVar()
     let tmpAlloca = hirAlloca(tmpName, operandType, loc)
@@ -3084,8 +3157,10 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
             if en.name.startsWith(enumName & "_"):
               return en.name & "_" & rest
 
-  # Also substitute type names in hAlloca and hStructInit from extraEnums
+  # Substitute type names in Type fields (Result → Result_int_String,
+  # Result_Tag → Result_int_String_Tag, Result_Data → Result_int_String_Data).
   proc substEnumType(typ: var Type, ctx: LowerCtx) =
+    if typ == nil: return
     if typ.kind == tkNamed:
       for enumName, _ in ctx.genericEnums:
         if typ.name == enumName:
@@ -3093,15 +3168,32 @@ proc lowerModule*(module: Module, sema: Sema): HirModule =
             if en.name.startsWith(enumName & "_"):
               typ = makeNamed(en.name)
               return
+        # Suffix forms used by try/field lowering
+        let tagSuffix = enumName & "_Tag"
+        let dataSuffix = enumName & "_Data"
+        if typ.name == tagSuffix or typ.name == dataSuffix:
+          let rest = typ.name[enumName.len + 1 .. ^1]  # "Tag" or "Data"
+          for en in ctx.extraEnums:
+            if en.name.startsWith(enumName & "_"):
+              typ = makeNamed(en.name & "_" & rest)
+              return
+    elif typ.kind in {tkPointer, tkRef, tkMutRef, tkSlice} and typ.inner.len > 0:
+      var inner = typ.inner[0]
+      substEnumType(inner, ctx)
+      typ.inner[0] = inner
 
   proc mangleHirNode(n: HirNode, ctx: LowerCtx) =
     if n == nil: return
+    # Mangle type annotation on every node (temps for .tag/.data loads)
+    if n.typ != nil:
+      substEnumType(n.typ, ctx)
     case n.kind
     of hVar:       n.varName = substEnumName(n.varName, ctx)
     of hStructInit: n.structInitName = substEnumName(n.structInitName, ctx)
     of hFieldAccess: n.fieldAccessName = substEnumName(n.fieldAccessName, ctx)
     of hArrowField: n.arrowFieldName = substEnumName(n.arrowFieldName, ctx)
     of hAlloca:     substEnumType(n.allocaType, ctx)
+    of hCast:       substEnumType(n.castType, ctx)
     else: discard
     # Walk children by variant
     case n.kind

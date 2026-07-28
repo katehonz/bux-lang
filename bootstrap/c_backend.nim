@@ -346,7 +346,8 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
     return &"(({typ}){operand})"
 
   of hIs:
-    return "true"  # TODO: proper type checking
+    # Should be desugared in hir_lower; keep false if any residual hIs remains
+    return "false"
 
   of hSizeOf:
     let typ = typeToC(be, node.sizeOfType)

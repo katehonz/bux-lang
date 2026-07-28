@@ -34,6 +34,15 @@
 
 ---
 
+## Follow-up fixes (post DeepSeek session)
+
+| # | Бъг | Фикс |
+|---|-----|------|
+| F.1 | `is` → LIR `unhandled hIs` / always false | Desugar to `==` / `.tag ==` in bootstrap + selfhost |
+| F.2 | `?` + `Result<T,E>` → `Result_Tag` C error | Concrete monomorphized typeName + `_Tag`/`_Data` mangling |
+| F.3 | `Unwrap` panic continues with garbage | `bux_exit(1)` after panic in Result/Option |
+| F.4 | Regression example | `examples/is_operator.bux` |
+
 ## Резултат
 
 - **Всички тестове: 0 FAIL, 0 error**
@@ -44,6 +53,8 @@
   - Data field достъп (`p.data.First_0` като l-value и r-value)
   - Множество конкретни инстанции в един файл
   - `Result<T,E>` и `Option<T>` в stdlib
+  - `is` operator (simple + algebraic enums)
+  - `?` try operator with monomorphized `Result<T,E>`
 
 ## Пример който работи
 

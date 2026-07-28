@@ -1498,10 +1498,8 @@ module CBackend {
             return;
         }
 
-        // Is (type test): check if the tag of an enum matches a variant
+        // Is (type test): should be desugared to hBinary in HIR lowering
         if kind == hIs {
-            // Should have been lowered to hBinary in HIR lowering
-            // Fallback: always emit false
             StringBuilder_Append(&cbe.sb, "0");
             return;
         }

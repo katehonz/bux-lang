@@ -1,0 +1,40 @@
+// is_operator.bux — `expr is Variant` for simple and algebraic enums
+import Std::Io::{PrintLine, PrintInt};
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Box {
+    Val(int),
+    Empty,
+}
+
+func Main() -> int {
+    let c: Color = Color { tag: Color_Red };
+    if c is Red {
+        PrintLine("color-red");
+    }
+    if c is Blue {
+        PrintLine("color-blue-unexpected");
+    } else {
+        PrintLine("color-not-blue");
+    }
+
+    let b: Box = Box { tag: Box_Val };
+    b.data.Val_0 = 42;
+    if b is Val {
+        Print("box-val=");
+        PrintInt(b.data.Val_0 as int64);
+        PrintLine("");
+    }
+    if b is Empty {
+        PrintLine("box-empty-unexpected");
+    } else {
+        PrintLine("box-not-empty");
+    }
+
+    return 0;
+}

@@ -803,16 +803,50 @@ module HirLower {
     func Lcx_EnumHasData(ctx: *LowerCtx, enumName: String) -> bool {
         if String_Eq(enumName, "") { return false; }
         let sym: Symbol = Scope_Lookup(ctx.scope, enumName);
-        if sym.decl == null as *Decl || sym.decl.kind != dkEnum { return false; }
-        if sym.decl.variantCount > 0 && sym.decl.variant0.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 1 && sym.decl.variant1.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 2 && sym.decl.variant2.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 3 && sym.decl.variant3.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 4 && sym.decl.variant4.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 5 && sym.decl.variant5.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 6 && sym.decl.variant6.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 7 && sym.decl.variant7.fieldCount > 0 { return true; }
-        if sym.decl.variantCount > 8 && sym.decl.variant8.fieldCount > 0 { return true; }
+        if sym.decl != null as *Decl && sym.decl.kind == dkEnum {
+            if sym.decl.variantCount > 0 && sym.decl.variant0.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 1 && sym.decl.variant1.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 2 && sym.decl.variant2.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 3 && sym.decl.variant3.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 4 && sym.decl.variant4.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 5 && sym.decl.variant5.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 6 && sym.decl.variant6.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 7 && sym.decl.variant7.fieldCount > 0 { return true; }
+            if sym.decl.variantCount > 8 && sym.decl.variant8.fieldCount > 0 { return true; }
+            return false;
+        }
+        // Monomorphized instance (Result_int_String) — check HIR enums
+        if ctx.hm != null as *HirModule {
+            var i: int = 0;
+            while i < ctx.hm.enumCount {
+                if String_Eq(ctx.hm.enums[i].name, enumName) {
+                    var vi: int = 0;
+                    while vi < ctx.hm.enums[i].variantCount {
+                        if ctx.hm.enums[i].variants[vi].fieldCount > 0 { return true; }
+                        vi = vi + 1;
+                    }
+                    return false;
+                }
+                i = i + 1;
+            }
+        }
+        // Bare prefix of monomorphized generic enum: Result_int_String → Result
+        var gi: int = 0;
+        while gi < ctx.genStructCount {
+            if ctx.genStructs[gi].kind == dkEnum {
+                let base: String = ctx.genStructs[gi].strValue;
+                let prefix: String = String_Concat(base, "_");
+                let prefLen: int = String_Len(prefix) as int;
+                let nameLen: int = String_Len(enumName) as int;
+                if nameLen > prefLen {
+                    let p: String = bux_str_slice(enumName, 0, prefLen as uint);
+                    if String_Eq(p, prefix) {
+                        return Lcx_EnumHasData(ctx, base);
+                    }
+                }
+            }
+            gi = gi + 1;
+        }
         return false;
     }
 
@@ -2509,52 +2543,73 @@ module HirLower {
             return n;
         }
 
-        // Is (type test): expr is Type — lowered to tag check for enums
+        // Is (type test): expr is Variant — desugar to tag / value equality
+        // Simple enums: subject == Enum_Variant
+        // Algebraic enums: subject.tag == Enum_Variant
         if kind == ekIs {
             let operand: *HirNode = Lcx_LowerExpr(ctx, expr.child1);
-            if expr.refType != null as *TypeExpr {
-                let isType: String = "";
-                if !String_Eq(expr.refType.typeName, "") {
-                    isType = expr.refType.typeName;
-                }
-                if !String_Eq(isType, "") {
-                    // Check if operand is an enum type — resolve from HIR type info
-                    let enumName: String = "";
-                    if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
-                        let sym: Symbol = Scope_Lookup(ctx.scope, expr.child1.strValue);
-                        if sym.decl != null as *Decl && sym.decl.kind == dkEnum {
-                            enumName = expr.child1.strValue;
-                        }
-                    }
-                    if !String_Eq(enumName, "") {
-                        let tagName: String = String_Concat(String_Concat(enumName, "_"), isType);
-                        // tagPtr = operand.tag
-                        let tagPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                        tagPtr.kind = hFieldPtr;
-                        tagPtr.line = expr.line;
-                        tagPtr.column = expr.column;
-                        tagPtr.strValue = "tag";
-                        tagPtr.child1 = operand;
-                        // tagLoad = *tagPtr
-                        let tagLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                        tagLoad.kind = hLoad;
-                        tagLoad.line = expr.line;
-                        tagLoad.column = expr.column;
-                        tagLoad.child1 = tagPtr;
-                        // tagConst = Enum_Target
-                        let tagConst: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
-                        tagConst.kind = hVar;
-                        tagConst.line = expr.line;
-                        tagConst.column = expr.column;
-                        tagConst.strValue = tagName;
-                        let result: *HirNode = Lcx_MakeBinHir(tkEq, tagLoad, tagConst, expr.line, expr.column);
-                        result.sourceFile = ctx.currentSourceFile;
-                        return result;
+            var variantName: String = "";
+            if expr.refType != null as *TypeExpr && !String_Eq(expr.refType.typeName, "") {
+                variantName = expr.refType.typeName;
+            }
+            var enumName: String = "";
+            // Resolve operand type from scope (variable / param), not enum decl name
+            if expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                let sym: Symbol = Scope_Lookup(ctx.scope, expr.child1.strValue);
+                if !String_Eq(sym.typeName, "") {
+                    enumName = sym.typeName;
+                } else if sym.refType != null as *TypeExpr {
+                    let te: *TypeExpr = Lcx_SubstituteType(ctx, sym.refType);
+                    if te != null as *TypeExpr && !String_Eq(te.typeName, "") {
+                        enumName = te.typeName;
                     }
                 }
             }
-            // Fallback: emit a compile-time error diagnostic via HIR comment
-            // For non-enum types, is always returns false at runtime
+            // Fallback: type annotation on the is-expression operand
+            if String_Eq(enumName, "") && expr.child1 != null as *Expr &&
+               expr.child1.refType != null as *TypeExpr {
+                let te: *TypeExpr = Lcx_SubstituteType(ctx, expr.child1.refType);
+                if te != null as *TypeExpr && !String_Eq(te.typeName, "") {
+                    enumName = te.typeName;
+                }
+            }
+            if !String_Eq(enumName, "") && !String_Eq(variantName, "") {
+                let hasData: bool = Lcx_EnumHasData(ctx, enumName);
+                let tagName: String = String_Concat(String_Concat(enumName, "_"), variantName);
+                if hasData {
+                    // subject.tag == Enum_Variant
+                    let tagPtr: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    tagPtr.kind = hFieldPtr;
+                    tagPtr.line = expr.line;
+                    tagPtr.column = expr.column;
+                    tagPtr.strValue = "tag";
+                    tagPtr.child1 = operand;
+                    let tagLoad: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    tagLoad.kind = hLoad;
+                    tagLoad.line = expr.line;
+                    tagLoad.column = expr.column;
+                    tagLoad.child1 = tagPtr;
+                    let tagConst: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    tagConst.kind = hVar;
+                    tagConst.line = expr.line;
+                    tagConst.column = expr.column;
+                    tagConst.strValue = tagName;
+                    let result: *HirNode = Lcx_MakeBinHir(tkEq, tagLoad, tagConst, expr.line, expr.column);
+                    result.sourceFile = ctx.currentSourceFile;
+                    return result;
+                } else {
+                    // Simple enum: subject == Enum_Variant
+                    let tagConst: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
+                    tagConst.kind = hVar;
+                    tagConst.line = expr.line;
+                    tagConst.column = expr.column;
+                    tagConst.strValue = tagName;
+                    let result: *HirNode = Lcx_MakeBinHir(tkEq, operand, tagConst, expr.line, expr.column);
+                    result.sourceFile = ctx.currentSourceFile;
+                    return result;
+                }
+            }
+            // Non-enum / unresolved → false
             let result: *HirNode = bux_alloc(sizeof(HirNode)) as *HirNode;
             result.kind = hLit;
             result.line = expr.line;
@@ -2668,19 +2723,43 @@ module HirLower {
             if stmt.child1 != null as *Expr && stmt.child1.kind == ekTry {
                 let tryExpr: *Expr = stmt.child1;
                 let operandExpr: *Expr = tryExpr.child1;
-                let operandTypeExpr: *TypeExpr = operandExpr.refType;
+                let operandTypeExpr: *TypeExpr = if operandExpr != null as *Expr { operandExpr.refType } else { null as *TypeExpr };
                 var typeName: String = "Result";
                 var errTag: String = "Result_Err";
                 var okField: String = "Ok_0";
                 if operandTypeExpr != null as *TypeExpr && operandTypeExpr.kind == tekNamed {
-                    typeName = operandTypeExpr.typeName;
+                    // Substitute/mangle generic enum type args (Result<int,String> → Result_int_String)
+                    let subTe: *TypeExpr = Lcx_SubstituteType(ctx, operandTypeExpr);
+                    if subTe != null as *TypeExpr && !String_Eq(subTe.typeName, "") {
+                        typeName = subTe.typeName;
+                    } else {
+                        typeName = operandTypeExpr.typeName;
+                    }
+                }
+                // Detect Option vs Result (bare or monomorphized)
+                var isOption: bool = String_Eq(typeName, "Option");
+                if !isOption {
+                    let optPrefix: String = "Option_";
+                    let tnLen: int = String_Len(typeName) as int;
+                    let prefLen: int = String_Len(optPrefix) as int;
+                    if tnLen > prefLen {
+                        let p: String = bux_str_slice(typeName, 0, prefLen as uint);
+                        if String_Eq(p, optPrefix) { isOption = true; }
+                    }
+                }
+                if isOption {
                     if String_Eq(typeName, "Option") {
                         errTag = "Option_None";
-                        okField = "Some_0";
-                    } else if !String_Eq(typeName, "Result") {
-                        errTag = String_Concat(String_Concat(typeName, "_"), "Err");
-                        okField = "Ok_0";
+                    } else {
+                        errTag = String_Concat(typeName, "_None");
                     }
+                    okField = "Some_0";
+                } else if String_Eq(typeName, "Result") {
+                    errTag = "Result_Err";
+                    okField = "Ok_0";
+                } else {
+                    errTag = String_Concat(typeName, "_Err");
+                    okField = "Ok_0";
                 }
                 let tmpName: String = String_Concat("__try_tmp_", String_FromInt(ctx.tryCounter as int64));
                 ctx.tryCounter = ctx.tryCounter + 1;

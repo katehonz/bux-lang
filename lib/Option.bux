@@ -29,6 +29,7 @@ module Std::Option {
     func Option_Unwrap<T>(o: Option<T>) -> T {
         if o.tag != Option_Some {
             PrintLine("panic: unwrap on None");
+            bux_exit(1);
         }
         return o.data.Some_0;
     }
