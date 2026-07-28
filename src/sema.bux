@@ -360,6 +360,34 @@ module Sema {
             i = i + 1;
         }
 
+        // Report named args that match no parameter
+        var checkArg: *ExprList = expr.callArgs;
+        while checkArg != null as *ExprList {
+            if !String_Eq(checkArg.argName, "") {
+                var foundName: bool = false;
+                var j: int = 0;
+                while j < decl.paramCount {
+                    var pj: *Param = null as *Param;
+                    if j == 0 { pj = &decl.param0; }
+                    else if j == 1 { pj = &decl.param1; }
+                    else if j == 2 { pj = &decl.param2; }
+                    else if j == 3 { pj = &decl.param3; }
+                    else if j == 4 { pj = &decl.param4; }
+                    else if j == 5 { pj = &decl.param5; }
+                    else if j == 6 { pj = &decl.param6; }
+                    else if j == 7 { pj = &decl.param7; }
+                    else if j == 8 { pj = &decl.param8; }
+                    if String_Eq(checkArg.argName, pj.name) { foundName = true; }
+                    j = j + 1;
+                }
+                if !foundName {
+                    Sema_EmitError(sema, expr.line, expr.column,
+                        String_Concat("unknown argument name '", String_Concat(checkArg.argName, "'")));
+                }
+            }
+            checkArg = checkArg.next;
+        }
+
         expr.callArgs = newFirst;
         expr.callArgCount = newCount;
     }
@@ -1227,6 +1255,10 @@ module Sema {
 
         // Struct init: TypeName { field: value, ... }
         if kind == ekStructInit {
+            let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+            te.kind = tekNamed;
+            te.typeName = expr.structName;
+            expr.refType = te;
             return tyNamed;
         }
 

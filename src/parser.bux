@@ -2168,6 +2168,7 @@ module Parser {
         parserParseTypeParams(p, d);
 
         discard parserExpect(p, tkLBrace, "expected '{'");
+        var lastWasComma: bool = false;
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
             if fieldCount >= 256 {
                 parserEmitDiag(p, line, col, "too many struct fields (max 255)");
@@ -2176,14 +2177,16 @@ module Parser {
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
             // Commas are also valid field separators (incl. trailing comma before '}')
-            if parserCheck(p, tkComma) { discard parserAdvance(p); continue; }
+            if parserCheck(p, tkComma) {
+                if fieldCount == 0 || lastWasComma {
+                    parserEmitDiag(p, parserCurToken(p).line, parserCurToken(p).column, "expected field name");
+                }
+                lastWasComma = true;
+                discard parserAdvance(p);
+                continue;
+            }
             let beforePos: int = p.pos;
             let fName: LexToken = parserExpectIdentOrKeyword(p, "expected field name");
-            if fieldCount >= 250 && fieldCount <= 256 {
-                PrintLine(String_Concat("RAW fieldCount=", bux_int_to_str(fieldCount as int64)));
-                PrintLine(String_Concat("RAW fName=", fName.text));
-                PrintLine(String_Concat("RAW pos=", bux_int_to_str(p.pos as int64)));
-            }
             discard parserExpect(p, tkColon, "expected ':' in struct field");
             let fType: *TypeExpr = parserParseType(p);
             parserMatch(p, tkSemicolon);
@@ -2196,6 +2199,7 @@ module Parser {
             d.fields[fieldCount].name = fName.text;
             d.fields[fieldCount].refFieldType = fType;
             fieldCount = fieldCount + 1;
+            lastWasComma = false;
         }
         d.fieldCount = fieldCount;
         discard parserExpect(p, tkRBrace, "expected '}'");
