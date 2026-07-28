@@ -93,6 +93,15 @@ module Sema {
         sema.hasError = true;
     }
 
+    func Sema_EmitExprError(sema: *Sema, expr: *Expr, msg: String) -> int {
+        Sema_EmitError(sema, expr.line, expr.column, msg);
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekNamed;
+        te.typeName = "?";
+        expr.refType = te;
+        return tyUnknown;
+    }
+
     // ---------------------------------------------------------------------------
     // Symbol zero-init helper (bootstrap C backend does not zero-init structs)
     // ---------------------------------------------------------------------------
@@ -849,8 +858,7 @@ module Sema {
             if sym.kind == 0 && !String_Eq(sym.name, expr.strValue) {
                 let errMsg: String = String_Concat("undeclared identifier '", expr.strValue);
                 let errMsg2: String = String_Concat(errMsg, "'");
-                Sema_EmitError(sema, expr.line, expr.column, errMsg2);
-                return tyUnknown;
+                return Sema_EmitExprError(sema, expr, errMsg2);
             }
             if sym.refType != null as *TypeExpr {
                 expr.refType = sym.refType;
@@ -877,8 +885,7 @@ module Sema {
         if kind == ekSelf {
             let sym: Symbol = Scope_Lookup(sema.scope, "self");
             if sym.kind == 0 && !String_Eq(sym.name, "self") {
-                Sema_EmitError(sema, expr.line, expr.column, "self outside method");
-                return tyUnknown;
+                return Sema_EmitExprError(sema, expr, "self outside method");
             }
             return sym.typeKind;
         }
