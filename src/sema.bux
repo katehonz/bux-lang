@@ -93,6 +93,15 @@ module Sema {
         sema.hasError = true;
     }
 
+    func Sema_EmitExprError(sema: *Sema, expr: *Expr, msg: String) -> int {
+        Sema_EmitError(sema, expr.line, expr.column, msg);
+        let te: *TypeExpr = bux_alloc(sizeof(TypeExpr)) as *TypeExpr;
+        te.kind = tekNamed;
+        te.typeName = "?";
+        expr.refType = te;
+        return tyUnknown;
+    }
+
     // ---------------------------------------------------------------------------
     // Symbol zero-init helper (bootstrap C backend does not zero-init structs)
     // ---------------------------------------------------------------------------
@@ -187,6 +196,33 @@ module Sema {
 
     func Sema_IsBool(kind: int) -> bool {
         return kind == tyBool || kind == tyBool8 || kind == tyBool16 || kind == tyBool32;
+    }
+
+    // Strict numeric predicate for assignment checking: unlike Sema_IsNumeric,
+    // this does NOT treat tyNamed/tyTypeParam as numeric.
+    func Sema_IsStrictNumeric(kind: int) -> bool {
+        if kind == tyInt8 || kind == tyInt16 || kind == tyInt32 || kind == tyInt64 || kind == tyInt { return true; }
+        if kind == tyUInt8 || kind == tyUInt16 || kind == tyUInt32 || kind == tyUInt64 || kind == tyUInt { return true; }
+        if kind == tyFloat32 || kind == tyFloat64 { return true; }
+        return false;
+    }
+
+    // Display-name helper for assignment diagnostics.
+    func Sema_TypeNameForDiag(te: *TypeExpr, kind: int) -> String {
+        if te != null as *TypeExpr {
+            if te.kind == tekPointer && te.pointerPointee != null as *TypeExpr {
+                return String_Concat(te.pointerPointee.typeName, "*");
+            }
+            if !String_Eq(te.typeName, "") { return te.typeName; }
+        }
+        if kind == tyBool { return "bool"; }
+        if kind == tyStr { return "String"; }
+        if kind == tyInt { return "int"; }
+        if kind == tyInt64 { return "int64"; }
+        if kind == tyUInt { return "uint"; }
+        if kind == tyFloat64 { return "float64"; }
+        if kind == tyPointer { return "*void"; }
+        return "?";
     }
 
     // ---------------------------------------------------------------------------
@@ -849,8 +885,7 @@ module Sema {
             if sym.kind == 0 && !String_Eq(sym.name, expr.strValue) {
                 let errMsg: String = String_Concat("undeclared identifier '", expr.strValue);
                 let errMsg2: String = String_Concat(errMsg, "'");
-                Sema_EmitError(sema, expr.line, expr.column, errMsg2);
-                return tyUnknown;
+                return Sema_EmitExprError(sema, expr, errMsg2);
             }
             if sym.refType != null as *TypeExpr {
                 expr.refType = sym.refType;
@@ -877,8 +912,7 @@ module Sema {
         if kind == ekSelf {
             let sym: Symbol = Scope_Lookup(sema.scope, "self");
             if sym.kind == 0 && !String_Eq(sym.name, "self") {
-                Sema_EmitError(sema, expr.line, expr.column, "self outside method");
-                return tyUnknown;
+                return Sema_EmitExprError(sema, expr, "self outside method");
             }
             return sym.typeKind;
         }
@@ -959,7 +993,7 @@ module Sema {
             if op == tkAmpAmp || op == tkPipePipe || op == tkBang { return tyBool; }
             // Arithmetic returns wider type
             if !Sema_IsNumeric(left) || !Sema_IsNumeric(right) {
-                Sema_EmitError(sema, expr.line, expr.column, "arithmetic requires numeric operands");
+                return Sema_EmitExprError(sema, expr, "arithmetic requires numeric operands");
             }
             if left == tyFloat64 || right == tyFloat64 { return tyFloat64; }
             return tyInt;
@@ -1457,6 +1491,35 @@ module Sema {
                     sym.typeName = String_Concat(stmt.child1.refType.pointerPointee.typeName, "*");
                 } else {
                     sym.typeName = stmt.child1.refType.typeName;
+                }
+            }
+            // Assignment check: annotation vs initializer (skip when either side is unknown)
+            if stmt.refStmtType != null as *TypeExpr && initType != tyUnknown {
+                let annotKind: int = Sema_ResolveType(sema, stmt.refStmtType);
+                if annotKind != tyUnknown {
+                    var mismatch: bool = false;
+                    if initType == tyNamed && annotKind == tyNamed {
+                        // Both named: kinds are equal, compare type names (when available).
+                        if stmt.child1 != null as *Expr && stmt.child1.refType != null as *TypeExpr {
+                            if !String_Eq(stmt.child1.refType.typeName, "") &&
+                            !String_Eq(stmt.child1.refType.typeName, stmt.refStmtType.typeName) {
+                                mismatch = true;
+                            }
+                        }
+                    } else if initType != annotKind {
+                        let numericOk: bool = Sema_IsStrictNumeric(initType) && Sema_IsStrictNumeric(annotKind);
+                        let boolOk: bool = Sema_IsBool(initType) && Sema_IsBool(annotKind);
+                        if !numericOk && !boolOk {
+                            mismatch = true;
+                        }
+                    }
+                    if mismatch {
+                        let gotName: String = Sema_TypeNameForDiag(stmt.child1.refType, initType);
+                        let wantName: String = Sema_TypeNameForDiag(stmt.refStmtType, annotKind);
+                        let msg: String = String_Concat("cannot assign ",
+                            String_Concat(gotName, String_Concat(" to ", wantName)));
+                        Sema_EmitError(sema, stmt.line, stmt.column, msg);
+                    }
                 }
             }
             sym.isMutable = stmt.boolValue;

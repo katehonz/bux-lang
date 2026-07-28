@@ -1,0 +1,6 @@
+func Main() -> int {
+    let x: int = "hello";
+    let y: bool = 42;
+    let z: int = undefined_variable;
+    return 0;
+}

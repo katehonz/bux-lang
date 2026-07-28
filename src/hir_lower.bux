@@ -682,6 +682,9 @@ module HirLower {
     }
 
     func Lcx_SubstEnumName(ctx: *LowerCtx, name: String) -> String {
+        // HIR nodes may carry null names (e.g. hStore without typeName);
+        // Nim tolerated nil strings, bux_strlen(NULL) segfaults.
+        if name == null as String { return name; }
         // If name is a bare generic enum name, mangle to concrete name
         var ge: *Decl = Lcx_FindGenericEnum(ctx, name);
         if ge != null as *Decl {
@@ -2723,7 +2726,8 @@ module HirLower {
             if stmt.child1 != null as *Expr && stmt.child1.kind == ekTry {
                 let tryExpr: *Expr = stmt.child1;
                 let operandExpr: *Expr = tryExpr.child1;
-                let operandTypeExpr: *TypeExpr = if operandExpr != null as *Expr { operandExpr.refType } else { null as *TypeExpr };
+                var operandTypeExpr: *TypeExpr = null as *TypeExpr;
+                if operandExpr != null as *Expr { operandTypeExpr = operandExpr.refType; }
                 var typeName: String = "Result";
                 var errTag: String = "Result_Err";
                 var okField: String = "Ok_0";
