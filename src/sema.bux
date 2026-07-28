@@ -232,6 +232,9 @@ module Sema {
             }
             return true;
         }
+        // Func-typed values: `&Func` reports tyPointer as its kind while its
+        // refType is tekFunc — accept when both sides are func-typed.
+        if toTe.kind == tekFunc && fromTe != null as *TypeExpr && fromTe.kind == tekFunc { return true; }
         if fromKind == toKind { return true; }
         if Sema_IsStrictNumeric(fromKind) && Sema_IsStrictNumeric(toKind) { return true; }
         if Sema_IsBool(fromKind) && Sema_IsBool(toKind) { return true; }

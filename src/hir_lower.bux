@@ -1788,6 +1788,15 @@ module HirLower {
 
         // Unary
         if kind == ekUnary {
+            // `&NamedFunc` — the ident already lowers to the fat-pointer value
+            // (BuxFn_* struct init via __adapt_); taking its address would yield
+            // a pointer-to-struct where the struct value is expected.
+            if expr.intValue == tkAmp && expr.child1 != null as *Expr && expr.child1.kind == ekIdent {
+                let ampSym: Symbol = Scope_Lookup(ctx.scope, expr.child1.strValue);
+                if ampSym.kind == skFunc {
+                    return Lcx_LowerExpr(ctx, expr.child1);
+                }
+            }
             // Overflow checking: in @[Checked] mode, lower negation on signed integers to checked call
             if ctx.checkedFunc && !ctx.releaseFunc && expr.intValue == tkMinus {
                 var isSignedInt: bool = false;
