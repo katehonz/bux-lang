@@ -569,7 +569,7 @@ func Cli_Check(srcPath: String) -> int {
     }
 
     // Phase 2: Parse
-    let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
+    var mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
     if mod == null as *Module {
         PrintLine("Parse failed");
         return 1;
@@ -585,6 +585,48 @@ func Cli_Check(srcPath: String) -> int {
             break;
         }
         decl2 = decl2.childDecl2;
+    }
+
+    // Phase 2a: merge stdlib when the file imports Std::* so single-file
+    // checks resolve stdlib symbols the same way project builds do.
+    var mergedStd: bool = false;
+    var hasStdImport: bool = false;
+    var useScan: *Decl = mod.firstItem;
+    while useScan != null as *Decl {
+        if useScan.kind == dkUse && String_StartsWith(useScan.usePath, "Std::") { hasStdImport = true; }
+        useScan = useScan.childDecl2;
+    }
+    if hasStdImport {
+        let stdlibDir: String = Cli_FindStdlibDir("");
+        if !String_Eq(stdlibDir, "") {
+            // Stamp user decls so `check func` output lists only user decls.
+            var stampU: *Decl = mod.firstItem;
+            while stampU != null as *Decl {
+                Cli_StampSourceFile(stampU, srcPath);
+                stampU = stampU.childDecl2;
+            }
+            // User decls shadow stdlib decls with the same name.
+            let maxNames: int = 2048;
+            let userNames: *String = bux_alloc(maxNames * 8) as *String;
+            let userNameCount: int = Cli_CollectNames(mod, userNames, maxNames);
+            let merged: *Module = bux_alloc(sizeof(Module)) as *Module;
+            merged.name = "main";
+            merged.path = "";
+            merged.itemCount = 0;
+            merged.firstItem = null as *Decl;
+            merged.diagCount = 0;
+            merged.diags = null as *ParserDiag;
+            var libCount: int = 0;
+            let libFiles: *String = bux_list_dir(stdlibDir, ".bux", &libCount);
+            var si: int = 0;
+            while si < libCount {
+                discard Cli_MergeFileInto(merged, libFiles[si], userNames, userNameCount);
+                si = si + 1;
+            }
+            Cli_CopyModuleDecls(merged, mod);
+            mod = merged;
+            mergedStd = true;
+        }
     }
 
     // Phase 2b: macro expand
@@ -628,8 +670,11 @@ func Cli_Check(srcPath: String) -> int {
     var dc: *Decl = mod.firstItem;
     while dc != null as *Decl {
         if dc.kind == dkFunc {
-            Print("check func ");
-            PrintLine(dc.strValue);
+            // With stdlib merged, list only the user file's functions.
+            if !mergedStd || String_Eq(dc.sourceFile, srcPath) {
+                Print("check func ");
+                PrintLine(dc.strValue);
+            }
         }
         dc = dc.childDecl2;
     }

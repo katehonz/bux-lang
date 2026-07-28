@@ -132,17 +132,8 @@ module Sema {
         var tail: *TypeExprList = null as *TypeExprList;
         var i: int = 0;
         while i < decl.paramCount && i < 9 {
-            var p: Param;
-            if i == 0 { p = decl.param0; }
-            else if i == 1 { p = decl.param1; }
-            else if i == 2 { p = decl.param2; }
-            else if i == 3 { p = decl.param3; }
-            else if i == 4 { p = decl.param4; }
-            else if i == 5 { p = decl.param5; }
-            else if i == 6 { p = decl.param6; }
-            else if i == 7 { p = decl.param7; }
-            else { p = decl.param8; }
-            if p.refParamType != null as *TypeExpr {
+            let p: *Param = Sema_DeclParam(decl, i);
+            if p != null as *Param && p.refParamType != null as *TypeExpr {
                 let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
                 node.te = p.refParamType;
                 node.next = null as *TypeExprList;
@@ -295,16 +286,7 @@ module Sema {
 
         var i: int = 0;
         while i < decl.paramCount {
-            var p: *Param = null as *Param;
-            if i == 0 { p = &decl.param0; }
-            else if i == 1 { p = &decl.param1; }
-            else if i == 2 { p = &decl.param2; }
-            else if i == 3 { p = &decl.param3; }
-            else if i == 4 { p = &decl.param4; }
-            else if i == 5 { p = &decl.param5; }
-            else if i == 6 { p = &decl.param6; }
-            else if i == 7 { p = &decl.param7; }
-            else if i == 8 { p = &decl.param8; }
+            let p: *Param = Sema_DeclParam(decl, i);
 
             var matched: *Expr = null as *Expr;
 
@@ -367,16 +349,7 @@ module Sema {
                 var foundName: bool = false;
                 var j: int = 0;
                 while j < decl.paramCount {
-                    var pj: *Param = null as *Param;
-                    if j == 0 { pj = &decl.param0; }
-                    else if j == 1 { pj = &decl.param1; }
-                    else if j == 2 { pj = &decl.param2; }
-                    else if j == 3 { pj = &decl.param3; }
-                    else if j == 4 { pj = &decl.param4; }
-                    else if j == 5 { pj = &decl.param5; }
-                    else if j == 6 { pj = &decl.param6; }
-                    else if j == 7 { pj = &decl.param7; }
-                    else if j == 8 { pj = &decl.param8; }
+                    let pj: *Param = Sema_DeclParam(decl, j);
                     if String_Eq(checkArg.argName, pj.name) { foundName = true; }
                     j = j + 1;
                 }
@@ -1084,6 +1057,10 @@ module Sema {
         // Call
         if kind == ekCall {
             let calleeType: int = Sema_CheckExpr(sema, expr.child1);
+            // Snapshot diag count: if ResolveCallArgs reports an unknown named
+            // arg, the reordered list is short and the arity error below would
+            // be confusing — suppress it in that case.
+            let diagsBeforeCallArgs: int = sema.diagCount;
             Sema_ResolveCallArgs(sema, expr);
             // Resolve callee decl for call-argument checking: direct calls to
             // non-generic named functions only (inference handles generics).
@@ -1097,7 +1074,7 @@ module Sema {
                 }
             }
             // Arity check (runs after Sema_ResolveCallArgs so defaults/named args align)
-            if callDecl != null as *Decl && expr.callArgCount != callDecl.paramCount {
+            if callDecl != null as *Decl && expr.callArgCount != callDecl.paramCount && sema.diagCount == diagsBeforeCallArgs {
                 Sema_EmitError(sema, expr.line, expr.column,
                     String_Concat("expected ", String_Concat(bux_int_to_str(callDecl.paramCount as int64),
                     String_Concat(" arguments, got ", bux_int_to_str(expr.callArgCount as int64)))));
@@ -1468,18 +1445,9 @@ module Sema {
             if params != null as *Decl {
                 var i: int = 0;
                 while i < params.paramCount {
-                    var p: Param;
-                    if i == 0 { p = params.param0; }
-                    else if i == 1 { p = params.param1; }
-                    else if i == 2 { p = params.param2; }
-                    else if i == 3 { p = params.param3; }
-                    else if i == 4 { p = params.param4; }
-                    else if i == 5 { p = params.param5; }
-                    else if i == 6 { p = params.param6; }
-                    else if i == 7 { p = params.param7; }
-                    else if i == 8 { p = params.param8; }
+                    let p: *Param = Sema_DeclParam(params, i);
 
-                    if !String_Eq(p.name, "") {
+                    if p != null as *Param && !String_Eq(p.name, "") {
                         var sym: Symbol;
                         sym.kind = skVar;
                         sym.name = p.name;
@@ -1521,19 +1489,12 @@ module Sema {
                 var tail: *TypeExprList = null as *TypeExprList;
                 var i: int = 0;
                 while i < params.paramCount {
-                    var p: Param;
-                    if i == 0 { p = params.param0; }
-                    else if i == 1 { p = params.param1; }
-                    else if i == 2 { p = params.param2; }
-                    else if i == 3 { p = params.param3; }
-                    else if i == 4 { p = params.param4; }
-                    else if i == 5 { p = params.param5; }
-                    else if i == 6 { p = params.param6; }
-                    else if i == 7 { p = params.param7; }
-                    else if i == 8 { p = params.param8; }
+                    let p: *Param = Sema_DeclParam(params, i);
+                    var pte: *TypeExpr = null as *TypeExpr;
+                    if p != null as *Param { pte = p.refParamType; }
 
                     let node: *TypeExprList = bux_alloc(sizeof(TypeExprList)) as *TypeExprList;
-                    node.te = p.refParamType;
+                    node.te = pte;
                     node.next = null as *TypeExprList;
                     if head == null as *TypeExprList {
                         head = node;
@@ -2325,15 +2286,8 @@ module Sema {
             if argExpr == null as *Expr { argList = argList.next; pi = pi + 1; continue; }
 
             var paramType: *TypeExpr = null as *TypeExpr;
-            if pi == 0 { paramType = funcDecl.param0.refParamType; }
-            else if pi == 1 { paramType = funcDecl.param1.refParamType; }
-            else if pi == 2 { paramType = funcDecl.param2.refParamType; }
-            else if pi == 3 { paramType = funcDecl.param3.refParamType; }
-            else if pi == 4 { paramType = funcDecl.param4.refParamType; }
-            else if pi == 5 { paramType = funcDecl.param5.refParamType; }
-            else if pi == 6 { paramType = funcDecl.param6.refParamType; }
-            else if pi == 7 { paramType = funcDecl.param7.refParamType; }
-            else if pi == 8 { paramType = funcDecl.param8.refParamType; }
+            let fp: *Param = Sema_DeclParam(funcDecl, pi);
+            if fp != null as *Param { paramType = fp.refParamType; }
 
             var argType: *TypeExpr = argExpr.refType;
             // &x → use type of x, wrap as pointer if pattern expects pointer
@@ -2443,16 +2397,7 @@ module Sema {
                 // Add parameters to scope
                 var i: int = 0;
                 while i < decl.paramCount {
-                    var p: *Param = null as *Param;
-                    if i == 0 { p = &decl.param0; }
-                    else if i == 1 { p = &decl.param1; }
-                    else if i == 2 { p = &decl.param2; }
-                    else if i == 3 { p = &decl.param3; }
-                    else if i == 4 { p = &decl.param4; }
-                    else if i == 5 { p = &decl.param5; }
-                    else if i == 6 { p = &decl.param6; }
-                    else if i == 7 { p = &decl.param7; }
-                    else if i == 8 { p = &decl.param8; }
+                    let p: *Param = Sema_DeclParam(decl, i);
                     var pSym: Symbol;
                     Sema_ZeroInitSymbol(&pSym);
                     pSym.kind = skVar;
@@ -2471,15 +2416,7 @@ module Sema {
                     pSym.isMutable = false;
                     pSym.isPublic = false;
                     pSym.decl = null as *Decl;
-                    if i == 0 { pSym.name = decl.param0.name; }
-                    else if i == 1 { pSym.name = decl.param1.name; }
-                    else if i == 2 { pSym.name = decl.param2.name; }
-                    else if i == 3 { pSym.name = decl.param3.name; }
-                    else if i == 4 { pSym.name = decl.param4.name; }
-                    else if i == 5 { pSym.name = decl.param5.name; }
-                    else if i == 6 { pSym.name = decl.param6.name; }
-                    else if i == 7 { pSym.name = decl.param7.name; }
-                    else if i == 8 { pSym.name = decl.param8.name; }
+                    if p != null as *Param { pSym.name = p.name; }
                     discard Scope_Define(&funcScope, pSym);
                     i = i + 1;
                 }

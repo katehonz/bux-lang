@@ -33,3 +33,9 @@ _test_*/
 # Log files
 *.log
 .nim_runtime/
+
+# Local build artifacts
+buxc_debug
+bootstrap/main
+tools/bux-lsp
+benches/*.out
