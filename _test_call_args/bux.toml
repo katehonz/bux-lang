@@ -1,0 +1,4 @@
+[Package]
+Name    = "call_args"
+Version = "0.1.0"
+Type    = "bin"

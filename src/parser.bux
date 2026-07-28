@@ -30,13 +30,6 @@ module Parser {
         macroTemplateMode: bool,  // allows $(…)* in macro! bodies
     }
 
-    struct ParserDiag {
-        line: uint32,
-        column: uint32,
-        message: String,
-        severity: int,  /* 0=error (fatal), 1=warning (recoverable) */
-    }
-
     // ---------------------------------------------------------------------------
     // Token helpers
     // ---------------------------------------------------------------------------
@@ -120,7 +113,7 @@ module Parser {
             return parserAdvance(p);
         }
         let tok: LexToken = parserCurToken(p);
-        if p.diagCount < 256 {
+        if p.diagCount < 256 && p.diags != null as *ParserDiag {
             p.diags[p.diagCount] = ParserDiag {
                 line: tok.line, column: tok.column, message: msg, severity: 1
             };
@@ -130,7 +123,7 @@ module Parser {
     }
 
     func parserEmitDiag(p: *Parser, line: uint32, col: uint32, msg: String) {
-        if p.diagCount < 256 {
+        if p.diagCount < 256 && p.diags != null as *ParserDiag {
             p.diags[p.diagCount] = ParserDiag {
                 line: line, column: col, message: msg, severity: 1
             };
@@ -149,7 +142,7 @@ module Parser {
         if tok.kind == tkIdent || parserIsKeyword(tok.kind) {
             return parserAdvance(p);
         }
-        if p.diagCount < 256 {
+        if p.diagCount < 256 && p.diags != null as *ParserDiag {
             p.diags[p.diagCount] = ParserDiag {
                 line: tok.line, column: tok.column, message: msg, severity: 1
             };
@@ -2175,6 +2168,7 @@ module Parser {
         parserParseTypeParams(p, d);
 
         discard parserExpect(p, tkLBrace, "expected '{'");
+        var lastWasComma: bool = false;
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
             if fieldCount >= 256 {
                 parserEmitDiag(p, line, col, "too many struct fields (max 255)");
@@ -2182,13 +2176,17 @@ module Parser {
             }
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
+            // Commas are also valid field separators (incl. trailing comma before '}')
+            if parserCheck(p, tkComma) {
+                if fieldCount == 0 || lastWasComma {
+                    parserEmitDiag(p, parserCurToken(p).line, parserCurToken(p).column, "expected field name");
+                }
+                lastWasComma = true;
+                discard parserAdvance(p);
+                continue;
+            }
             let beforePos: int = p.pos;
             let fName: LexToken = parserExpectIdentOrKeyword(p, "expected field name");
-            if fieldCount >= 250 && fieldCount <= 256 {
-                PrintLine(String_Concat("RAW fieldCount=", bux_int_to_str(fieldCount as int64)));
-                PrintLine(String_Concat("RAW fName=", fName.text));
-                PrintLine(String_Concat("RAW pos=", bux_int_to_str(p.pos as int64)));
-            }
             discard parserExpect(p, tkColon, "expected ':' in struct field");
             let fType: *TypeExpr = parserParseType(p);
             parserMatch(p, tkSemicolon);
@@ -2201,6 +2199,7 @@ module Parser {
             d.fields[fieldCount].name = fName.text;
             d.fields[fieldCount].refFieldType = fType;
             fieldCount = fieldCount + 1;
+            lastWasComma = false;
         }
         d.fieldCount = fieldCount;
         discard parserExpect(p, tkRBrace, "expected '}'");
@@ -2281,9 +2280,10 @@ module Parser {
         d.isPublic = isPublic;
 
         // Parse path: Std::Io::PrintLine
+        // Stop before `::{` (multi-import) and `::*` (glob import)
         var pathStr: String = "";
         var segCount: int = 0;
-        while parserCheck(p, tkIdent) || (segCount > 0 && parserCheck(p, tkColonColon) && parserPeek(p, 1) != tkLBrace) {
+        while parserCheck(p, tkIdent) || (segCount > 0 && parserCheck(p, tkColonColon) && parserPeek(p, 1) != tkLBrace && parserPeek(p, 1) != tkStar) {
             if segCount > 0 {
                 discard parserAdvance(p); // ::
                 if String_Len(pathStr) > 0 {
@@ -2314,6 +2314,10 @@ module Parser {
                     names = String_Concat(names, n.text);
                     names = String_Concat(names, ",");
                     if !parserMatch(p, tkComma) { break; }
+                }
+                // Allow newlines before the closing brace (multi-line import lists)
+                while parserCheck(p, tkNewLine) {
+                    discard parserAdvance(p);
                 }
                 discard parserExpect(p, tkRBrace, "expected '}'");
                 d.useNames = names;
@@ -2373,6 +2377,8 @@ module Parser {
         var lastMethod: *Decl = null as *Decl;
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+            // Bodyless method signatures end with ';'
+            if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkFunc) {
                 let m: *Decl = parserParseFuncDecl(p, false, false, false);
                 if methods == null as *Decl {
@@ -2827,34 +2833,9 @@ module Parser {
             }
         }
 
-        /* Print fatal parser diagnostics (severity == 0) or if nothing valid was parsed */
-        if p.diagCount > 0 && mod.itemCount == 0 {
-            var di: int = 0;
-            while di < p.diagCount {
-                let d: ParserDiag = p.diags[di];
-                Print("error: ");
-                PrintLine(d.message);
-                Print("  --> <input>:");
-                PrintInt(d.line as int64);
-                Print(":");
-                PrintInt(d.column as int64);
-                PrintLine("");
-                Print("   |");
-                PrintLine("");
-                Print(" ");
-                PrintInt(d.line as int64);
-                Print(" | <source unavailable>");
-                PrintLine("");
-                Print("   | ");
-                var sp: uint32 = 0;
-                while sp < d.column - 1 && sp < 120 {
-                    Print(" ");
-                    sp = sp + 1;
-                }
-                PrintLine("^");
-                di = di + 1;
-            }
-        }
+        // Attach parser diagnostics to the module; the CLI reports them
+        mod.diagCount = p.diagCount;
+        mod.diags = p.diags;
 
         return mod;
     }

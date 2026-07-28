@@ -1,0 +1,4 @@
+[Package]
+Name    = "parse_recovery"
+Version = "0.1.0"
+Type    = "bin"

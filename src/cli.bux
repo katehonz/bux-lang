@@ -359,6 +359,28 @@ module Cli {
 // In self-hosting mode, these are compiled together from src/
 
 // ---------------------------------------------------------------------------
+// Report parser diagnostics attached to a module (Rust-style, with snippets).
+// Returns the number of diagnostics reported (0 = clean).
+// ---------------------------------------------------------------------------
+
+func Cli_ReportParseDiags(mod: *Module, sourceName: String) -> int {
+    if mod == null as *Module { return 0; }
+    if mod.diagCount == 0 { return 0; }
+    var i: int = 0;
+    while i < mod.diagCount {
+        let diag: Diagnostic = Diagnostic {
+            message: mod.diags[i].message,
+            line: mod.diags[i].line,
+            column: mod.diags[i].column,
+            severity: 0,
+        };
+        Diagnostic_Print(&diag, sourceName);
+        i = i + 1;
+    }
+    return mod.diagCount;
+}
+
+// ---------------------------------------------------------------------------
 // Compile a single .bux source file
 // ---------------------------------------------------------------------------
 
@@ -389,6 +411,7 @@ func Cli_Compile(source: String, sourceName: String, targetTriple: String) -> St
         PrintLine("Parse failed");
         return "";
     }
+    if Cli_ReportParseDiags(mod, sourceName) > 0 { return ""; }
     PrintLine("  Parse done");
 
     // Flatten module wrappers: find module decl and hoist its children
@@ -551,6 +574,7 @@ func Cli_Check(srcPath: String) -> int {
         PrintLine("Parse failed");
         return 1;
     }
+    if Cli_ReportParseDiags(mod, srcPath) > 0 { return 1; }
     PrintLine("  Parse done");
 
     // Flatten module wrappers
@@ -635,6 +659,7 @@ func Cli_CompileSource(source: String, sourceName: String) -> *HirModule {
         PrintLine(sourceName);
         return null as *HirModule;
     }
+    if Cli_ReportParseDiags(mod, sourceName) > 0 { return null as *HirModule; }
 
     // Phase 2b: macro expand
     let macEx3: *MacroExpander = MacroExpand_ExpandModule(mod);
@@ -836,6 +861,10 @@ func Cli_MergeFileInto(target: *Module, path: String, skipNames: *String, skipCo
     if Lexer_DiagCount(lex) > 0 { return 0; }
     let mod: *Module = Parser_Parse(lex.tokens, lex.tokenCount);
     if mod == null as *Module { return 0; }
+    // Report parse diags but keep merging the recovered decls: this path
+    // handles stdlib/dependency files, and the parser currently emits
+    // recoverable diags for valid multi-line braced imports there.
+    discard Cli_ReportParseDiags(mod, path);
     // Tag every decl from this file for #line maps
     var stamp: *Decl = mod.firstItem;
     while stamp != null as *Decl {
@@ -1928,6 +1957,8 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool,
     userMerged.path = "";
     userMerged.itemCount = 0;
     userMerged.firstItem = null as *Decl;
+    userMerged.diagCount = 0;
+    userMerged.diags = null as *ParserDiag;
 
     // Parse each file and merge declarations into userMerged module
     var i: int = 0;
@@ -1962,6 +1993,7 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool,
             PrintLine(path);
             return 1;
         }
+        if Cli_ReportParseDiags(mod, path) > 0 { return 1; }
         // Tag decls with this source path for multi-file #line
         var stampUser: *Decl = mod.firstItem;
         while stampUser != null as *Decl {
@@ -2031,6 +2063,8 @@ func Cli_BuildProject(projectDir: String, targetTriple: String, isRelease: bool,
     merged.path = "";
     merged.itemCount = 0;
     merged.firstItem = null as *Decl;
+    merged.diagCount = 0;
+    merged.diags = null as *ParserDiag;
 
     // Find and merge ALL stdlib declarations
     let stdlibDir: String = Cli_FindStdlibDir(projectDir);
