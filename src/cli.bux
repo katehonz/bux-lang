@@ -2337,7 +2337,7 @@ func Cli_Run(args: *String, argCount: int) -> int {
     }
 
     if argCount < 2 {
-        PrintLine("Bux Self-Hosting Compiler v1.0.0");
+        PrintLine("Bux Self-Hosting Compiler v1.0.2");
         PrintLine("Usage: buxc <command> [args]");
         PrintLine("Commands: build, check, new, init, add, remove, fetch, install, search, fmt, doc, test, run, project, help, version");
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");
@@ -2355,12 +2355,12 @@ func Cli_Run(args: *String, argCount: int) -> int {
 
     let cmd: String = args[1];
     if String_Eq(cmd, "version") || String_Eq(cmd, "--version") || String_Eq(cmd, "-v") {
-        PrintLine("Bux 1.0.0 (self-hosting)");
+        PrintLine("Bux 1.0.2 (self-hosting)");
         return 0;
     }
 
     if String_Eq(cmd, "help") || String_Eq(cmd, "--help") || String_Eq(cmd, "-h") {
-        PrintLine("Bux Self-Hosting Compiler v1.0.0");
+        PrintLine("Bux Self-Hosting Compiler v1.0.2");
         PrintLine("Usage: buxc <command> [args]");
         PrintLine("Commands: build, check, new, init, add, remove, fetch, install, search, fmt, doc, test, run, project, help, version");
         PrintLine("  test --filter <name>   Only run tests/*.bux whose name contains <name>");

@@ -2579,7 +2579,7 @@ module HirLower {
             }
             // Fallback: type annotation on the is-expression operand
             if String_Eq(enumName, "") && expr.child1 != null as *Expr &&
-               expr.child1.refType != null as *TypeExpr {
+            expr.child1.refType != null as *TypeExpr {
                 let te: *TypeExpr = Lcx_SubstituteType(ctx, expr.child1.refType);
                 if te != null as *TypeExpr && !String_Eq(te.typeName, "") {
                     enumName = te.typeName;

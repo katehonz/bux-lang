@@ -1350,7 +1350,7 @@ proc cmdDoc*(args: seq[string], opts: GlobalOptions): int =
   return 0
 
 proc cmdVersion*(args: seq[string], opts: GlobalOptions): int =
-  echo "bux 1.0.0 (bootstrap)"
+  echo "bux 1.0.2 (bootstrap)"
   return 0
 
 proc runCli*(args: seq[string]): int =

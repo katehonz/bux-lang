@@ -358,7 +358,7 @@ module Sema {
                 }
                 if !foundName {
                     Sema_EmitError(sema, expr.line, expr.column,
-                        String_Concat("unknown argument name '", String_Concat(checkArg.argName, "'")));
+                    String_Concat("unknown argument name '", String_Concat(checkArg.argName, "'")));
                 }
             }
             checkArg = checkArg.next;
@@ -1079,8 +1079,8 @@ module Sema {
             // Arity check (runs after Sema_ResolveCallArgs so defaults/named args align)
             if callDecl != null as *Decl && expr.callArgCount != callDecl.paramCount && sema.diagCount == diagsBeforeCallArgs {
                 Sema_EmitError(sema, expr.line, expr.column,
-                    String_Concat("expected ", String_Concat(bux_int_to_str(callDecl.paramCount as int64),
-                    String_Concat(" arguments, got ", bux_int_to_str(expr.callArgCount as int64)))));
+                String_Concat("expected ", String_Concat(bux_int_to_str(callDecl.paramCount as int64),
+                String_Concat(" arguments, got ", bux_int_to_str(expr.callArgCount as int64)))));
                 callDecl = null as *Decl;
             }
             var argIdx: int = 0;
@@ -1109,9 +1109,9 @@ module Sema {
                             let wantName: String = Sema_TypeNameForDiag(cp.refParamType, Sema_ResolveType(sema, cp.refParamType));
                             let gotName: String = Sema_TypeNameForDiag(arg.expr.refType, argKind);
                             Sema_EmitError(sema, arg.expr.line, arg.expr.column,
-                                String_Concat("argument ", String_Concat(bux_int_to_str((argIdx + 1) as int64),
-                                String_Concat(": expected ", String_Concat(wantName,
-                                String_Concat(", got ", gotName))))));
+                            String_Concat("argument ", String_Concat(bux_int_to_str((argIdx + 1) as int64),
+                            String_Concat(": expected ", String_Concat(wantName,
+                            String_Concat(", got ", gotName))))));
                         }
                     }
                 }
@@ -1565,7 +1565,7 @@ module Sema {
                     let gotName: String = Sema_TypeNameForDiag(stmt.child1.refType, initType);
                     let wantName: String = Sema_TypeNameForDiag(stmt.refStmtType, Sema_ResolveType(sema, stmt.refStmtType));
                     let msg: String = String_Concat("cannot assign ",
-                        String_Concat(gotName, String_Concat(" to ", wantName)));
+                    String_Concat(gotName, String_Concat(" to ", wantName)));
                     Sema_EmitError(sema, stmt.line, stmt.column, msg);
                 }
             }

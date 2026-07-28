@@ -11,6 +11,15 @@ import Std::Test::{
 };
 
 func Main() -> int {
+    // Zero-capacity grow (v1.0.2): must not segfault
+    var z: Array<int> = Array_New<int>(0);
+    Array_Push<int>(&z, 7);
+    Array_Push<int>(&z, 8);
+    Test_AssertEqInt(Array_Len<int>(&z) as int, 2);
+    Test_AssertEqInt(Array_Get<int>(&z, 0), 7);
+    Test_AssertEqInt(Array_Get<int>(&z, 1), 8);
+    Array_Free<int>(&z);
+
     var arr: Array<int> = Array_New<int>(2);
     Array_Reserve<int>(&arr, 8);
     Test_AssertTrue(Array_Cap<int>(&arr) >= 8);

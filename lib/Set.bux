@@ -16,18 +16,45 @@ module Std::Set {
         len: uint,
     }
 
+    /// Create a set with at least `cap` slots. `cap == 0` defaults to 8.
     func Set_New<T>(cap: uint) -> Set<T> {
-        let total: uint = cap * sizeof(SetEntry<T>);
+        var c: uint = cap;
+        if c == 0 {
+            c = 8;
+        }
+        let total: uint = c * sizeof(SetEntry<T>);
         let data: *SetEntry<T> = bux_alloc(total) as *SetEntry<T>;
         var i: uint = 0;
-        while i < cap {
+        while i < c {
             data[i].occupied = false;
             i = i + 1;
         }
-        return Set<T> { entries: data, cap: cap, len: 0 };
+        return Set<T> { entries: data, cap: c, len: 0 };
     }
 
-    func Set_Add<T>(s: *Set<T>, value: T) {
+    func Set_Rehash<T>(s: *Set<T>, newCap: uint) {
+        var nc: uint = newCap;
+        if nc == 0 {
+            nc = 8;
+        }
+        var fresh: Set<T> = Set_New<T>(nc);
+        var i: uint = 0;
+        while i < s.cap {
+            if s.entries[i].occupied {
+                Set_AddInsertOnly<T>(&fresh, s.entries[i].value);
+            }
+            i = i + 1;
+        }
+        bux_free(s.entries as *void);
+        s.entries = fresh.entries;
+        s.cap = fresh.cap;
+        s.len = fresh.len;
+        fresh.entries = null as *SetEntry<T>;
+        fresh.cap = 0;
+        fresh.len = 0;
+    }
+
+    func Set_AddInsertOnly<T>(s: *Set<T>, value: T) {
         var valuePtr: *T = &value;
         let hash: uint = bux_hash_bytes(valuePtr as *void, sizeof(T));
         var idx: uint = hash % s.cap;
@@ -43,7 +70,21 @@ module Std::Set {
         s.len = s.len + 1;
     }
 
+    func Set_Add<T>(s: *Set<T>, value: T) {
+        if s.cap == 0 || s.len * 2 >= s.cap {
+            var nc: uint = s.cap * 2;
+            if nc < 8 {
+                nc = 8;
+            }
+            Set_Rehash<T>(s, nc);
+        }
+        Set_AddInsertOnly<T>(s, value);
+    }
+
     func Set_Has<T>(s: *Set<T>, value: T) -> bool {
+        if s.cap == 0 {
+            return false;
+        }
         var valuePtr: *T = &value;
         let hash: uint = bux_hash_bytes(valuePtr as *void, sizeof(T));
         var idx: uint = hash % s.cap;
@@ -70,14 +111,18 @@ module Std::Set {
         if !Set_Has<T>(s, value) {
             return false;
         }
-        var fresh: Set<T> = Set_New<T>(s.cap);
+        var keepCap: uint = s.cap;
+        if keepCap == 0 {
+            keepCap = 8;
+        }
+        var fresh: Set<T> = Set_New<T>(keepCap);
         var i: uint = 0;
         while i < s.cap {
             if s.entries[i].occupied {
                 var entryPtr: *T = &s.entries[i].value;
                 var valuePtr: *T = &value;
                 if bux_mem_eq(entryPtr as *void, valuePtr as *void, sizeof(T)) == 0 {
-                    Set_Add<T>(&fresh, s.entries[i].value);
+                    Set_AddInsertOnly<T>(&fresh, s.entries[i].value);
                 }
             }
             i = i + 1;

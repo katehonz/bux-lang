@@ -2,6 +2,8 @@ module Std::Map {
 
     extern func bux_hash_bytes(ptr: *void, size: uint) -> uint;
     extern func bux_hash_string(s: String) -> uint;
+    extern func bux_alloc(size: uint) -> *void;
+    extern func bux_free(ptr: *void);
 
     // ---------------------------------------------------------------------------
     // Generic Map<K, V> — works with value-type keys (int, float, etc.)
@@ -20,18 +22,48 @@ module Std::Map {
         len: uint,
     }
 
+    /// Create a map with at least `cap` slots (open addressing).
+    /// `cap == 0` defaults to 8 so inserts never hit `% 0` or a full table with no growth room.
     func Map_New<K, V>(cap: uint) -> Map<K, V> {
-        let total: uint = cap * sizeof(MapEntry<K, V>);
+        var c: uint = cap;
+        if c == 0 {
+            c = 8;
+        }
+        let total: uint = c * sizeof(MapEntry<K, V>);
         let data: *MapEntry<K, V> = bux_alloc(total) as *MapEntry<K, V>;
         var i: uint = 0;
-        while i < cap {
+        while i < c {
             data[i].occupied = false;
             i = i + 1;
         }
-        return Map<K, V> { entries: data, cap: cap, len: 0 };
+        return Map<K, V> { entries: data, cap: c, len: 0 };
     }
 
-    func Map_Set<K, V>(m: *Map<K, V>, key: K, value: V) {
+    /// Grow / rehash to `newCap` (must be > 0). Transfers ownership; does not Drop `fresh`.
+    func Map_Rehash<K, V>(m: *Map<K, V>, newCap: uint) {
+        var nc: uint = newCap;
+        if nc == 0 {
+            nc = 8;
+        }
+        var fresh: Map<K, V> = Map_New<K, V>(nc);
+        var i: uint = 0;
+        while i < m.cap {
+            if m.entries[i].occupied {
+                Map_SetInsertOnly<K, V>(&fresh, m.entries[i].key, m.entries[i].value);
+            }
+            i = i + 1;
+        }
+        bux_free(m.entries as *void);
+        m.entries = fresh.entries;
+        m.cap = fresh.cap;
+        m.len = fresh.len;
+        fresh.entries = null as *MapEntry<K, V>;
+        fresh.cap = 0;
+        fresh.len = 0;
+    }
+
+    /// Insert assuming free slots exist (no grow). Used by rehash.
+    func Map_SetInsertOnly<K, V>(m: *Map<K, V>, key: K, value: V) {
         var keyPtr: *K = &key;
         let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
         var idx: uint = hash % m.cap;
@@ -48,7 +80,23 @@ module Std::Map {
         m.len = m.len + 1;
     }
 
+    func Map_Set<K, V>(m: *Map<K, V>, key: K, value: V) {
+        // Keep load factor under ~50% for open addressing (also handles cap==0).
+        if m.cap == 0 || m.len * 2 >= m.cap {
+            var nc: uint = m.cap * 2;
+            if nc < 8 {
+                nc = 8;
+            }
+            Map_Rehash<K, V>(m, nc);
+        }
+        Map_SetInsertOnly<K, V>(m, key, value);
+    }
+
     func Map_Get<K, V>(m: *Map<K, V>, key: K) -> V {
+        if m.cap == 0 {
+            var zero: V = 0 as V;
+            return zero;
+        }
         var keyPtr: *K = &key;
         let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
         var idx: uint = hash % m.cap;
@@ -72,6 +120,9 @@ module Std::Map {
     }
 
     func Map_Has<K, V>(m: *Map<K, V>, key: K) -> bool {
+        if m.cap == 0 {
+            return false;
+        }
         var keyPtr: *K = &key;
         let hash: uint = bux_hash_bytes(keyPtr as *void, sizeof(K));
         var idx: uint = hash % m.cap;
@@ -97,12 +148,16 @@ module Std::Map {
         if !Map_Has<K, V>(m, key) {
             return false;
         }
-        var fresh: Map<K, V> = Map_New<K, V>(m.cap);
+        var keepCap: uint = m.cap;
+        if keepCap == 0 {
+            keepCap = 8;
+        }
+        var fresh: Map<K, V> = Map_New<K, V>(keepCap);
         var i: uint = 0;
         while i < m.cap {
             if m.entries[i].occupied {
                 if m.entries[i].key != key {
-                    Map_Set<K, V>(&fresh, m.entries[i].key, m.entries[i].value);
+                    Map_SetInsertOnly<K, V>(&fresh, m.entries[i].key, m.entries[i].value);
                 }
             }
             i = i + 1;
@@ -155,17 +210,43 @@ module Std::Map {
     }
 
     func StringMap_New<V>(cap: uint) -> StringMap<V> {
-        let total: uint = cap * sizeof(StringMapEntry<V>);
+        var c: uint = cap;
+        if c == 0 {
+            c = 8;
+        }
+        let total: uint = c * sizeof(StringMapEntry<V>);
         let data: *StringMapEntry<V> = bux_alloc(total) as *StringMapEntry<V>;
         var i: uint = 0;
-        while i < cap {
+        while i < c {
             data[i].occupied = false;
             i = i + 1;
         }
-        return StringMap<V> { entries: data, cap: cap, len: 0 };
+        return StringMap<V> { entries: data, cap: c, len: 0 };
     }
 
-    func StringMap_Set<V>(m: *StringMap<V>, key: String, value: V) {
+    func StringMap_Rehash<V>(m: *StringMap<V>, newCap: uint) {
+        var nc: uint = newCap;
+        if nc == 0 {
+            nc = 8;
+        }
+        var fresh: StringMap<V> = StringMap_New<V>(nc);
+        var i: uint = 0;
+        while i < m.cap {
+            if m.entries[i].occupied {
+                StringMap_SetInsertOnly<V>(&fresh, m.entries[i].key, m.entries[i].value);
+            }
+            i = i + 1;
+        }
+        bux_free(m.entries as *void);
+        m.entries = fresh.entries;
+        m.cap = fresh.cap;
+        m.len = fresh.len;
+        fresh.entries = null as *StringMapEntry<V>;
+        fresh.cap = 0;
+        fresh.len = 0;
+    }
+
+    func StringMap_SetInsertOnly<V>(m: *StringMap<V>, key: String, value: V) {
         let hash: uint = bux_hash_string(key);
         var idx: uint = hash % m.cap;
         while m.entries[idx].occupied {
@@ -181,7 +262,22 @@ module Std::Map {
         m.len = m.len + 1;
     }
 
+    func StringMap_Set<V>(m: *StringMap<V>, key: String, value: V) {
+        if m.cap == 0 || m.len * 2 >= m.cap {
+            var nc: uint = m.cap * 2;
+            if nc < 8 {
+                nc = 8;
+            }
+            StringMap_Rehash<V>(m, nc);
+        }
+        StringMap_SetInsertOnly<V>(m, key, value);
+    }
+
     func StringMap_Get<V>(m: *StringMap<V>, key: String) -> V {
+        if m.cap == 0 {
+            var zero: V = 0 as V;
+            return zero;
+        }
         let hash: uint = bux_hash_string(key);
         var idx: uint = hash % m.cap;
         while m.entries[idx].occupied {
@@ -203,6 +299,9 @@ module Std::Map {
     }
 
     func StringMap_Has<V>(m: *StringMap<V>, key: String) -> bool {
+        if m.cap == 0 {
+            return false;
+        }
         let hash: uint = bux_hash_string(key);
         var idx: uint = hash % m.cap;
         while m.entries[idx].occupied {
@@ -226,12 +325,16 @@ module Std::Map {
         if !StringMap_Has<V>(m, key) {
             return false;
         }
-        var fresh: StringMap<V> = StringMap_New<V>(m.cap);
+        var keepCap: uint = m.cap;
+        if keepCap == 0 {
+            keepCap = 8;
+        }
+        var fresh: StringMap<V> = StringMap_New<V>(keepCap);
         var i: uint = 0;
         while i < m.cap {
             if m.entries[i].occupied {
                 if !String_Eq(m.entries[i].key, key) {
-                    StringMap_Set<V>(&fresh, m.entries[i].key, m.entries[i].value);
+                    StringMap_SetInsertOnly<V>(&fresh, m.entries[i].key, m.entries[i].value);
                 }
             }
             i = i + 1;

@@ -256,6 +256,12 @@ proc emitExpr(be: var CBackend, node: HirNode): string =
   of hBinary:
     let left = be.emitExpr(node.binaryLeft)
     let right = be.emitExpr(node.binaryRight)
+    # Checked integer / and % (float keeps raw C operators)
+    let isFloat = node.typ != nil and node.typ.kind in {tkFloat32, tkFloat64}
+    if node.binaryOp == tkSlash and not isFloat:
+      return &"bux_div_i64((int64_t)({left}), (int64_t)({right}))"
+    if node.binaryOp == tkPercent and not isFloat:
+      return &"bux_mod_i64((int64_t)({left}), (int64_t)({right}))"
     let op = operatorToC(node.binaryOp)
     return &"({left} {op} {right})"
 
@@ -657,6 +663,9 @@ proc emitModule*(be: var CBackend, module: HirModule): string =
   be.emitLine("#include <stdint.h>")
   be.emitLine("#include <stdbool.h>")
   be.emitLine("#include <string.h>")
+  be.emitLine("")
+  be.emitLine("extern int64_t bux_div_i64(int64_t a, int64_t b);")
+  be.emitLine("extern int64_t bux_mod_i64(int64_t a, int64_t b);")
   be.emitLine("")
 
   # Pre-collect slice types so we can emit forward declarations early

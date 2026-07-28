@@ -34,6 +34,23 @@ func Main() -> int {
     Test_AssertTrue(Map_IsEmpty<int, int>(&m));
     Map_Free<int, int>(&m);
 
+    // Auto-grow past initial cap (v1.0.2): must not hang
+    var tiny: Map<int, int> = Map_New<int, int>(2);
+    Map_Set<int, int>(&tiny, 1, 10);
+    Map_Set<int, int>(&tiny, 2, 20);
+    Map_Set<int, int>(&tiny, 3, 30);
+    Map_Set<int, int>(&tiny, 4, 40);
+    Map_Set<int, int>(&tiny, 5, 50);
+    Test_AssertEqInt(Map_Len<int, int>(&tiny) as int, 5);
+    Test_AssertEqInt(Map_Get<int, int>(&tiny, 5), 50);
+    Map_Free<int, int>(&tiny);
+
+    // Zero-cap request defaults to usable table (v1.0.2)
+    var z: Map<int, int> = Map_New<int, int>(0);
+    Map_Set<int, int>(&z, 9, 99);
+    Test_AssertEqInt(Map_Get<int, int>(&z, 9), 99);
+    Map_Free<int, int>(&z);
+
     var s: Set<int> = Set_New<int>(16);
     Set_Add<int>(&s, 10);
     Set_Add<int>(&s, 20);
@@ -44,6 +61,16 @@ func Main() -> int {
     Test_AssertEqInt(Set_Len<int>(&s) as int, 2);
     Test_AssertFalse(Set_IsEmpty<int>(&s));
     Set_Free<int>(&s);
+
+    // Set grow (v1.0.2)
+    var s2: Set<int> = Set_New<int>(2);
+    Set_Add<int>(&s2, 1);
+    Set_Add<int>(&s2, 2);
+    Set_Add<int>(&s2, 3);
+    Set_Add<int>(&s2, 4);
+    Test_AssertEqInt(Set_Len<int>(&s2) as int, 4);
+    Test_AssertTrue(Set_Has<int>(&s2, 4));
+    Set_Free<int>(&s2);
 
     let ok: Result<int, String> = Result_NewOk<int, String>(42);
     let err: Result<int, String> = Result_NewErr<int, String>("boom");

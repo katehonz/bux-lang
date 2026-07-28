@@ -996,7 +996,24 @@ module CBackend {
 
         // Binary — always parenthesize so C precedence cannot rewrite the AST.
         // Without parens, Mul(Add(a,b), c) emits `a + b * c` (= a+(b*c)) instead of (a+b)*c.
+        // Integer / and % use checked runtime helpers (panic on zero divisor).
         if kind == hBinary {
+            if node.intValue == tkSlash {
+                StringBuilder_Append(&cbe.sb, "bux_div_i64((int64_t)(");
+                CBE_EmitExpr(cbe, node.child1);
+                StringBuilder_Append(&cbe.sb, "), (int64_t)(");
+                CBE_EmitExpr(cbe, node.child2);
+                StringBuilder_Append(&cbe.sb, "))");
+                return;
+            }
+            if node.intValue == tkPercent {
+                StringBuilder_Append(&cbe.sb, "bux_mod_i64((int64_t)(");
+                CBE_EmitExpr(cbe, node.child1);
+                StringBuilder_Append(&cbe.sb, "), (int64_t)(");
+                CBE_EmitExpr(cbe, node.child2);
+                StringBuilder_Append(&cbe.sb, "))");
+                return;
+            }
             StringBuilder_Append(&cbe.sb, "(");
             CBE_EmitExpr(cbe, node.child1);
             StringBuilder_Append(&cbe.sb, " ");
@@ -2108,6 +2125,8 @@ module CBackend {
         StringBuilder_Append(&cbe.sb, "#include <string.h>\n");
         StringBuilder_Append(&cbe.sb, "#include <stdio.h>\n");
         StringBuilder_Append(&cbe.sb, "#include <stdlib.h>\n\n");
+        StringBuilder_Append(&cbe.sb, "extern int64_t bux_div_i64(int64_t a, int64_t b);\n");
+        StringBuilder_Append(&cbe.sb, "extern int64_t bux_mod_i64(int64_t a, int64_t b);\n\n");
         // Type aliases
         StringBuilder_Append(&cbe.sb, "typedef const char* String;\n");
         StringBuilder_Append(&cbe.sb, "typedef unsigned char uint8;\n");

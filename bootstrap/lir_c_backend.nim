@@ -106,14 +106,17 @@ proc emitInstr(be: var LirCBackend, instr: LirInstr) =
     be.emitLine(&"{v(instr.dst)} = {v(instr.src)};")
 
   # ── Arithmetic ──
-  of lirAdd, lirSub, lirMul, lirDiv, lirMod,
+  of lirDiv:
+    # Checked integer division (runtime panics on divisor 0 instead of SIGFPE).
+    be.emitLine(&"{v(instr.dst)} = bux_div_i64((int64_t)({v(instr.src)}), (int64_t)({v(instr.src2)}));")
+  of lirMod:
+    be.emitLine(&"{v(instr.dst)} = bux_mod_i64((int64_t)({v(instr.src)}), (int64_t)({v(instr.src2)}));")
+  of lirAdd, lirSub, lirMul,
      lirAnd, lirOr, lirXor, lirShl, lirShr:
     let op = case instr.kind
       of lirAdd: "+"
       of lirSub: "-"
       of lirMul: "*"
-      of lirDiv: "/"
-      of lirMod: "%"
       of lirAnd: "&"
       of lirOr: "|"
       of lirXor: "^"
@@ -628,6 +631,10 @@ proc emitModule*(be: var LirCBackend, builder: LirBuilder, module: HirModule): s
   be.emitLine("#include <stdint.h>")
   be.emitLine("#include <stdbool.h>")
   be.emitLine("#include <string.h>")
+  be.emitLine("")
+  # Checked integer div/mod (rt/runtime*.c) — always available
+  be.emitLine("extern int64_t bux_div_i64(int64_t a, int64_t b);")
+  be.emitLine("extern int64_t bux_mod_i64(int64_t a, int64_t b);")
   be.emitLine("")
 
   # Forward struct declarations

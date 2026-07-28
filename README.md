@@ -2,7 +2,7 @@
 
 ![Bux Language](bux-lang-01.jpeg)
 
-> **Status:** **v1.0.0** — language freeze. Bootstrap (`buxc`, Nim) and self-hosted (`buxc2`, Bux) both compile `.bux` → C → native binary.
+> **Status:** **v1.0.2** — language freeze (1.0) + patch fixes. Bootstrap (`buxc`, Nim) and self-hosted (`buxc2`, Bux) both compile `.bux` → C → native binary.
 > **Selfhost loop:** deterministic C codegen + ELF verified.
 > **Gradual Ownership:** `@[Checked]` borrow checker, `@[Release]` zero-cost mode, `borrow &mut` expressions.
 > **Closures:** multi-instance capturing closures via fat function pointers (`BuxFn { code, env }`) in both compilers.
@@ -316,6 +316,7 @@ make vscode           # VS Code extension (syntax + client; auto-finds tools/bux
 | [`docs/Packages.md`](docs/Packages.md) | Package manager + registry |
 | [`docs/SEMVER.md`](docs/SEMVER.md) | Semver policy (**active** post-1.0) |
 | [`docs/RELEASE_v1.0.0.md`](docs/RELEASE_v1.0.0.md) | v1.0.0 freeze notes |
+| [`docs/RELEASE_v1.0.2.md`](docs/RELEASE_v1.0.2.md) | v1.0.2 patch (stdlib grow + checked div) |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Language construct status |
 | [`docs/QUALITY_PLAN.md`](docs/QUALITY_PLAN.md) | Session history + path to v1.0 (archive) |
 | [`vscode/README.md`](vscode/README.md) | VS Code extension install & settings |

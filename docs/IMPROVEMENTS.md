@@ -1,9 +1,20 @@
 # Bux — План за подобрения (post-v1.0.0)
 
 > **Дата:** 2026-07-28  
-> **Статус:** Всички приоритетни задачи изпълнени ✅ · follow-up DX/correctness shipped
+> **Статус:** Всички приоритетни задачи изпълнени ✅ · follow-up DX/correctness shipped · **v1.0.2** patch
 
 ---
+
+## Сесия 6 — v1.0.2 runtime correctness (2026-07-28)
+
+| # | Задача | Файлове |
+|---|--------|---------|
+| S.1 | `Array_Push` grow from cap 0 (no segfault) | `lib/Array.bux` |
+| S.2 | `Map`/`StringMap`/`Set` min cap + auto-rehash (no hang / FPE) | `lib/Map.bux`, `lib/Set.bux` |
+| S.3 | Integer `/` `%` → `bux_div_i64` / `bux_mod_i64` | `bootstrap/lir_c_backend.nim`, `bootstrap/c_backend.nim`, `src/c_backend.bux` |
+| S.4 | Version **1.0.2** + golden regressions | `bootstrap/cli.nim`, `src/cli.bux`, `bux.toml`, `tests/stdlib_golden/` |
+
+**Verified:** stdlib golden PASS; `Array_New(0)+Push` OK; `Map_New(2)+5 inserts` OK; div-by-zero → `bux panic: division by zero`; examples PASS; fmt-check PASS.
 
 ## Сесия 4 — Try payload type + LSP formatting (2026-07-28)
 

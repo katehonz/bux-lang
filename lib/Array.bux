@@ -21,7 +21,11 @@ module Std::Array {
     /// Append `value`, growing capacity if needed.
     func Array_Push<T>(self: *Array<T>, value: T) {
         if self.len >= self.cap {
-            self.cap = self.cap * 2;
+            var newCap: uint = self.cap * 2;
+            if newCap == 0 {
+                newCap = 4;
+            }
+            self.cap = newCap;
             self.data = bux_realloc(self.data as *void, self.cap * sizeof(T)) as *T;
         }
         self.data[self.len] = value;
