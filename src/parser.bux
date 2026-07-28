@@ -113,7 +113,7 @@ module Parser {
             return parserAdvance(p);
         }
         let tok: LexToken = parserCurToken(p);
-        if p.diagCount < 256 {
+        if p.diagCount < 256 && p.diags != null as *ParserDiag {
             p.diags[p.diagCount] = ParserDiag {
                 line: tok.line, column: tok.column, message: msg, severity: 1
             };
@@ -123,7 +123,7 @@ module Parser {
     }
 
     func parserEmitDiag(p: *Parser, line: uint32, col: uint32, msg: String) {
-        if p.diagCount < 256 {
+        if p.diagCount < 256 && p.diags != null as *ParserDiag {
             p.diags[p.diagCount] = ParserDiag {
                 line: line, column: col, message: msg, severity: 1
             };
@@ -142,7 +142,7 @@ module Parser {
         if tok.kind == tkIdent || parserIsKeyword(tok.kind) {
             return parserAdvance(p);
         }
-        if p.diagCount < 256 {
+        if p.diagCount < 256 && p.diags != null as *ParserDiag {
             p.diags[p.diagCount] = ParserDiag {
                 line: tok.line, column: tok.column, message: msg, severity: 1
             };
@@ -2175,6 +2175,8 @@ module Parser {
             }
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
+            // Commas are also valid field separators (incl. trailing comma before '}')
+            if parserCheck(p, tkComma) { discard parserAdvance(p); continue; }
             let beforePos: int = p.pos;
             let fName: LexToken = parserExpectIdentOrKeyword(p, "expected field name");
             if fieldCount >= 250 && fieldCount <= 256 {
@@ -2274,9 +2276,10 @@ module Parser {
         d.isPublic = isPublic;
 
         // Parse path: Std::Io::PrintLine
+        // Stop before `::{` (multi-import) and `::*` (glob import)
         var pathStr: String = "";
         var segCount: int = 0;
-        while parserCheck(p, tkIdent) || (segCount > 0 && parserCheck(p, tkColonColon) && parserPeek(p, 1) != tkLBrace) {
+        while parserCheck(p, tkIdent) || (segCount > 0 && parserCheck(p, tkColonColon) && parserPeek(p, 1) != tkLBrace && parserPeek(p, 1) != tkStar) {
             if segCount > 0 {
                 discard parserAdvance(p); // ::
                 if String_Len(pathStr) > 0 {
@@ -2307,6 +2310,10 @@ module Parser {
                     names = String_Concat(names, n.text);
                     names = String_Concat(names, ",");
                     if !parserMatch(p, tkComma) { break; }
+                }
+                // Allow newlines before the closing brace (multi-line import lists)
+                while parserCheck(p, tkNewLine) {
+                    discard parserAdvance(p);
                 }
                 discard parserExpect(p, tkRBrace, "expected '}'");
                 d.useNames = names;
@@ -2366,6 +2373,8 @@ module Parser {
         var lastMethod: *Decl = null as *Decl;
         while !parserCheck(p, tkRBrace) && parserPeek(p, 0) != tkEndOfFile {
             if parserCheck(p, tkNewLine) { discard parserAdvance(p); continue; }
+            // Bodyless method signatures end with ';'
+            if parserCheck(p, tkSemicolon) { discard parserAdvance(p); continue; }
             if parserCheck(p, tkFunc) {
                 let m: *Decl = parserParseFuncDecl(p, false, false, false);
                 if methods == null as *Decl {
