@@ -30,13 +30,6 @@ module Parser {
         macroTemplateMode: bool,  // allows $(…)* in macro! bodies
     }
 
-    struct ParserDiag {
-        line: uint32,
-        column: uint32,
-        message: String,
-        severity: int,  /* 0=error (fatal), 1=warning (recoverable) */
-    }
-
     // ---------------------------------------------------------------------------
     // Token helpers
     // ---------------------------------------------------------------------------
@@ -2827,34 +2820,9 @@ module Parser {
             }
         }
 
-        /* Print fatal parser diagnostics (severity == 0) or if nothing valid was parsed */
-        if p.diagCount > 0 && mod.itemCount == 0 {
-            var di: int = 0;
-            while di < p.diagCount {
-                let d: ParserDiag = p.diags[di];
-                Print("error: ");
-                PrintLine(d.message);
-                Print("  --> <input>:");
-                PrintInt(d.line as int64);
-                Print(":");
-                PrintInt(d.column as int64);
-                PrintLine("");
-                Print("   |");
-                PrintLine("");
-                Print(" ");
-                PrintInt(d.line as int64);
-                Print(" | <source unavailable>");
-                PrintLine("");
-                Print("   | ");
-                var sp: uint32 = 0;
-                while sp < d.column - 1 && sp < 120 {
-                    Print(" ");
-                    sp = sp + 1;
-                }
-                PrintLine("^");
-                di = di + 1;
-            }
-        }
+        // Attach parser diagnostics to the module; the CLI reports them
+        mod.diagCount = p.diagCount;
+        mod.diags = p.diags;
 
         return mod;
     }

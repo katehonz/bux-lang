@@ -374,6 +374,16 @@ module Ast {
     }
 
     // ---------------------------------------------------------------------------
+    // Parser diagnostic (recoverable errors collected during parsing)
+    // ---------------------------------------------------------------------------
+    struct ParserDiag {
+        line: uint32,
+        column: uint32,
+        message: String,
+        severity: int,  /* 0=error (fatal), 1=warning (recoverable) */
+    }
+
+    // ---------------------------------------------------------------------------
     // Module — AST root
     // ---------------------------------------------------------------------------
     struct Module {
@@ -381,6 +391,8 @@ module Ast {
         path: String,            // path segments joined
         itemCount: int,
         firstItem: *Decl,
+        diagCount: int,
+        diags: *ParserDiag,
     }
 
     // ---------------------------------------------------------------------------
