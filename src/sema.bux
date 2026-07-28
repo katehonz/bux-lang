@@ -966,7 +966,7 @@ module Sema {
             if op == tkAmpAmp || op == tkPipePipe || op == tkBang { return tyBool; }
             // Arithmetic returns wider type
             if !Sema_IsNumeric(left) || !Sema_IsNumeric(right) {
-                Sema_EmitError(sema, expr.line, expr.column, "arithmetic requires numeric operands");
+                return Sema_EmitExprError(sema, expr, "arithmetic requires numeric operands");
             }
             if left == tyFloat64 || right == tyFloat64 { return tyFloat64; }
             return tyInt;

@@ -1,0 +1,5 @@
+func Main() -> int {
+    let bad: int = "a" + 1;
+    let z: int = undefined_variable;
+    return 0;
+}
