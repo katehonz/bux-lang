@@ -1,37 +1,60 @@
 {
     "name": "bux-lang",
     "displayName": "Bux Language Support",
-    "description": "Syntax highlighting, snippets, and LSP support for the Bux programming language",
-    "version": "0.1.0",
+    "description": "Syntax highlighting, snippets, and full LSP support for Bux — live error underlines, hover, go-to-def, rename, call/type hierarchy",
+    "version": "0.2.1",
     "publisher": "bux-lang",
     "license": "MIT",
     "icon": "icon.png",
+    "galleryBanner": {
+        "color": "#0d1117",
+        "theme": "dark"
+    },
     "repository": {
         "type": "git",
         "url": "https://github.com/katehonz/bux"
     },
+    "bugs": {
+        "url": "https://github.com/katehonz/bux/issues"
+    },
+    "homepage": "https://github.com/katehonz/bux",
     "engines": {
         "vscode": "^1.85.0"
     },
     "categories": [
         "Programming Languages",
         "Snippets",
-        "Linters"
+        "Linters",
+        "Other"
+    ],
+    "keywords": [
+        "bux",
+        "bux-lang",
+        "programming-language",
+        "lsp",
+        "syntax"
     ],
     "activationEvents": [
-        "onLanguage:bux"
+        "onLanguage:bux",
+        "workspaceContains:**/*.bux",
+        "workspaceContains:bux.toml"
     ],
     "main": "./out/extension.js",
     "contributes": {
         "languages": [
             {
                 "id": "bux",
-                "aliases": ["Bux", "bux"],
-                "extensions": [".bux"],
+                "aliases": [
+                    "Bux",
+                    "bux"
+                ],
+                "extensions": [
+                    ".bux"
+                ],
                 "configuration": "./language-configuration.json",
                 "icon": {
-                    "dark": "./icon.png",
-                    "light": "./icon.png"
+                    "dark": "./icons/bux-file.svg",
+                    "light": "./icons/bux-file.svg"
                 }
             }
         ],
@@ -48,30 +71,122 @@
                 "path": "./snippets/bux.json"
             }
         ],
+        "commands": [
+            {
+                "command": "bux.restartLsp",
+                "title": "Bux: Restart Language Server",
+                "category": "Bux"
+            },
+            {
+                "command": "bux.stopLsp",
+                "title": "Bux: Stop Language Server",
+                "category": "Bux"
+            },
+            {
+                "command": "bux.showOutput",
+                "title": "Bux: Show Output Channel",
+                "category": "Bux"
+            }
+        ],
+        "menus": {
+            "commandPalette": [
+                {
+                    "command": "bux.restartLsp"
+                },
+                {
+                    "command": "bux.stopLsp"
+                },
+                {
+                    "command": "bux.showOutput"
+                }
+            ]
+        },
         "configuration": {
             "title": "Bux",
             "properties": {
                 "bux.lsp.enabled": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Enable LSP server for diagnostics and autocomplete"
+                    "description": "Enable the Bux language server (diagnostics, hover, go-to-definition, rename, hierarchy)."
                 },
                 "bux.lsp.path": {
                     "type": "string",
                     "default": "bux-lsp",
-                    "description": "Path to the bux-lsp binary"
+                    "description": "Path to the bux-lsp binary. Absolute path, workspace-relative path, or command on PATH. If unset/default, the extension also searches tools/bux-lsp under workspace folders."
+                },
+                "bux-lsp.trace.server": {
+                    "type": "string",
+                    "scope": "window",
+                    "enum": [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Traces the communication between VS Code and the Bux language server."
                 }
             }
-        }
+        },
+        "configurationDefaults": {
+            "[bux]": {
+                "editor.semanticHighlighting.enabled": true,
+                "editor.tabSize": 4,
+                "editor.insertSpaces": true,
+                "editor.detectIndentation": false,
+                "editor.quickSuggestions": {
+                    "other": true,
+                    "comments": false,
+                    "strings": false
+                },
+                "editor.suggest.snippetsPreventQuickSuggestions": false,
+                "editor.wordBasedSuggestions": "off"
+            }
+        },
+        "problemMatchers": [
+            {
+                "name": "buxc",
+                "owner": "bux",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(error|warning|note):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
+        ],
+        "taskDefinitions": [
+            {
+                "type": "bux",
+                "required": [
+                    "task"
+                ],
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "bux subcommand (build, run, test, check)"
+                    }
+                }
+            }
+        ]
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
-        "watch": "tsc -watch -p ./"
+        "watch": "tsc -watch -p ./",
+        "package": "vsce package --no-dependencies 2>/dev/null || npx @vscode/vsce package --no-dependencies"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.1"
     },
     "devDependencies": {
+        "@types/node": "^20.11.0",
         "@types/vscode": "^1.85.0",
-        "typescript": "^5.0.0",
-        "vscode-languageclient": "^9.0.0"
+        "typescript": "^5.3.0"
     }
 }

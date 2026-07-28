@@ -332,16 +332,25 @@ make docs                            # writes docs/api/stdlib.md
 Scans `///` line comments (and bootstrap also accepts adjacent `/* */`) immediately
 before `func` / `struct` / `enum` / `interface` / `module` declarations.
 
-### Language Server (`bux-lsp` 0.4.0)
+### Language Server (`bux-lsp` 0.17.0)
+
+Full write-up: **[LSP.md](LSP.md)**. VS Code client: **[../vscode/README.md](../vscode/README.md)**.
+
 ```bash
 make lsp                             # → tools/bux-lsp
-nim r --path:bootstrap tools/test_lsp_locals.nim
-./tools/smoke_lsp_hover.sh
+make test-lsp                        # unit + all smoke_lsp_*.sh
+make vscode                          # compile VS Code extension (npm)
 ```
 
-Features: diagnostics (`buxc check`), hover, go-to-def, outline, completion.
-**Locals are position-sensitive** (nested scopes / shadowing). **Inferred `let` types**
-appear on hover (`let x: int · inferred`).
+| Area | Status |
+|------|--------|
+| **Error underlines** | ✅ live on open/**change**/save (in-process lex/parse/sema) |
+| Hover / definition / completion | ✅ (scoped locals + inferred `let`) |
+| References / rename | ✅ (fields, variants, methods, import paths) |
+| Document + workspace symbols | ✅ |
+| Call hierarchy / type hierarchy / implementation | ✅ |
+
+Any editor that speaks **LSP over stdio** can run `tools/bux-lsp` directly.
 
 ### Example Programs
 ```bash

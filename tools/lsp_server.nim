@@ -19,6 +19,8 @@
 # v0.15.0: type hierarchy (prepare / supertypes / subtypes via extend for).
 # v0.16.0: workspace type-impl index — hierarchy works for closed multi-file
 #          docs even when `extend T for I` has no methods (no open required).
+# v0.17.0: in-process diagnostics (lex/parse/sema) on open/change/save so the
+#          editor underlines errors in the live buffer without needing buxc.
 
 import std/[json, os, strutils, streams, tables, osproc, sequtils, sets]
 import lexer, parser, ast, sema, types, scope, source_location
@@ -1075,7 +1077,8 @@ proc enrichWithSema(doc: DocumentState) =
     discard  # sema failures must not crash the LSP
 
 # ---------------------------------------------------------------------------
-# Diagnostics — run `buxc check` when available and parse Rust-style errors
+# Diagnostics — in-process lex/parse/sema (live buffer underlines)
+# Optional: also merge `buxc check` when the binary is available.
 # ---------------------------------------------------------------------------
 
 type
@@ -1085,19 +1088,159 @@ type
     endCol: int      ## 0-based exclusive
     severity: int    ## 1=error, 2=warning
     message: string
+    source: string   ## "bux" | "buxc"
+
+proc diagSpanEnd(content: string; line0, col0: int): int =
+  ## Expand underline to cover the token under the diagnostic start column.
+  let lines = content.split("\n")
+  if line0 < 0 or line0 >= lines.len:
+    return col0 + 1
+  let l = lines[line0]
+  if col0 < 0:
+    return 1
+  if col0 >= l.len:
+    return col0 + 1
+  var endC = col0
+  let ch = l[col0]
+  if ch in {'a'..'z', 'A'..'Z', '_', '0'..'9'}:
+    while endC < l.len and l[endC] in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
+      inc endC
+  elif ch == '"':
+    inc endC
+    while endC < l.len:
+      if l[endC] == '\\' and endC + 1 < l.len:
+        endC += 2
+        continue
+      if l[endC] == '"':
+        inc endC
+        break
+      inc endC
+  elif ch == '`':
+    inc endC
+    while endC < l.len and l[endC] != '`':
+      inc endC
+    if endC < l.len:
+      inc endC
+  elif ch == '\'':
+    inc endC
+    while endC < l.len:
+      if l[endC] == '\\' and endC + 1 < l.len:
+        endC += 2
+        continue
+      if l[endC] == '\'':
+        inc endC
+        break
+      inc endC
+  else:
+    # Operators / punctuation — underline at least one character
+    endC = col0 + 1
+  if endC <= col0:
+    endC = col0 + 1
+  return endC
+
+proc locMatchesFile(locFile, sourcePath: string): bool =
+  ## True if a diagnostic location belongs to the open buffer.
+  if locFile.len == 0 or sourcePath.len == 0:
+    return true
+  if locFile == sourcePath:
+    return true
+  try:
+    if locFile.absolutePath == sourcePath.absolutePath:
+      return true
+  except CatchableError:
+    discard
+  return locFile.extractFilename == sourcePath.extractFilename
+
+proc makeDiag(content: string; line1, col1: int; severity: int; message, source: string): LspDiag =
+  let line0 = max(0, line1 - 1)
+  let col0 = max(0, col1 - 1)
+  LspDiag(
+    line: line0,
+    col: col0,
+    endCol: diagSpanEnd(content, line0, col0),
+    severity: severity,
+    message: message,
+    source: source
+  )
+
+proc collectInProcessDiagnostics(doc: DocumentState): seq[LspDiag] =
+  ## Lex / parse / type-check the **buffer content** so squiggles match the editor.
+  result = @[]
+  if doc.content.len == 0:
+    return
+  let path = uriToPath(doc.uri)
+  try:
+    let lexRes = tokenize(doc.content, path)
+    for d in lexRes.diagnostics:
+      let sev = if d.severity == ldsError: 1 else: 2
+      let line1 = int(d.loc.line)
+      let col1 = int(d.loc.column)
+      result.add(makeDiag(doc.content, line1, col1, sev, d.message, "bux"))
+    if lexRes.hasErrors:
+      return
+
+    let parseRes = parse(lexRes.tokens, path)
+    for d in parseRes.diagnostics:
+      let sev = if d.severity == pdsError: 1 else: 2
+      result.add(makeDiag(doc.content, int(d.loc.line), int(d.loc.column),
+                          sev, d.message, "bux"))
+    # Still run sema if parse only had warnings; hard parse errors → stop
+    var hardParse = false
+    for d in parseRes.diagnostics:
+      if d.severity == pdsError:
+        hardParse = true
+        break
+    if hardParse:
+      return
+
+    ensureStdlibCached()
+    if cachedStdlibDecls.len == 0:
+      let tryRoot =
+        if path.len > 0: path.parentDir.parentDir
+        else: rootPath
+      cachedStdlibDir = findStdlibDirLocal(tryRoot)
+      if cachedStdlibDir.len > 0:
+        cachedStdlibDecls = loadStdlibDecls(cachedStdlibDir)
+
+    var unified = newModule("lsp")
+    for d in cachedStdlibDecls:
+      unified.items.add(d)
+    for d in parseRes.module.items:
+      if d.kind == dkModule:
+        for sub in d.declModuleItems:
+          unified.items.add(sub)
+      else:
+        unified.items.add(d)
+
+    let (semaRes, _) = analyzeFull(unified)
+    for d in semaRes.diagnostics:
+      if not locMatchesFile(d.loc.file, path):
+        continue
+      let sev = if d.severity == sdsError: 1 else: 2
+      result.add(makeDiag(doc.content, int(d.loc.line), int(d.loc.column),
+                          sev, d.message, "bux"))
+  except CatchableError:
+    discard
 
 proc findBuxc(): string =
-  ## Prefer buxc next to the LSP binary, then PATH.
-  let beside = getAppDir() / "buxc"
-  if fileExists(beside): return beside
-  let beside2 = getCurrentDir() / "buxc"
-  if fileExists(beside2): return beside2
+  ## Prefer buxc next to the LSP binary, repo root (tools/..), cwd, then PATH.
+  let candidates = @[
+    getAppDir() / "buxc",
+    getAppDir() / ".." / "buxc",
+    getAppDir() / ".." / "buxc_debug",
+    getCurrentDir() / "buxc",
+    getCurrentDir() / ".." / "buxc",
+  ]
+  for c in candidates:
+    if fileExists(c):
+      return c.absolutePath
   result = findExe("buxc")
 
-proc parseBuxcDiagnostics(output, sourcePath: string): seq[LspDiag] =
+proc parseBuxcDiagnostics(output, sourcePath, content: string): seq[LspDiag] =
   ## Parse lines like:
   ##   error: cannot assign String to int
   ##     --> /path/Main.bux:4:18
+  ##       |                  ^^^^^^
   result = @[]
   let lines = output.splitLines()
   var i = 0
@@ -1123,61 +1266,77 @@ proc parseBuxcDiagnostics(output, sourcePath: string): seq[LspDiag] =
 
     var fileLine = 1
     var fileCol = 1
+    var pathPart = ""
     if i + 1 < lines.len and lines[i + 1].strip().startsWith("-->"):
       let locPart = lines[i + 1].strip()[3..^1].strip()
       # path:line:col
       let parts = locPart.rsplit(':', maxsplit = 2)
       if parts.len >= 3:
+        pathPart = parts[0]
         try:
           fileLine = parseInt(parts[^2])
           fileCol = parseInt(parts[^1])
         except: discard
-      # Optionally filter to the open document
-      let pathPart = if parts.len >= 3: parts[0] else: ""
       if sourcePath.len > 0 and pathPart.len > 0:
         if not pathPart.endsWith(sourcePath.extractFilename) and
-           pathPart != sourcePath:
-          i += 1
+           pathPart != sourcePath and
+           not locMatchesFile(pathPart, sourcePath):
+          inc i
           continue
-    # Estimate end column from message quote or single caret width
-    var endCol = fileCol
-    let q = msg.find('\'')
-    if q >= 0:
-      let q2 = msg.find('\'', q + 1)
-      if q2 > q + 1:
-        endCol = fileCol + (q2 - q - 1)
-    if endCol <= fileCol:
-      endCol = fileCol + 1
+
+    let line0 = max(0, fileLine - 1)
+    let col0 = max(0, fileCol - 1)
+    var endCol = diagSpanEnd(content, line0, col0)
+
+    # Prefer caret underline from following lines: "    |    ^^^^^^"
+    var j = i + 2
+    while j < lines.len and j <= i + 6:
+      let cl = lines[j]
+      let caret = cl.find('^')
+      if caret >= 0 and cl.strip().startsWith("|"):
+        # Map caret columns relative to the pipe-aligned source display
+        var last = caret
+        while last < cl.len and cl[last] == '^':
+          inc last
+        # Display is usually "    | <source>" — find source start after "| "
+        let pipe = cl.find('|')
+        if pipe >= 0:
+          let srcStart = pipe + 2
+          let c0 = max(0, caret - srcStart)
+          let c1 = max(c0 + 1, last - srcStart)
+          endCol = c1
+          # also fix start if compiler pointed mid-token
+          # keep fileCol from --> as start; only extend end
+          discard c0
+        break
+      if cl.strip().startsWith("= help:") or cl.strip().startsWith("error:") or
+         cl.strip().startsWith("warning:"):
+        break
+      inc j
+
+    if endCol <= col0:
+      endCol = col0 + 1
 
     result.add(LspDiag(
-      line: max(0, fileLine - 1),
-      col: max(0, fileCol - 1),
-      endCol: max(0, endCol - 1),
+      line: line0,
+      col: col0,
+      endCol: endCol,
       severity: sev,
-      message: msg
+      message: msg,
+      source: "buxc"
     ))
     inc i
 
 proc runBuxcDiagnostics(sourcePath, content: string): seq[LspDiag] =
+  ## Optional project check. Always feeds **buffer content** via a temp package
+  ## so unsaved edits still produce squiggles.
   result = @[]
   let buxc = findBuxc()
   if buxc.len == 0:
     return
 
-  # Prefer package root if this file lives under src/
-  var projectDir = sourcePath.parentDir
-  if projectDir.endsWith("src"):
-    projectDir = projectDir.parentDir
-  let toml = projectDir / "bux.toml"
-
-  var cmd: string
-  var workDir: string
-  if fileExists(toml):
-    workDir = projectDir
-    cmd = buxc & " check --color off"
-  else:
-    # Temp package for free-standing buffers
-    let tmp = getTempDir() / "bux-lsp-" & $getCurrentProcessId()
+  let tmp = getTempDir() / "bux-lsp-diag-" & $getCurrentProcessId()
+  try:
     createDir(tmp / "src")
     writeFile(tmp / "bux.toml", """[Package]
 Name = "lsp_tmp"
@@ -1186,15 +1345,27 @@ Type = "bin"
 [Build]
 Output = "Bin"
 """)
-    writeFile(tmp / "src" / "Main.bux", content)
-    workDir = tmp
-    cmd = buxc & " check --color off"
-
-  try:
-    let (output, _) = execCmdEx(cmd, workingDir = workDir)
-    result = parseBuxcDiagnostics(output, sourcePath)
+    let mainPath = tmp / "src" / "Main.bux"
+    writeFile(mainPath, content)
+    let (output, _) = execCmdEx(buxc & " check --color off", workingDir = tmp)
+    # Map diagnostics from temp Main.bux back onto the open URI path filter
+    result = parseBuxcDiagnostics(output, mainPath, content)
   except CatchableError:
     discard
+
+proc diagKey(d: LspDiag): string =
+  $d.line & ":" & $d.col & ":" & $d.severity & ":" & d.message
+
+proc mergeDiagnostics(primary, extra: seq[LspDiag]): seq[LspDiag] =
+  result = primary
+  var seen = initHashSet[string]()
+  for d in primary:
+    seen.incl(diagKey(d))
+  for d in extra:
+    let k = diagKey(d)
+    if k notin seen:
+      seen.incl(k)
+      result.add(d)
 
 proc publishDiagnostics(stream: FileStream, uri: string, diags: seq[LspDiag] = @[]) =
   var arr = newJArray()
@@ -1205,7 +1376,7 @@ proc publishDiagnostics(stream: FileStream, uri: string, diags: seq[LspDiag] = @
         "end": {"line": d.line, "character": d.endCol}
       },
       "severity": d.severity,
-      "source": "buxc",
+      "source": d.source,
       "message": d.message
     })
   sendNotification(stream, "textDocument/publishDiagnostics", %*{
@@ -1213,7 +1384,7 @@ proc publishDiagnostics(stream: FileStream, uri: string, diags: seq[LspDiag] = @
     "diagnostics": arr
   })
 
-proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
+proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState; runBuxc = true) =
   let path = uriToPath(doc.uri)
   let updated = analyzeFile(path, doc.content)
   doc.symbols = updated.symbols
@@ -1224,7 +1395,10 @@ proc analyzeAndPublishDiagnostics(stream: FileStream, doc: DocumentState) =
   doc.importPaths = updated.importPaths
   # Keep / refresh real types for hover (does not replace lightweight outline)
   enrichWithSema(doc)
-  let diags = runBuxcDiagnostics(path, doc.content)
+  # Primary: in-process diags from the live buffer (works without buxc on PATH)
+  var diags = collectInProcessDiagnostics(doc)
+  if runBuxc:
+    diags = mergeDiagnostics(diags, runBuxcDiagnostics(path, doc.content))
   publishDiagnostics(stream, doc.uri, diags)
 
 proc scanWorkspace(dir: string, depth = 0) =
@@ -3198,7 +3372,7 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
         "implementationProvider": true,
         "typeHierarchyProvider": true
       },
-      "serverInfo": {"name": "bux-lsp", "version": "0.16.0"}
+      "serverInfo": {"name": "bux-lsp", "version": "0.17.0"}
     })
     if paramsNode.hasKey("rootPath") and paramsNode["rootPath"].kind != JNull:
       rootPath = paramsNode["rootPath"].getStr()
@@ -3229,8 +3403,8 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
     doc.content = content
     if td.hasKey("version"):
       doc.version = td["version"].getInt()
-    # Lightweight scan + sema enrich + buxc diagnostics
-    analyzeAndPublishDiagnostics(stream, doc)
+    # Symbols + hover types + live underlines (in-process; optional buxc)
+    analyzeAndPublishDiagnostics(stream, doc, runBuxc = true)
   
   of "textDocument/didChange":
     let td = paramsNode["textDocument"]
@@ -3241,29 +3415,15 @@ proc handleMessage(stream: FileStream, msg: JsonNode) =
       doc.content = changes[changes.len - 1]["text"].getStr()
     if td.hasKey("version"):
       doc.version = td["version"].getInt()
-    # Fast path: lightweight symbols only; keep previous typeIndex until save/hover refresh
-    let updated = analyzeFile(uriToPath(uri), doc.content)
-    doc.symbols = updated.symbols
-    doc.ordered = updated.ordered
-    doc.members = updated.members
-    doc.ifaceMethods = updated.ifaceMethods
-    doc.impls = updated.impls
-    doc.importPaths = updated.importPaths
-    # Re-apply typeIndex details onto matching names (don't drop sema types mid-edit)
-    for name, detail in doc.typeIndex.pairs:
-      if doc.symbols.hasKey(name):
-        var info = doc.symbols[name]
-        info.detail = detail
-        info.fromSema = true
-        if doc.kindIndex.hasKey(name):
-          info.kind = doc.kindIndex[name]
-        doc.symbols[name] = info
+    # Re-analyze + publish squiggles on every edit (buffer content, not disk).
+    # Skip spawning buxc here — in-process lex/parse/sema is enough while typing.
+    analyzeAndPublishDiagnostics(stream, doc, runBuxc = false)
 
   of "textDocument/didSave":
     let td = paramsNode["textDocument"]
     let uri = td["uri"].getStr()
     discard getDoc(uri)
-    analyzeAndPublishDiagnostics(stream, getDoc(uri))
+    analyzeAndPublishDiagnostics(stream, getDoc(uri), runBuxc = true)
 
   of "textDocument/completion":
     handleCompletion(stream, id, paramsNode)

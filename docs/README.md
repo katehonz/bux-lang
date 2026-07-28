@@ -7,6 +7,7 @@
 | [LanguageRef.md](LanguageRef.md) | **Normative** language specification |
 | [Stdlib.md](Stdlib.md) | Standard library overview / API tables |
 | [BuildAndTest.md](BuildAndTest.md) | Build, test, cross, static, containers |
+| [LSP.md](LSP.md) | **Language server** (`bux-lsp` 0.17) — live error underlines + editor setup |
 | [Packages.md](Packages.md) | Manifests, registry, lockfiles |
 | [SEMVER.md](SEMVER.md) | Versioning policy (active after 1.0) |
 | [RELEASE_v1.0.0.md](RELEASE_v1.0.0.md) | v1.0.0 release / freeze notes |

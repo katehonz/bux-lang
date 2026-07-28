@@ -9,11 +9,23 @@
         ],
         "description": "Main entry point function"
     },
+    "Hello World": {
+        "prefix": "hello",
+        "body": [
+            "import Std::Io::{PrintLine};",
+            "",
+            "func Main() -> int {",
+            "    PrintLine(\"${1:Hello, Bux!}\");",
+            "    return 0;",
+            "}"
+        ],
+        "description": "Minimal Hello World program"
+    },
     "Function": {
         "prefix": "func",
         "body": [
             "func ${1:Name}(${2:params}) -> ${3:void} {",
-            "    $4",
+            "    $0",
             "}"
         ],
         "description": "Function declaration"
@@ -22,10 +34,19 @@
         "prefix": "afunc",
         "body": [
             "async func ${1:Name}(${2:params}) -> ${3:void} {",
-            "    $4",
+            "    $0",
             "}"
         ],
         "description": "Async function declaration"
+    },
+    "Generic function": {
+        "prefix": "gfunc",
+        "body": [
+            "func ${1:Name}<${2:T}>(${3:param}: ${2:T}) -> ${2:T} {",
+            "    $0",
+            "}"
+        ],
+        "description": "Generic function"
     },
     "Variable (let)": {
         "prefix": "let",
@@ -40,6 +61,13 @@
             "var ${1:name}: ${2:Type} = ${3:value};"
         ],
         "description": "Mutable variable"
+    },
+    "Const": {
+        "prefix": "const",
+        "body": [
+            "const ${1:NAME}: ${2:Type} = ${3:value};"
+        ],
+        "description": "Constant declaration"
     },
     "Struct": {
         "prefix": "struct",
@@ -60,11 +88,52 @@
         ],
         "description": "Enum declaration"
     },
+    "Generic enum": {
+        "prefix": "genum",
+        "body": [
+            "enum ${1:Name}<${2:T}> {",
+            "    ${3:Some}(${2:T}),",
+            "    ${4:None},",
+            "}"
+        ],
+        "description": "Generic enum declaration"
+    },
+    "Interface": {
+        "prefix": "interface",
+        "body": [
+            "interface ${1:Name} {",
+            "    func ${2:Method}(${3:self}) -> ${4:void};",
+            "}"
+        ],
+        "description": "Interface declaration"
+    },
+    "Extend methods": {
+        "prefix": "extend",
+        "body": [
+            "extend ${1:Type} {",
+            "    func ${2:Method}(self) -> ${3:void} {",
+            "        $0",
+            "    }",
+            "}"
+        ],
+        "description": "Extend block for inherent methods"
+    },
+    "Extend for interface": {
+        "prefix": "extendfor",
+        "body": [
+            "extend ${1:Type} for ${2:Interface} {",
+            "    func ${3:Method}(self) -> ${4:void} {",
+            "        $0",
+            "    }",
+            "}"
+        ],
+        "description": "Implement interface for type"
+    },
     "If statement": {
         "prefix": "if",
         "body": [
             "if ${1:condition} {",
-            "    ${2:body}",
+            "    $0",
             "}"
         ],
         "description": "If statement"
@@ -75,7 +144,7 @@
             "if ${1:condition} {",
             "    ${2:body}",
             "} else {",
-            "    ${3:elseBody}",
+            "    $0",
             "}"
         ],
         "description": "If-else statement"
@@ -84,19 +153,28 @@
         "prefix": "while",
         "body": [
             "while ${1:condition} {",
-            "    ${2:body}",
+            "    $0",
             "}"
         ],
         "description": "While loop"
     },
-    "For loop": {
+    "For-in loop": {
         "prefix": "for",
         "body": [
             "for ${1:item} in ${2:iterable} {",
-            "    ${3:body}",
+            "    $0",
             "}"
         ],
         "description": "For-in loop"
+    },
+    "Loop": {
+        "prefix": "loop",
+        "body": [
+            "loop {",
+            "    $0",
+            "}"
+        ],
+        "description": "Infinite loop"
     },
     "Match": {
         "prefix": "match",
@@ -108,40 +186,61 @@
         ],
         "description": "Pattern match expression"
     },
+    "Switch": {
+        "prefix": "switch",
+        "body": [
+            "switch ${1:expr} {",
+            "    case ${2:value}:",
+            "        $0",
+            "        break;",
+            "    default:",
+            "        break;",
+            "}"
+        ],
+        "description": "Switch statement"
+    },
     "Import": {
         "prefix": "import",
         "body": [
-            "import Std::${1:Module}::{${2:items}};"
+            "import Std::${1:Io}::{${2:PrintLine}};"
         ],
-        "description": "Import statement"
+        "description": "Import from Std"
     },
     "Module": {
         "prefix": "module",
         "body": [
             "module ${1:Name} {",
-            "${2:body}",
+            "    $0",
             "}"
         ],
         "description": "Module declaration"
     },
-    "Extend": {
-        "prefix": "extend",
-        "body": [
-            "extend ${1:Type} {",
-            "    ${2:methods}",
-            "}"
-        ],
-        "description": "Extend block for methods"
-    },
-    "@Checked": {
+    "@Checked function": {
         "prefix": "checked",
         "body": [
             "@[Checked]",
             "func ${1:Name}(${2:params}) -> ${3:void} {",
-            "    ${4:body}",
+            "    $0",
             "}"
         ],
-        "description": "Checked function with borrow checker enabled"
+        "description": "Checked function with borrow checker"
+    },
+    "@Release function": {
+        "prefix": "release",
+        "body": [
+            "@[Release]",
+            "func ${1:Name}(${2:params}) -> ${3:void} {",
+            "    $0",
+            "}"
+        ],
+        "description": "Release (unchecked) function"
+    },
+    "Defer": {
+        "prefix": "defer",
+        "body": [
+            "defer ${1:cleanup};"
+        ],
+        "description": "Defer cleanup"
     },
     "PrintLine": {
         "prefix": "pl",
@@ -150,13 +249,56 @@
         ],
         "description": "Print with newline"
     },
-    "Generic function": {
-        "prefix": "gfunc",
+    "Interpolated string": {
+        "prefix": "fstr",
         "body": [
-            "func ${1:Name}<${2:T}>(${3:param}: ${2:T}) -> ${2:T} {",
-            "    ${4:body}",
+            "f\"${1:Hello, }{${2:name}}\""
+        ],
+        "description": "Interpolated f-string"
+    },
+    "Macro definition": {
+        "prefix": "macro",
+        "body": [
+            "macro! ${1:name} {",
+            "    (\\$${2:x}:expr) => {",
+            "        $0",
+            "    }",
             "}"
         ],
-        "description": "Generic function"
+        "description": "Declarative macro! definition"
+    },
+    "Test assert": {
+        "prefix": "tassert",
+        "body": [
+            "Test_AssertEq${1:Int}(${2:got}, ${3:want});"
+        ],
+        "description": "Test equality assertion"
+    },
+    "Spawn task": {
+        "prefix": "spawn",
+        "body": [
+            "let ${1:handle}: *void = spawn ${2:Worker}(${3:args});"
+        ],
+        "description": "Spawn green-thread task"
+    },
+    "Result Ok/Err match": {
+        "prefix": "resultmatch",
+        "body": [
+            "match ${1:result} {",
+            "    Ok(${2:value}) => ${3:value},",
+            "    Err(${4:err}) => ${5:/* handle */},",
+            "}"
+        ],
+        "description": "Match on Result"
+    },
+    "Option Some/None match": {
+        "prefix": "optmatch",
+        "body": [
+            "match ${1:opt} {",
+            "    Some(${2:value}) => ${3:value},",
+            "    None => ${4:/* handle */},",
+            "}"
+        ],
+        "description": "Match on Option"
     }
 }

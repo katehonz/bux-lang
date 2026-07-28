@@ -10,7 +10,7 @@ EXAMPLES := hello fibonacci factorial structs enums methods algebraic_enums gene
 # Platform smoke (macOS CI): full EXAMPLES still runs on Linux.
 EXAMPLES_SMOKE := hello ownership ownership_release strings map move_field move_field_partial move_field_remaining move_field_nested move_field_ptr move_cross_fn c_precedence macro_twice macro_repeat macro_nested macro_hygiene macro_unhygienic macro_stmt_pat macro_tt macro_tt_raw ctfe_crc
 
-.PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit test-linux-targets ensure-buxc
+.PHONY: all build dev debug test clean clean-all test-examples test-examples-smoke selfhost test-golden test-errors test-stdlib selfhost-loop lsp vscode vscode-package fmt-check docs bench test-apps test-dwarf test-selfhost-smoke test-unit test-linux-targets ensure-buxc
 
 all: build
 
@@ -189,6 +189,19 @@ lsp: tools/bux-lsp
 tools/bux-lsp: tools/lsp_server.nim bootstrap/*.nim
 	cd tools && $(NIM) c -d:release --opt:size --path:../bootstrap -o:bux-lsp lsp_server.nim
 
+# VS Code extension (syntax + LSP client). Requires Node.js/npm.
+.PHONY: vscode vscode-package
+vscode: lsp
+	@cd vscode && npm install --silent && npm run compile
+	@echo "VS Code extension compiled → vscode/out/"
+	@echo "  Dev: open vscode/ in VS Code and press F5"
+	@echo "  Or:  code --install-extension \$$(pwd)/vscode  (after npm i && compile)"
+	@echo "  LSP: tools/bux-lsp (auto-discovered)"
+
+vscode-package: vscode
+	@cd vscode && npx --yes @vscode/vsce package --no-dependencies
+	@echo "VSIX: vscode/bux-lang-$$(node -p \"require('./vscode/package.json').version\").vsix"
+
 .PHONY: test-lsp
 test-lsp: lsp
 	@echo "=== LSP unit (locals / inference) ==="
@@ -196,6 +209,9 @@ test-lsp: lsp
 	@echo "=== LSP hover smoke ==="
 	@chmod +x tools/smoke_lsp_hover.sh
 	@tools/smoke_lsp_hover.sh
+	@echo "=== LSP diagnostics (error underlines) smoke ==="
+	@chmod +x tools/smoke_lsp_diagnostics.sh
+	@tools/smoke_lsp_diagnostics.sh
 	@echo "=== LSP references / rename smoke ==="
 	@chmod +x tools/smoke_lsp_rename.sh
 	@tools/smoke_lsp_rename.sh

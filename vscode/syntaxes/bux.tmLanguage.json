@@ -3,33 +3,19 @@
     "name": "Bux",
     "scopeName": "source.bux",
     "patterns": [
-        {
-            "include": "#comments"
-        },
-        {
-            "include": "#strings"
-        },
-        {
-            "include": "#keywords"
-        },
-        {
-            "include": "#types"
-        },
-        {
-            "include": "#functions"
-        },
-        {
-            "include": "#constants"
-        },
-        {
-            "include": "#operators"
-        },
-        {
-            "include": "#numbers"
-        },
-        {
-            "include": "#attributes"
-        }
+        { "include": "#comments" },
+        { "include": "#attributes" },
+        { "include": "#macros" },
+        { "include": "#strings" },
+        { "include": "#chars" },
+        { "include": "#keywords" },
+        { "include": "#types" },
+        { "include": "#constants" },
+        { "include": "#lifetimes" },
+        { "include": "#functions" },
+        { "include": "#paths" },
+        { "include": "#numbers" },
+        { "include": "#operators" }
     ],
     "repository": {
         "comments": {
@@ -37,20 +23,129 @@
                 {
                     "name": "comment.block.bux",
                     "begin": "/\\*",
-                    "end": "\\*/"
+                    "end": "\\*/",
+                    "patterns": [
+                        { "include": "#comments" }
+                    ]
                 },
                 {
-                    "name": "comment.line.bux",
+                    "name": "comment.line.double-slash.bux",
                     "match": "//.*$"
+                }
+            ]
+        },
+        "attributes": {
+            "patterns": [
+                {
+                    "name": "meta.attribute.bux",
+                    "begin": "@\\[",
+                    "end": "\\]",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.attribute.bux" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.attribute.bux" }
+                    },
+                    "patterns": [
+                        {
+                            "name": "storage.modifier.attribute.bux",
+                            "match": "\\b(Checked|Release|Shared|Import|Drop)\\b"
+                        }
+                    ]
+                },
+                {
+                    "name": "storage.modifier.attribute.bux",
+                    "match": "@(Checked|Release|Shared|Import|Drop)\\b"
+                }
+            ]
+        },
+        "macros": {
+            "patterns": [
+                {
+                    "name": "meta.macro.definition.bux",
+                    "begin": "\\b(macro!)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+                    "beginCaptures": {
+                        "1": { "name": "keyword.declaration.macro.bux" },
+                        "2": { "name": "entity.name.function.macro.bux" }
+                    },
+                    "end": "(?<=\\})",
+                    "patterns": [
+                        { "include": "$self" }
+                    ]
+                },
+                {
+                    "name": "meta.macro.invocation.bux",
+                    "begin": "\\b([A-Za-z_][A-Za-z0-9_]*!)\\s*(\\()",
+                    "beginCaptures": {
+                        "1": { "name": "entity.name.function.macro.bux" },
+                        "2": { "name": "punctuation.section.parens.begin.bux" }
+                    },
+                    "end": "\\)",
+                    "endCaptures": {
+                        "0": { "name": "punctuation.section.parens.end.bux" }
+                    },
+                    "patterns": [
+                        { "include": "$self" }
+                    ]
+                },
+                {
+                    "name": "variable.other.macro.fragment.bux",
+                    "match": "\\$([A-Za-z_][A-Za-z0-9_]*)"
+                },
+                {
+                    "name": "keyword.operator.macro.repeat.bux",
+                    "match": "\\$\\(|\\)\\s*[*+?]"
                 }
             ]
         },
         "strings": {
             "patterns": [
                 {
-                    "name": "string.quoted.double.bux",
-                    "begin": "\"",
+                    "name": "string.interpolated.bux",
+                    "begin": "f\"",
                     "end": "\"",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.string.begin.bux" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.string.end.bux" }
+                    },
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.bux",
+                            "match": "\\\\[ntr\\\\\"'{}]|\\\\u\\{[0-9a-fA-F]+\\}|\\\\x[0-9a-fA-F]{2}"
+                        },
+                        {
+                            "name": "meta.interpolation.bux",
+                            "begin": "\\{",
+                            "end": "\\}",
+                            "beginCaptures": {
+                                "0": { "name": "punctuation.section.embedded.begin.bux" }
+                            },
+                            "endCaptures": {
+                                "0": { "name": "punctuation.section.embedded.end.bux" }
+                            },
+                            "patterns": [
+                                { "include": "#keywords" },
+                                { "include": "#types" },
+                                { "include": "#constants" },
+                                { "include": "#numbers" },
+                                { "include": "#functions" },
+                                { "include": "#operators" }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.double.cstr.bux",
+                    "begin": "c(8|16|32)\"",
+                    "end": "\"",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.string.begin.bux" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.string.end.bux" }
+                    },
                     "patterns": [
                         {
                             "name": "constant.character.escape.bux",
@@ -59,9 +154,40 @@
                     ]
                 },
                 {
-                    "name": "string.quoted.backtick.bux",
+                    "name": "string.quoted.double.bux",
+                    "begin": "\"",
+                    "end": "\"",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.string.begin.bux" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.string.end.bux" }
+                    },
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.bux",
+                            "match": "\\\\[ntr\\\\\"']|\\\\u\\{[0-9a-fA-F]+\\}|\\\\x[0-9a-fA-F]{2}|\\\\."
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.raw.bux",
                     "begin": "`",
-                    "end": "`"
+                    "end": "`",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.string.begin.bux" }
+                    },
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.string.end.bux" }
+                    }
+                }
+            ]
+        },
+        "chars": {
+            "patterns": [
+                {
+                    "name": "string.quoted.single.bux",
+                    "match": "c?(8|16|32)?'(\\\\.|[^'\\\\])'"
                 }
             ]
         },
@@ -69,55 +195,87 @@
             "patterns": [
                 {
                     "name": "keyword.control.bux",
-                    "match": "\\b(if|else|while|for|do|loop|in|break|continue|return|match|case|default|spawn|async|await|try|catch|throw|discard)\\b"
+                    "match": "\\b(if|else|while|for|do|loop|in|break|continue|return|match|switch|case|default|spawn|async|await|try|catch|throw|discard|defer)\\b"
                 },
                 {
                     "name": "keyword.declaration.bux",
-                    "match": "\\b(func|var|let|const|type|struct|enum|union|interface|extend|module|import|extern|pub)\\b"
+                    "match": "\\b(func|var|let|const|type|struct|enum|union|interface|extend|module|import|extern|pub|macro)\\b"
                 },
                 {
-                    "name": "keyword.operator.bux",
+                    "name": "keyword.operator.word.bux",
                     "match": "\\b(as|is|sizeof|comptime|static_assert|dyn)\\b"
                 },
                 {
                     "name": "keyword.ownership.bux",
-                    "match": "\\b(own|mut|borrow)\\b"
-                },
-                {
-                    "name": "storage.modifier.bux",
-                    "match": "@\\[(Checked|Shared|Import)\\]"
+                    "match": "\\b(own|mut|borrow|checked)\\b"
                 }
             ]
         },
         "types": {
             "patterns": [
                 {
-                    "name": "support.type.bux",
-                    "match": "\\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|char8|char32|String|void)\\b"
+                    "name": "support.type.primitive.bux",
+                    "match": "\\b(int|int8|int16|int32|int64|uint|uint8|uint16|uint32|uint64|float32|float64|bool|char8|char16|char32|String|void)\\b"
+                },
+                {
+                    "name": "support.type.stdlib.bux",
+                    "match": "\\b(Result|Option|Array|Map|Set|Slice|Channel|TaskHandle)\\b"
                 },
                 {
                     "name": "entity.name.type.bux",
-                    "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
-                }
-            ]
-        },
-        "functions": {
-            "patterns": [
-                {
-                    "name": "entity.name.function.bux",
-                    "match": "\\b([a-z_][a-zA-Z0-9_]*)(?=\\s*\\()"
+                    "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
                 }
             ]
         },
         "constants": {
             "patterns": [
                 {
-                    "name": "constant.language.bux",
-                    "match": "\\b(true|false|null)\\b"
+                    "name": "constant.language.boolean.bux",
+                    "match": "\\b(true|false)\\b"
                 },
                 {
-                    "name": "constant.numeric.bux",
-                    "match": "\\b(true|false|null|self|super)\\b"
+                    "name": "constant.language.null.bux",
+                    "match": "\\bnull\\b"
+                },
+                {
+                    "name": "variable.language.bux",
+                    "match": "\\b(self|super)\\b"
+                }
+            ]
+        },
+        "lifetimes": {
+            "patterns": [
+                {
+                    "name": "storage.modifier.lifetime.bux",
+                    "match": "'[A-Za-z_][A-Za-z0-9_]*\\b"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "name": "meta.function.declaration.bux",
+                    "match": "\\b(func|async\\s+func)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+                    "captures": {
+                        "1": { "name": "keyword.declaration.bux" },
+                        "2": { "name": "entity.name.function.bux" }
+                    }
+                },
+                {
+                    "name": "entity.name.function.bux",
+                    "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*[<(])"
+                }
+            ]
+        },
+        "paths": {
+            "patterns": [
+                {
+                    "name": "meta.path.bux",
+                    "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(::)",
+                    "captures": {
+                        "1": { "name": "entity.name.namespace.bux" },
+                        "2": { "name": "punctuation.accessor.bux" }
+                    }
                 }
             ]
         },
@@ -125,31 +283,67 @@
             "patterns": [
                 {
                     "name": "constant.numeric.float.bux",
-                    "match": "\\b[0-9]+\\.[0-9]+(?:[eE][+-]?[0-9]+)?\\b"
+                    "match": "\\b[0-9]+\\.[0-9]+(?:[eE][+-]?[0-9]+)?(?:f32|f64)?\\b"
                 },
                 {
                     "name": "constant.numeric.hex.bux",
-                    "match": "\\b0[xX][0-9a-fA-F]+\\b"
+                    "match": "\\b0[xX][0-9a-fA-F_]+(?:[iu](?:8|16|32|64)?)?\\b"
                 },
                 {
-                    "name": "constant.numeric.bux",
-                    "match": "\\b[0-9]+\\b"
+                    "name": "constant.numeric.octal.bux",
+                    "match": "\\b0[oO][0-7_]+(?:[iu](?:8|16|32|64)?)?\\b"
+                },
+                {
+                    "name": "constant.numeric.binary.bux",
+                    "match": "\\b0[bB][01_]+(?:[iu](?:8|16|32|64)?)?\\b"
+                },
+                {
+                    "name": "constant.numeric.integer.bux",
+                    "match": "\\b[0-9][0-9_]*(?:[iu](?:8|16|32|64)?|f32|f64)?\\b"
                 }
             ]
         },
         "operators": {
             "patterns": [
                 {
-                    "name": "keyword.operator.bux",
-                    "match": "->|=>|==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!&|^~@]"
-                }
-            ]
-        },
-        "attributes": {
-            "patterns": [
+                    "name": "keyword.operator.arrow.bux",
+                    "match": "->|=>"
+                },
                 {
-                    "name": "storage.modifier.bux",
-                    "match": "@(Checked|Shared|Import)"
+                    "name": "keyword.operator.range.bux",
+                    "match": "\\.\\.=|\\.\\.\\.|\\.\\."
+                },
+                {
+                    "name": "keyword.operator.comparison.bux",
+                    "match": "==|!=|<=|>=|<|>"
+                },
+                {
+                    "name": "keyword.operator.logical.bux",
+                    "match": "&&|\\|\\||!"
+                },
+                {
+                    "name": "keyword.operator.assignment.bux",
+                    "match": "\\+=|-=|\\*=|/=|%=|=|:=|\\*\\*="
+                },
+                {
+                    "name": "keyword.operator.arithmetic.bux",
+                    "match": "\\*\\*|[+\\-*/%]"
+                },
+                {
+                    "name": "keyword.operator.bitwise.bux",
+                    "match": "&|\\||\\^|~|<<|>>"
+                },
+                {
+                    "name": "keyword.operator.try.bux",
+                    "match": "\\?"
+                },
+                {
+                    "name": "keyword.operator.borrow.bux",
+                    "match": "&mut\\b|&"
+                },
+                {
+                    "name": "punctuation.accessor.bux",
+                    "match": "::|\\."
                 }
             ]
         }

@@ -247,7 +247,7 @@ func Main() -> int {
 | **Package Manager** | `bux add`, `bux install`, `bux.lock`, path + git deps |
 | **Cross-Compilation** | `--target <triple>` via clang (e.g. `aarch64-linux-gnu`) |
 | **Diagnostics** | Rust-style snippets, multi-char underlines, `= help:` hints |
-| **Tooling** | `bux new/build/run/test/check/fmt/doc`, LSP 0.4.0 (locals + inferred lets) |
+| **Tooling** | `bux new/build/run/test/check/fmt/doc`, **LSP 0.17** (live error squiggles, hover, rename, hierarchies), **VS Code** extension (`vscode/`) |
 
 ---
 
@@ -285,9 +285,23 @@ bux/
 ├── examples/         # Example programs
 ├── apps/             # Real-world applications
 ├── docs/             # Documentation (LanguageRef = v1.0 normative)
+├── tools/            # bux-lsp, smoke scripts, benches
+├── vscode/           # VS Code extension (syntax + LSP client)
 ├── README.md
 ├── PLAN.md           # Historical roadmap (pre-1.0)
 └── Makefile
+```
+
+### Language Server & VS Code
+
+**Yes — Bux has an LSP** (`bux-lsp` **0.17**): **live error underlines**, hover, go-to-def, rename, refs, call/type hierarchy. Docs: [`docs/LSP.md`](docs/LSP.md).
+
+```bash
+make lsp              # build tools/bux-lsp  (stdio JSON-RPC — any editor)
+make test-lsp         # smoke suite
+make vscode           # VS Code extension (syntax + client; auto-finds tools/bux-lsp)
+# Open the repo in VS Code, or F5 from vscode/
+# Settings: bux.lsp.path, bux.lsp.enabled  ·  vscode/README.md
 ```
 
 ---
@@ -304,6 +318,7 @@ bux/
 | [`docs/RELEASE_v1.0.0.md`](docs/RELEASE_v1.0.0.md) | v1.0.0 freeze notes |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Language construct status |
 | [`docs/QUALITY_PLAN.md`](docs/QUALITY_PLAN.md) | Session history + path to v1.0 (archive) |
+| [`vscode/README.md`](vscode/README.md) | VS Code extension install & settings |
 | [`PLAN.md`](PLAN.md) | Historical phase plan (pre-1.0) |
 
 ---
